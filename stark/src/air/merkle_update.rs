@@ -531,15 +531,35 @@ pub fn evaluate_merkle_update_transition<E: FieldElement>(
 ///
 /// Both old and new hash chains share the same `path_elements` and `path_indices`;
 /// only the leaf differs.
+/// `mask` is the blinding material for rows `depth*32 .. trace_length` of every
+/// column, laid out ROW-MAJOR as `mask_len_for_depth(depth)` elements: element
+/// `i * TRACE_WIDTH + col`. At the canonical depth that is
+/// `MASK_ROWS * TRACE_WIDTH = 128 * 10 = 1280`.
+///
+/// It is a REQUIRED argument and not an `Option` on purpose. A default would be
+/// a zero-filled or witness-derived mask, which is exactly the failure this
+/// design exists to prevent, and a caller who has not thought about randomness
+/// should not compile.
+///
+/// It MUST be fresh CSPRNG output, redrawn for every proof.
 pub fn build_merkle_update_trace(
     old_leaf: BaseElement,
     new_leaf: BaseElement,
     path_elements: &[BaseElement],
     path_indices: &[u8],
+    mask: &[BaseElement],
 ) -> Vec<Vec<BaseElement>> {
     let depth = path_elements.len();
     assert_eq!(depth, path_indices.len());
     assert!(depth > 0);
+    assert_eq!(
+        mask.len(),
+        mask_len_for_depth(depth),
+        "C6 at depth {depth} needs {} blinding elements ({} rows x {TRACE_WIDTH} columns), got {}",
+        mask_len_for_depth(depth),
+        trace_length_for_depth(depth) - depth * HASH_CYCLE_LEN,
+        mask.len(),
+    );
 
     let trace_length = trace_length_for_depth(depth);
     let mut trace = vec![vec![BaseElement::ZERO; trace_length]; TRACE_WIDTH];
@@ -651,32 +671,38 @@ pub fn build_merkle_update_trace(
         new_carry = new_state[0];
     }
 
-    // Fill padding rows beyond active hash cycles
-    let last_active = depth * HASH_CYCLE_LEN;
-    if last_active < trace_length {
-        let last_old = [
-            trace[0][last_active - 1],
-            trace[1][last_active - 1],
-            trace[2][last_active - 1],
-        ];
-        let last_new = [
-            trace[3][last_active - 1],
-            trace[4][last_active - 1],
-            trace[5][last_active - 1],
-        ];
-        for row in last_active..trace_length {
-            trace[0][row] = last_old[0];
-            trace[1][row] = last_old[1];
-            trace[2][row] = last_old[2];
-            trace[3][row] = last_new[0];
-            trace[4][row] = last_new[1];
-            trace[5][row] = last_new[2];
-            trace[6][row] = BaseElement::ZERO;
-            trace[7][row] = BaseElement::ZERO;
-            trace[8][row] = old_carry;
-            trace[9][row] = new_carry;
+    // -- Blinding region, rows depth*32 .. trace_length, ALL TEN COLUMNS --
+    //
+    // THIS IS THE ZERO-KNOWLEDGE ARGUMENT AND IT IS THE WHOLE POINT OF DEPTH 12.
+    // Every transition constraint is gated off here by `active` /
+    // `not_boundary_active`, so these rows are unconstrained and the prover
+    // writes INDEPENDENT UNIFORM field elements into them, redrawn per proof.
+    //
+    // The counting: the wire publishes four trace rows per query plus two
+    // out-of-domain openings, so R = 4 * 22 + 2 = 90 evaluations per column.
+    // MASK_ROWS = 128 > 90, margin 38.
+    //
+    // WHAT THIS REPLACES, AND WHY IT WAS THE BUG. The old loop wrote the FROZEN
+    // last state into these rows and a literal ZERO into cols 6 and 7. Cols 6-9
+    // then carried one value per 32-row cycle across the whole trace, so a
+    // 512-row column held fifteen unknowns against 90 published evaluations.
+    // Equalities are linear, so nobody had to invert Poseidon:
+    // `stark/tests/air_aware_recovery_c6.rs` recovers four of the ten columns
+    // from the published bytes today, and that test going RED is what this
+    // change is for.
+    //
+    // `mask` MUST be fresh CSPRNG output per proof. A chain, a counter or
+    // anything derived from the witness collapses these values to one degree of
+    // freedom and the attack comes straight back.
+    let first_free_row = depth * HASH_CYCLE_LEN;
+    for (i, row) in (first_free_row..trace_length).enumerate() {
+        for col in 0..TRACE_WIDTH {
+            trace[col][row] = mask[i * TRACE_WIDTH + col];
         }
     }
+    // `old_carry` / `new_carry` are no longer read after the walk; the blinding
+    // region replaces the copy that used to consume them.
+    let _ = (old_carry, new_carry);
 
     trace
 }
@@ -712,6 +738,26 @@ pub fn compute_update_roots(
 // ============================================================================
 // Tests
 // ============================================================================
+
+
+/// A deterministic mask for the tests in this file.
+///
+/// Adequate for exercising the TRACE SHAPE, and inadequate for any secrecy
+/// claim: the blinding region is only hiding if its values are unpredictable.
+/// The shipping path draws from `getrandom` inside the wasm entry and refuses to
+/// build without a CSPRNG.
+#[cfg(test)]
+pub(crate) fn deterministic_test_mask(depth: usize) -> Vec<BaseElement> {
+    let mut z: u64 = 0x9E37_79B9_7F4A_7C15 ^ (depth as u64) << 32 | 1;
+    (0..mask_len_for_depth(depth))
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -781,7 +827,7 @@ mod tests {
     #[test]
     fn test_build_trace_outputs_match_roots() {
         let (ol, nl, elems, indices, old_root, new_root) = make_test_update(3);
-        let trace = build_merkle_update_trace(ol, nl, &elems, &indices);
+        let trace = build_merkle_update_trace(ol, nl, &elems, &indices, &deterministic_test_mask(indices.len()));
         let output_row = 2 * HASH_CYCLE_LEN + NUM_ROUNDS; // last cycle's hash output
         assert_eq!(trace[0][output_row], old_root);
         assert_eq!(trace[3][output_row], new_root);
@@ -793,7 +839,7 @@ mod tests {
     #[test]
     fn test_build_trace_shared_sibling_direction() {
         let (ol, nl, elems, indices, _o, _n) = make_test_update(3);
-        let trace = build_merkle_update_trace(ol, nl, &elems, &indices);
+        let trace = build_merkle_update_trace(ol, nl, &elems, &indices, &deterministic_test_mask(indices.len()));
         for cycle in 0..3 {
             let start = cycle * HASH_CYCLE_LEN;
             let expected_sib = elems[cycle];
@@ -814,7 +860,7 @@ mod tests {
         use crate::prover::{prove_generic, verify_generic};
 
         let (ol, nl, elems, indices, old_root, new_root) = make_test_update(3);
-        let trace = build_merkle_update_trace(ol, nl, &elems, &indices);
+        let trace = build_merkle_update_trace(ol, nl, &elems, &indices, &deterministic_test_mask(indices.len()));
 
         let pub_inputs = MerkleUpdatePublicInputs {
             old_leaf: ol,
@@ -835,7 +881,7 @@ mod tests {
         use crate::prover::{prove_generic, verify_generic};
 
         let (ol, nl, elems, indices, old_root, new_root) = make_test_update(8);
-        let trace = build_merkle_update_trace(ol, nl, &elems, &indices);
+        let trace = build_merkle_update_trace(ol, nl, &elems, &indices, &deterministic_test_mask(indices.len()));
 
         let pub_inputs = MerkleUpdatePublicInputs {
             old_leaf: ol,
@@ -857,7 +903,7 @@ mod tests {
         use std::panic;
 
         let (ol, nl, elems, indices, old_root, _new_root) = make_test_update(3);
-        let trace = build_merkle_update_trace(ol, nl, &elems, &indices);
+        let trace = build_merkle_update_trace(ol, nl, &elems, &indices, &deterministic_test_mask(indices.len()));
 
         let pub_inputs = MerkleUpdatePublicInputs {
             old_leaf: ol,

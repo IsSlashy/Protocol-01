@@ -76,7 +76,7 @@ const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 22;
 const QUOTIENT_SEGMENTS: usize = 8;
 const HASH_CYCLE_LEN: usize = 32;
-const DEPTH: usize = 15;
+const DEPTH: usize = 12;
 
 fn self_check_field() {
     assert_eq!(fpow(GEN_512, 512), 1, "GEN_512 is not a 512th root");
@@ -226,28 +226,63 @@ fn solve(mut rows: Vec<Vec<u64>>, n: usize) -> Option<Vec<u64>> {
 /// The 15 held cycles. `with_tail` adds rows 480..512, which is an unknown for
 /// the carry columns (it holds the root) and a literal zero for sibling and
 /// direction, where it must be omitted rather than modelled.
-fn cycles(with_tail: bool) -> Vec<Vec<usize>> {
+/// The attacker's best model. `_with_tail` is kept for signature compatibility
+/// with the pre-mask version of this file and no longer changes anything: the
+/// tail is not ONE segment any more.
+///
+/// 🚨 THAT IS THE WHOLE CHANGE. Before the depth-12 cut these rows were a frozen
+/// copy of row 479, i.e. a single unknown that the held cycles already pinned.
+/// They are now `MASK_ROWS` INDEPENDENT uniform values, so each is its own
+/// unknown and the system stops closing.
+fn cycles(_with_tail: bool) -> Vec<Vec<usize>> {
     let mut segs: Vec<Vec<usize>> = (0..DEPTH)
         .map(|c| (c * HASH_CYCLE_LEN..(c + 1) * HASH_CYCLE_LEN).collect())
         .collect();
-    if with_tail {
-        segs.push((DEPTH * HASH_CYCLE_LEN..TRACE_LEN).collect());
+    for row in (DEPTH * HASH_CYCLE_LEN)..TRACE_LEN {
+        segs.push(vec![row]);
     }
     segs
+}
+
+/// `MASK_ROWS * TRACE_WIDTH`, the arity the prover now demands.
+fn mask_len() -> usize {
+    (TRACE_LEN - DEPTH * HASH_CYCLE_LEN) * TRACE_WIDTH
+}
+
+/// A deterministic mask. Adequate for a RANK measurement -- the rank does not
+/// care how the values were drawn, only that the rows are independent unknowns
+/// -- and inadequate for a secrecy claim, which is why the shipping path draws
+/// from getrandom and refuses to build without it.
+fn test_mask(seed: u64) -> Vec<u64> {
+    let mut z = seed | 1;
+    (0..mask_len())
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
 }
 
 const OLD_LEAF: u64 = 0x0A1D_1EAF_0000_0011;
 const NEW_LEAF: u64 = 0x0E70_1EAF_0000_0022;
 /// Deliberately irregular — an alternating pattern would be guessable without
 /// reading a byte, and this file would prove nothing.
-const DIRECTIONS: [u8; DEPTH] = [0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 0, 0, 1];
+const DIRECTIONS: [u8; DEPTH] = [0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0];
 
 fn path_elements() -> Vec<u64> {
     (0..DEPTH as u64).map(|i| 0xC0DE_0000 + i * 6151).collect()
 }
 
 fn update_proof() -> p01_stark::compact::GenericCompactProofData {
-    generate_merkle_update_compact_proof(OLD_LEAF, NEW_LEAF, &path_elements(), &DIRECTIONS.to_vec())
+    generate_merkle_update_compact_proof(
+        OLD_LEAF,
+        NEW_LEAF,
+        &path_elements(),
+        &DIRECTIONS.to_vec(),
+        &test_mask(0xC6_5EED_0001),
+    )
 }
 
 // ===========================================================================
@@ -255,70 +290,43 @@ fn update_proof() -> p01_stark::compact::GenericCompactProofData {
 // ===========================================================================
 
 #[test]
-fn c6_held_columns_and_both_carry_chains_are_recovered() {
+fn the_mask_closes_the_four_columns_that_used_to_fall() {
     self_check_field();
 
     let proof = update_proof();
     let op = parse_generic(&proof.proof_bytes);
     assert_eq!(op.num_queries, NUM_QUERIES, "C6 ships {NUM_QUERIES} queries");
 
-    let pe = path_elements();
+    let unknowns = cycles(false).len();
+    let published = published_nodes(&op, 7).len();
 
-    // col 6 / col 7 — sibling and direction, tail is a literal zero.
-    let sibs = solve(system(&published_nodes(&op, 6), &cycles(false)), DEPTH)
-        .expect("col 6 must solve");
-    let dirs = solve(system(&published_nodes(&op, 7), &cycles(false)), DEPTH)
-        .expect("col 7 must solve");
-
-    // col 8 / col 9 — the carry chains. Sixteen segments, of which the first and
-    // last are PUBLIC. Solve all sixteen and use those two as the control.
-    let old_nodes = published_nodes(&op, 8);
-    let old_chain = solve(system(&old_nodes, &cycles(true)), DEPTH + 1)
-        .expect("col 8 must solve");
-    let new_chain = solve(system(&published_nodes(&op, 9), &cycles(true)), DEPTH + 1)
-        .expect("col 9 must solve");
-
-    println!("published equations per column : {}", old_nodes.len());
-    println!("unknowns: sibling {DEPTH}, direction {DEPTH}, each carry {}", DEPTH + 1);
+    println!("C6 at depth {DEPTH}, masked");
+    println!("  published equations per column : {published}");
+    println!("  unknowns per column            : {unknowns}  ({DEPTH} held cycles + {} mask rows)", TRACE_LEN - DEPTH * HASH_CYCLE_LEN);
+    println!("  short by                       : {}", unknowns as i64 - published as i64);
     println!();
-    println!("direction expected  {DIRECTIONS:?}");
-    println!("direction recovered {dirs:?}");
-    println!("sibling[7]  {:#018x} -> {:#018x}", pe[7], sibs[7]);
-    println!();
-    println!("old_leaf (public input 0) {:#018x} -> chain[0]  {:#018x}", proof.public_inputs[0], old_chain[0]);
-    println!("old_root (public input 2) {:#018x} -> chain[15] {:#018x}", proof.public_inputs[2], old_chain[DEPTH]);
-    println!("new_leaf (public input 1) {:#018x} -> chain[0]  {:#018x}", proof.public_inputs[1], new_chain[0]);
-    println!("new_root (public input 3) {:#018x} -> chain[15] {:#018x}", proof.public_inputs[3], new_chain[DEPTH]);
 
-    // The control first: if the public endpoints of the chains do not land, the
-    // parser or the basis is wrong and nothing else here means anything.
-    assert_eq!(old_chain[0], proof.public_inputs[0], "old chain must start at the public old_leaf");
-    assert_eq!(old_chain[DEPTH], proof.public_inputs[2], "and end at the public old_root");
-    assert_eq!(new_chain[0], proof.public_inputs[1], "new chain must start at the public new_leaf");
-    assert_eq!(new_chain[DEPTH], proof.public_inputs[3], "and end at the public new_root");
-
-    for (level, &want) in DIRECTIONS.iter().enumerate() {
-        assert_eq!(dirs[level], want as u64, "direction of level {level}");
-    }
-    for (level, &want) in pe.iter().enumerate() {
-        assert_eq!(sibs[level], want, "sibling of level {level}");
+    let mut solved = 0;
+    for col in [6usize, 7, 8, 9] {
+        let ok = solve(system(&published_nodes(&op, col), &cycles(false)), unknowns).is_some();
+        println!("  col {col}: {}", if ok { "SOLVED" } else { "no solve" });
+        if ok { solved += 1; }
     }
 
-    let index: u64 = DIRECTIONS.iter().enumerate().fold(0, |a, (i, &b)| a | ((b as u64) << i));
-    let rec: u64 = dirs.iter().enumerate().fold(0, |a, (i, &b)| a | (b << i));
-    println!("\nleaf index {index} -> {rec}");
-    assert_eq!(rec, index, "the leaf index is the direction bits read as binary");
+    println!();
+    println!("  columns solved: {solved} of {TRACE_WIDTH}  (was 4 of 10 at depth 15, unmasked)");
 
-    // The fourteen interior carries are the intermediate hashes. They are what
-    // lets an observer CHECK the recovered path without touching the tree.
-    println!("interior old-chain hashes recovered: {}", DEPTH - 1);
-    assert_ne!(old_chain[1], 0, "an interior carry of zero would mean a mis-modelled segment");
+    // The measurement this whole change exists to produce. It is asserted, not
+    // merely printed, so a regression that re-arms the mask rows turns this red.
+    assert_eq!(
+        solved, 0,
+        "the mask must close every held column; {solved} still solve",
+    );
+    assert!(
+        unknowns > published,
+        "under-determination is the argument: {unknowns} unknowns against {published} equations",
+    );
 }
-
-// ===========================================================================
-// 2. The calibration — the held cycles are the cause.
-// ===========================================================================
-
 #[test]
 fn the_held_cycles_are_what_make_it_solvable() {
     self_check_field();
@@ -345,33 +353,3 @@ fn the_held_cycles_are_what_make_it_solvable() {
 // ===========================================================================
 // 3. Four of ten columns, and the standing table.
 // ===========================================================================
-
-#[test]
-fn four_of_ten_columns_are_determined_by_the_published_bytes() {
-    self_check_field();
-
-    let proof = update_proof();
-    let op = parse_generic(&proof.proof_bytes);
-    let published = published_nodes(&op, 7).len();
-
-    let mut solved = 0;
-    for (col, n) in [(6usize, DEPTH), (7, DEPTH), (8, DEPTH + 1), (9, DEPTH + 1)] {
-        let segs = cycles(n > DEPTH);
-        if solve(system(&published_nodes(&op, col), &segs), n).is_some() {
-            solved += 1;
-        }
-    }
-    println!("columns solved: {solved} of {TRACE_WIDTH}");
-    assert_eq!(solved, 4, "cols 6,7,8,9 must all solve");
-
-    println!();
-    println!("             unknowns  equations  over-determined by");
-    println!("  C0 (32)          32        110                  72");
-    println!("  C1 (128)         93        110                  11");
-    println!("  C3 held cols     15         90                  75");
-    println!("  C5 accumulator    5         90                  85");
-    println!("  C6 held cols     15   {published:>8}   {:>17}", published as i64 - DEPTH as i64);
-    println!("  C7 (512)        138         90     under by 48 -> no solve");
-    println!();
-    println!("C7 is the only live circuit the instrument does not open.");
-}

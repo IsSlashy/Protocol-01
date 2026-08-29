@@ -3080,9 +3080,7 @@ mod tests {
         let new_leaf = 1337u64;
         let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
         let path_indices = vec![0u8, 1, 0];
-        let proof = generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+        let proof = generate_merkle_update_compact_proof(old_leaf, new_leaf, &path_elements, &path_indices, &c6_test_mask(path_indices.len()));
         assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_UPDATE);
         assert_eq!(proof.public_inputs.len(), 5);
         assert_eq!(proof.public_inputs[0], old_leaf);
@@ -3127,6 +3125,26 @@ mod tests {
     /// `p01_stark_verifier/src/periodic_consts.rs`. If this fails, the on-chain
     /// DEEP-ALI check rejects honest proofs (or — worse — accepts malicious
     /// ones if the divergence happens to line up with an attacker's forgery).
+    ///
+    /// 🚨 RED SINCE 2026-08-29, ON PURPOSE. THIS IS THE LOCKSTEP MARKER.
+    ///
+    /// C6 moved to the depth-12 masked geometry: nine periodic columns instead
+    /// of seven, and columns 0-6 emitted at natural period 32 over the whole
+    /// trace rather than truncated at the walk. The verifier's tables are still
+    /// the depth-15 ones, so of course they no longer match — that is the
+    /// disagreement, not a defect, and it is exactly why the prover half must
+    /// not ship alone.
+    ///
+    /// ⛔ DO NOT `#[ignore]` THIS AND DO NOT RE-PIN IT AGAINST THE PROVER. It is
+    /// the only thing in the prover crate that fails while the two halves
+    /// disagree, and silencing it would let a prover the deployed verifier
+    /// cannot parse reach a client — where the failure lands at the END of an
+    /// ~87-chunk upload, after the payer has paid.
+    ///
+    /// It goes green again when `periodic_consts.rs` is regenerated at depth 12
+    /// (`cargo test -p p01-stark --lib emit_circuit_6_periodic_coeffs --
+    /// --ignored --nocapture`) and the verifier is redeployed. That is Phase 4
+    /// of the checklist, and it is gated on an explicit per-deploy go-ahead.
     #[test]
     fn circuit_6_periodic_coeffs_match_verifier_constants_depth15() {
         use crate::air::merkle_update::build_merkle_update_periodic_columns;
@@ -3561,8 +3579,13 @@ mod tests {
         let path_indices: Vec<u8> = vec![0, 1, 0];
 
         // Build trace + LDE.
-        let trace =
-            build_merkle_update_trace(old_leaf, new_leaf, &path_elements, &path_indices);
+        let trace = build_merkle_update_trace(
+            old_leaf,
+            new_leaf,
+            &path_elements,
+            &path_indices,
+            &crate::air::merkle_update::deterministic_test_mask(path_indices.len()),
+        );
         assert_eq!(trace.len(), 10);
         let trace_length = trace[0].len();
         let blowup = 16;
@@ -3793,7 +3816,7 @@ mod tests {
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
             rows.push(("C6 merkle_update", 10, GENERIC_QUOTIENT_SEGMENTS,
-                       generate_merkle_update_compact_proof(42, 1337, &path_elements, &[0u8, 1, 0])
+                       generate_merkle_update_compact_proof(42, 1337, &path_elements, &[0u8, 1, 0], &c6_test_mask(3))
                            .proof_bytes));
         }
 
@@ -4351,9 +4374,7 @@ mod tests {
         let old_leaf = 111u64;
         let new_leaf = 222u64;
 
-        let proof = generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+        let proof = generate_merkle_update_compact_proof(old_leaf, new_leaf, &path_elements, &path_indices, &c6_test_mask(path_indices.len()));
         assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_UPDATE);
         assert_eq!(proof.public_inputs.len(), 5);
 
@@ -9360,17 +9381,35 @@ fn generate_transfer_compact_proof_inner(
 /// plus the on-chain verifier's per-query constraint re-evaluation (see
 /// `verify_constraints_merkle_update`). This matches the soundness model used
 /// by circuits 3-5 (wider traces with carry columns).
+
+/// Deterministic C6 mask for the tests in this file. See the note on the twin in
+/// `air/merkle_update.rs`: adequate for shape, inadequate for secrecy.
+#[cfg(test)]
+fn c6_test_mask(depth: usize) -> Vec<u64> {
+    let mut z: u64 = 0xC6_5EED_0000 ^ ((depth as u64) << 8) | 1;
+    (0..crate::air::merkle_update::mask_len_for_depth(depth))
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
 pub fn generate_merkle_update_compact_proof(
     old_leaf: u64,
     new_leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
+    mask: &[u64],
 ) -> GenericCompactProofData {
     generate_merkle_update_compact_proof_inner(
         old_leaf,
         new_leaf,
         path_elements,
         path_indices,
+        mask,
         DeepProbe::HONEST,
     )
 }
@@ -9389,6 +9428,7 @@ pub fn generate_merkle_update_compact_proof_with_forgery(
     new_leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
+    mask: &[u64],
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9397,6 +9437,7 @@ pub fn generate_merkle_update_compact_proof_with_forgery(
         new_leaf,
         path_elements,
         path_indices,
+        mask,
         DeepProbe { ood_forgery, terminal_poly },
     )
 }
@@ -9406,14 +9447,23 @@ fn generate_merkle_update_compact_proof_inner(
     new_leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
+    mask: &[u64],
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     let old_leaf_felt = BaseElement::new(old_leaf);
     let new_leaf_felt = BaseElement::new(new_leaf);
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
+    let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+
+    // A zero-filled or constant mask compiles, proves and verifies -- and leaks.
+    // It is the one failure mode no downstream test can see, so catch it here.
+    debug_assert!(
+        mask.windows(2).any(|w| w[0] != w[1]),
+        "C6 mask is constant; that is not blinding, it is one degree of freedom",
+    );
 
     let trace = crate::air::merkle_update::build_merkle_update_trace(
-        old_leaf_felt, new_leaf_felt, &elems, path_indices,
+        old_leaf_felt, new_leaf_felt, &elems, path_indices, &mask_felts,
     );
     let (old_root, new_root) = crate::air::merkle_update::compute_update_roots(
         old_leaf_felt, new_leaf_felt, &elems, path_indices,

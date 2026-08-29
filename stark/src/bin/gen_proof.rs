@@ -63,8 +63,29 @@ fn main() {
             let elements: Vec<u64> = args[4].split(',').map(|s| s.trim().parse().unwrap()).collect();
             let indices: Vec<u8> = args[5].split(',').map(|s| s.trim().parse().unwrap()).collect();
 
+            // C6 now carries a blinding region and the mask is a required
+            // argument. This is a DEVELOPMENT CLI, so the mask below is a
+            // deterministic xorshift, the same shortcut wire_parity.rs takes.
+            //
+            // It is adequate for generating a proof to inspect and INADEQUATE
+            // for anything whose secrecy matters: the blinding region is only
+            // hiding if its values are unpredictable. The shipping path draws
+            // from getrandom inside the wasm entry and refuses to build without
+            // a CSPRNG. Do not copy this into one.
+            let mask: Vec<u64> = {
+                let n = p01_stark::air::merkle_update::mask_len_for_depth(elements.len());
+                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
+                (0..n)
+                    .map(|_| {
+                        z ^= z << 13;
+                        z ^= z >> 7;
+                        z ^= z << 17;
+                        z % 0xFFFF_FFFF_0000_0001
+                    })
+                    .collect()
+            };
             let proof = p01_stark::compact::generate_merkle_update_compact_proof(
-                old_leaf, new_leaf, &elements, &indices,
+                old_leaf, new_leaf, &elements, &indices, &mask,
             );
             println!("{{");
             println!("  \"circuit_id\": {},", proof.circuit_id);
