@@ -415,11 +415,18 @@ mod domain_generator_tests {
     /// RLC-combined result.
     ///
     /// 🚨 This is what catches the copy that would otherwise pass review:
-    /// gating C7's Poseidon rows with `1 - is_boundary`, as C6 does, instead of
-    /// with `not_boundary_active`. The two agree everywhere except the blinding
+    /// gating C7's Poseidon rows with `1 - is_boundary` instead of with
+    /// `not_boundary_active`. The two agree everywhere except the blinding
     /// region -- so an honest proof would still verify, and only the privacy
     /// property would be gone. A random frame with a nonzero `is_boundary` and
     /// a zero `nba` separates them.
+    ///
+    /// ⚠️ "as C6 does" REMOVED 2026-08-29: C6 took the same depth-12 cut and now
+    /// gates with its own `nba`. The unmasked circuits -- C2, C3, C4 and
+    /// `denominated_pool` -- still use `1 - is_boundary`, correctly, because
+    /// they have no blinding region for it to be wrong about. C3 is the one to
+    /// watch: it is next in line for the cut, and on the day it takes one this
+    /// sentence has to move again.
     #[test]
     fn c7_ood_evaluator_matches_the_air_on_random_frames() {
         use p01_stark::air::spend::{
@@ -523,6 +530,195 @@ mod domain_generator_tests {
                 );
             }
         }
+    }
+
+    /// [C6-D12] The C6 OOD evaluator agrees with the C6 AIR on random frames.
+    ///
+    /// The twin of `c7_ood_evaluator_matches_the_air_on_random_frames`, and C6
+    /// needs it more than C7 did. C6 is the circuit `verify.rs:4713` names as
+    /// "THE ONE PLACE C6 MUST NOT BE COPIED" -- it used to gate its Poseidon
+    /// rows with `1 - is_boundary`, and the depth cut required moving it to
+    /// `not_boundary_active`.
+    ///
+    /// 🚨 THOSE TWO GATES AGREE EVERYWHERE EXCEPT THE BLINDING REGION. Leave the
+    /// old one in and every honest proof still verifies, every existing test
+    /// still passes, and the 128 masked rows are constrained again -- which is
+    /// to say the mask does nothing and `air_aware_recovery_c6.rs` solves four
+    /// of the ten columns from the published bytes. There is no honest-proof
+    /// test that can catch that. A random frame with a nonzero `is_boundary` and
+    /// a zero `nba` separates them, and this is that frame, sixty-four times.
+    #[test]
+    fn c6_ood_evaluator_matches_the_air_on_random_frames() {
+        use p01_stark::air::merkle_update::{
+            evaluate_merkle_update_transition, MERKLE_UPDATE_NUM_CONSTRAINTS,
+            MERKLE_UPDATE_NUM_PERIODIC, TRACE_WIDTH,
+        };
+        use p01_stark::{BaseElement, FieldElement, StarkField};
+
+        assert_eq!(MERKLE_UPDATE_NUM_CONSTRAINTS, 19);
+        assert_eq!(MERKLE_UPDATE_NUM_PERIODIC, 9, "seven columns plus the two gates");
+        assert_eq!(TRACE_WIDTH, 10);
+
+        let w = TRACE_WIDTH;
+        let np = MERKLE_UPDATE_NUM_PERIODIC;
+        for seed in 0..64u64 {
+            let raw = c7_stream(0xC6_0000 ^ seed, w + w + np + 1);
+            let cur_air: Vec<BaseElement> =
+                raw[0..w].iter().map(|&v| BaseElement::new(v)).collect();
+            let nxt_air: Vec<BaseElement> =
+                raw[w..2 * w].iter().map(|&v| BaseElement::new(v)).collect();
+            let per_air: Vec<BaseElement> = raw[2 * w..2 * w + np]
+                .iter()
+                .map(|&v| BaseElement::new(v))
+                .collect();
+            let alpha_air = BaseElement::new(raw[2 * w + np]);
+
+            let mut air_out = vec![BaseElement::ZERO; MERKLE_UPDATE_NUM_CONSTRAINTS];
+            evaluate_merkle_update_transition(&cur_air, &nxt_air, &per_air, &mut air_out);
+            let mut want = BaseElement::ZERO;
+            let mut pw = BaseElement::ONE;
+            for v in air_out.iter() {
+                want += pw * *v;
+                pw *= alpha_air;
+            }
+
+            let cur_v: Vec<Felt> = raw[0..w].iter().map(|&v| Felt::new(v)).collect();
+            let nxt_v: Vec<Felt> = raw[w..2 * w].iter().map(|&v| Felt::new(v)).collect();
+            let mut per_v = [Felt::ZERO; 9];
+            for i in 0..np {
+                per_v[i] = Felt::new(raw[2 * w + i]);
+            }
+            let got = evaluate_transition_at_ood_circuit_6(
+                &cur_v, &nxt_v, &per_v, Felt::new(raw[2 * w + np]),
+            );
+
+            assert_eq!(
+                got.as_u64(),
+                want.as_int(),
+                "C6 transition drift at seed {seed}: the verifier and the AIR disagree",
+            );
+        }
+    }
+
+    /// [C6-D12] The nine values the verifier evaluates at `z` are the nine
+    /// columns the prover committed to.
+    ///
+    /// The evaluator test above proves the two sides combine their inputs the
+    /// same way. It says nothing about whether they are being handed the same
+    /// inputs -- a rebaked table, a column emitted in the wrong slot, or a
+    /// stride-16 evaluator pointed at a dense column would all pass it. This is
+    /// the other half.
+    ///
+    /// ⚠️ ALL NINE COME BACK AT FULL TRACE LENGTH, WHICH IS NOT WHAT C7 DOES.
+    /// C7 emits its seven stride columns at their natural period 32 and lets the
+    /// caller tile them; C6 tiles them itself. Both are correct and they are
+    /// byte-identical downstream -- but the verifier's compressed evaluator
+    /// reads a 32-entry table either way, so what actually has to hold is that
+    /// the first seven are stride-16 IN COEFFICIENT SPACE. That is asserted
+    /// per-coefficient in `circuit_6_periodic_coeffs_match_verifier_constants_depth12`;
+    /// what is pinned here is the emission length, so the difference from C7
+    /// stays deliberate rather than becoming a surprise.
+    #[test]
+    fn c6_periodic_at_z_matches_the_prover_columns() {
+        use p01_stark::air::merkle_update::{
+            build_merkle_update_periodic_columns, CANONICAL_DEPTH, CANONICAL_TRACE_LENGTH,
+        };
+        use p01_stark::{BaseElement, StarkField};
+        use crate::periodic_consts::{C7_ACTIVE_COEFFS, C7_NOT_BOUNDARY_ACTIVE_COEFFS};
+        use crate::periodic_ext_consts::{
+            C6_HASH_START_PERIODIC16, C6_IS_BOUNDARY_PERIODIC16, C6_IS_INTERIOR_PERIODIC16,
+            C6_RC0_PERIODIC16, C6_RC1_PERIODIC16, C6_RC2_PERIODIC16,
+            C6_ROUND_ACTIVE_PERIODIC16,
+        };
+
+        let cols = build_merkle_update_periodic_columns(CANONICAL_DEPTH, CANONICAL_TRACE_LENGTH);
+        assert_eq!(cols.len(), 9, "nine periodic columns");
+        for (i, col) in cols.iter().enumerate() {
+            assert_eq!(
+                col.len(),
+                CANONICAL_TRACE_LENGTH,
+                "C6 periodic column {i} changed length; C6 emits all nine pre-tiled",
+            );
+        }
+
+        let full: Vec<Vec<BaseElement>> = cols
+            .iter()
+            .map(|col| (0..CANONICAL_TRACE_LENGTH).map(|i| col[i % col.len()]).collect())
+            .collect();
+
+        for z_seed in 0..8u64 {
+            let z_u = c7_stream(0xC6_D12 ^ z_seed, 1)[0];
+            let z = Felt::new(z_u);
+            let z_air = BaseElement::new(z_u);
+            let y16 = z.exp(16);
+
+            // Exactly what `verify_deep_ali_circuit_6` builds.
+            let got: [Felt; 9] = [
+                eval_periodic_compressed32_at_z(&C6_RC0_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C6_RC1_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C6_RC2_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C6_ROUND_ACTIVE_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C6_HASH_START_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C6_IS_BOUNDARY_PERIODIC16, y16),
+                eval_periodic_compressed32_at_z(&C6_IS_INTERIOR_PERIODIC16, y16),
+                eval_periodic_at_z(&C7_ACTIVE_COEFFS, z),
+                eval_periodic_at_z(&C7_NOT_BOUNDARY_ACTIVE_COEFFS, z),
+            ];
+
+            for i in 0..9 {
+                let poly = p01_stark::compact::inverse_ntt_probe(
+                    &full[i],
+                    p01_stark::compact::domain_generator_probe(CANONICAL_TRACE_LENGTH),
+                );
+                let want = p01_stark::compact::evaluate_poly_probe(&poly, z_air);
+                assert_eq!(
+                    got[i].as_u64(),
+                    want.as_int(),
+                    "C6 periodic slot {i} disagrees with the prover at z_seed {z_seed}",
+                );
+            }
+        }
+    }
+
+    /// [C6-D12] C6 and C7 share ONE pair of dense row-gate tables, and this is
+    /// what makes that sharing a signal instead of a coincidence.
+    ///
+    /// Both gates are functions of `FIRST_FREE_ROW` and `HASH_CYCLE_LEN` alone.
+    /// Depth-12 C6 and C7 have identical geometry -- 512 rows, 384 constrained,
+    /// 128 free -- so the tables are bit-identical and C6 evaluates C7's,
+    /// costing zero added rodata.
+    ///
+    /// ⛔ THE DAY THAT STOPS BEING TRUE, C6 SILENTLY EVALUATES C7's GEOMETRY.
+    /// Move either circuit's `FIRST_FREE_ROW` and the sharing becomes wrong
+    /// without becoming a compile error: C6 would gate its constraints off at
+    /// C7's boundary rather than its own, and the rows between the two
+    /// boundaries would be either unconstrained (a soundness hole) or
+    /// constrained-but-masked (an honest proof that no longer verifies). This
+    /// test is the tripwire; the fix is to emit C6's own pair, not to relax it.
+    #[test]
+    fn c6_and_c7_row_gates_are_the_same_two_columns() {
+        use p01_stark::air::merkle_update as c6;
+        use p01_stark::air::spend as c7;
+        use crate::periodic_consts::{
+            C6_ACTIVE_COEFFS, C6_NOT_BOUNDARY_ACTIVE_COEFFS, C7_ACTIVE_COEFFS,
+            C7_NOT_BOUNDARY_ACTIVE_COEFFS,
+        };
+
+        assert_eq!(
+            c6::FIRST_FREE_ROW, c7::FIRST_FREE_ROW,
+            "the two circuits stopped agreeing on where the blinding region starts",
+        );
+        assert_eq!(c6::CANONICAL_TRACE_LENGTH, 512);
+        assert_eq!(c6::MASK_ROWS, 128, "128 free rows against R = 4*22 + 2 = 90");
+
+        assert_eq!(
+            C6_ACTIVE_COEFFS, C7_ACTIVE_COEFFS,
+            "C6 and C7 `active` diverged — C6 must stop borrowing C7's table",
+        );
+        assert_eq!(
+            C6_NOT_BOUNDARY_ACTIVE_COEFFS, C7_NOT_BOUNDARY_ACTIVE_COEFFS,
+            "C6 and C7 `not_boundary_active` diverged — C6 must emit its own",
+        );
     }
 
     /// [W18b] C7's seven compressed tables ARE the extension tables C3 and C6
@@ -4749,15 +4945,32 @@ pub fn verify_deep_ali_circuit_5(
 /// this exact sequence, so swapping two lines produces a different polynomial
 /// and every honest proof fails.
 ///
-/// 🚨 THE ONE PLACE C6 MUST NOT BE COPIED. `evaluate_transition_at_ood_circuit_6`
-/// gates its Poseidon rounds with `not_boundary = 1 - is_boundary`. C7 gates
-/// them with `nba` = `periodic[12]` = `not_boundary_active`, which is ALSO zero
-/// on rows 383..511. Using C6's gate here would switch the Poseidon constraints
-/// back ON across C7's blinding region: 128 rows per column that must carry
-/// free randomness would become constrained, the counting argument in
-/// `air/spend.rs` would collapse, and the note commitment would be solvable
-/// from the published evaluations again. The whole depth-12 redesign exists to
-/// escape that state.
+/// 🚨 THE GATE IS `nba`, NEVER `1 - is_boundary`, AND THE TWO ARE NOT
+/// INTERCHANGEABLE.
+///
+/// C7 gates its Poseidon rounds with `nba` = `periodic[12]` =
+/// `not_boundary_active`, which is zero on rows 383..511 as well as on the
+/// boundary rows. `1 - is_boundary` is zero only on the boundary rows. Swap them
+/// and the Poseidon constraints switch back ON across the blinding region: 128
+/// rows per column that must carry free randomness become constrained, the
+/// counting argument in `air/spend.rs` collapses, and the note commitment is
+/// solvable from the published evaluations again.
+///
+/// ⚠️ NOTE CORRECTED 2026-08-29. This paragraph used to read "THE ONE PLACE C6
+/// MUST NOT BE COPIED" and said C6 gated with `1 - is_boundary`. That WAS true
+/// and is not any more: C6 took the same depth-12 cut, grew the same two gate
+/// columns, and now gates with its own `nba` (`periodic_at_z[8]`). The hazard
+/// is unchanged; the example of it is gone. Left as it stood, the warning would
+/// send a reader to `evaluate_transition_at_ood_circuit_6` to see the mistake
+/// and they would find the correct code, which is how a stale warning teaches
+/// people to stop reading warnings.
+///
+/// ✅ WHAT CATCHES IT NOW IS A TEST, NOT THIS COMMENT.
+/// `c7_ood_evaluator_matches_the_air_on_random_frames` and its C6 twin feed the
+/// same random frame to the AIR and to the evaluator and compare. A frame with a
+/// nonzero `is_boundary` and a zero `nba` separates the two gates; no
+/// honest-proof test can, because the substitution rejects nothing and only
+/// removes the privacy property.
 ///
 /// `periodic_at_z` indices, all thirteen:
 ///   0 rc0 · 1 rc1 · 2 rc2 · 3 round_flag · 4 is_boundary · 5 hash_start
