@@ -1503,12 +1503,32 @@ async function verifySpend(rpc, signature, opts = {}) {
   //
   // ⛔ THAT IS NOT SECRECY AND THE PROBE MUST NOT SOFTEN. What C7 buys is
   // UNDERDETERMINATION: 90 published evaluations against ~138 unknowns in
-  // column 9, which is why depth 12 was chosen. Underdetermination has a
-  // MEASURED counterexample in this repository — four C1 witnesses, including
-  // the spend secret, were recovered in 5 ms by AIR-AWARE recovery on an
-  // underdetermined system, because the constraints supply the equations the
-  // openings do not. C7's argument has the same shape and has never been
-  // attacked. "More unknowns than equations" is not a security claim.
+  // column 9, which is why depth 12 was chosen.
+  //
+  // 🚨 THIS PARAGRAPH USED TO CITE, AS A "MEASURED counterexample in this
+  // repository", an AIR-aware recovery of four C1 witnesses. It was not in this
+  // repository: verified 2026-08-29 across every ref, `git log --all -S
+  // "AIR-aware"` returned ONE commit, and it added only this comment. The
+  // probe's own load-bearing evidence was prose.
+  //
+  // ✅ IT IS MEASURED NOW, and it says both halves out loud:
+  //
+  //   stark/tests/air_aware_recovery_c1.rs
+  //       all FOUR C1 private inputs, the spend secret among them, recovered
+  //       from published bytes. 110 openings against a 128-row column is
+  //       "safe" by counting; the AIR's 35 linear equalities — padding rows
+  //       repeating their predecessors — cut it to 93 effective unknowns and
+  //       it solves. "More unknowns than equations" is NOT a security claim.
+  //   stark/tests/air_aware_recovery_c7.rs
+  //       the same solver does NOT close on C7. The counterfactual beside it
+  //       shows why: collapse the 128 mask rows into one and it closes at
+  //       once. The margin is the mask's independence and nothing else.
+  //
+  // ⛔ THAT STILL DOES NOT MAKE C7 ZERO-KNOWLEDGE, and the verdict below does
+  // not move. ONE channel is measured. `stark/src/air/spend.rs:262-268` names
+  // the ones that are not: the quotient decomposition, the DEEP composition
+  // polynomial, the vector commitment, and the absent FRI salt — no simulation
+  // argument for any of them.
   //
   // ⛔ AND v3 IS STILL REGISTERED. Notes whose blinding is unknown spend on the
   // C1 + C3 pair, which has no coset masking of its own to appeal to.
@@ -1527,10 +1547,15 @@ async function verifySpend(rpc, signature, opts = {}) {
       'INCONCLUSIVE BY CONSTRUCTION: this tool only detects a value present verbatim, and ' +
         'recovery from a STARK proof is polynomial, not a byte copy. Circuit 7 does apply a coset ' +
         'LDE and 128 CSPRNG-drawn mask rows — unlike the C1+C3 pair v3 still uses — but that buys ' +
-        'UNDERDETERMINATION (90 published evaluations against ~138 unknowns), not secrecy: four C1 ' +
-        'witnesses were recovered in 5 ms by AIR-aware recovery on an underdetermined system, and ' +
-        'C7 has never been attacked that way. A PASS on P3 says the commitment was not copied into ' +
-        'the proof; it says nothing about whether the proof hides it.',
+        'UNDERDETERMINATION (90 published evaluations against ~138 unknowns), not secrecy. ' +
+        'MEASURED in-tree 2026-08-29: an AIR-aware solve recovers all four C1 private inputs from ' +
+        'published bytes (stark/tests/air_aware_recovery_c1.rs), because 35 of its rows are copies ' +
+        'of others — so "more unknowns than equations" is not a security claim. The same solver ' +
+        'does NOT close on C7, and collapsing its mask makes it close, so the margin is the mask ' +
+        '(air_aware_recovery_c7.rs). That is ONE channel: the quotient decomposition, the DEEP ' +
+        'composition polynomial, the vector commitment and the absent FRI salt have no simulation ' +
+        'argument at all (stark/src/air/spend.rs:262-268). A PASS on P3 says the commitment was ' +
+        'not copied into the proof; it says nothing about whether the proof hides it.',
     ),
   );
 
