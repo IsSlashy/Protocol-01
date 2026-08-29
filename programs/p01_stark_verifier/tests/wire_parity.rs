@@ -72,9 +72,9 @@ fn fixture_c5() -> Vec<u8> {
     .proof_bytes
 }
 fn fixture_c6() -> Vec<u8> {
-    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
-    p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi).proof_bytes
+    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())).proof_bytes
 }
 
 fn fixture_c7() -> Vec<u8> {

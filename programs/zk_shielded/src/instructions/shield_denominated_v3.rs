@@ -6,6 +6,7 @@ use crate::errors::ZkShieldedError;
 use crate::fee::{self, FEE_ESCROW_SEED_PREFIX};
 use crate::state::pool_v3::DenominatedPoolV3;
 use crate::state::merkle_tree_v3::MerkleTreeStateV3;
+use crate::state::insert_root::{self, INSERT_SUBTREE_DEPTH};
 
 // ---------------------------------------------------------------------------
 // C6 (merkle_update) STARK proof-buffer wiring
@@ -37,8 +38,44 @@ const PROOF_BUF_MIN_LEN: usize = 83;
 /// Circuit id for `merkle_update`.
 const CIRCUIT_MERKLE_UPDATE: u8 = 6;
 
+/// Read a Goldilocks element from its 32-byte encoding, rejecting non-canonical
+/// values and non-zero padding.
+///
+/// The upper 24 bytes MUST be zero. The old code did `u64::from_le_bytes(x[..8])`
+/// and ignored the rest, which let two different 32-byte arrays name the same
+/// root -- the same aliasing shape as the nullifier defect closed 2026-08-26.
+fn felt_from_bytes(bytes: &[u8; 32]) -> Result<u64> {
+    require!(
+        bytes[8..].iter().all(|b| *b == 0),
+        ZkShieldedError::InvalidMerkleRoot
+    );
+    let v = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    require!(
+        v < crate::state::poseidon_gl::MODULUS,
+        ZkShieldedError::InvalidMerkleRoot
+    );
+    Ok(v)
+}
+
+/// The canonical 32-byte encoding of a Goldilocks element: low 8 bytes LE, then
+/// 24 zero bytes. The inverse of `felt_from_bytes`.
+fn felt_to_bytes(v: u64) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[..8].copy_from_slice(&v.to_le_bytes());
+    out
+}
+
 /// Verify the C6 proof buffer attests `(old_leaf=0, new_leaf=leaf,
-/// old_root=current_root, new_root=new_root, depth=tree_depth)`.
+/// old_root=old_subtree_root, new_root=new_subtree_root, depth=12)`.
+///
+/// 🚨 THESE ARE SUBTREE ROOTS SINCE 2026-08-29, NOT POOL ROOTS, and the
+/// depth is the constant 12 rather than `merkle_tree.depth`. C6 was cut to depth
+/// 12 to free 128 trace rows for a blinding region. Passing the pool root or the
+/// pool depth here produces a hash no honest proof can match, so that mistake is
+/// loud -- but the reverse is not: this function alone does NOT establish that
+/// the subtree belongs to the pool. `fold_insertion` plus the old-root equality
+/// in the handler is what does that, and without them a depositor proves an
+/// insertion into a subtree they invented.
 ///
 /// Returns Ok(()) iff all of the following hold:
 ///   - `proof_buffer.owner == STARK_VERIFIER_PROGRAM_ID`
@@ -57,9 +94,8 @@ fn verify_c6_proof_buffer(
     proof_info: &AccountInfo,
     depositor: &Pubkey,
     leaf: &[u8; 32],
-    old_root: &[u8; 32],
-    new_root: &[u8; 32],
-    depth: u8,
+    old_subtree_root: &[u8; 32],
+    new_subtree_root: &[u8; 32],
 ) -> Result<()> {
     require!(
         *proof_info.owner == STARK_VERIFIER_PROGRAM_ID,
@@ -100,9 +136,11 @@ fn verify_c6_proof_buffer(
     // as `verify_stark_proof_v2` / `verify_deep_ali_phase2`.
     let old_leaf_u64: u64 = 0; // insertion ⇒ replacing ZEROS[0]
     let new_leaf_u64 = u64::from_le_bytes(leaf[..8].try_into().unwrap());
-    let old_root_u64 = u64::from_le_bytes(old_root[..8].try_into().unwrap());
-    let new_root_u64 = u64::from_le_bytes(new_root[..8].try_into().unwrap());
-    let depth_u64 = depth as u64;
+    let old_root_u64 = u64::from_le_bytes(old_subtree_root[..8].try_into().unwrap());
+    let new_root_u64 = u64::from_le_bytes(new_subtree_root[..8].try_into().unwrap());
+    // ⛔ THE CONSTANT, NOT `merkle_tree.depth`. The verifier rejects any other
+    // value for C6 in phase 2, and the pool is 15 deep.
+    let depth_u64 = INSERT_SUBTREE_DEPTH as u64;
 
     let mut pub_buf = [0u8; 40];
     pub_buf[0..8].copy_from_slice(&old_leaf_u64.to_le_bytes());
@@ -134,11 +172,21 @@ fn verify_c6_proof_buffer(
 ///     delay) are derivable from on-chain pool state at the time of the slot
 ///     for indexers that genuinely need them.
 ///
-/// `new_subtrees` is the post-insertion filled-subtrees array (one entry per
-/// internal level, length == tree_depth). Produced by the client alongside
-/// `new_root` and bound to both via the C6 proof.
+/// ⛔ `new_root` IS GONE FROM THIS INSTRUCTION, AND IT MUST NOT COME BACK.
+/// The program now COMPUTES the pool root by folding the top levels itself; a
+/// caller-supplied one is exactly the value the fold exists to stop the caller
+/// from choosing.
+///
+/// `old_subtree_root` and `new_subtree_root` are C6's depth-12 roots. Neither is
+/// trusted: the old one must reproduce the pool's current root through the fold,
+/// and the new one is covered by the proof's public-input hash.
+///
+/// `new_subtrees` remains the client's post-insertion filled-subtrees array for
+/// the levels BELOW 12. ⚠️ It is still bound by nothing -- the same hole
+/// `insert_with_root_v3` documents -- and the top-level entries are now derived
+/// on chain and overwrite whatever it claims there.
 #[derive(Accounts)]
-#[instruction(commitment: [u8; 32], new_root: [u8; 32], new_subtrees: Vec<[u8; 32]>)]
+#[instruction(commitment: [u8; 32], old_subtree_root: [u8; 32], new_subtree_root: [u8; 32], new_subtrees: Vec<[u8; 32]>)]
 pub struct ShieldDenominatedV3<'info> {
     /// User depositing tokens
     #[account(mut)]
@@ -207,7 +255,8 @@ pub struct ShieldDenominatedV3<'info> {
 pub fn handler(
     ctx: Context<ShieldDenominatedV3>,
     commitment: [u8; 32],
-    new_root: [u8; 32],
+    old_subtree_root: [u8; 32],
+    new_subtree_root: [u8; 32],
     new_subtrees: Vec<[u8; 32]>,
 ) -> Result<()> {
     let clock = Clock::get()?;
@@ -337,10 +386,51 @@ pub fn handler(
         &ctx.accounts.c6_proof_buffer,
         &ctx.accounts.depositor.key(),
         &commitment,
-        &merkle_tree.root,
-        &new_root,
-        merkle_tree.depth,
+        &old_subtree_root,
+        &new_subtree_root,
     )?;
+
+    // ------------------------------------------------------------------
+    // [C6-D12] Fold the top levels, and let the OLD fold prove the subtree
+    // belongs to this pool.
+    //
+    // The proof above says "inserting this leaf into a 12-level tree rooted at
+    // `old_subtree_root` yields `new_subtree_root`". It says nothing about
+    // whose tree that is. The fold answers that: both roots go up through the
+    // pool account's OWN `filled_subtrees`, and the old one is required to come
+    // out equal to the pool's current root.
+    //
+    // ⛔ `new_subtrees` -- the depositor's array, in scope right here -- is NOT
+    // what the fold reads. See `state::insert_root` for why that substitution is
+    // the whole vulnerability.
+    // ------------------------------------------------------------------
+    let insert_at = merkle_tree.leaf_count;
+    let old_sub = felt_from_bytes(&old_subtree_root)?;
+    let new_sub = felt_from_bytes(&new_subtree_root)?;
+    let filled: Vec<u64> = merkle_tree
+        .filled_subtrees
+        .iter()
+        .map(felt_from_bytes)
+        .collect::<Result<Vec<u64>>>()?;
+
+    let folded = insert_root::fold_insertion(
+        old_sub,
+        new_sub,
+        insert_at,
+        &filled,
+        merkle_tree.depth,
+    )
+    .map_err(|_| error!(ZkShieldedError::InvalidMerkleRoot))?;
+
+    // 🚨 THIS EQUALITY IS THE WHOLE BINDING. Drop it and every other check
+    // in this handler still passes while a depositor writes an arbitrary pool
+    // root.
+    require!(
+        folded.old_pool_root == felt_from_bytes(&merkle_tree.root)?,
+        ZkShieldedError::InvalidMerkleRoot
+    );
+
+    let new_root = felt_to_bytes(folded.new_pool_root);
 
     // Insert commitment into V3 Merkle tree (emits universal LeafInserted event).
     let leaf_index = merkle_tree.insert_with_root_v3(
@@ -349,6 +439,17 @@ pub fn handler(
         &new_subtrees,
         true, // c6_verified — see verify_c6_proof_buffer above
     )?;
+
+    // The top-level subtree entries are DERIVED from the fold that just
+    // reproduced the pool root, so they overwrite whatever `new_subtrees` said
+    // there. Levels below 12 remain the client's hint: unchanged, and still
+    // unbound -- a pre-existing hole this change narrows but does not close.
+    for (level, value) in folded.updated_subtrees() {
+        let l = *level as usize;
+        if l < merkle_tree.filled_subtrees.len() {
+            merkle_tree.filled_subtrees[l] = felt_to_bytes(*value);
+        }
+    }
 
     // Update pool state (mirrors v2)
     pool.update_root(merkle_tree.root);

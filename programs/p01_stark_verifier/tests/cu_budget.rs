@@ -1368,7 +1368,34 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
     // active_rows bound). The CEILINGS are unchanged and neither was approached.
     CuCeiling { circuit_id: 5, phase1_measured: 874456, phase1_max: 892000, phase2_measured: Some(201324), phase2_max: Some(206000) },
-    CuCeiling { circuit_id: 6, phase1_measured: 892107, phase1_max: 910000, phase2_measured: Some(122739), phase2_max: Some(126000) },
+    // [C6-D12 2026-08-29] RE-RECORDED for the depth-12 masked geometry, and the
+    // two phases moved in OPPOSITE directions. That is the whole story of this
+    // change in two numbers, so neither is worth flattening into "C6 got more
+    // expensive".
+    //
+    // phase 1: 892,107 -> 888,250. CHEAPER BY 3,857. At depth 15 the walk
+    // truncated the seven periodic columns, so the verifier evaluated them from
+    // a 32-entry stride table PLUS a shared Lagrange correction over rows
+    // 480..=511. At depth 12 they tile all 512 rows, the correction is
+    // identically zero, and `cycle15_lagrange_weights` left the C6 path
+    // entirely. The saving is the correction.
+    //
+    // phase 2: 122,739 -> 175,269. DEARER BY 52,530, and this is the price of
+    // the mask, paid where it should be. Two genuinely dense 512-coefficient
+    // Horner evaluations -- `active` and `not_boundary_active` -- plus the
+    // 19 constraints now carrying those factors.
+    //
+    // ✅ THE NUMBER IS SANE BECAUSE C7 ALREADY PAYS IT. C7 has the same trace
+    // width, the same trace length and the same two dense gates, and it measures
+    // 192,715. C6 landing at 175,269 -- BELOW C7, since C7 also carries four
+    // one-hot recipient columns C6 does not -- is what a correct implementation
+    // should cost. A C6 phase 2 that had stayed near 122,739 would have been the
+    // alarming result: it would mean the gates were not being evaluated, and
+    // therefore that the 128 masked rows were still constrained.
+    //
+    // Against the 1,400,000 cap the deposit still fits in one instruction:
+    // 888,250 + 175,269 = 1,063,519.
+    CuCeiling { circuit_id: 6, phase1_measured: 888250, phase1_max: 907000, phase2_measured: Some(175269), phase2_max: Some(179000) },
     // [C7 2026-08-25] C7 pinned for the first time. Until today the only C7
     // figure anywhere in this repo came from `tests/c7_probe/` -- a throwaway
     // program reproducing the arithmetic SHAPE of a phase-2 check that did not
@@ -1718,7 +1745,14 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 41] = [
+const PROSE_FIGURES: [(u64, &str); 45] = [
+    // [C6-D12 2026-08-29] The depth cut moved BOTH C6 phases, in opposite
+    // directions. The AFTER values are the constants in CU_CEILINGS; these four
+    // are the BEFORE values and the two deltas, which no constant produces.
+    (892_107, "the PRE-mask C6 phase-1 pin, quoted beside the 888,250 that replaced it"),
+    (3_857, "CU the depth cut SAVED in C6 phase 1 — the retired Lagrange correction"),
+    (122_739, "the PRE-mask C6 phase-2 pin, quoted beside the 175,269 that replaced it"),
+    (52_530, "CU the mask COST in C6 phase 2 — two dense 512-coeff gate columns"),
     (1_399_000, "illustrative: what C0 could have become before a ceiling existed"),
     (638_248, "byte size of the historical Route C .so this doc used to name"),
     // [C7 2026-08-25] The measured cost circuit 7 imposes on the other six.
@@ -2138,6 +2172,69 @@ fn ci_names_test_target(name: &str) -> bool {
 
 /// Split out so the parser can be tested against strings that are not `ci.yml`.
 /// A scanner with no negative control is how the blindness above survived.
+/// Resolve a shell variable that a workflow defines in a YAML `env:` mapping.
+///
+/// 🚨 THE REASON THIS EXISTS. On 2026-08-29 both guards built on
+/// `ci_names_test_target` were RED, and neither had anything to do with the
+/// circuits. `ci.yml` was refactored in `2049aa6d` -- "the soundness pins timed
+/// out the job twice: split, not dropped" -- which moved the seventeen pin names
+/// out of the inline `for pin in a b c; do` list and into an `ALL_PINS` env var.
+/// The workflow kept running every one of them. The parser stopped being able to
+/// see any of them.
+///
+/// ⛔ AND THAT IS THE WORST POSSIBLE FAILURE FOR THIS PARTICULAR GUARD. Its job
+/// is to notice when a test target stops running in CI. Once it cannot read the
+/// list, it reports EVERY target as unrun -- so the one signal it exists to
+/// carry is buried under seventeen false ones, and the honest response to a wall
+/// of noise is to stop reading it. That is the same shape as the gate that was
+/// written and never ran, one level up: a guard that is red for a reason nobody
+/// acts on protects nothing.
+///
+/// Handles both the folded form
+///
+/// ```yaml
+///   env:
+///     ALL_PINS: >-
+///       alpha beta
+///       gamma
+/// ```
+///
+/// and the one-line form `ALL_PINS: alpha beta gamma`. Continuation lines are
+/// those indented strictly deeper than the key.
+fn resolve_workflow_env_var(workflow: &str, var: &str) -> Option<String> {
+    let key = format!("{var}:");
+    let lines: Vec<&str> = workflow.lines().collect();
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix(&key) else {
+            continue;
+        };
+        let indent = line.len() - trimmed.len();
+        let rest = rest.trim();
+
+        // One-line form: the value sits on the key's own line.
+        if !rest.is_empty() && rest != ">-" && rest != ">" && rest != "|" && rest != "|-" {
+            return Some(rest.to_string());
+        }
+
+        // Folded form: take every following line indented deeper than the key.
+        let mut out = String::new();
+        for next in &lines[i + 1..] {
+            if next.trim().is_empty() {
+                continue;
+            }
+            let next_indent = next.len() - next.trim_start().len();
+            if next_indent <= indent {
+                break;
+            }
+            out.push(' ');
+            out.push_str(next.trim());
+        }
+        return if out.trim().is_empty() { None } else { Some(out) };
+    }
+    None
+}
+
 fn ci_names_test_target_in(workflow: &str, name: &str) -> bool {
     // Form 1 — `--test <name>` spelled out.
     let needle = format!("--test {name}");
@@ -2195,11 +2292,40 @@ fn ci_names_test_target_in(workflow: &str, name: &str) -> bool {
         if !workflow.contains(&format!("--test \"${var}\"")) {
             return false;
         }
-        list.trim_end_matches("do")
+        let list = list
+            .trim_end_matches("do")
             .trim_end()
             .trim_end_matches(';')
-            .split_whitespace()
-            .any(|w| w == name)
+            .trim();
+
+        // Form 3 — the list is a variable the workflow defines in `env:`.
+        // `for pin in $ALL_PINS; do ... --test "$pin"` runs every name in
+        // ALL_PINS, and a parser that reads only the literal token `$ALL_PINS`
+        // concludes the workflow runs a target by that name and nothing else.
+        //
+        // The `--test "$var"` requirement above still applies and is checked
+        // before we get here, so resolving the variable cannot turn an unrelated
+        // word list into coverage.
+        let resolved;
+        let list = if let Some(name) = list
+            .strip_prefix("${")
+            .and_then(|r| r.strip_suffix('}'))
+            .or_else(|| list.strip_prefix('$'))
+        {
+            match resolve_workflow_env_var(workflow, name) {
+                Some(v) => {
+                    resolved = v;
+                    resolved.as_str()
+                }
+                // An undefined variable expands to nothing in shell, so the loop
+                // genuinely runs no targets. Reporting no coverage is correct.
+                None => return false,
+            }
+        } else {
+            list
+        };
+
+        list.split_whitespace().any(|w| w == name)
     })
 }
 
@@ -2256,6 +2382,77 @@ fn cu_ceiling_ci_target_parser_sees_both_forms() {
         !ci_names_test_target_in(DECOY, "wire_parity"),
         "a for-loop that does not run `--test \"$var\"` must not grant coverage"
     );
+
+    // Form 3 — the list is an env var, folded across lines. This is the shape
+    // `ci.yml` has carried since `2049aa6d`, and the shape that made both guards
+    // built on this parser read as "nothing runs" for a day.
+    const ENVVAR: &str = concat!(
+        "        env:\n",
+        "          ALL_PINS: >-\n",
+        "            alpha beta\n",
+        "            gamma\n",
+        "          SLOW_PINS: beta\n",
+        "        run: |\n",
+        "          for pin in $ALL_PINS; do\n",
+        "            cargo test -p p01_stark_verifier --release --test \"$pin\"\n",
+        "          done\n",
+    );
+    for target in ["alpha", "beta", "gamma"] {
+        assert!(
+            ci_names_test_target_in(ENVVAR, target),
+            "`{target}` was missed inside a folded env-var list"
+        );
+    }
+    assert!(!ci_names_test_target_in(ENVVAR, "delta"), "a name not in the env-var list");
+    assert!(
+        !ci_names_test_target_in(ENVVAR, "ALL_PINS"),
+        "the variable NAME must never count as a target"
+    );
+
+    // The braced spelling resolves the same way.
+    const BRACED: &str = concat!(
+        "          ALL_PINS: >-\n",
+        "            alpha\n",
+        "          for pin in ${ALL_PINS}; do\n",
+        "            cargo test --test \"$pin\"\n",
+        "          done\n",
+    );
+    assert!(ci_names_test_target_in(BRACED, "alpha"));
+
+    // An UNDEFINED variable expands to nothing in shell, so the loop runs no
+    // targets and the parser must say so rather than assume the best.
+    const UNDEFINED: &str = concat!(
+        "          for pin in $NOT_DEFINED_ANYWHERE; do\n",
+        "            cargo test --test \"$pin\"\n",
+        "          done\n",
+    );
+    assert!(
+        !ci_names_test_target_in(UNDEFINED, "alpha"),
+        "an unresolvable variable must not grant coverage"
+    );
+
+    // And resolving a variable must NOT bypass the body check: a for-loop that
+    // never runs `--test \"$var\"` grants nothing, env var or not.
+    const ENV_DECOY: &str = concat!(
+        "          ALL_PINS: >-\n",
+        "            alpha beta\n",
+        "          for pin in $ALL_PINS; do\n",
+        "            echo \"$pin\"\n",
+        "          done\n",
+    );
+    assert!(
+        !ci_names_test_target_in(ENV_DECOY, "alpha"),
+        "resolving the variable must not skip the `--test \"$var\"` requirement"
+    );
+
+    // The one-line form.
+    const INLINE_ENV: &str = concat!(
+        "          PINS: alpha beta\n",
+        "          for p in $PINS; do\n",
+        "            cargo test --test \"$p\"\n",
+        "          done\n",
+    );
+    assert!(ci_names_test_target_in(INLINE_ENV, "beta"));
 
     // And the real workflow must satisfy the parser, or every check built on it
     // is vacuous again.
@@ -3691,11 +3888,11 @@ fn all_cases() -> Vec<ProofCase> {
     cases.push(generic_case(5, "C5 transfer", p5, ms));
 
     // --- C6 merkle_update ---------------------------------------------------
-    // Args from `verify.rs::merkle_update_depth15_verify_generic`.
-    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+    // Args from `verify.rs::merkle_update_depth12_masked_verify_generic`.
+    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
     let (p6, ms) =
-        timed(|| p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi));
+        timed(|| p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())));
     cases.push(generic_case(6, "C6 merkle_update", p6, ms));
 
     // --- C7 spend -----------------------------------------------------------
@@ -4052,8 +4249,10 @@ fn cu_budget_verify_uniform_path() {
 
     let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
     let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
-    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+    // [C6-D12] `pe`/`pi` feed C6 ONLY; C3 in the same array uses
+    // `path_elements`/`path_indices` and stays at 15.
+    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
 
     // Only the five circuits in PROBE_ORDER can go through this path.
     let cases: Vec<(&str, u8, p01_stark::compact::GenericCompactProofData)> = vec![
@@ -4073,7 +4272,7 @@ fn cu_budget_verify_uniform_path() {
         (
             "C6 merkle_update",
             6,
-            p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi),
+            p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())),
         ),
     ];
 
@@ -4529,8 +4728,10 @@ fn uniform_leak_probe(
 fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCompactProofData)> {
     let path_elements: Vec<u64> = (0..15u64).map(|i| 1000 + i).collect();
     let path_indices: Vec<u8> = (0..15u8).map(|i| i % 2).collect();
-    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+    // [C6-D12] `pe`/`pi` feed C6 ONLY; C3 in the same array uses
+    // `path_elements`/`path_indices` and stays at 15.
+    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
     vec![
         (
             "C1 pool_commitment",
@@ -4556,7 +4757,7 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
         (
             "C6 merkle_update",
             6,
-            p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi),
+            p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())),
         ),
         // [C7 2026-08-25] C7 joined PROBE_ORDER, so it joined the anonymity set
         // and therefore this table. Leaving it out would flatter the result in

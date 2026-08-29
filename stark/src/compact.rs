@@ -3080,7 +3080,7 @@ mod tests {
         let new_leaf = 1337u64;
         let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
         let path_indices = vec![0u8, 1, 0];
-        let proof = generate_merkle_update_compact_proof(old_leaf, new_leaf, &path_elements, &path_indices, &c6_test_mask(path_indices.len()));
+        let proof = generate_merkle_update_compact_proof(old_leaf, new_leaf, &path_elements, &path_indices, &c6_deterministic_probe_mask(path_indices.len()));
         assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_UPDATE);
         assert_eq!(proof.public_inputs.len(), 5);
         assert_eq!(proof.public_inputs[0], old_leaf);
@@ -3856,7 +3856,7 @@ mod tests {
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
             rows.push(("C6 merkle_update", 10, GENERIC_QUOTIENT_SEGMENTS,
-                       generate_merkle_update_compact_proof(42, 1337, &path_elements, &[0u8, 1, 0], &c6_test_mask(3))
+                       generate_merkle_update_compact_proof(42, 1337, &path_elements, &[0u8, 1, 0], &c6_deterministic_probe_mask(3))
                            .proof_bytes));
         }
 
@@ -4426,7 +4426,7 @@ mod tests {
         let old_leaf = 111u64;
         let new_leaf = 222u64;
 
-        let proof = generate_merkle_update_compact_proof(old_leaf, new_leaf, &path_elements, &path_indices, &c6_test_mask(path_indices.len()));
+        let proof = generate_merkle_update_compact_proof(old_leaf, new_leaf, &path_elements, &path_indices, &c6_deterministic_probe_mask(path_indices.len()));
         assert_eq!(proof.circuit_id, CIRCUIT_MERKLE_UPDATE);
         assert_eq!(proof.public_inputs.len(), 5);
 
@@ -9434,10 +9434,27 @@ fn generate_transfer_compact_proof_inner(
 /// `verify_constraints_merkle_update`). This matches the soundness model used
 /// by circuits 3-5 (wider traces with carry columns).
 
-/// Deterministic C6 mask for the tests in this file. See the note on the twin in
-/// `air/merkle_update.rs`: adequate for shape, inadequate for secrecy.
-#[cfg(test)]
-fn c6_test_mask(depth: usize) -> Vec<u64> {
+/// A DETERMINISTIC, PUBLICLY REPRODUCIBLE C6 mask. Test scaffolding only.
+///
+/// ⛔ THIS MASK HIDES NOTHING. Every value is a pure function of `depth`, so an
+/// observer who reads this file reconstructs the whole blinding region and the
+/// 128 free rows stop being free. It is adequate for the two things tests
+/// actually need -- the trace SHAPE, and the RANK of the recovered system, which
+/// depends only on the rows being independent unknowns and not on how they were
+/// drawn -- and it is adequate for nothing else.
+///
+/// ✅ IT CANNOT REACH A SHIPPED BINARY, and that is by construction rather than
+/// by discipline. `test-probes` is off in `default`, so it is absent from
+/// `cargo build` and from `wasm-pack build stark --target web -- --features
+/// wasm`; calling it from a production path is a COMPILE ERROR in the shipping
+/// configuration, not a review finding. The verifier's integration tests get it
+/// through that crate's dev-dependency, which is why ~28 call sites can share
+/// one definition instead of open-coding the same xorshift each.
+///
+/// The shipping path draws from `getrandom` inside the wasm entry and refuses to
+/// build without a CSPRNG.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c6_deterministic_probe_mask(depth: usize) -> Vec<u64> {
     let mut z: u64 = 0xC6_5EED_0000 ^ ((depth as u64) << 8) | 1;
     (0..crate::air::merkle_update::mask_len_for_depth(depth))
         .map(|_| {

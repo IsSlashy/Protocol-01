@@ -159,7 +159,9 @@ fn merkle_witness() -> (Vec<u64>, Vec<u8>) {
 }
 
 fn merkle_update_witness() -> (Vec<u64>, Vec<u8>) {
-    ((0..15).map(|i| 100u64 + i * 13).collect(), (0..15).map(|i| (i % 2) as u8).collect())
+    // [C6-D12] 12, not 15. `merkle_witness` above stays at 15: that is C3, and
+    // only C6 took the depth cut.
+    ((0..12).map(|i| 100u64 + i * 13).collect(), (0..12).map(|i| (i % 2) as u8).collect())
 }
 
 fn generic_case(
@@ -183,7 +185,7 @@ fn generic_case(
         ),
         6 => {
             let (pe, pi) = merkle_update_witness();
-            c::generate_merkle_update_compact_proof_with_forgery(111, 222, &pe, &pi, ood, term)
+            c::generate_merkle_update_compact_proof_with_forgery(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()), ood, term)
         }
         other => panic!("no generic pipeline for circuit {other}"),
     }
@@ -593,7 +595,7 @@ fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofD
         6 => {
             let (mut pe, pi) = merkle_update_witness();
             pe[0] += seed;
-            c::generate_merkle_update_compact_proof(111, 222, &pe, &pi)
+            c::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
         }
         other => panic!("no honest pipeline for circuit {other}"),
     }

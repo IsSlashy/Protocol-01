@@ -168,9 +168,9 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
             "C6",
             10,
             {
-                let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-                let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
-                p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi)
+                let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+                let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+                p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
             },
         ),
     ];
@@ -681,17 +681,16 @@ fn t1_t2_t3_c1_coordinated_forgery_matrix() {
 fn t1_t2_t3_c6_coordinated_forgery() {
     let config = &CONFIG_MERKLE_UPDATE;
     // Canonical depth 15 — CONFIG_MERKLE_UPDATE pins trace_length 512.
-    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
-    let honest = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi);
+    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let honest = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()));
     let forged = p01_stark::compact::generate_merkle_update_compact_proof_with_forgery(
         111,
         222,
         &pe,
-        &pi,
+        &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest);
     assert_ne!(
         read_ood_current(&honest.proof_bytes, 0),
         read_ood_current(&forged.proof_bytes, 0),
@@ -736,10 +735,9 @@ fn t1_t2_t3_c6_coordinated_forgery() {
         111,
         222,
         &pe,
-        &pi,
+        &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::AliasedFold,
-    );
+        TerminalPoly::AliasedFold);
     let parsed = GenericCompactProof::from_bytes(&aliased.proof_bytes, config)
         .expect("aliased forged C6 proof still parses");
     let odd = parsed.queries.iter().filter(|q| (q.position as usize & 15) % 2 == 1).count();
@@ -1887,8 +1885,23 @@ const FIXTURE_C4_SHA256: &str =
     "6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0";
 const FIXTURE_C5_SHA256: &str =
     "a9e3805e504ac0468632739d615ac7d90e34843f27442685f8b30efb7723b5ed";
-const FIXTURE_C6_SHA256: &str =
-    "65497bd9d2b35feefb285101353d5b3485e27e00c2985bfbd3d20cb80196e47a";
+// ⛔ FIXTURE_C6_SHA256 IS GONE, AND IT MUST NOT COME BACK. Retired 2026-08-29.
+//
+// C6 draws a fresh CSPRNG blinding region for every proof
+// (`lib.rs::draw_blinding_mask`, refuses to build without one), so its bytes are
+// not reproducible and a pinned digest cannot describe it. This is the same
+// reason C7 was never added to this table.
+//
+// 🚨 THE DANGEROUS VERSION OF THIS IS A GREEN ONE. A digest pinned against
+// `c6_deterministic_probe_mask` WOULD pass here forever -- and it would be
+// asserting reproducibility of a prover that is not reproducible, while
+// silently going red the day anyone reships. What replaces it:
+//
+//   - the LENGTH pin below, which is the substantive invariant and which
+//     measured 81_037 both before and after the mask landed -- that number is
+//     the evidence that a 128-row blinding region costs zero wire bytes;
+//   - `c6_proof_bytes_change_when_the_mask_changes`, which pins the property
+//     that actually matters and that no digest can express.
 
 fn hex32(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(64);
@@ -1931,9 +1944,9 @@ fn fixture_c5() -> Vec<u8> {
 }
 
 fn fixture_c6() -> Vec<u8> {
-    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
-    p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi).proof_bytes
+    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())).proof_bytes
 }
 
 /// One row per circuit. `len` is the same literal `wireFormat.test.ts` pins as
@@ -1942,20 +1955,30 @@ fn fixture_c6() -> Vec<u8> {
 struct Fixture {
     label: &'static str,
     len: usize,
-    sha256: &'static str,
+    /// `None` for a circuit whose prover draws fresh randomness per proof. The
+    /// length still pins; the digest cannot.
+    sha256: Option<&'static str>,
     build: fn() -> Vec<u8>,
 }
 
 const FIXTURES: [Fixture; 7] = [
-    Fixture { label: "C0", len: 47_641, sha256: FIXTURE_C0_SHA256, build: fixture_c0 },
-    Fixture { label: "C1", len: 68_881, sha256: FIXTURE_C1_SHA256, build: fixture_c1 },
-    Fixture { label: "C2", len: 69_761, sha256: FIXTURE_C2_SHA256, build: fixture_c2 },
-    Fixture { label: "C3", len: 78_157, sha256: FIXTURE_C3_SHA256, build: fixture_c3 },
-    Fixture { label: "C4", len: 81_457, sha256: FIXTURE_C4_SHA256, build: fixture_c4 },
-    Fixture { label: "C5", len: 78_877, sha256: FIXTURE_C5_SHA256, build: fixture_c5 },
-    Fixture { label: "C6", len: 81_037, sha256: FIXTURE_C6_SHA256, build: fixture_c6 },
+    Fixture { label: "C0", len: 47_641, sha256: Some(FIXTURE_C0_SHA256), build: fixture_c0 },
+    Fixture { label: "C1", len: 68_881, sha256: Some(FIXTURE_C1_SHA256), build: fixture_c1 },
+    Fixture { label: "C2", len: 69_761, sha256: Some(FIXTURE_C2_SHA256), build: fixture_c2 },
+    Fixture { label: "C3", len: 78_157, sha256: Some(FIXTURE_C3_SHA256), build: fixture_c3 },
+    Fixture { label: "C4", len: 81_457, sha256: Some(FIXTURE_C4_SHA256), build: fixture_c4 },
+    Fixture { label: "C5", len: 78_877, sha256: Some(FIXTURE_C5_SHA256), build: fixture_c5 },
+    // [C6-D12] Length pinned, digest deliberately absent. See the note above.
+    Fixture { label: "C6", len: 81_037, sha256: None, build: fixture_c6 },
 ];
 
+/// The prover core is a function of its inputs.
+///
+/// ⚠️ FOR C6 THIS IS A WEAKER STATEMENT THAN IT LOOKS, and the weakness is the
+/// point of the test below it. `fixture_c6` feeds a FIXED mask, so what is
+/// pinned here is that nothing else in the C6 path is nondeterministic. The
+/// shipped prover draws a fresh mask and is therefore NOT byte-reproducible --
+/// by design, not by accident.
 #[test]
 fn fixture_proofs_are_deterministic() {
     for f in FIXTURES.iter() {
@@ -1966,6 +1989,44 @@ fn fixture_proofs_are_deterministic() {
             f.label,
         );
     }
+}
+
+/// [C6-D12] Two masks, two different proofs. The property a digest cannot pin.
+///
+/// This is the substitute for `FIXTURE_C6_SHA256`, and it tests the thing that
+/// pin never did: that the blinding region REACHES THE PUBLISHED BYTES. A mask
+/// that were dropped on the floor -- written into the trace and then overwritten,
+/// or gated out of the committed columns -- would leave two proofs identical
+/// here while every other C6 test in this repository stayed green.
+///
+/// It also fails if someone reintroduces a default mask, since a default makes
+/// the two calls agree regardless of what is passed.
+#[test]
+fn c6_proof_bytes_change_when_the_mask_changes() {
+    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+
+    let m1 = p01_stark::compact::c6_deterministic_probe_mask(pe.len());
+    let mut m2 = m1.clone();
+    // ONE element, by ONE. The weakest possible perturbation: if the mask were
+    // only partly committed, a bigger change might still show up by accident.
+    m2[0] = (m2[0] + 1) % 0xFFFF_FFFF_0000_0001;
+
+    let a = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &m1);
+    let b = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &m2);
+
+    assert_eq!(
+        a.proof_bytes.len(), b.proof_bytes.len(),
+        "the mask must not change the wire LENGTH — that would be a format change, not blinding",
+    );
+    assert_ne!(
+        a.proof_bytes, b.proof_bytes,
+        "a one-element mask change produced identical proof bytes: the blinding region is          not reaching the committed trace, and C6 is publishing an unmasked proof",
+    );
+    assert_eq!(
+        a.public_inputs, b.public_inputs,
+        "the mask must not touch the public inputs — same insertion, same statement",
+    );
 }
 
 #[test]
@@ -1990,8 +2051,14 @@ fn cross_language_fixture_digests() {
         if *len != f.len {
             drift.push(format!("{label} length: measured {len}, pinned {}", f.len));
         }
-        if digest != f.sha256 {
-            drift.push(format!("{label} sha256: measured {digest}, pinned {}", f.sha256));
+        match f.sha256 {
+            Some(pinned) if digest != pinned => {
+                drift.push(format!("{label} sha256: measured {digest}, pinned {pinned}"));
+            }
+            Some(_) => {}
+            // Masked circuit: no reproducible digest exists to compare against.
+            // The length check above still ran, and it is the one that matters.
+            None => println!("[FIXTURE] {label} digest not pinned (masked prover)"),
         }
     }
     assert!(

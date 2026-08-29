@@ -31,9 +31,9 @@ fn honest_c5(s: u64) -> p01_stark::compact::GenericCompactProofData {
 }
 
 fn honest_c6(s: u64) -> p01_stark::compact::GenericCompactProofData {
-    let pe: Vec<u64> = (0..15u64).map(|j| 100 + j * 13 + s * 37).collect();
-    let pi: Vec<u8> = (0..15u8).map(|j| ((j as usize + s as usize) % 2) as u8).collect();
-    p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222 + s * 3, &pe, &pi)
+    let pe: Vec<u64> = (0..12u64).map(|j| 100 + j * 13 + s * 37).collect();
+    let pi: Vec<u8> = (0..12u8).map(|j| ((j as usize + s as usize) % 2) as u8).collect();
+    p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222 + s * 3, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
 }
 
 // ---------------------------------------------------------------------------

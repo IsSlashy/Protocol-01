@@ -280,8 +280,31 @@ mod wasm_api {
             .filter_map(|s| s.trim().parse().ok())
             .collect();
 
+        // [C6-D12] The blinding region, drawn fresh for THIS proof.
+        //
+        // ⛔ REFUSES RATHER THAN FALLING BACK, and the reason is the same one
+        // C7 states: no proof fails loudly and a weak mask succeeds and leaks.
+        // A zero-filled or witness-derived default here would leave rows
+        // 384..511 predictable, and `air_aware_recovery_c6.rs` would go back to
+        // recovering four of the ten columns from published openings alone.
+        //
+        // 🚨 IT MUST BE REDRAWN EVERY PROOF. Two C6 proofs over the same
+        // insertion with the same mask publish the same bytes, which re-links
+        // exactly what the mask exists to unlink.
+        let mask = match draw_blinding_mask(
+            p01_stark_mask_len_c6(path_elements.len()),
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C6 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+
         let proof_data = generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
+            old_leaf, new_leaf, &path_elements, &path_indices, &mask,
         );
         let proof_hex = proof_data.proof_bytes.iter()
             .map(|b| format!("{:02x}", b))
@@ -344,7 +367,21 @@ mod wasm_api {
         )
     }
 
-    /// [C7] Draw the C7 blinding mask from the platform CSPRNG.
+    /// C6's mask arity for a given depth, from the AIR rather than a literal.
+    ///
+    /// `build_merkle_update_trace` asserts on this exact number, so a literal
+    /// here would turn a depth change into a runtime panic on the deposit path
+    /// of three surfaces instead of a compile-time-stable derivation.
+    fn p01_stark_mask_len_c6(depth: usize) -> usize {
+        crate::air::merkle_update::mask_len_for_depth(depth)
+    }
+
+    /// Draw a blinding mask from the platform CSPRNG.
+    ///
+    /// 🚨 SHARED BY C7 AND C6 SINCE 2026-08-29, and it was renamed off
+    /// `draw_spend_mask` for exactly that reason: a C7-shaped name on the only
+    /// CSPRNG path in the crate is how a second circuit ends up quietly reusing
+    /// something else, or nothing.
     ///
     /// Rejection-samples into the Goldilocks field instead of reducing a u64.
     /// Reducing biases the low ~2^32 of the field by a factor of two, and this
@@ -354,7 +391,7 @@ mod wasm_api {
     ///
     /// Returns `Err` rather than falling back to anything. A weak mask is worse
     /// than no proof: no proof fails loudly, a weak mask succeeds and leaks.
-    fn draw_spend_mask(n: usize) -> Result<Vec<u64>, getrandom::Error> {
+    fn draw_blinding_mask(n: usize) -> Result<Vec<u64>, getrandom::Error> {
         const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
         let mut out = Vec::with_capacity(n);
         let mut buf = [0u8; 8];
@@ -425,7 +462,7 @@ mod wasm_api {
             );
         }
 
-        let mask = match draw_spend_mask(MASK_ROWS * TRACE_WIDTH) {
+        let mask = match draw_blinding_mask(MASK_ROWS * TRACE_WIDTH) {
             Ok(m) => m,
             Err(e) => {
                 return format!(

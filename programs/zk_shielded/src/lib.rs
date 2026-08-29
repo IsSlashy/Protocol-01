@@ -352,16 +352,26 @@ pub mod zk_shielded {
         )
     }
 
-    /// Shield into a V3 pool. Requires a pre-verified C6 (merkle_update)
-    /// STARK proof buffer attesting that (old_root → new_root + leaf +
-    /// new_subtrees) is a valid insertion.
+    /// Shield into a V3 pool. Requires a pre-verified C6 (merkle_update) STARK
+    /// proof buffer attesting the depth-12 SUBTREE transition
+    /// `old_subtree_root -> new_subtree_root` for this leaf.
+    ///
+    /// ⛔ `new_root` IS NO LONGER AN ARGUMENT, and reintroducing it is the one
+    /// change that would undo this instruction's security. Since 2026-08-29 C6
+    /// proves an insertion into a 12-level subtree, not the whole tree, so the
+    /// pool root is COMPUTED here by folding the top levels against the pool
+    /// account's own `filled_subtrees` -- see `state::insert_root`. A
+    /// caller-supplied pool root is precisely what that fold exists to refuse.
     pub fn shield_denominated_v3(
         ctx: Context<ShieldDenominatedV3>,
         commitment: [u8; 32],
-        new_root: [u8; 32],
+        old_subtree_root: [u8; 32],
+        new_subtree_root: [u8; 32],
         new_subtrees: Vec<[u8; 32]>,
     ) -> Result<()> {
-        instructions::shield_denominated_v3::handler(ctx, commitment, new_root, new_subtrees)
+        instructions::shield_denominated_v3::handler(
+            ctx, commitment, old_subtree_root, new_subtree_root, new_subtrees,
+        )
     }
 
     /// Unshield from a V3 pool using two STARK proof buffers:

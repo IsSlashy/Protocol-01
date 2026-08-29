@@ -1193,9 +1193,9 @@ fn route_c_wire_sizes_match_the_closed_form() {
             .proof_bytes
             .len()),
         ("C6", 76_405, &CONFIG_MERKLE_UPDATE, {
-            let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-            let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
-            p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi)
+            let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+            let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+            p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
                 .proof_bytes
                 .len()
         }),

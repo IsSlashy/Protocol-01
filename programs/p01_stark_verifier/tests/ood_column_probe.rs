@@ -151,14 +151,13 @@ fn c5() -> Vec<Vec<u8>> {
 fn c6() -> Vec<Vec<u8>> {
     (0..WITNESSES)
         .map(|w| {
-            let pe: Vec<u64> = (0..15u64).map(|i| 100 + i * 13 + (w as u64) * 71).collect();
-            let pi: Vec<u8> = (0..15u8).map(|i| ((i as usize + w) % 2) as u8).collect();
+            let pe: Vec<u64> = (0..12u64).map(|i| 100 + i * 13 + (w as u64) * 71).collect();
+            let pi: Vec<u8> = (0..12u8).map(|i| ((i as usize + w) % 2) as u8).collect();
             p01_stark::compact::generate_merkle_update_compact_proof(
                 111 + (w as u64) * 17,
                 222 + (w as u64) * 19,
                 &pe,
-                &pi,
-            )
+                &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
             .proof_bytes
         })
         .collect()

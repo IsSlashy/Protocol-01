@@ -12,6 +12,11 @@ pub mod poseidon_gl;
 /// this walk a C7 proof means 'this leaf is in SOME subtree', which anyone can
 /// satisfy with a tree they built themselves.
 pub mod spend_root;
+/// [C6-D12] The write-side twin of `spend_root`. C6 was cut to depth 12 to make
+/// room for a blinding region, so a deposit now proves a SUBTREE transition and
+/// the program must fold the remaining levels itself -- against the pool
+/// account's own `filled_subtrees`, never the caller's `new_subtrees`.
+pub mod insert_root;
 pub mod nullifier_set;
 pub mod subscription_vault;
 pub mod route;

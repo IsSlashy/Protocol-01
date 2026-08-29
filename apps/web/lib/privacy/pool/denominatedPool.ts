@@ -106,6 +106,21 @@ export const USDC_DEVNET_MINT = new PublicKey(
 /** Tree depth — matches mobile line 77. */
 export const MERKLE_DEPTH = 15;
 
+/**
+ * The depth circuit 6 proves, since 2026-08-29.
+ *
+ * C6 was cut from 15 to 12 to free 128 unconstrained trace rows for a blinding
+ * region. The pool tree is still MERKLE_DEPTH (15) deep; the circuit now covers
+ * only its bottom 12 levels, and `shield_denominated_v3` folds the remaining 3
+ * on chain against the pool account's own `filled_subtrees`.
+ *
+ * ⛔ SENDING 15 PATH ELEMENTS INTO THE C6 PROVER PANICS INSIDE THE WASM. The
+ * trace builder asserts the mask length for the depth it was handed, so the
+ * failure lands mid-proof on the deposit path with no useful message. Slice
+ * first -- the same shape C7 already uses for its own depth-12 cut.
+ */
+const C6_SUBTREE_DEPTH = 12;
+
 /** Slots per epoch — matches mobile line 78. */
 const SLOTS_PER_EPOCH = 7200;
 
@@ -1272,9 +1287,18 @@ async function signSendV3(
 /**
  * Build `shield_denominated_v3` instruction.
  *
- * Args: commitment[32] | new_root[32] | Vec<[u8;32]> new_subtrees.
- * Account order mirrors mobile lines 2895-2905 (and shield_denominated_v3.rs
- * account order).
+ * Args: commitment[32] | old_subtree_root[32] | new_subtree_root[32] |
+ *       Vec<[u8;32]> new_subtrees.
+ *
+ * ⛔ `new_root` IS NO LONGER AN ARGUMENT. Since the C6 depth cut the program
+ * COMPUTES the pool root by folding the top 3 levels against the pool account's
+ * own `filled_subtrees`; a caller-supplied pool root is exactly what that fold
+ * exists to refuse. Adding it back here would not be rejected by the layout --
+ * it would shift every following byte and the instruction would fail to
+ * deserialize, which is the good case. The bad case is adding it back on BOTH
+ * sides.
+ *
+ * Account order mirrors shield_denominated_v3.rs.
  */
 function buildShieldDenominatedV3Ix(
   depositor: PublicKey,
@@ -1282,7 +1306,8 @@ function buildShieldDenominatedV3Ix(
   treePDA: PublicKey,
   c6ProofBuffer: PublicKey,
   commitment: number[],
-  newRoot: number[],
+  oldSubtreeRoot: number[],
+  newSubtreeRoot: number[],
   newSubtrees: number[][],
   tokenProgram?: PublicKey,
   userTokenAccount?: PublicKey,
@@ -1290,11 +1315,12 @@ function buildShieldDenominatedV3Ix(
 ): TransactionInstruction {
   const disc = getDiscriminator('shield_denominated_v3');
   const subtreesBytesLen = 4 + newSubtrees.length * 32;
-  const data = Buffer.alloc(8 + 32 + 32 + subtreesBytesLen);
+  const data = Buffer.alloc(8 + 32 + 32 + 32 + subtreesBytesLen);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(commitment).copy(data, offset); offset += 32;
-  Buffer.from(newRoot).copy(data, offset); offset += 32;
+  Buffer.from(oldSubtreeRoot).copy(data, offset); offset += 32;
+  Buffer.from(newSubtreeRoot).copy(data, offset); offset += 32;
   data.writeUInt32LE(newSubtrees.length, offset); offset += 4;
   for (const st of newSubtrees) {
     Buffer.from(st).copy(data, offset);
@@ -1338,7 +1364,12 @@ export async function shieldV3(
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number },
   insertParams: {
     commitment: bigint;
+    /** Client-side tree bookkeeping only; NOT sent to the program any more. */
     newRoot: bigint;
+    /** C6 public input 2. Must fold back to the pool's current root on chain. */
+    oldSubtreeRoot: bigint;
+    /** C6 public input 3. */
+    newSubtreeRoot: bigint;
     newSubtrees: bigint[];
     secret: bigint;
     nullifierPreimage: bigint;
@@ -1381,7 +1412,8 @@ export async function shieldV3(
     }
 
     const commitmentBytes = goldilocksToLeBytes32(insertParams.commitment);
-    const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
+    const oldSubtreeRootBytes = goldilocksToLeBytes32(insertParams.oldSubtreeRoot);
+    const newSubtreeRootBytes = goldilocksToLeBytes32(insertParams.newSubtreeRoot);
     const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
 
     const ix = buildShieldDenominatedV3Ix(
@@ -1390,7 +1422,8 @@ export async function shieldV3(
       poolConfig.treePDA,
       c6ProofBuffer,
       commitmentBytes,
-      newRootBytes,
+      oldSubtreeRootBytes,
+      newSubtreeRootBytes,
       newSubtreesBytes,
       tokenProgram,
       userTokenAccount,
@@ -1398,7 +1431,21 @@ export async function shieldV3(
     );
 
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
+    // [C6-D12] 300,000 -> 600,000.
+    //
+    // MEASURED 2026-08-29 (`subscribe_v4_adversarial::the_walk_is_what_the_new_
+    // instruction_pays_for`, litesvm SBF VM): one on-chain Poseidon-GL `hash2`
+    // costs ~34,469 CU. The fold does SIX -- three levels, old root and new root
+    // -- so it adds ~206,814 CU by itself, before any of the deposit's existing
+    // work. 300,000 was not enough and the deposit would have failed with
+    // `exceeded CUs`, at the END of the whole proof-upload sequence.
+    //
+    // ⚠️ 600,000 IS A HEADROOM CHOICE, NOT A MEASUREMENT OF THIS PATH. The
+    // number that is measured is the fold's; the shield handler's own total has
+    // not been measured on the SBF VM since the fold landed. It is well under
+    // the 1,400,000 cap and requesting more than needed costs only a marginally
+    // higher priority fee, so erring high is the cheap direction here.
+    tx.add(...buildComputeBudgetIxs(600_000));
     if (!isNativeSOL && userTokenAccount) {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -1474,7 +1521,12 @@ export async function prepareShieldInsert(
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
   insertParams: {
     commitment: bigint;
+    /** Client-side tree bookkeeping only; NOT sent to the program any more. */
     newRoot: bigint;
+    /** C6 public input 2. Must fold back to the pool's current root on chain. */
+    oldSubtreeRoot: bigint;
+    /** C6 public input 3. */
+    newSubtreeRoot: bigint;
     newSubtrees: bigint[];
     secret: bigint;
     nullifierPreimage: bigint;
@@ -1569,28 +1621,59 @@ export async function prepareShieldInsert(
   let c6Result;
   try {
     await starkProver.start();
+    // [C6-D12] Only the bottom 12 levels go into the circuit. The top 3 are
+    // the program's job now, and it does NOT accept them from us -- see
+    // `state::insert_root` for why a caller-supplied top level is the whole
+    // vulnerability.
     c6Result = await starkProver.generateMerkleUpdateProof(
       '0',                          // oldLeaf = 0 (empty slot)
       newLeaf.toString(),           // newLeaf = commitment u64
-      pathElements.map(e => e.toString()),
-      pathIndices,
+      pathElements.slice(0, C6_SUBTREE_DEPTH).map(e => e.toString()),
+      pathIndices.slice(0, C6_SUBTREE_DEPTH),
     );
   } finally {
     clearInterval(proofHeartbeat);
   }
 
   const proofBytes = hexToBytes(c6Result.proofHex);
+  const c6PublicInputs = c6Result.publicInputs.map(s => BigInt(s));
+
+  // [C6-D12] The two SUBTREE roots the instruction now takes, read back from
+  // the proof's own public inputs rather than recomputed here.
+  //
+  // The layout is [old_leaf, new_leaf, old_root, new_root, depth]. Reading them
+  // from the proof is deliberate: the circuit derived them from the same 12 path
+  // elements it proved over, so there is no second implementation of the walk to
+  // disagree with the first. A client-side recomputation would be one more place
+  // for the deposit to fail with `InvalidProof` and no explanation.
+  if (c6PublicInputs.length !== 5) {
+    throw new Error(
+      `C6 returned ${c6PublicInputs.length} public inputs, expected 5 ` +
+      `[old_leaf, new_leaf, old_root, new_root, depth]. The prover wire changed.`,
+    );
+  }
+  if (c6PublicInputs[4] !== BigInt(C6_SUBTREE_DEPTH)) {
+    throw new Error(
+      `C6 proved depth ${c6PublicInputs[4]}, expected ${C6_SUBTREE_DEPTH}. ` +
+      `The shipped wasm prover is stale — it predates the depth cut, and the ` +
+      `on-chain verifier rejects every proof it makes. Reship the blob.`,
+    );
+  }
 
   return {
     c6ProofResult: {
       proofBytes,
-      publicInputs: c6Result.publicInputs.map(s => BigInt(s)),
+      publicInputs: c6PublicInputs,
       proofSize: c6Result.proofSize,
       circuitId: CIRCUIT_MERKLE_UPDATE,
     },
     insertParams: {
       commitment,
+      // Kept for the CLIENT's own tree bookkeeping. ⛔ It is no longer sent to
+      // the program, which computes the pool root itself.
       newRoot,
+      oldSubtreeRoot: c6PublicInputs[2],
+      newSubtreeRoot: c6PublicInputs[3],
       newSubtrees: updatedSubtrees,
       secret,
       nullifierPreimage,

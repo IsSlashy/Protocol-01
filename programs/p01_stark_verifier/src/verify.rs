@@ -5952,15 +5952,14 @@ mod merkle_update_e2e {
     use crate::compact_proof::get_circuit_config;
 
     #[test]
-    fn merkle_update_depth15_verify_generic() {
+    fn merkle_update_depth12_masked_verify_generic() {
         let old_leaf = 111u64;
         let new_leaf = 222u64;
-        let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-        let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+        let path_elements: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+        let path_indices: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
 
         let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+            old_leaf, new_leaf, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()));
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -5968,7 +5967,7 @@ mod merkle_update_e2e {
         ).expect("deserialize");
 
         verify_generic(&parsed, proof_data.circuit_id, &proof_data.public_inputs, config)
-            .expect("verify_generic should succeed on honest depth-15 proof");
+            .expect("verify_generic must succeed on an honest depth-12 MASKED proof");
     }
 
     /// [P2.2a] Host-side DEEP-ALI check on a real circuit-6 proof. Runs the
@@ -5976,15 +5975,14 @@ mod merkle_update_e2e {
     /// the Fiat-Shamir α derivation, periodic polynomial evaluation, 19-
     /// constraint RLC, and Z_T division are bit-identical to the prover.
     #[test]
-    fn merkle_update_depth15_verify_deep_ali_phase2() {
+    fn merkle_update_depth12_masked_verify_deep_ali_phase2() {
         let old_leaf = 111u64;
         let new_leaf = 222u64;
-        let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-        let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+        let path_elements: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+        let path_indices: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
 
         let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+            old_leaf, new_leaf, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()));
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -6008,12 +6006,11 @@ mod merkle_update_e2e {
         let old_leaf = 111u64;
         let new_leaf = 222u64;
         // depth=15 is the canonical depth baked into periodic_consts.
-        let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-        let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+        let path_elements: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+        let path_indices: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
 
         let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+            old_leaf, new_leaf, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()));
 
         // Tamper with the first ood_current byte directly in the proof buffer.
         // ood_current lives at offset 32 (trace_root) + 32 (quotient_root) = 64.
@@ -6044,12 +6041,11 @@ mod merkle_update_e2e {
         let old_leaf = 333u64;
         let new_leaf = 444u64;
         // depth=15 canonical.
-        let path_elements: Vec<u64> = (0..15).map(|i| 500u64 + i * 7).collect();
-        let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+        let path_elements: Vec<u64> = (0..12).map(|i| 500u64 + i * 7).collect();
+        let path_indices: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
 
         let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+            old_leaf, new_leaf, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()));
 
         // ood_quotient lives after trace_root(32) + quotient_root(32) +
         // ood_current(10*8) + ood_next(10*8) + ood_z(8) = 64 + 160 + 8 = 232.
@@ -6078,12 +6074,11 @@ mod merkle_update_e2e {
         let old_leaf = 999u64;
         let new_leaf = 1000u64;
         // depth=15 canonical.
-        let path_elements: Vec<u64> = (0..15).map(|i| 42u64 + i).collect();
-        let path_indices: Vec<u8> = (0..15).map(|i| ((i * 7 + 3) % 2) as u8).collect();
+        let path_elements: Vec<u64> = (0..12).map(|i| 42u64 + i).collect();
+        let path_indices: Vec<u8> = (0..12).map(|i| ((i * 7 + 3) % 2) as u8).collect();
 
         let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+            old_leaf, new_leaf, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()));
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -6123,12 +6118,11 @@ mod merkle_update_e2e {
     fn route_c_trace_commitment_is_checked_c6() {
         let old_leaf = 111u64;
         let new_leaf = 222u64;
-        let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-        let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+        let path_elements: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+        let path_indices: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
 
         let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices,
-        );
+            old_leaf, new_leaf, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()));
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
 
         // Positive control first: without it, "the tampered proof was rejected"
@@ -7357,11 +7351,10 @@ mod merkle_update_e2e {
             // CANONICAL_DEPTH * 32 — the region of the 2026-08-01 twin fix.
             Some(480),
             |s| {
-                let path_elements: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-                let path_indices: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+                let path_elements: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+                let path_indices: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
                 p01_stark::compact::generate_merkle_update_compact_proof(
-                    111 + s, 222, &path_elements, &path_indices,
-                )
+                    111 + s, 222, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()))
             },
             verify_constraints_merkle_update,
         );

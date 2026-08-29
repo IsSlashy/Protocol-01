@@ -58,10 +58,10 @@ fn locate_the_c6_rows_that_reject_an_honest_trace() {
 
     for i in 0..WITNESSES {
         let s = i as u64;
-        let pe: Vec<u64> = (0..15u64).map(|j| 100 + j * 13 + s * 37).collect();
-        let pi: Vec<u8> = (0..15u8).map(|j| ((j as usize + i) % 2) as u8).collect();
+        let pe: Vec<u64> = (0..12u64).map(|j| 100 + j * 13 + s * 37).collect();
+        let pi: Vec<u8> = (0..12u8).map(|j| ((j as usize + i) % 2) as u8).collect();
         let data =
-            p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222 + s * 3, &pe, &pi);
+            p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222 + s * 3, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()));
         let proof = GenericCompactProof::from_bytes(&data.proof_bytes, config).expect("parse");
         let rows: Vec<usize> = proof
             .queries

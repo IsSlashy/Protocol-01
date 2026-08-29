@@ -72,10 +72,21 @@ use p01_stark::BaseElement;
 /// the C6 padding rows (480..=509) stayed invisible for as long as they did.
 pub const WITNESSES: usize = 160;
 
-/// The only Merkle depth the shipped verifier accepts. `verify.rs` rejects any
-/// other value in phase 2 (`CANONICAL_DEPTH`), because the periodic polynomials
-/// are baked for `active_rows = depth * 32 = 480`.
+/// C3's Merkle depth. `verify.rs` rejects any other value in phase 2, because
+/// the periodic polynomials are baked for `active_rows = depth * 32 = 480`.
+///
+/// 🚨 THIS IS C3's DEPTH ALONE SINCE 2026-08-29. It used to be shared with C6,
+/// and that sharing is exactly what would have made the C6 cut invisible here:
+/// one constant, two circuits, one of which moved.
 pub const CANONICAL_DEPTH: usize = 15;
+
+/// C6's Merkle depth, which is NOT C3's any more.
+///
+/// Sourced from the AIR rather than typed, so it cannot drift from the geometry
+/// the prover actually builds. At 12 the walk occupies rows 0..383 and rows
+/// 384..511 are the blinding region -- 128 free rows against `R = 4*22 + 2 = 90`
+/// published openings per column, which is the whole reason the cut happened.
+pub const C6_CANONICAL_DEPTH: usize = p01_stark::air::merkle_update::CANONICAL_DEPTH;
 
 fn f(x: u64) -> BaseElement {
     BaseElement::new(x)
@@ -267,8 +278,9 @@ pub fn w6(i: usize) -> W6 {
     W6 {
         old_leaf: 111 + s,
         new_leaf: 222 + s * 3,
-        path_elements: (0..15u64).map(|j| 100 + j * 13 + s * 37).collect(),
-        path_indices: (0..15u8).map(|j| ((j as usize + i) % 2) as u8).collect(),
+        // [C6-D12] 12, not 15. `w3` above stays at 15: C3 did not take the cut.
+        path_elements: (0..12u64).map(|j| 100 + j * 13 + s * 37).collect(),
+        path_indices: (0..12u8).map(|j| ((j as usize + i) % 2) as u8).collect(),
     }
 }
 
@@ -315,8 +327,7 @@ pub fn prove5(w: &W5) -> p01_stark::compact::GenericCompactProofData {
 
 pub fn prove6(w: &W6) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_merkle_update_compact_proof(
-        w.old_leaf, w.new_leaf, &w.path_elements, &w.path_indices,
-    )
+        w.old_leaf, w.new_leaf, &w.path_elements, &w.path_indices, &p01_stark::compact::c6_deterministic_probe_mask(w.path_elements.len()))
 }
 
 pub fn prove7(w: &W7) -> p01_stark::compact::GenericCompactProofData {
@@ -649,8 +660,11 @@ pub fn check_semantics_5(w: &W5, data: &p01_stark::compact::GenericCompactProofD
 }
 
 pub fn check_semantics_6(w: &W6, data: &p01_stark::compact::GenericCompactProofData) {
-    assert_eq!(w.path_elements.len(), CANONICAL_DEPTH, "C6: depth must be the canonical 15");
-    assert_eq!(w.path_indices.len(), CANONICAL_DEPTH, "C6: index count must match the path");
+    assert_eq!(
+        w.path_elements.len(), C6_CANONICAL_DEPTH,
+        "C6: depth must be the canonical 12 — C3 is still 15, they are different constants now",
+    );
+    assert_eq!(w.path_indices.len(), C6_CANONICAL_DEPTH, "C6: index count must match the path");
 
     let old_leaf = f(w.old_leaf);
     let new_leaf = f(w.new_leaf);
@@ -669,20 +683,52 @@ pub fn check_semantics_6(w: &W6, data: &p01_stark::compact::GenericCompactProofD
     assert_eq!(f(data.public_inputs[2]), old_root, "C6: old_root is not the real fold of old_leaf");
     assert_eq!(f(data.public_inputs[3]), new_root, "C6: new_root is not the real fold of new_leaf");
     assert_eq!(
-        data.public_inputs[4], CANONICAL_DEPTH as u64,
-        "C6: depth public input must be 15 — verify.rs rejects anything else in phase 2",
+        data.public_inputs[4], C6_CANONICAL_DEPTH as u64,
+        "C6: depth public input must be 12 — verify.rs rejects anything else in phase 2",
     );
 
-    let trace =
-        merkle_update::build_merkle_update_trace(old_leaf, new_leaf, &elems, &w.path_indices);
+    // The mask is DETERMINISTIC here on purpose, and it has to be: this function
+    // re-derives the trace and compares it against the proof's own public
+    // inputs, so prover and checker must draw the same blinding region or every
+    // assertion below is comparing two different traces.
+    //
+    // ⛔ That also means this call proves NOTHING about secrecy. What it proves
+    // is the SHAPE: that the walk still lands where the boundary assertions say,
+    // and that the transition sweep below still vanishes once 128 random rows
+    // sit at the end of the trace.
+    let mask: Vec<BaseElement> =
+        p01_stark::compact::c6_deterministic_probe_mask(w.path_elements.len())
+            .into_iter()
+            .map(f)
+            .collect();
+    let trace = merkle_update::build_merkle_update_trace(
+        old_leaf, new_leaf, &elems, &w.path_indices, &mask,
+    );
     assert_eq!(trace[8][0], old_leaf, "C6: old carry at row 0 must be old_leaf");
     assert_eq!(trace[9][0], new_leaf, "C6: new carry at row 0 must be new_leaf");
-    assert_eq!(trace[0][478], old_root, "C6: boundary row 478 col 0 (old_root)");
-    assert_eq!(trace[3][478], new_root, "C6: boundary row 478 col 3 (new_root)");
+
+    // 🚨 382, NOT 478. `(depth - 1) * 32 + 30` moved with the depth cut, and 478
+    // is now INSIDE the blinding region -- a masked row carrying a fresh random
+    // value. Left at 478 this pair of assertions would have compared the root
+    // against noise and failed loudly, which is the good case; the bad case is
+    // the reader who "fixes" it by deleting them.
+    const ROW_ROOT: usize = (p01_stark::air::merkle_update::CANONICAL_DEPTH - 1) * 32 + 30;
+    assert_eq!(ROW_ROOT, 382);
+    assert!(ROW_ROOT < p01_stark::air::merkle_update::FIRST_FREE_ROW,
+        "the root row must stay OUT of the blinding region");
+    assert_eq!(trace[0][ROW_ROOT], old_root, "C6: boundary row 382 col 0 (old_root)");
+    assert_eq!(trace[3][ROW_ROOT], new_root, "C6: boundary row 382 col 3 (new_root)");
+
+    // ✅ AND THIS IS THE REAL MEASUREMENT IN THIS FUNCTION. The sweep evaluates
+    // every one of the 19 constraints at every frame of the trace, including the
+    // 128 masked rows, and demands they all vanish. The masked rows hold
+    // unconstrained noise, so they vanish ONLY because `active` and
+    // `not_boundary_active` switch the constraints off there. Break either gate
+    // and this is what goes red -- on all 160 witnesses at once.
     sweep_transitions(
         "C6",
         &trace,
-        &merkle_update::build_merkle_update_periodic_columns(CANONICAL_DEPTH, trace[0].len()),
+        &merkle_update::build_merkle_update_periodic_columns(C6_CANONICAL_DEPTH, trace[0].len()),
         merkle_update::MERKLE_UPDATE_NUM_CONSTRAINTS,
         merkle_update::evaluate_merkle_update_transition,
     );

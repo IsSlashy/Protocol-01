@@ -188,11 +188,10 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
         )
         .proof_bytes,
         6 => {
-            let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13).collect();
-            let pi: Vec<u8> = (0..15).map(|i| (i % 2) as u8).collect();
+            let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
+            let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
             p01_stark::compact::generate_merkle_update_compact_proof_with_forgery(
-                111, 222, &pe, &pi, f, t,
-            )
+                111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()), f, t)
             .proof_bytes
         }
         _ => unreachable!(),
@@ -242,9 +241,9 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
                     50,
                 ),
                 6 => {
-                    let pe: Vec<u64> = (0..15).map(|i| 100u64 + i * 13 + s).collect();
-                    let pi: Vec<u8> = (0..15).map(|i| ((i as u64 + s) % 2) as u8).collect();
-                    p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222, &pe, &pi)
+                    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13 + s).collect();
+                    let pi: Vec<u8> = (0..12).map(|i| ((i as u64 + s) % 2) as u8).collect();
+                    p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
                 }
                 _ => unreachable!(),
             };
