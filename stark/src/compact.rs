@@ -3146,13 +3146,18 @@ mod tests {
     /// --ignored --nocapture`) and the verifier is redeployed. That is Phase 4
     /// of the checklist, and it is gated on an explicit per-deploy go-ahead.
     #[test]
-    fn circuit_6_periodic_coeffs_match_verifier_constants_depth15() {
+    fn circuit_6_periodic_coeffs_match_verifier_constants_depth12() {
         use crate::air::merkle_update::build_merkle_update_periodic_columns;
 
-        let depth = 15usize;
-        let trace_length = 512usize;
+        let depth = crate::air::merkle_update::CANONICAL_DEPTH;
+        let trace_length = crate::air::merkle_update::CANONICAL_TRACE_LENGTH;
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_merkle_update_periodic_columns(depth, trace_length);
+        assert_eq!(
+            periodic.len(),
+            crate::air::merkle_update::MERKLE_UPDATE_NUM_PERIODIC,
+            "nine columns since the depth-12 cut",
+        );
 
         // Verifier's periodic_consts.rs bakes these specific coefficients. Any
         // drift in either lib rewrites these pin values.
@@ -3164,18 +3169,53 @@ mod tests {
         let is_boundary: Vec<u64> = inverse_ntt(&periodic[5], trace_g).iter().map(|f| f.as_int()).collect();
         let is_interior: Vec<u64> = inverse_ntt(&periodic[6], trace_g).iter().map(|f| f.as_int()).collect();
 
-        assert_eq!(rc0[0], 0x558F5C5694E81D40);
-        assert_eq!(rc0[511], 0x0AB02BE02E19C660);
-        assert_eq!(rc1[0], 0x1230EF570AB0C5A3);
-        assert_eq!(rc2[0], 0x0197B1AA9C1A574D);
-        assert_eq!(round_active[0], 0x1EFFFFFFE1000001);
-        assert_eq!(round_active[511], 0xAC5B6AFDF33F4359);
-        assert_eq!(hash_start[0], 0xF87FFFFF07800001);
-        assert_eq!(hash_start[511], 0xFFFFFFFEF8000001);
-        assert_eq!(is_boundary[0], 0xF87FFFFF07800001);
-        assert_eq!(is_boundary[511], 0x39E10F3192185B4B);
-        assert_eq!(is_interior[0], 0x1EFFFFFFE1000001);
-        assert_eq!(is_interior[511], 0x044CB98D1B6CF0E1);
+        // RE-PINNED 2026-08-29 for the depth-12 masked geometry.
+        assert_eq!(rc0[0], 0xC1A9FC17AFE6859A);
+        assert_eq!(rc1[0], 0x8ADEDD292D895B59);
+        assert_eq!(rc2[0], 0xAC5D8A4EEAC6C386);
+        assert_eq!(round_active[0], 0x0FFFFFFFF0000001);
+        assert_eq!(hash_start[0], 0xF7FFFFFF08000001);
+        assert_eq!(is_boundary[0], 0xF7FFFFFF08000001);
+        assert_eq!(is_interior[0], 0x0FFFFFFFF0000001);
+
+        // 🚨 THE STRONGER CHECK, AND IT IS WHY THE DEPTH CUT IS FREE ON CHAIN.
+        //
+        // At depth 15 these seven were TRUNCATED by the walk, so their
+        // interpolants were dense and the verifier paid for a 32-entry Lagrange
+        // correction over the tail. At depth 12 they tile the whole trace, so
+        // every coefficient whose index is not a multiple of 16 is ZERO — the
+        // definition of stride-16 sparse — the seven C6_*_TAIL tables are
+        // identically zero and dead, and cycle15_lagrange_weights leaves the
+        // C6 path entirely.
+        //
+        // A typed pin catches a value moving. This catches the SHAPE moving,
+        // which is what would silently make the verifier evaluate a different
+        // polynomial.
+        for (name, col) in [
+            ("rc0", &rc0), ("rc1", &rc1), ("rc2", &rc2),
+            ("round_active", &round_active), ("hash_start", &hash_start),
+            ("is_boundary", &is_boundary), ("is_interior", &is_interior),
+        ] {
+            for (k, c) in col.iter().enumerate() {
+                if k % 16 != 0 {
+                    assert_eq!(*c, 0, "C6 {name} lost its stride-16 sparsity at coefficient {k}");
+                }
+            }
+        }
+
+        // And the two gates are DENSE, which is the other half of the shape:
+        // emitting either as stride-16 would be a different polynomial and would
+        // silently re-arm the 128 masked rows.
+        let active: Vec<u64> = inverse_ntt(&periodic[7], trace_g).iter().map(|f| f.as_int()).collect();
+        let nba: Vec<u64> = inverse_ntt(&periodic[8], trace_g).iter().map(|f| f.as_int()).collect();
+        assert_eq!(active[0], 0x407FFFFFBF800001);
+        assert_eq!(active[511], 0xB7A2C2D6CA02E575);
+        assert_eq!(nba[0], 0x45FFFFFFBA000001);
+        assert_eq!(nba[511], 0x213F6FEE45E8DA41);
+        assert!(
+            active.iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0),
+            " must be DENSE; a sparse one is not the gate the verifier bakes",
+        );
     }
 
     /// [P2.2d-C1] Circuit 1 parity: re-emitting periodic coefficients via
@@ -3876,8 +3916,10 @@ mod tests {
         // tests/p01-stark-verifier.test.ts: "depth 15 is what the production
         // mobile app uses"). Periodic columns are depth-dependent because
         // active_rows = depth * 32 masks off rows.
-        let depth = 15usize;
-        let trace_length = 512usize;
+        // [C6-D12] 12, not 15. The columns are depth-dependent, and at depth 12
+        // rows 384..511 are the blinding region rather than more walk.
+        let depth = crate::air::merkle_update::CANONICAL_DEPTH;
+        let trace_length = crate::air::merkle_update::CANONICAL_TRACE_LENGTH;
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_merkle_update_periodic_columns(depth, trace_length);
         let names = [
@@ -3888,7 +3930,17 @@ mod tests {
             "C6_HASH_START_COEFFS",
             "C6_IS_BOUNDARY_COEFFS",
             "C6_IS_INTERIOR_COEFFS",
+            // APPENDED 2026-08-29 with the depth-12 cut. Order is FROZEN: the
+            // verifier indexes this array positionally.
+            "C6_ACTIVE_COEFFS",
+            "C6_NOT_BOUNDARY_ACTIVE_COEFFS",
         ];
+        assert_eq!(
+            names.len(),
+            crate::air::merkle_update::MERKLE_UPDATE_NUM_PERIODIC,
+            "the emitter must name every periodic column or the verifier bakes a short table",
+        );
+        assert_eq!(periodic.len(), names.len());
         for (i, col) in periodic.iter().enumerate() {
             let poly = inverse_ntt(col, trace_g);
             println!("pub const {}: [u64; {}] = [", names[i], trace_length);
