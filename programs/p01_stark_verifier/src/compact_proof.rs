@@ -118,10 +118,25 @@ pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
 /// pool_commitment: 3 cols, 128 rows
 pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     trace_width: 3,
-    trace_length: 128,
+    // [C1-N256 2026-08-29] 128 -> 256, and this is a HARD WIRE BREAK in both
+    // directions: `num_fri_layers` goes 6 -> 7 and the parser checks it, so the
+    // deployed verifier cannot read a new proof and this one cannot read an old
+    // one.
+    //
+    // C1 is the one circuit the depth trick could not save. Its three hash
+    // cycles occupy rows 0..95 of a 128-row trace, leaving 32 free rows against
+    // `R = 4 * 27 + 2 = 110` published openings per column. No arrangement of
+    // 128 rows yields 110 free ones while a 96-row witness is present, so the
+    // geometry had to move. At 256 there are 160 free rows, margin 50.
+    //
+    // ⚠️ NOT FREE, unlike C3/C6/C7's depth cuts: the wire grows 68,881 ->
+    // 80,577 bytes (+11,696), chunk uploads go 69 -> 81, and conjectured
+    // soundness drops 50 -> 48 bits because the field floor depends on the LDE
+    // size. The unconditional column stays at 46.
+    trace_length: 256,
     blowup: 16,
-    lde_size: 2048,
-    merkle_depth: 11,  // log2(2048) = 11
+    lde_size: 4096,
+    merkle_depth: 12,  // log2(4096) = 12
     num_rounds: 30,
     fri_final_poly_size: 16,
     fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation

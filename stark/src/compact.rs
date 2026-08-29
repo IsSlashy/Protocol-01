@@ -2759,13 +2759,28 @@ mod tests {
 
     #[test]
     fn test_wire_size_pool_commitment_circuit_1() {
-        // Circuit 1: tw=3, trace=128, blowup=16, md=11 (LDE=2048), num_queries=27
-        let proof = generate_pool_commitment_proof(111, 222, 333, 444);
+        // Circuit 1: tw=3, trace=256, blowup=16, md=12 (LDE=4096), num_queries=27
+        //
+        // [C1-N256 2026-08-29] md 11 -> 12 and LDE 2048 -> 4096. MEASURED
+        // 68,881 -> 80,577 bytes, +11,696 (+17.0%): one more FRI commit root,
+        // one more pair-opening per query, and one more node on each of the
+        // three Merkle paths per query.
+        //
+        // ⚠️ THIS IS THE ONE MASKED CIRCUIT WHOSE WIRE GREW. C3, C6 and C7 all
+        // freed their blinding region by cutting a Merkle depth, which
+        // `next_pow2` absorbed for free — all three measured identical proof
+        // bytes before and after. C1 had no depth to cut, so it paid in wire.
+        //
+        // Chunk uploads go 69 -> 81 transactions at MAX_CHUNK_SIZE = 1000, and
+        // the proof still fits inside UNIFORM_PROOF_SIZE = 145,000 with 64,423
+        // to spare.
+        let proof = generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask());
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(3, 11, 27, 2048, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
+            expected_wire_size(3, 12, 27, 4096, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "pool_commitment wire size drift",
         );
+        assert_eq!(proof.proof_bytes.len(), 80_577, "the measured C1 wire size");
     }
 
     #[test]
@@ -3036,7 +3051,7 @@ mod tests {
 
     #[test]
     fn test_pool_commitment_compact_proof() {
-        let proof = generate_pool_commitment_proof(111, 222, 333, 444);
+        let proof = generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask());
         assert!(!proof.proof_bytes.is_empty());
         assert!(proof.proof_bytes.len() < 500_000, "Pool proof too large: {}", proof.proof_bytes.len());
         println!("Pool commitment proof size: {} bytes", proof.proof_bytes.len());
@@ -3218,15 +3233,20 @@ mod tests {
         );
     }
 
-    /// [P2.2d-C1] Circuit 1 parity: re-emitting periodic coefficients via
-    /// inverse_ntt on the circuit-1 periodic columns must match the
-    /// `C1_*_COEFFS` arrays baked into `p01_stark_verifier/src/periodic_consts.rs`.
-    /// Drift here breaks the on-chain DEEP-ALI check (either rejects honest
-    /// proofs or — worse — mis-accepts malicious ones).
+    /// [P2.2d-C1] THE C1 LOCK-STEP MARKER.
+    ///
+    /// The seven periodic columns the prover builds must be exactly what the
+    /// on-chain verifier evaluates. A prover committing to seven and a verifier
+    /// checking six do not disagree loudly — they disagree by silently
+    /// re-imposing `next[i] - current[i] = 0` over the blinding region, which is
+    /// the exact condition the mask exists to remove.
+    ///
+    /// RE-PINNED 2026-08-29 for n = 256.
     #[test]
     fn circuit_1_periodic_coeffs_match_verifier_constants() {
         use crate::air::denominated_pool::{
-            build_pool_commitment_periodic_columns, TRACE_LENGTH as POOL_TRACE_LENGTH,
+            build_pool_commitment_periodic_columns, POOL_COMMITMENT_NUM_PERIODIC,
+            TRACE_LENGTH as POOL_TRACE_LENGTH,
         };
 
         let trace_length = POOL_TRACE_LENGTH;
@@ -3239,19 +3259,69 @@ mod tests {
         let round_flag: Vec<u64> = inverse_ntt(&periodic[3], trace_g).iter().map(|f| f.as_int()).collect();
         let chain_flag: Vec<u64> = inverse_ntt(&periodic[4], trace_g).iter().map(|f| f.as_int()).collect();
         let is_boundary: Vec<u64> = inverse_ntt(&periodic[5], trace_g).iter().map(|f| f.as_int()).collect();
+        let nba: Vec<u64> = inverse_ntt(&periodic[6], trace_g).iter().map(|f| f.as_int()).collect();
 
-        assert_eq!(rc0[0], 0x113F7D1243ECE433);
-        assert_eq!(rc0[127], 0x9F44812C1341A9B3);
-        assert_eq!(rc1[0], 0xA82725DEA2270483);
-        assert_eq!(rc1[127], 0x276708ABFC60C355);
-        assert_eq!(rc2[0], 0x014627BBB01512A4);
-        assert_eq!(rc2[127], 0x185F12D8475200CE);
-        assert_eq!(round_flag[0], 0x4BFFFFFFB4000001);
-        assert_eq!(round_flag[127], 0x3324DD568D8154A0);
-        assert_eq!(chain_flag[0], 0xFDFFFFFF02000001);
-        assert_eq!(chain_flag[127], 0x20001FFFE0000000);
-        assert_eq!(is_boundary[0], 0xF9FFFFFF06000001);
-        assert_eq!(is_boundary[127], 0x20001FFFE0000000);
+        assert_eq!(
+            periodic.len(),
+            POOL_COMMITMENT_NUM_PERIODIC,
+            "seven columns since the n=256 rebake",
+        );
+        assert_eq!(trace_length, 256, "C1's trace doubled on 2026-08-29");
+
+        assert_eq!(rc0[0], 0x889FBE88A1F6721A);
+        assert_eq!(rc0[255], 0x92FE44607CD55117);
+        assert_eq!(rc1[0], 0xD41392EED1138242);
+        assert_eq!(rc1[255], 0x65B192B4A28534D3);
+        assert_eq!(rc2[0], 0x00A313DDD80A8952);
+        assert_eq!(rc2[255], 0x3284DBA7B9BD86F6);
+        assert_eq!(round_flag[0], 0xA5FFFFFF5A000001);
+        assert_eq!(round_flag[255], 0xC35A5E84612BE522);
+        assert_eq!(chain_flag[0], 0xFEFFFFFF01000001);
+        assert_eq!(chain_flag[255], 0x07D1BFA49D1CF03E);
+        assert_eq!(is_boundary[0], 0xFCFFFFFF03000001);
+        assert_eq!(is_boundary[255], 0x801D0EEC7074DF61);
+        assert_eq!(nba[0], 0xA2FFFFFF5D000001);
+        assert_eq!(nba[255], 0xB35A6E84710BE522);
+
+        // 🚨 THE SHAPE ASSERTION, AND IT IS WHAT MAKES THE MASK REAL.
+        //
+        // Every one of C1's seven columns is DENSE — unlike C3, C6 and C7,
+        // whose seven flag columns became stride-16 sparse when their depth cut
+        // made them fully 32-periodic. C1's cannot: `chain_flag` is a one-hot at
+        // row 63 and `is_boundary` is three one-hots, so neither has a period.
+        // That is why C1 pays ~6 KB of new rodata where the depth cuts paid
+        // none, and why it evaluates dense Horners rather than 32-entry tables.
+        //
+        // Pinned as a property rather than left implicit: a column that went
+        // sparse would mean the builder had started tiling, which would be a
+        // different polynomial and would silently re-arm the 160 masked rows.
+        for (name, col) in [
+            ("rc0", &rc0), ("rc1", &rc1), ("rc2", &rc2),
+            ("round_flag", &round_flag), ("chain_flag", &chain_flag),
+            ("is_boundary", &is_boundary), ("not_boundary_active", &nba),
+        ] {
+            assert!(
+                col.iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0),
+                "C1 {name} went stride-16 sparse; C1's columns have no period and must stay dense",
+            );
+        }
+
+        // And the gate is genuinely OFF across the blinding region, checked on
+        // the VALUES rather than the coefficients — this is the property, the
+        // pins above are only its fingerprint.
+        let nba_values = &periodic[6];
+        for row in (crate::air::denominated_pool::FIRST_FREE_ROW - 1)..trace_length {
+            assert_eq!(
+                nba_values[row],
+                BaseElement::ZERO,
+                "not_boundary_active is nonzero at row {row}, inside the blinding region",
+            );
+        }
+        assert_ne!(
+            nba_values[0],
+            BaseElement::ZERO,
+            "not_boundary_active must be ON inside the witness region, or C1 proves nothing",
+        );
     }
 
     /// [P2.2d-C2] Circuit 2 parity: re-emitting periodic coefficients via
@@ -3896,7 +3966,7 @@ mod tests {
         rows.push(("C0 subscriber_ownership", TRACE_WIDTH, LEGACY_QUOTIENT_SEGMENTS,
                    generate_compact_proof(42).proof_bytes));
         rows.push(("C1 pool_commitment", 3, GENERIC_QUOTIENT_SEGMENTS,
-                   generate_pool_commitment_proof(111, 222, 333, 444).proof_bytes));
+                   generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask()).proof_bytes));
         rows.push(("C2 balance_proof", 4, GENERIC_QUOTIENT_SEGMENTS,
                    generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes));
         {
@@ -4024,7 +4094,7 @@ mod tests {
             build_pool_commitment_periodic_columns, TRACE_LENGTH as POOL_TRACE_LENGTH,
         };
 
-        let trace_length = POOL_TRACE_LENGTH; // 128
+        let trace_length = POOL_TRACE_LENGTH; // 256 since 2026-08-29
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_pool_commitment_periodic_columns(trace_length);
         let names = [
@@ -4034,7 +4104,14 @@ mod tests {
             "C1_ROUND_FLAG_COEFFS",
             "C1_CHAIN_FLAG_COEFFS",
             "C1_IS_BOUNDARY_COEFFS",
+            "C1_NOT_BOUNDARY_ACTIVE_COEFFS",
         ];
+        // Tied to the AIR rather than to a literal, so the emitter cannot fall
+        // behind a column the AIR grew without failing here first.
+        assert_eq!(
+            names.len(),
+            crate::air::denominated_pool::POOL_COMMITMENT_NUM_PERIODIC,
+        );
         for (i, col) in periodic.iter().enumerate() {
             let poly = inverse_ntt(col, trace_g);
             println!("pub const {}: [u64; {}] = [", names[i], trace_length);
@@ -4608,7 +4685,7 @@ mod tests {
             TRACE_LENGTH as POOL_TRACE_LENGTH, TRACE_WIDTH as POOL_TRACE_WIDTH,
         };
 
-        let proof = generate_pool_commitment_proof(111, 222, 333, 444);
+        let proof = generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask());
         assert_eq!(proof.circuit_id, CIRCUIT_POOL_COMMITMENT);
         assert_eq!(proof.public_inputs.len(), 2);
 
@@ -6568,10 +6645,9 @@ pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
         111,
         222,
         333,
-        444,
+        444, &c1_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest);
 
     // C1 header: 32 + 32 + 3*8 + 3*8 + 8 + 8k, then layers, then fps + poly.
     let bytes = &forged.proof_bytes;
@@ -8725,17 +8801,42 @@ const SPEND_FRI_FINAL_POLY_DEGREE_BOUND: usize = 2;
 ///
 /// Proves: nullifier = Poseidon(np, secret), commitment = Poseidon(nullifier, Poseidon(epoch, mint))
 /// Public inputs: nullifier, commitment
+/// A DETERMINISTIC, PUBLICLY REPRODUCIBLE C1 mask. Test scaffolding only.
+///
+/// ⛔ THIS MASK HIDES NOTHING. Every value is a pure function of nothing at all,
+/// so an observer who reads this file reconstructs the whole blinding region and
+/// the 160 free rows stop being free. Adequate for trace SHAPE and for a RANK
+/// measurement; adequate for nothing else.
+///
+/// ✅ IT CANNOT REACH A SHIPPED BINARY, by construction: `test-probes` is off in
+/// `default`, so calling it from a production path is a COMPILE ERROR in the
+/// shipping configuration. The twins are `c3_deterministic_probe_mask` and
+/// `c6_deterministic_probe_mask`.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c1_deterministic_probe_mask() -> Vec<u64> {
+    let mut z: u64 = 0xC1_5EED_0001;
+    (0..crate::air::denominated_pool::MASK_LEN)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
 pub fn generate_pool_commitment_proof(
     nullifier_preimage: u64,
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
+    mask: &[u64],
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout(
         nullifier_preimage,
         secret,
         deposit_epoch,
-        token_mint,
+        token_mint, mask,
         PairIndexing::Canonical,
         TraceLeaf::Canonical,
         DeepProbe::HONEST,
@@ -8754,13 +8855,14 @@ pub fn generate_pool_commitment_proof_with_pair_indexing(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
+    mask: &[u64],
     pair_indexing: PairIndexing,
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout(
         nullifier_preimage,
         secret,
         deposit_epoch,
-        token_mint,
+        token_mint, mask,
         pair_indexing,
         TraceLeaf::Canonical,
         DeepProbe::HONEST,
@@ -8786,13 +8888,14 @@ pub fn generate_pool_commitment_proof_with_trace_leaf(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
+    mask: &[u64],
     trace_leaf: TraceLeaf,
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout(
         nullifier_preimage,
         secret,
         deposit_epoch,
-        token_mint,
+        token_mint, mask,
         PairIndexing::Canonical,
         trace_leaf,
         DeepProbe::HONEST,
@@ -8813,6 +8916,7 @@ pub fn generate_pool_commitment_proof_with_forgery(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
+    mask: &[u64],
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -8820,7 +8924,7 @@ pub fn generate_pool_commitment_proof_with_forgery(
         nullifier_preimage,
         secret,
         deposit_epoch,
-        token_mint,
+        token_mint, mask,
         PairIndexing::Canonical,
         TraceLeaf::Canonical,
         DeepProbe { ood_forgery, terminal_poly },
@@ -8841,11 +8945,12 @@ pub fn generate_pool_commitment_proof_claiming(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
+    mask: &[u64],
     claim_index: usize,
     claimed_value: u64,
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout_and_claim(
-        nullifier_preimage, secret, deposit_epoch, token_mint,
+        nullifier_preimage, secret, deposit_epoch, token_mint, mask,
         PairIndexing::Canonical, TraceLeaf::Canonical, DeepProbe::HONEST,
         Some((claim_index, claimed_value)),
     )
@@ -8856,12 +8961,13 @@ fn generate_pool_commitment_proof_with_layout(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
+    mask: &[u64],
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout_and_claim(
-        nullifier_preimage, secret, deposit_epoch, token_mint, pair_indexing, trace_leaf, probe,
+        nullifier_preimage, secret, deposit_epoch, token_mint, mask, pair_indexing, trace_leaf, probe,
         None,
     )
 }
@@ -8872,6 +8978,7 @@ fn generate_pool_commitment_proof_with_layout_and_claim(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
+    mask: &[u64],
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
@@ -8885,7 +8992,13 @@ fn generate_pool_commitment_proof_with_layout_and_claim(
     let mint = BaseElement::new(token_mint);
 
     let (trace, nullifier, commitment) =
-        crate::air::denominated_pool::build_pool_commitment_trace(np, s, epoch, mint);
+        crate::air::denominated_pool::build_pool_commitment_trace(
+            np,
+            s,
+            epoch,
+            mint,
+            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+        );
 
     // Public inputs: nullifier, commitment
     let mut public_inputs = vec![nullifier.as_int(), commitment.as_int()];

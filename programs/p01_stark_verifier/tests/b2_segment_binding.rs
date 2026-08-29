@@ -173,7 +173,7 @@ fn generic_case(
 ) -> p01_stark::compact::GenericCompactProofData {
     use p01_stark::compact as c;
     match id {
-        1 => c::generate_pool_commitment_proof_with_forgery(111, 222, 333, 444, ood, term),
+        1 => c::generate_pool_commitment_proof_with_forgery(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask(), ood, term),
         2 => c::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, ood, term),
         3 => {
             let (pe, pi) = merkle_witness();
@@ -562,7 +562,7 @@ fn s3_terminal_index_distribution_on_honest_proofs() {
 fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofData {
     use p01_stark::compact as c;
     match id {
-        1 => c::generate_pool_commitment_proof(111 + seed, 222, 333, 444),
+        1 => c::generate_pool_commitment_proof(111 + seed, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask()),
         2 => c::generate_balance_compact_proof(42 + seed, 1000, 777, 999),
         3 => {
             let (mut pe, pi) = merkle_witness();
@@ -767,8 +767,8 @@ fn s5_the_rejecting_mechanism_is_recorded_for_both_forgeries_on_every_circuit() 
 #[test]
 fn s6_segments_cannot_be_mixed_across_proofs() {
     let cfg = &CONFIG_POOL_COMMITMENT;
-    let a = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
-    let b = p01_stark::compact::generate_pool_commitment_proof(555, 666, 777, 888);
+    let a = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask());
+    let b = p01_stark::compact::generate_pool_commitment_proof(555, 666, 777, 888, &p01_stark::compact::c1_deterministic_probe_mask());
     assert_ne!(a.public_inputs, b.public_inputs, "two DIFFERENT statements");
     assert_eq!(a.proof_bytes.len(), b.proof_bytes.len(), "same circuit, same length");
 

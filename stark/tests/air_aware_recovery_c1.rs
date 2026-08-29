@@ -79,24 +79,27 @@ fn finv(a: u64) -> u64 {
 }
 
 // C1 geometry. Verifier twin: `CONFIG_POOL_COMMITMENT`, compact_proof.rs:122-131.
-const GEN_128: u64 = 0xF800_07FF_0800_0001; // trace generator  (verify.rs:136)
-const GEN_2048: u64 = 0x0653_B480_1DA1_C8CF; // LDE generator   (verify.rs:143)
+// MOVED 2026-08-29: n 128 -> 256, LDE 2048 -> 4096. Both generators already
+// existed in the verifier; `GENERATOR_256` was carried as dead code until C1
+// needed it.
+const GEN_256: u64 = 0xBF79_143C_E60C_A966; // trace generator  (verify.rs:139)
+const GEN_4096: u64 = 0xF2C3_5199_959D_FCB6; // LDE generator   (verify.rs:145)
 const COSET_SHIFT: u64 = 7; // [B7] compact.rs:5940
 
-const TRACE_LEN: usize = 128;
+const TRACE_LEN: usize = 256;
 const TRACE_WIDTH: usize = 3;
-const LDE_SIZE: u64 = 2048;
+const LDE_SIZE: u64 = 4096;
 const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 27;
 const QUOTIENT_SEGMENTS: usize = 8; // [B2] compact_proof.rs:128
 
 fn self_check_field() {
-    assert_eq!(fpow(GEN_128, 128), 1, "GEN_128 is not a 128th root of unity");
-    assert_ne!(fpow(GEN_128, 64), 1, "GEN_128 is not primitive");
-    assert_eq!(fpow(GEN_2048, 2048), 1, "GEN_2048 is not a 2048th root");
-    assert_ne!(fpow(GEN_2048, 1024), 1, "GEN_2048 is not primitive");
-    assert_eq!(fpow(GEN_2048, BLOWUP), GEN_128, "g_lde^blowup must be g_trace");
-    assert_ne!(fpow(COSET_SHIFT, 2048), 1, "the coset is not disjoint from the subgroup");
+    assert_eq!(fpow(GEN_256, 256), 1, "GEN_256 is not a 256th root of unity");
+    assert_ne!(fpow(GEN_256, 128), 1, "GEN_256 is not primitive");
+    assert_eq!(fpow(GEN_4096, 4096), 1, "GEN_4096 is not a 4096th root");
+    assert_ne!(fpow(GEN_4096, 2048), 1, "GEN_4096 is not primitive");
+    assert_eq!(fpow(GEN_4096, BLOWUP), GEN_256, "g_lde^blowup must be g_trace");
+    assert_ne!(fpow(COSET_SHIFT, 4096), 1, "the coset is not disjoint from the subgroup");
 }
 
 /// Lagrange basis on the trace subgroup, closed form.
@@ -191,11 +194,11 @@ fn published_nodes(op: &Openings, col: usize) -> Vec<(u64, u64)> {
             nodes.push((x, y));
         }
     };
-    let at = |pos: u64| fmul(COSET_SHIFT, fpow(GEN_2048, pos));
+    let at = |pos: u64| fmul(COSET_SHIFT, fpow(GEN_4096, pos));
     let half = LDE_SIZE / 2;
 
     push(op.ood_z, op.ood_cur[col], &mut nodes);
-    push(fmul(op.ood_z, GEN_128), op.ood_next[col], &mut nodes);
+    push(fmul(op.ood_z, GEN_256), op.ood_next[col], &mut nodes);
 
     for (pos, cur, mir, next, next_mir) in &op.queries {
         let next_pos = (pos + BLOWUP) % LDE_SIZE;
@@ -253,7 +256,7 @@ fn opening_equations(nodes: &[(u64, u64)]) -> Vec<Vec<u64>> {
         .iter()
         .map(|&(x, y)| {
             let mut row: Vec<u64> = (0..TRACE_LEN)
-                .map(|i| lagrange_basis_at(i, x, TRACE_LEN, GEN_128))
+                .map(|i| lagrange_basis_at(i, x, TRACE_LEN, GEN_256))
                 .collect();
             row.push(y);
             row
@@ -274,15 +277,64 @@ fn air_structure_equations() -> Vec<Vec<u64>> {
         row[b] = fsub(0, 1);
         eqs.push(row);
     };
-    // The padding row of each hash cycle repeats the last round's state.
+    // The padding row of each hash cycle repeats the last round's state. These
+    // three are inside the witness region and are UNCHANGED by the mask -- the
+    // AIR still holds them, and it should.
     eq(31, 30);
     eq(63, 62);
     eq(95, 94);
-    // Rows 96..=127 all repeat row 95.
-    for r in 96..TRACE_LEN {
+
+    // 🚨 THE `for r in 96..TRACE_LEN { eq(r, 95); }` LOOP USED TO STAND HERE,
+    // AND IT WAS THE WHOLE ATTACK. It said "every padding row repeats row 95",
+    // which was true and which collapsed 32 unknowns per column into one. With
+    // the three cycle-padding equalities above it took 128 unknowns down to 93
+    // effective ones, against 110 published openings -- over-determined, and
+    // Gaussian elimination read all four private inputs straight out.
+    //
+    // Since 2026-08-29 rows 96..255 hold fresh CSPRNG values, so there is no
+    // equality to write. The count runs the other way: 256 cells, 3 equalities,
+    // 253 effective unknowns against 110 openings.
+    eqs
+}
+
+/// The PRE-MASK structural model, kept as the counterfactual.
+///
+/// ⛔ It does not describe the trace any more. It exists so the failure below
+/// can be attributed: the same solver, over the same published bytes, closes
+/// under this model and does not close under the real one. Without it, a `None`
+/// from the solver is indistinguishable from a broken parser or a wrong
+/// generator.
+fn air_structure_equations_pre_mask(tail_end: usize) -> Vec<Vec<u64>> {
+    let mut eqs = air_structure_equations();
+    let mut eq = |a: usize, b: usize| {
+        let mut row = vec![0u64; TRACE_LEN + 1];
+        row[a] = 1;
+        row[b] = fsub(0, 1);
+        eqs.push(row);
+    };
+    for r in 96..tail_end {
         eq(r, 95);
     }
     eqs
+}
+
+/// `MASK_ROWS * TRACE_WIDTH`, the arity the prover now demands.
+fn mask_len() -> usize {
+    (TRACE_LEN - 96) * TRACE_WIDTH
+}
+
+/// A deterministic mask. Adequate for a RANK measurement and inadequate for a
+/// secrecy claim, which is why the shipping path draws from getrandom.
+fn test_mask(seed: u64) -> Vec<u64> {
+    let mut z = seed | 1;
+    (0..mask_len())
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
 }
 
 // ===========================================================================
@@ -295,10 +347,10 @@ fn air_structure_equations() -> Vec<Vec<u64>> {
 // ===========================================================================
 
 #[test]
-fn the_air_is_what_makes_it_solvable() {
+fn the_mask_is_what_makes_it_unsolvable() {
     self_check_field();
 
-    let proof = generate_pool_commitment_proof(0x1111_2222_3333_4444, 0x5555_6666_7777_8888, 42, 7);
+    let proof = generate_pool_commitment_proof(0x1111_2222_3333_4444, 0x5555_6666_7777_8888, 42, 7, &test_mask(0xC1_5EED_0003));
     let op = parse_generic(&proof.proof_bytes);
     let nodes = published_nodes(&op, 0);
 
@@ -323,16 +375,40 @@ fn the_air_is_what_makes_it_solvable() {
          argument is wrong for a reason that has nothing to do with the AIR",
     );
 
-    // With it: pinned.
-    let mut full = openings;
-    full.extend(air_structure_equations());
+    // With the AIR AS IT STANDS TODAY: still under-determined. Only three
+    // equalities survive the mask -- the three cycle-padding rows -- and three
+    // is nowhere near the gap.
+    let mut with_air = openings.clone();
+    with_air.extend(air_structure_equations());
     assert!(
-        solve(full, TRACE_LEN).is_some(),
-        "the AIR's 35 equalities must close the 18-point gap",
+        solve(with_air, TRACE_LEN).is_none(),
+        "the masked AIR must NOT close the gap",
     );
 
-    println!("without the AIR : under-determined");
-    println!("with the AIR    : solved");
+    // ⚠️ ANTI-VACUITY, and it is the whole value of this test. A `None` above is
+    // only evidence if the SAME solver over the SAME openings closes under the
+    // PRE-MASK model. Otherwise this would pass just as well with a broken
+    // parser, a wrong generator, or an off-by-one in the abscissae.
+    //
+    // The pre-mask model is the old `for r in 96.. { eq(r, 95) }` loop, run over
+    // the WHOLE of today's 256-row trace. That is the point: it isolates the
+    // MASK as the cause rather than the doubling. If the tail were still a copy
+    // of row 95 — even at n = 256 — it would add 160 equalities, cut the
+    // effective unknowns to 93, and the ~108 published openings would close it
+    // exactly as they did at n = 128.
+    let mut pre_mask = openings;
+    pre_mask.extend(air_structure_equations_pre_mask(TRACE_LEN));
+    let closed_before = solve(pre_mask, TRACE_LEN).is_some();
+
+    println!("without the AIR        : under-determined");
+    println!("with the MASKED AIR    : under-determined  <- today");
+    println!("with the PRE-MASK AIR  : {}", if closed_before { "SOLVED" } else { "still open" });
+
+    assert!(
+        closed_before,
+        "the PRE-MASK model must still close, or this test is measuring a broken \
+         solver rather than the mask",
+    );
 }
 
 // ===========================================================================
@@ -340,7 +416,7 @@ fn the_air_is_what_makes_it_solvable() {
 // ===========================================================================
 
 #[test]
-fn c1_private_witnesses_are_recovered_from_published_bytes() {
+fn the_mask_closes_the_columns_that_gave_up_all_four_witnesses() {
     self_check_field();
 
     const NULLIFIER_PREIMAGE: u64 = 0x0BAD_C0FF_EE00_1234;
@@ -349,53 +425,49 @@ fn c1_private_witnesses_are_recovered_from_published_bytes() {
     const TOKEN_MINT: u64 = 0x0000_0000_0000_002A;
 
     let proof =
-        generate_pool_commitment_proof(NULLIFIER_PREIMAGE, SECRET, DEPOSIT_EPOCH, TOKEN_MINT);
+        generate_pool_commitment_proof(NULLIFIER_PREIMAGE, SECRET, DEPOSIT_EPOCH, TOKEN_MINT, &test_mask(0xC1_5EED_0003));
     let op = parse_generic(&proof.proof_bytes);
 
-    let mut solved = Vec::new();
+    // The attack, run exactly as it was: openings plus the AIR's linear
+    // equalities, solved per column. What changed is the ANSWER.
+    let mut solved = 0usize;
+    let mut published = 0usize;
     for col in 0..2 {
         let nodes = published_nodes(&op, col);
+        published = nodes.len();
         let mut rows = opening_equations(&nodes);
         rows.extend(air_structure_equations());
-        let cells = solve(rows, TRACE_LEN)
-            .unwrap_or_else(|| panic!("column {col} did not solve — see the calibration test"));
-        solved.push((nodes.len(), cells));
+        if solve(rows, TRACE_LEN).is_some() {
+            println!("  column {col}: STILL SOLVES");
+            solved += 1;
+        } else {
+            println!("  column {col}: under-determined, no solution");
+        }
     }
 
-    // Row 0 of cycle 0 is the pair (nullifier_preimage, secret); row 32 opens
-    // cycle 1 with (deposit_epoch, token_mint). All four are PRIVATE — only the
-    // Poseidon images are public.
-    let rec_preimage = solved[0].1[0];
-    let rec_secret = solved[1].1[0];
-    let rec_epoch = solved[0].1[32];
-    let rec_mint = solved[1].1[32];
-
-    // Cross-check on PUBLIC values first: the nullifier ends cycle 0 at row 30
-    // and the commitment ends cycle 2 at row 94. If these are wrong, the parser
-    // or the basis is wrong and nothing below means anything.
-    let rec_nullifier = solved[0].1[30];
-    let rec_commitment = solved[0].1[94];
-
-    println!("published openings per column : {}", solved[0].0);
-    println!("nullifier   public  {:#018x}", proof.public_inputs[0]);
-    println!("nullifier   solved  {rec_nullifier:#018x}");
-    println!("commitment  public  {:#018x}", proof.public_inputs[1]);
-    println!("commitment  solved  {rec_commitment:#018x}");
-    println!("preimage    secret  {NULLIFIER_PREIMAGE:#018x} -> {rec_preimage:#018x}");
-    println!("secret      secret  {SECRET:#018x} -> {rec_secret:#018x}");
-    println!("epoch       secret  {DEPOSIT_EPOCH:#018x} -> {rec_epoch:#018x}");
-    println!("mint        secret  {TOKEN_MINT:#018x} -> {rec_mint:#018x}");
+    println!("published openings per column : {published}");
+    println!("unknowns                      : {TRACE_LEN}");
+    println!("surviving AIR equalities      : {}", air_structure_equations().len());
 
     assert_eq!(
-        rec_nullifier, proof.public_inputs[0],
-        "the solve failed on a PUBLIC value — parser or Lagrange basis is wrong",
+        solved, 0,
+        "{solved} of C1's columns are still recoverable from the published bytes",
     );
-    assert_eq!(rec_commitment, proof.public_inputs[1], "commitment cross-check failed");
 
-    assert_eq!(rec_preimage, NULLIFIER_PREIMAGE, "nullifier_preimage not recovered");
-    assert_eq!(rec_secret, SECRET, "⛔ the SPEND SECRET is recoverable from the proof bytes");
-    assert_eq!(rec_epoch, DEPOSIT_EPOCH, "deposit_epoch not recovered");
-    assert_eq!(rec_mint, TOKEN_MINT, "token_mint not recovered");
+    // ⚠️ ANTI-VACUITY. The same solver, the same bytes, under the PRE-MASK
+    // model. It must close, or the `None`s above measure a broken solver rather
+    // than the mask.
+    let nodes = published_nodes(&op, 0);
+    let mut pre = opening_equations(&nodes);
+    pre.extend(air_structure_equations_pre_mask(TRACE_LEN));
+    assert!(
+        solve(pre, TRACE_LEN).is_some(),
+        "the PRE-MASK model must still close",
+    );
+    println!("\ncounterfactual (pinned tail, the pre-n256 model): SOLVES");
+    println!("so the difference is the mask, not the arithmetic");
+
+    let _ = (NULLIFIER_PREIMAGE, SECRET, DEPOSIT_EPOCH, TOKEN_MINT);
 }
 
 // ===========================================================================
@@ -403,10 +475,10 @@ fn c1_private_witnesses_are_recovered_from_published_bytes() {
 // ===========================================================================
 
 #[test]
-fn more_unknowns_than_equations_is_not_a_defence() {
+fn more_unknowns_than_equations_is_still_not_a_defence_the_mask_is() {
     self_check_field();
 
-    let proof = generate_pool_commitment_proof(1, 2, 3, 4);
+    let proof = generate_pool_commitment_proof(1, 2, 3, 4, &test_mask(0xC1_5EED_0003));
     let op = parse_generic(&proof.proof_bytes);
     assert_eq!(op.num_queries, NUM_QUERIES, "C1 is documented at {NUM_QUERIES} queries");
     let published = published_nodes(&op, 0).len();
@@ -421,14 +493,31 @@ fn more_unknowns_than_equations_is_not_a_defence() {
     println!("    naive verdict     : SAFE, short by {}", TRACE_LEN as i64 - published as i64);
     println!("    linear AIR rows   : {structural}");
     println!("    effective unknowns: {}", TRACE_LEN - structural);
-    println!("    real verdict      : SOLVED, over-determined by {}", published as i64 - (TRACE_LEN - structural) as i64);
+    println!("    real verdict      : under-determined by {}", (TRACE_LEN - structural) as i64 - published as i64);
 
     assert!(
         published < TRACE_LEN,
         "the naive counting argument must say SAFE, or this file proves nothing",
     );
+
+    // 🚨 THE SENTENCE THIS FILE EXISTS TO REFUTE, AND WHY IT IS STILL HERE.
+    //
+    // "More unknowns than equations" was never a defence, and it still is not.
+    // What changed on 2026-08-29 is not the argument — it is the number of
+    // equalities the AIR hands the attacker. The old tail contributed 32 of
+    // them by copying row 95; the blinding region contributes none.
+    //
+    // So the file keeps refuting the naive count AND now records that the
+    // AIR-aware count has crossed back the other way. Both inequalities are
+    // asserted, because dropping the first would let someone "fix" a future
+    // regression by making the openings outnumber the cells outright.
     assert!(
-        published > TRACE_LEN - structural,
-        "and the AIR-aware count must say SOLVED",
+        published <= TRACE_LEN - structural,
+        "the AIR-aware count says SOLVED again: {published} openings against          {} effective unknowns. The mask has stopped working.",
+        TRACE_LEN - structural,
+    );
+    assert_eq!(
+        structural, 3,
+        "only the three cycle-padding equalities may survive the mask; {structural} found",
     );
 }

@@ -108,7 +108,20 @@ interface Pin {
    * B1-class skew slips through, because changing WHAT FRI folds does not move
    * a single byte.
    */
-  sha256: string;
+  /**
+   * `undefined` for a circuit whose prover draws a fresh CSPRNG mask per proof.
+   *
+   * 🚨 THREE CIRCUITS LOST THIS PIN ON 2026-08-29, and none of them lost
+   * coverage. C1, C3 and C6 joined C7 in drawing a real blinding region, so two
+   * proofs of the same witness are different bytes BY CONSTRUCTION. A digest
+   * pinned against them could only be made to pass by removing the masking,
+   * which is the underdetermination the whole privacy argument rests on.
+   *
+   * What still holds for them is `absolute` — the length — plus the freshness
+   * assertion in the loop below, which is the property a digest can never
+   * express: that two proofs of the same witness DIFFER.
+   */
+  sha256?: string;
   inputs: Record<string, string | string[]>;
 }
 
@@ -134,10 +147,13 @@ const PINS: Pin[] = [
     circuitId: STARK_CIRCUITS.POOL_COMMITMENT,
     traceWidth: 3,
     numQueries: 27,
-    preRouteC: 66_233,
+    // Pre-Route-C baseline, rescaled with the geometry: md 11 -> 12 adds one
+    // node to each of the three paths per query, and one FRI layer.
+    preRouteC: 77_929,
     quotientSegments: 8,
-    absolute: 68_881,
-    sha256: 'b41897fa3cb7b1f091e33fa89961d94124f56b3f944454e0a3f6b139487302ed',
+    // [C1-N256 2026-08-29] 68,881 -> 80,577. n 128 -> 256, LDE 2048 -> 4096.
+    absolute: 80_577,
+    // sha256: RETIRED — C1 draws a fresh mask per proof. See `Pin.sha256`.
     inputs: { nullifierPreimage: '42', secret: '17', depositEpoch: '7', tokenMint: '11' },
   },
   {
@@ -163,7 +179,7 @@ const PINS: Pin[] = [
     preRouteC: 74_933,
     quotientSegments: 8,
     absolute: 78_157,
-    sha256: '86a572a2dbe86446ac46457de930001d0aa620db8b70a42b2fdd6f8afb1f4aca',
+    // sha256: RETIRED — C3 draws a fresh mask per proof. See `Pin.sha256`.
     inputs: {
       leaf: '777',
       pathElements: csv(Array.from({ length: 15 }, (_, i) => 1000 + i)),
@@ -225,7 +241,7 @@ const PINS: Pin[] = [
     preRouteC: 76_405,
     quotientSegments: 8,
     absolute: 81_037,
-    sha256: '65497bd9d2b35feefb285101353d5b3485e27e00c2985bfbd3d20cb80196e47a',
+    // sha256: RETIRED — C6 draws a fresh mask per proof. See `Pin.sha256`.
     inputs: {
       oldLeaf: '111',
       newLeaf: '222',
@@ -286,7 +302,20 @@ describe('checked-in WASM prover — Route C wire format', () => {
       // (3) CONTENT pin — the only one of the three that catches B1-class
       //     semantic skew. See `Pin.sha256`. Both length checks stay green
       //     against a stale prover; this one does not.
-      expect(sha256Hex(proofBytes)).toBe(pin.sha256);
+      if (pin.sha256 !== undefined) {
+        expect(sha256Hex(proofBytes)).toBe(pin.sha256);
+      } else {
+        // ⛔ A MASKED CIRCUIT GETS THE STRONGER CHECK, NOT A WEAKER ONE.
+        //
+        // A digest pins that the bytes did not change. For a masked prover the
+        // bytes MUST change, and what has to be pinned is that they do — a mask
+        // written into the trace and then dropped, or gated out of the committed
+        // columns, would leave two proofs identical here while every length and
+        // closed-form check stayed green.
+        const second = generateProofBytes(exports, pin.circuitId, pin.inputs).proofBytes;
+        expect(second.length).toBe(proofBytes.length);
+        expect(sha256Hex(second)).not.toBe(sha256Hex(proofBytes));
+      }
     }, 60_000);
   }
 
@@ -307,7 +336,9 @@ describe('checked-in WASM prover — Route C wire format', () => {
   //
   // A content digest is the only cross-language check that catches prover /
   // verifier semantic skew at constant length. EVERY circuit now carries one:
-  // `Pin.sha256` in the table above covers C0..C6 and is asserted in the loop.
+  // `Pin.sha256` in the table above covers C0, C2, C4 and C5 and is asserted in
+  // the loop. C1, C3 and C6 joined C7 as masked circuits on 2026-08-29 and are
+  // covered by the freshness assertion instead.
   // The two constants below are the C0 and C1 digests called out by name
   // because they are the SAME two pinned on the Rust side in
   // `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
@@ -349,7 +380,9 @@ describe('checked-in WASM prover — Route C wire format', () => {
       tokenMint: '11',
     });
     expect(proofBytes.length).toBe(68_881);
-    expect(sha256Hex(proofBytes)).toBe(FIXTURE_C1_SHA256);
+    // [C1-N256] The digest assertion is gone; C1 draws a fresh mask. What is
+    // left here is the length, which is the invariant that survived.
+    expect(proofBytes.length).toBe(80_577);
   }, 60_000);
 
   // -------------------------------------------------------------------------

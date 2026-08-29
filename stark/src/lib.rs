@@ -149,8 +149,25 @@ mod wasm_api {
         deposit_epoch: u64,
         token_mint: u64,
     ) -> String {
+        // [C1-N256] The blinding region, drawn fresh for THIS proof.
+        //
+        // ⛔ REFUSES RATHER THAN FALLING BACK, for the reason C7 states and C3
+        // and C6 repeat: no proof fails loudly, a weak mask succeeds and leaks.
+        // A zero-filled or witness-derived default would leave rows 96..255
+        // predictable and `air_aware_recovery_c1.rs` would go back to recovering
+        // all four private inputs from the published bytes.
+        let mask = match draw_blinding_mask(crate::air::denominated_pool::MASK_LEN) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C1 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+
         let proof_data = generate_pool_commitment_proof(
-            nullifier_preimage, secret, deposit_epoch, token_mint,
+            nullifier_preimage, secret, deposit_epoch, token_mint, &mask,
         );
         let proof_hex = proof_data.proof_bytes.iter()
             .map(|b| format!("{:02x}", b))

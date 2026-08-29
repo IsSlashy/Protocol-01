@@ -103,7 +103,10 @@ export const E_TX_FEE_BUDGET = 4_000_000;
  * `subscribeFloat.test.ts` re-reads all three out of those files.
  */
 export const MEASURED_PROOF_BYTES = {
-  c1: 68_881,
+  // [C1-N256 2026-08-29] 68,881 -> 80,577. C1 was the one circuit the depth cut
+  // could not save, so its geometry moved (n 128 -> 256) and its wire grew with
+  // it. C3 and C7 took depth cuts instead and their sizes did not move.
+  c1: 80_577,
   c3: 78_157,
   c7: 77_965,
 } as const;

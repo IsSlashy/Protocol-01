@@ -303,8 +303,7 @@ pub fn prove0(w: &W0) -> p01_stark::compact::CompactProofData {
 
 pub fn prove1(w: &W1) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_pool_commitment_proof(
-        w.nullifier_preimage, w.secret, w.deposit_epoch, w.token_mint,
-    )
+        w.nullifier_preimage, w.secret, w.deposit_epoch, w.token_mint, &p01_stark::compact::c1_deterministic_probe_mask())
 }
 
 pub fn prove2(w: &W2) -> p01_stark::compact::GenericCompactProofData {
@@ -448,8 +447,7 @@ pub fn check_semantics_1(w: &W1, data: &p01_stark::compact::GenericCompactProofD
     );
 
     let (trace, _, _) = denominated_pool::build_pool_commitment_trace(
-        f(w.nullifier_preimage), f(w.secret), f(w.deposit_epoch), f(w.token_mint),
-    );
+        f(w.nullifier_preimage), f(w.secret), f(w.deposit_epoch), f(w.token_mint), &p01_stark::compact::c1_deterministic_probe_mask().iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>());
     assert_eq!(trace[0][30], nullifier, "C1: boundary row 30 (nullifier)");
     assert_eq!(trace[0][94], commitment, "C1: boundary row 94 (commitment)");
     assert_eq!(trace[0][64], nullifier, "C1: cycle-2 left input must be the nullifier");

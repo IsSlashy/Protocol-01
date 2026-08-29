@@ -83,7 +83,7 @@ fn c1() -> Vec<Vec<u8>> {
     [(42u64, 17u64, 7u64, 11u64), (99, 23, 3, 11), (7, 5, 9, 11), (123_456, 789, 1, 11)]
         .iter()
         .map(|(n, s, e, t)| {
-            p01_stark::compact::generate_pool_commitment_proof(*n, *s, *e, *t).proof_bytes
+            p01_stark::compact::generate_pool_commitment_proof(*n, *s, *e, *t, &p01_stark::compact::c1_deterministic_probe_mask()).proof_bytes
         })
         .collect()
 }

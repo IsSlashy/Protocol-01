@@ -52,7 +52,7 @@
 //! ```text
 //!  id | B1 conj | B2 conj | gain | B1 uncond | B2 uncond | gain
 //!  C0 |      48 |      52 |   +4 |        28 |        46 |  +18
-//!  C1 |      43 |      50 |   +7 |        27 |        46 |  +19
+//!  C1 |      43 |      48 |   +5 |        27 |        46 |  +19
 //!  C2 |      43 |      50 |   +7 |        27 |        46 |  +19
 //!  C3 |      38 |      47 |   +9 |        25 |        42 |  +17
 //!  C4 |      43 |      48 |   +5 |        27 |        46 |  +19
@@ -169,7 +169,7 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
     let t = TerminalPoly::Honest;
     match id {
         0 => p01_stark::compact::generate_compact_proof_with_forgery(42, f, t).proof_bytes,
-        1 => p01_stark::compact::generate_pool_commitment_proof_with_forgery(111, 222, 333, 444, f, t)
+        1 => p01_stark::compact::generate_pool_commitment_proof_with_forgery(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask(), f, t)
             .proof_bytes,
         2 => p01_stark::compact::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, f, t)
             .proof_bytes,
@@ -208,7 +208,7 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
         }
         _ => {
             let d = match id {
-                1 => p01_stark::compact::generate_pool_commitment_proof(s, s + 1, s + 2, s + 3),
+                1 => p01_stark::compact::generate_pool_commitment_proof(s, s + 1, s + 2, s + 3, &p01_stark::compact::c1_deterministic_probe_mask()),
                 2 => p01_stark::compact::generate_balance_compact_proof(s, 1000 + s, 777, 999 + s),
                 3 => {
                     let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i + s).collect();

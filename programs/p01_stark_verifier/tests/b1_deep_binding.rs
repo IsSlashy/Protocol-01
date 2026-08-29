@@ -137,7 +137,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
 
     // C1..C6, generic path.
     let generic: Vec<(&str, usize, p01_stark::compact::GenericCompactProofData)> = vec![
-        ("C1", 3, p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444)),
+        ("C1", 3, p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask())),
         ("C2", 4, p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)),
         (
             "C3",
@@ -243,15 +243,14 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
 #[test]
 fn terminal_degree_bound_rejects_a_high_coefficient_generic() {
     let config = &CONFIG_POOL_COMMITMENT;
-    let honest = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    let honest = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask());
     let forged = p01_stark::compact::generate_pool_commitment_proof_with_forgery(
         111,
         222,
         333,
-        444,
+        444, &p01_stark::compact::c1_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest);
 
     // Control: the honest tail is all zeros, so the bound is not vacuous and the
     // rejection below cannot be a property every C1 proof has.
@@ -310,7 +309,7 @@ fn terminal_degree_bound_check_in_isolation() {
     // must refuse it outright: the tail check compares reduced felts while the
     // transcript absorbs raw bytes, so accepting `MODULUS` would let those two
     // views of the same slot disagree.
-    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask());
     let config = &CONFIG_POOL_COMMITMENT;
     let mut bytes = data.proof_bytes.clone();
     write_final_poly_coeff(&mut bytes, config.trace_width, config.quotient_segments, 15, MODULUS);
@@ -390,7 +389,7 @@ fn terminal_degree_bound_check_in_isolation() {
 /// ~21-26 bits post-B2. Nothing here is publishable as a security level. Lifting
 /// the floor needs the challenges drawn from an extension field, which is a
 /// separate change and another wire break.
-const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [52, 50, 50, 47, 48, 47, 47];
+const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [ 52, 48, 50, 47, 48, 47, 47];
 const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
 
 /// The DERIVED twin of the two arrays above.
@@ -577,17 +576,16 @@ fn t1_c0_coordinated_forgery_is_rejected_by_the_legacy_verifier() {
 #[test]
 fn t1_t2_t3_c1_coordinated_forgery_matrix() {
     let config = &CONFIG_POOL_COMMITMENT;
-    let honest = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    let honest = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask());
 
     // --- T1: forgery + honest terminal poly -> rejected by the FRI-on-D chain.
     let forged = p01_stark::compact::generate_pool_commitment_proof_with_forgery(
         111,
         222,
         333,
-        444,
+        444, &p01_stark::compact::c1_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest);
     assert_ne!(
         read_ood_current(&honest.proof_bytes, 0),
         read_ood_current(&forged.proof_bytes, 0),
@@ -638,10 +636,9 @@ fn t1_t2_t3_c1_coordinated_forgery_matrix() {
         111,
         222,
         333,
-        444,
+        444, &p01_stark::compact::c1_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::AliasedFold,
-    );
+        TerminalPoly::AliasedFold);
     let parsed = GenericCompactProof::from_bytes(&aliased.proof_bytes, config)
         .expect("aliased forged C1 proof still parses");
     let poly = read_final_poly(&aliased.proof_bytes, config.trace_width, config.quotient_segments);
@@ -1640,18 +1637,16 @@ fn subgroup_alias_equals_aliased_fold_when_the_bound_is_half_the_size() {
         111,
         222,
         333,
-        444,
+        444, &p01_stark::compact::c1_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::AliasedFold,
-    );
+        TerminalPoly::AliasedFold);
     let b = p01_stark::compact::generate_pool_commitment_proof_with_forgery(
         111,
         222,
         333,
-        444,
+        444, &p01_stark::compact::c1_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::SubgroupAlias,
-    );
+        TerminalPoly::SubgroupAlias);
     assert_eq!(
         a.proof_bytes, b.proof_bytes,
         "on C1 (bound 8 of fps 16) the two terminal plays are the same polynomial, \
@@ -1836,8 +1831,18 @@ fn both_fri_paths_derive_the_deep_coefficient_and_check_the_degree_bound() {
 /// b2 digests live in `prover-behaviour.mjs` with no classifier column.
 const FIXTURE_C0_SHA256: &str =
     "157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e";
-const FIXTURE_C1_SHA256: &str =
-    "b41897fa3cb7b1f091e33fa89961d94124f56b3f944454e0a3f6b139487302ed";
+// ⛔ FIXTURE_C1_SHA256 IS GONE, AND IT MUST NOT COME BACK. Retired 2026-08-29,
+// the fourth and last of them, after C6, C3 and C7.
+//
+// C1 now draws a fresh CSPRNG blinding region for every proof
+// (`lib.rs::draw_blinding_mask`, which refuses to build without one), so its
+// bytes are not reproducible and a pinned digest cannot describe it.
+//
+// Its LENGTH is still pinned below and it is the one that moved: 68,881 ->
+// 80,577. C1 is the only masked circuit whose wire grew, because it is the only
+// one that could not free its blinding region with a depth cut — its three hash
+// cycles fill 96 of 128 rows and `R = 4*27 + 2 = 110`, so the geometry had to go
+// to n = 256.
 /// [BIND-C2C4 2026-08-03] MOVED. Wiring C2's boundary fold changes the
 /// committed quotient, so every C2 proof this tree produces is a different 69,761
 /// bytes. Length is unchanged — the fold adds `deg(Q_bnd) <= n-2` to a polynomial
@@ -1928,7 +1933,7 @@ fn fixture_c0() -> Vec<u8> {
 }
 
 fn fixture_c1() -> Vec<u8> {
-    p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11).proof_bytes
+    p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()).proof_bytes
 }
 
 fn fixture_c2() -> Vec<u8> {
@@ -1975,7 +1980,8 @@ struct Fixture {
 
 const FIXTURES: [Fixture; 7] = [
     Fixture { label: "C0", len: 47_641, sha256: Some(FIXTURE_C0_SHA256), build: fixture_c0 },
-    Fixture { label: "C1", len: 68_881, sha256: Some(FIXTURE_C1_SHA256), build: fixture_c1 },
+    // [C1-N256] Length pinned and MOVED; digest deliberately absent.
+    Fixture { label: "C1", len: 80_577, sha256: None, build: fixture_c1 },
     Fixture { label: "C2", len: 69_761, sha256: Some(FIXTURE_C2_SHA256), build: fixture_c2 },
     // [C3-D12] Length pinned, digest deliberately absent. See the note above.
     Fixture { label: "C3", len: 78_157, sha256: None, build: fixture_c3 },

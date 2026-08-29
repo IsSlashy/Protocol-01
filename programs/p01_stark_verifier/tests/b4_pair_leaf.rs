@@ -60,9 +60,8 @@ fn generic_rejects_every_mismatched_pair_indexing() {
             0xDEADBEEF_u64,
             0xCAFEBABE_u64,
             7,
-            0xA55A_u64,
-            mode,
-        );
+            0xA55A_u64, &p01_stark::compact::c1_deterministic_probe_mask(),
+            mode);
 
         // The proof must still PARSE: the byte layout is unchanged, only the
         // tree layout differs. If it failed to parse we would not be testing
@@ -125,7 +124,7 @@ fn legacy_rejects_every_mismatched_pair_indexing() {
 /// that got the ordering backwards would hash — and it must be rejected.
 #[test]
 fn generic_rejects_wire_level_pair_half_swap() {
-    let data = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4);
+    let data = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4, &p01_stark::compact::c1_deterministic_probe_mask());
     let cfg = &CONFIG_POOL_COMMITMENT;
 
     // Sanity: the untouched proof verifies.
@@ -172,7 +171,7 @@ fn generic_rejects_wire_level_pair_half_swap() {
 /// the pair, and require a rejection for every single index.
 #[test]
 fn every_quotient_segment_is_covered_by_the_pair_leaf() {
-    let data = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4);
+    let data = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4, &p01_stark::compact::c1_deterministic_probe_mask());
     let cfg = &CONFIG_POOL_COMMITMENT;
     let k = cfg.quotient_segments;
     assert!(k > 1, "this test is vacuous at k = 1");
@@ -284,9 +283,8 @@ fn canonical_generic_proof_verifies() {
         0xDEADBEEF_u64,
         0xCAFEBABE_u64,
         7,
-        0xA55A_u64,
-        PairIndexing::Canonical,
-    );
+        0xA55A_u64, &p01_stark::compact::c1_deterministic_probe_mask(),
+        PairIndexing::Canonical);
     let proof = GenericCompactProof::from_bytes(&data.proof_bytes, &CONFIG_POOL_COMMITMENT)
         .expect("parse");
     verify_generic(
@@ -313,14 +311,13 @@ fn canonical_legacy_proof_verifies() {
 /// i.e. nothing in production reaches a probe layout.
 #[test]
 fn default_entry_points_are_canonical() {
-    let a = p01_stark::compact::generate_pool_commitment_proof(9, 8, 7, 6);
+    let a = p01_stark::compact::generate_pool_commitment_proof(9, 8, 7, 6, &p01_stark::compact::c1_deterministic_probe_mask());
     let b = p01_stark::compact::generate_pool_commitment_proof_with_pair_indexing(
         9,
         8,
         7,
-        6,
-        PairIndexing::Canonical,
-    );
+        6, &p01_stark::compact::c1_deterministic_probe_mask(),
+        PairIndexing::Canonical);
     assert_eq!(a.proof_bytes, b.proof_bytes, "generic default must be canonical");
 
     let c = p01_stark::compact::generate_compact_proof(7);
@@ -335,9 +332,13 @@ fn default_entry_points_are_canonical() {
 /// second path is caught. Sizes are computed from the format, not hard-coded.
 #[test]
 fn pair_leaf_wire_size_matches_the_format() {
-    // C1: tw=3, md=11, num_queries=27, lde=2048, final_poly=16, segments=8.
-    let expect = expected_wire_size(3, 11, 27, 2048, 16, 8);
-    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    // C1: tw=3, md=12, num_queries=27, lde=4096, final_poly=16, segments=8.
+    //
+    // [C1-N256 2026-08-29] md 11 -> 12 and lde 2048 -> 4096. The size is still
+    // COMPUTED from the format rather than typed, which is why only the two
+    // geometry arguments move here and no literal does.
+    let expect = expected_wire_size(3, 12, 27, 4096, 16, 8);
+    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask());
     assert_eq!(data.proof_bytes.len(), expect, "C1 wire size drift");
 
     // Pre-B4 the same circuit was 120,665 bytes (measured on this tree at

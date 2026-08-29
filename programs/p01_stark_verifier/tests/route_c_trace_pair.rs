@@ -77,7 +77,7 @@ const C4_ARGS: (u64, u64, u64, u64, u64, u64, u64, u64) =
 
 fn c1_proof(trace_leaf: TraceLeaf) -> p01_stark::compact::GenericCompactProofData {
     let (a, b, c, d) = C1_ARGS;
-    p01_stark::compact::generate_pool_commitment_proof_with_trace_leaf(a, b, c, d, trace_leaf)
+    p01_stark::compact::generate_pool_commitment_proof_with_trace_leaf(a, b, c, d, &p01_stark::compact::c1_deterministic_probe_mask(), trace_leaf)
 }
 
 fn c4_proof(trace_leaf: TraceLeaf) -> p01_stark::compact::GenericCompactProofData {
@@ -1106,8 +1106,7 @@ fn mirror_slot_holds_the_row_at_the_mirror_position() {
             seed.wrapping_mul(0x9E37_79B9_7F4A_7C15),
             seed + 1,
             seed + 2,
-            seed + 3,
-        );
+            seed + 3, &p01_stark::compact::c1_deterministic_probe_mask());
         let (_, row_len) = trace_block_offsets(cfg, &data.proof_bytes, 0);
         let proof = GenericCompactProof::from_bytes(&data.proof_bytes, cfg).expect("parse");
 
@@ -1167,7 +1166,7 @@ fn route_c_wire_sizes_match_the_closed_form() {
         ("C0", 45_433, &CONFIG_SUBSCRIBER_OWNERSHIP,
             p01_stark::compact::generate_compact_proof(42).proof_bytes.len()),
         ("C1", 66_233, &CONFIG_POOL_COMMITMENT,
-            p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11).proof_bytes.len()),
+            p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()).proof_bytes.len()),
         ("C2", 66_681, &CONFIG_BALANCE_PROOF,
             p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)
                 .proof_bytes.len()),

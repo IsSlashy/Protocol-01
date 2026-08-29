@@ -1242,9 +1242,19 @@ struct CuCeiling {
 /// future regression up to 10% invisible.
 ///
 /// Worst absolute is C4 at 924,827 of 1,400,000 (66%); worst phase1+phase2 is
-/// C4 at 1,132,432, still inside one instruction, leaving ~267,000 CU of margin.
-/// Worst phase 2 alone is C4 at 207,605. The smallest phase-1 pin is C0 at
+/// C1 at 1,136,761, still inside one instruction, leaving ~263,000 CU of margin.
+/// Worst phase 2 alone is C1 at 222,020. The smallest phase-1 pin is C0 at
 /// 633,531. CU was never the binding constraint and it still is not.
+///
+/// [C1-N256 2026-08-29] C1 took TWO of those three titles from C4 and not the
+/// third, which is worth stating because I got it wrong first: C1's phase 1 is
+/// 914,741, still BELOW C4's 924,827, so C4 keeps worst-absolute. C1 takes the
+/// worst TOTAL and the worst phase 2, both by margins that come from its dense
+/// periodic columns rather than from its FRI work.
+///
+/// C1 is the one circuit the depth cut could not save: n went 128 -> 256, so
+/// its FRI scales with a doubled LDE and its six dense Horners doubled in
+/// length. C4's numbers did not move.
 ///
 /// [B7 2026-08-04] All thirteen pins moved with the LDE coset. The price is
 /// +34,874 to +79,303 CU per circuit, +6% to +9%, and it buys the end of the
@@ -1339,7 +1349,37 @@ struct CuCeiling {
 ///
 const CU_CEILINGS: [CuCeiling; 8] = [
     CuCeiling { circuit_id: 0, phase1_measured: 633531, phase1_max: 647000, phase2_measured: None,           phase2_max: None },
-    CuCeiling { circuit_id: 1, phase1_measured: 813259, phase1_max: 830000, phase2_measured: Some(124932), phase2_max: Some(128000) },
+    // [C1-N256 2026-08-29] RE-RECORDED for n = 256, and C1 is the ONLY masked
+    // circuit whose phase 1 moved materially. That is the whole difference
+    // between a depth cut and a geometry change, in two numbers.
+    //
+    // phase 1: 813,259 -> 914,741. DEARER BY 101,482 (+12.5%). C3, C6 and C7
+    // all freed their blinding region by cutting a Merkle depth, which left n,
+    // the LDE and the query count untouched -- their phase 1 moved by tens of
+    // CU. C1 had no depth to cut, so n went 128 -> 256 and the LDE 2048 ->
+    // 4096. Phase 1 is FRI and Merkle path verification, so it scales with the
+    // LDE: one more fold layer and one more node on every path, per query, at
+    // 27 queries.
+    //
+    // phase 2: 124,932 -> 222,020. DEARER BY 97,088 (+77.7%). Two causes, not
+    // one: the six existing dense Horners doubled in length (128 -> 256
+    // coefficients), and a seventh column was added.
+    //
+    // ⚠️ C1's PHASE 2 IS THE MOST EXPENSIVE OF ANY CIRCUIT, above C4's 207,605,
+    // and that is the price of C1 having no periodic structure to compress.
+    // C3, C6 and C7 evaluate seven columns from 32-entry stride tables because
+    // their flags are fully 32-periodic. C1's `chain_flag` is a one-hot at row
+    // 63 and its `is_boundary` is three one-hots -- neither has a period, so
+    // all seven of C1's columns are dense and every one is a full-length
+    // Horner.
+    //
+    // Against the 1,400,000 cap the spend still fits in one instruction:
+    // 914,741 + 222,020 = 1,136,761, comparable to C4's 1,132,432.
+    //
+    // ⛔ AND THE WIRE GREW, which no other masked circuit did: 68,881 ->
+    // 80,577 bytes. C3, C6 and C7 all measured identical proof bytes before
+    // and after.
+    CuCeiling { circuit_id: 1, phase1_measured: 914741, phase1_max: 934000, phase2_measured: Some(222020), phase2_max: Some(227000) },
     // [BIND-C2C4 2026-08-03] C2 and C4 phase-2 re-pinned UPWARD. The cause is the
     // public-input boundary fold: `verify_deep_ali_circuit_2` and `_4` now
     // reconstruct the boundary term of `Q` at `z` and fold it into the DEEP
@@ -1774,7 +1814,17 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 48] = [
+const PROSE_FIGURES: [(u64, &str); 54] = [
+    // [C1-N256 2026-08-29] C1's wire size on both sides of the geometry change.
+    // Not CU pins, so no constant here produces them; they live in
+    // `stark/src/compact.rs::test_wire_size_pool_commitment_circuit_1`.
+    (68_881, "C1's PRE-n256 proof size, quoted beside the 80,577 that replaced it"),
+    (80_577, "C1's measured proof size at n=256 — the only masked circuit whose wire grew"),
+    // [C1-N256 2026-08-29] The BEFORE values on C1's row and the two deltas.
+    (813_259, "the PRE-mask C1 phase-1 pin, quoted beside the 914,741 that replaced it"),
+    (101_482, "CU the n=128->256 geometry change COST in C1 phase 1 — FRI scales with the LDE"),
+    (124_932, "the PRE-mask C1 phase-2 pin, quoted beside the 222,020 that replaced it"),
+    (97_088, "CU it COST in C1 phase 2 — six Horners doubled in length, plus a seventh column"),
     (115_904, "the PRE-mask C3 phase-2 pin, quoted beside the 168,132 that replaced it"),
     // [C3-D12 2026-08-29] The BEFORE values on C3's row; the AFTER values are the
     // constants themselves.
@@ -1839,7 +1889,7 @@ const PROSE_FIGURES: [(u64, &str); 48] = [
     (1_051_138, "the PRE-B7 worst phase1+phase2 total (C4)"),
     (207_220, "the PRE-B7 C4 phase-2 pin"),
     (201_422, "the PRE-B7 C5 phase-2 pin"),
-    (267_000, "cap minus the worst phase1+phase2 total — derived from pins, rounded"),
+    (263_000, "cap minus the worst phase1+phase2 total (C1) — derived from pins, rounded"),
     (34_874, "smallest per-circuit CU delta the coset cost (C0) — provenance, not a pin"),
     (79_303, "largest per-circuit CU delta the coset cost (C3) — provenance, not a pin"),
 ];
@@ -3884,7 +3934,7 @@ fn all_cases() -> Vec<ProofCase> {
 
     // --- C1 pool_commitment -------------------------------------------------
     // Args from `verify.rs::pool_commitment_verify_generic_accepts_honest_proof`.
-    let (p1, ms) = timed(|| p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11));
+    let (p1, ms) = timed(|| p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()));
     cases.push(generic_case(1, "C1 pool_commitment", p1, ms));
 
     // --- C2 balance_proof ---------------------------------------------------
@@ -4291,7 +4341,7 @@ fn cu_budget_verify_uniform_path() {
 
     // Only the five circuits in PROBE_ORDER can go through this path.
     let cases: Vec<(&str, u8, p01_stark::compact::GenericCompactProofData)> = vec![
-        ("C1 pool_commitment", 1, p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11)),
+        ("C1 pool_commitment", 1, p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask())),
         (
             "C3 merkle_path",
             3,
@@ -4771,7 +4821,7 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
         (
             "C1 pool_commitment",
             1,
-            p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11),
+            p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()),
         ),
         (
             "C3 merkle_path",

@@ -49,7 +49,7 @@ fn fixture_c0() -> Vec<u8> {
     p01_stark::compact::generate_compact_proof(42).proof_bytes
 }
 fn fixture_c1() -> Vec<u8> {
-    p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11).proof_bytes
+    p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()).proof_bytes
 }
 fn fixture_c2() -> Vec<u8> {
     p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes

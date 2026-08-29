@@ -3896,7 +3896,7 @@ pub fn verify_deep_ali_circuit_6(
 fn evaluate_transition_at_ood_circuit_1(
     ood_current: &[Felt; 3],
     ood_next: &[Felt; 3],
-    periodic_at_z: &[Felt; 6],
+    periodic_at_z: &[Felt; 7],
     alpha: Felt,
 ) -> Felt {
     let rc0 = periodic_at_z[0];
@@ -3904,11 +3904,11 @@ fn evaluate_transition_at_ood_circuit_1(
     let rc2 = periodic_at_z[2];
     let round_flag = periodic_at_z[3];
     let chain_flag = periodic_at_z[4];
-    let is_boundary = periodic_at_z[5];
+    let _is_boundary = periodic_at_z[5];
+    let nba = periodic_at_z[6];
 
     let one = Felt::ONE;
     let three = Felt::new(3);
-    let not_boundary = one.sub(is_boundary);
 
     // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──
     let s0 = ood_current[0].add(rc0);
@@ -3921,15 +3921,24 @@ fn evaluate_transition_at_ood_circuit_1(
     let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
     let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
 
-    // c_i = not_boundary · (next[i] − current[i] − round_flag · (ro_i − current[i]))
+    // c_i = nba · (next[i] − current[i] − round_flag · (ro_i − current[i]))
+    //
+    // 🚨 `nba`, NOT `one.sub(is_boundary)`. The two agree on every row of the
+    // three hash cycles and differ only across rows 96..255, so the
+    // substitution rejects NO honest proof and passes every existing test —
+    // while re-imposing `next[i] - current[i] = 0` on the 160 blinding rows,
+    // which is the degenerate form that pins each column to a single unknown.
+    //
+    // ⚠️ TWO PERIODIC FACTORS PER LINE, `nba` and `round_flag`, over a degree-7
+    // body. A third takes ce_blowup_factor from 8 to 16.
     let mut cs = [Felt::ZERO; 4];
-    cs[0] = not_boundary.mul(
+    cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_flag.mul(ro0.sub(ood_current[0])))
     );
-    cs[1] = not_boundary.mul(
+    cs[1] = nba.mul(
         ood_next[1].sub(ood_current[1]).sub(round_flag.mul(ro1.sub(ood_current[1])))
     );
-    cs[2] = not_boundary.mul(
+    cs[2] = nba.mul(
         ood_next[2].sub(ood_current[2]).sub(round_flag.mul(ro2.sub(ood_current[2])))
     );
 
@@ -3967,20 +3976,29 @@ pub fn verify_deep_ali_circuit_1(
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
     use crate::periodic_consts::{
-        C1_RC0_COEFFS, C1_RC1_COEFFS, C1_RC2_COEFFS,
+        C1_NOT_BOUNDARY_ACTIVE_COEFFS, C1_RC0_COEFFS, C1_RC1_COEFFS, C1_RC2_COEFFS,
         C1_ROUND_FLAG_COEFFS, C1_CHAIN_FLAG_COEFFS, C1_IS_BOUNDARY_COEFFS,
     };
 
     let z = proof.ood_z;
 
-    // Evaluate the 6 periodic columns at z via Horner (~128 muls each).
-    let periodic_at_z: [Felt; 6] = [
+    // Evaluate the periodic columns at z via Horner (~256 muls each at n=256).
+    // [C1-N256] SEVEN columns. The appended one is `not_boundary_active`, the
+    // gate that switches every transition off across rows 96..255.
+    //
+    // ⛔ RETURNING SIX WOULD BE A SILENT PRIVACY REGRESSION. It rejects no
+    // honest proof: drop slot 6 and the verifier re-imposes
+    // `next[i] - current[i] = 0` on the 160 blinding rows, each column collapses
+    // to one unknown again, and `air_aware_recovery_c1.rs` recovers all four
+    // private inputs.
+    let periodic_at_z: [Felt; 7] = [
         eval_periodic_at_z(&C1_RC0_COEFFS, z),
         eval_periodic_at_z(&C1_RC1_COEFFS, z),
         eval_periodic_at_z(&C1_RC2_COEFFS, z),
         eval_periodic_at_z(&C1_ROUND_FLAG_COEFFS, z),
         eval_periodic_at_z(&C1_CHAIN_FLAG_COEFFS, z),
         eval_periodic_at_z(&C1_IS_BOUNDARY_COEFFS, z),
+        eval_periodic_at_z(&C1_NOT_BOUNDARY_ACTIVE_COEFFS, z),
     ];
 
     // Collect OOD trace values. Circuit 1 is width-3.
@@ -4001,9 +4019,12 @@ pub fn verify_deep_ali_circuit_1(
     );
 
     // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 128.
-    const TRACE_LENGTH_C1: usize = 128;
+    // [C1-N256] 128 -> 256. `quotient_segments` stays 8 and rho stays 1/16;
+    // both are scale-invariant in n. See CONFIG_POOL_COMMITMENT.
+    const TRACE_LENGTH_C1: usize = 256;
     let z_d = vanishing_poly(z, TRACE_LENGTH_C1);
-    let g = Felt::new(GENERATOR_128);
+    // GENERATOR_256 already existed, carried as dead code. No new constant.
+    let g = Felt::new(GENERATOR_256);
     let last_row_x = g.exp((TRACE_LENGTH_C1 - 1) as u64);
     let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
     let z_minus_last = z.add(neg_last);
@@ -6677,8 +6698,7 @@ mod merkle_update_e2e {
     #[test]
     fn pool_commitment_verify_generic_accepts_honest_proof() {
         let proof_data = p01_stark::compact::generate_pool_commitment_proof(
-            42u64, 17u64, 7u64, 11u64,
-        );
+            42u64, 17u64, 7u64, 11u64, &p01_stark::compact::c1_deterministic_probe_mask());
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -6698,8 +6718,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_pool_commitment_proof(
-            42u64, 17u64, 7u64, 11u64,
-        );
+            42u64, 17u64, 7u64, 11u64, &p01_stark::compact::c1_deterministic_probe_mask());
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -6719,8 +6738,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_pool_commitment_proof(
-            1u64, 2u64, 3u64, 4u64,
-        );
+            1u64, 2u64, 3u64, 4u64, &p01_stark::compact::c1_deterministic_probe_mask());
 
         let mut tampered = proof_data.proof_bytes.clone();
         tampered[64] ^= 0x01;
@@ -6744,8 +6762,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_pool_commitment_proof(
-            5u64, 6u64, 7u64, 8u64,
-        );
+            5u64, 6u64, 7u64, 8u64, &p01_stark::compact::c1_deterministic_probe_mask());
 
         let mut tampered = proof_data.proof_bytes.clone();
         tampered[120] ^= 0x02;
@@ -6769,8 +6786,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_pool_commitment_proof(
-            9u64, 10u64, 11u64, 12u64,
-        );
+            9u64, 10u64, 11u64, 12u64, &p01_stark::compact::c1_deterministic_probe_mask());
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7664,7 +7680,7 @@ mod merkle_update_e2e {
             &crate::compact_proof::CONFIG_POOL_COMMITMENT,
             // `cycle < 3`: rows 96..=127 are the inactive tail.
             Some(96),
-            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()),
             verify_constraints_pool_commitment,
         );
     }
@@ -7930,7 +7946,7 @@ mod merkle_update_e2e {
             1,
             &crate::compact_proof::CONFIG_POOL_COMMITMENT,
             8,
-            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()),
         );
     }
 
@@ -8174,9 +8190,9 @@ mod merkle_update_e2e {
             2,
             16,
             |s, idx, v| {
-                p01_stark::compact::generate_pool_commitment_proof_claiming(42 + s, 17, 7, 11, idx, v)
+                p01_stark::compact::generate_pool_commitment_proof_claiming(42 + s, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask(), idx, v)
             },
-            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11),
+            |s| p01_stark::compact::generate_pool_commitment_proof(42 + s, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()),
             |p, pi| verify_deep_ali_circuit_1(p, pi),
         );
     }
@@ -8400,7 +8416,7 @@ mod grinding_enforcement {
     /// GENERIC path (`derive_query_positions_generic`, circuits 1..=6).
     #[test]
     fn the_generic_grinding_call_site_enforces_the_whole_constant() {
-        let pd = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4);
+        let pd = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4, &p01_stark::compact::c1_deterministic_probe_mask());
         let cfg = get_circuit_config(pd.circuit_id).expect("C1 config");
         let proof =
             GenericCompactProof::from_bytes(&pd.proof_bytes, cfg).expect("honest proof parses");

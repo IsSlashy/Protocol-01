@@ -35,10 +35,68 @@ use crate::poseidon;
 // ============================================================================
 
 pub const TRACE_WIDTH: usize = 3;
-pub const TRACE_LENGTH: usize = 128;
+
+/// CHANGED 128 -> 256 on 2026-08-29, and C1 is the one circuit where the DEPTH
+/// TRICK DOES NOT WORK.
+///
+/// C3, C6 and C7 all freed their blinding region by cutting a Merkle depth,
+/// which cost nothing because `next_pow2` absorbed it. C1 has no depth to cut:
+/// its three hash cycles occupy rows 0..95 of a 128-row trace, leaving 32 free
+/// rows against `R = 4 * 27 + 2 = 110` published openings per column. There is
+/// no arrangement of 128 rows that yields 110 free ones while a 96-row witness
+/// is present.
+///
+/// So the geometry moves instead: n 128 -> 256, LDE 2048 -> 4096.
+///
+/// ⚠️ THIS ONE IS NOT FREE, unlike the depth cuts. Measured consequences:
+///   - the wire grows 68,881 -> 80,577 bytes (+11,696), so chunk uploads go
+///     69 -> 81 transactions;
+///   - `num_fri_layers` goes 6 -> 7, which the parser checks, so old and new
+///     C1 proofs are mutually unparseable -- a hard wire break in both
+///     directions;
+///   - conjectured soundness drops 50 -> 48 bits, because the field floor is
+///     `64 - log2(8n + w+k+1 + folds*lde)` and the LDE grew. The unconditional
+///     column stays at 46.
+///
+/// ✅ What does NOT move, verified rather than assumed: `quotient_segments`
+/// stays 8 (`ceil((8n-7)/n) = 8` for any n, and the double-sided assert in
+/// `segment_quotient_poly` measures it), rho stays 1/16, and
+/// `fri_final_poly_degree_bound` stays 1. No new domain-generator constants are
+/// needed either: 256 and 4096 are already listed in the verifier's tables,
+/// because C4 uses 4096 already.
+pub const TRACE_LENGTH: usize = 256;
+
 pub const HASH_CYCLE_LEN: usize = 32;
 pub const NUM_ROUNDS: usize = 30;
 pub const NUM_HASH_CYCLES: usize = 3;
+
+/// First trace row free on every one of the three columns.
+///
+/// The witness occupies exactly three hash cycles and not one row more, so this
+/// is `NUM_HASH_CYCLES * HASH_CYCLE_LEN` and moves with them.
+pub const FIRST_FREE_ROW: usize = NUM_HASH_CYCLES * HASH_CYCLE_LEN; // 96
+
+/// Blinding positions per column.
+///
+/// ```text
+///   MASK_ROWS = 256 - 96 = 160
+///   R         = 4 * 27 + 2 = 110      (C1 ships 27 queries, not 22)
+///   160 > 110, margin 50.
+///
+///   n = 128 -> 32  free  < 110   <- before this change: NOT zero-knowledge
+///   n = 256 -> 160 free  > 110   margin 50   <- chosen
+/// ```
+///
+/// 🚨 THE OLD TAIL WAS NOT FREE, IT WAS FORCED. `build_pool_commitment_trace`
+/// used to fill rows 96..127 by copying row 95, and with the periodic flags at
+/// zero the Poseidon constraints degenerate to `next[i] - current[i] = 0`,
+/// which pins each column constant across the whole tail. That is ONE unknown
+/// per column, not 32, and `stark/tests/air_aware_recovery_c1.rs` turns it into
+/// 35 linear equalities and solves for all four private inputs.
+pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 160
+
+/// Mask elements `build_pool_commitment_trace` requires.
+pub const MASK_LEN: usize = MASK_ROWS * TRACE_WIDTH; // 480
 
 /// Number of transition constraints in the pool-commitment AIR.
 ///
@@ -49,8 +107,21 @@ pub const POOL_COMMITMENT_NUM_CONSTRAINTS: usize = 4;
 
 /// Number of periodic columns.
 ///
-/// Layout: `[rc0, rc1, rc2, round_flag, chain_flag, is_boundary]`.
-pub const POOL_COMMITMENT_NUM_PERIODIC: usize = 6;
+/// Layout: `[rc0, rc1, rc2, round_flag, chain_flag, is_boundary,
+/// not_boundary_active]`.
+///
+/// 6 -> 7 on 2026-08-29. ORDER IS FROZEN - the RLC uses `alpha^i` and the
+/// coefficient emitter indexes positionally. Append only, never insert.
+///
+/// ⚠️ ONE NEW COLUMN, NOT TWO. C3, C6 and C7 each gained `active` AND
+/// `not_boundary_active`, because they have gates that need `active` on its own
+/// (`hash_start`, `is_boundary`, `is_interior`). C1 has only four constraints:
+/// three Poseidon rows already gated by `not_boundary`, and one chain
+/// constraint whose `chain_flag` is a ONE-HOT at row 63, deep inside the
+/// witness region and therefore already zero everywhere the mask lives. So the
+/// pre-multiplied column alone suffices, and adding a second would be dead
+/// rodata.
+pub const POOL_COMMITMENT_NUM_PERIODIC: usize = 7;
 
 // ============================================================================
 // Public inputs
@@ -194,7 +265,46 @@ pub fn build_pool_commitment_periodic_columns(trace_length: usize) -> Vec<Vec<Ba
         is_boundary[cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1] = BaseElement::ONE;
     }
 
-    vec![rc0, rc1, rc2, round_flag, chain_flag, is_boundary]
+    // -- APPENDED 2026-08-29: the gate that makes C1 zero-knowledge --
+    //
+    // `not_boundary_active` is `active` pre-multiplied with `not_boundary`. It
+    // is a SEPARATE COLUMN rather than a product formed in the constraint body
+    // ON PURPOSE: the degree-7 Poseidon constraints may carry exactly TWO
+    // periodic factors, and they already spend both on `not_boundary` and
+    // `round_flag`. A third makes degree_bound = 7 + 3 - 1 = 9, whose
+    // next_power_of_two is 16, so ce_blowup_factor goes 8 -> 16 and the whole
+    // proof structure changes with it. Substituting keeps the count at two.
+    //
+    // THE BOUND IS `FIRST_FREE_ROW - 1`, NOT `FIRST_FREE_ROW`.
+    //
+    // These are TRANSITION constraints: the one at row i reads row i+1. Row 95
+    // is the last witness row, so a gate left on there would constrain the
+    // 95 -> 96 transition, i.e. demand a relationship between real state and
+    // the first masked row.
+    //
+    // ⚠️ FOR C1 SPECIFICALLY THAT BOUND IS BELT AND BRACES, and it is worth
+    // saying why rather than copying it blindly: `is_boundary[95] = 1` already
+    // zeroes `not_boundary` at row 95, so the Poseidon constraints are off
+    // there whichever bound is used. The `-1` is kept for consistency with C3,
+    // C6 and C7, and because it stays correct if `is_boundary` ever stops
+    // covering that row. C3/C6/C7 genuinely need it -- their carry constraints
+    // fire AT the boundary.
+    let mut not_boundary_active = vec![BaseElement::ZERO; tl];
+    for row in 0..(FIRST_FREE_ROW - 1) {
+        if row % HASH_CYCLE_LEN != HASH_CYCLE_LEN - 1 {
+            not_boundary_active[row] = BaseElement::ONE;
+        }
+    }
+
+    vec![
+        rc0,                 // 0
+        rc1,                 // 1
+        rc2,                 // 2
+        round_flag,          // 3
+        chain_flag,          // 4
+        is_boundary,         // 5
+        not_boundary_active, // 6  APPENDED
+    ]
 }
 
 /// Standalone evaluator for circuit 1 transition constraints.
@@ -220,7 +330,12 @@ pub fn evaluate_pool_commitment_transition<E: FieldElement>(
     let rc2 = periodic[2];
     let round_flag = periodic[3];
     let chain_flag = periodic[4];
-    let is_boundary = periodic[5];
+    // `is_boundary` is still read: `nba` replaced its only USE in the Poseidon
+    // gate, but the binding stays so the layout comment above matches the code
+    // and so a future constraint can reach for the ungated form deliberately
+    // rather than by reconstructing it.
+    let _is_boundary = periodic[5];
+    let nba = periodic[6];
 
     // ── Poseidon round (cols 0-2) ──
     let s0 = current[0] + rc0;
@@ -236,11 +351,21 @@ pub fn evaluate_pool_commitment_transition<E: FieldElement>(
     let ro1 = s0_7 + three * s1_7 + s2_7;
     let ro2 = s0_7 + s1_7 + three * s2_7;
 
-    // Gate by (1 - is_boundary) to allow free transitions at hash cycle boundaries.
-    let not_boundary = E::ONE - is_boundary;
-    result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
-    result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
-    result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
+    // Gated by `not_boundary_active`, which is `not_boundary` AND `active`.
+    //
+    // 🚨 `E::ONE - is_boundary` MUST NOT COME BACK HERE. It and `nba` agree on
+    // every row of the three hash cycles and differ only across rows 96..255 --
+    // so the substitution rejects NO honest proof, passes every existing test,
+    // and silently re-imposes `next[i] - current[i] = 0` on the 160 blinding
+    // rows. That degenerate form is exactly what pins each column to a single
+    // unknown, and it is what `stark/tests/air_aware_recovery_c1.rs` solves.
+    //
+    // ⚠️ COUNT THE PERIODIC FACTORS BEFORE EDITING. Each of these three lines
+    // carries exactly TWO, `nba` and `round_flag`, over a degree-7 body. A
+    // third takes ce_blowup_factor from 8 to 16.
+    result[0] = nba * (next[0] - current[0] - round_flag * (ro0 - current[0]));
+    result[1] = nba * (next[1] - current[1] - round_flag * (ro1 - current[1]));
+    result[2] = nba * (next[2] - current[2] - round_flag * (ro2 - current[2]));
 
     // ── Chain: epoch_hash → cycle 2 right input ──
     // At row 63 (end of cycle 1): next[1] at row 64 should = current[0] at row 63 (epoch_hash).
@@ -265,7 +390,14 @@ pub fn build_pool_commitment_trace(
     secret: BaseElement,
     deposit_epoch: BaseElement,
     token_mint: BaseElement,
+    mask: &[BaseElement],
 ) -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement) {
+    assert_eq!(
+        mask.len(),
+        MASK_LEN,
+        "C1 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x {TRACE_WIDTH} columns), got {}",
+        mask.len(),
+    );
     let mut trace = vec![vec![BaseElement::ZERO; TRACE_LENGTH]; TRACE_WIDTH];
 
     let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
@@ -328,12 +460,24 @@ pub fn build_pool_commitment_trace(
     // Cycle 2: commitment = Poseidon(nullifier, epoch_hash)
     let commitment = run_hash_cycle(&mut trace, 2, nullifier, epoch_hash);
 
-    // Padding rows 96-127: copy last state
-    let last = [trace[0][95], trace[1][95], trace[2][95]];
-    for row in 96..TRACE_LENGTH {
-        trace[0][row] = last[0];
-        trace[1][row] = last[1];
-        trace[2][row] = last[2];
+    // -- THE BLINDING REGION, 2026-08-29 --
+    //
+    // 🚨 WHAT THIS REPLACES IS THE ENTIRE DEFECT, and the old comment said it
+    // out loud: "Padding rows 96-127: copy last state". Those rows looked free
+    // and were not -- they were a FUNCTION of the witness, and each column
+    // contributed ONE unknown across the whole tail instead of one per row.
+    //
+    // `air_aware_recovery_c1.rs` turns exactly that into 35 linear equalities,
+    // collapses 128 unknowns per column to 93 effective ones against 110
+    // published openings, and recovers all four private inputs in closed form.
+    //
+    // Fresh uniform values make each of the 160 rows its own unknown, so the
+    // count runs the other way: 160 * 3 unknowns against 110 openings.
+    for row in FIRST_FREE_ROW..TRACE_LENGTH {
+        let base = (row - FIRST_FREE_ROW) * TRACE_WIDTH;
+        for col in 0..TRACE_WIDTH {
+            trace[col][row] = mask[base + col];
+        }
     }
 
     (trace, nullifier, commitment)
@@ -355,6 +499,26 @@ pub fn compute_pool_values(
 // ============================================================================
 // Tests
 // ============================================================================
+
+
+/// A deterministic mask for the tests in this file.
+///
+/// Adequate for exercising the TRACE SHAPE, and inadequate for any secrecy
+/// claim: the blinding region only hides if its values are unpredictable. The
+/// shipping path draws from `getrandom` inside the wasm entry and refuses to
+/// build without a CSPRNG.
+#[cfg(test)]
+fn deterministic_test_mask() -> Vec<BaseElement> {
+    let mut z: u64 = 0xC1_5EED_0002;
+    (0..MASK_LEN)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
+        })
+        .collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -381,7 +545,7 @@ mod tests {
         let mint = BaseElement::new(444);
 
         let (expected_null, expected_commit) = compute_pool_values(np, secret, epoch, mint);
-        let (trace, null, commit) = build_pool_commitment_trace(np, secret, epoch, mint);
+        let (trace, null, commit) = build_pool_commitment_trace(np, secret, epoch, mint, &deterministic_test_mask());
 
         assert_eq!(null, expected_null);
         assert_eq!(commit, expected_commit);
@@ -398,7 +562,7 @@ mod tests {
         let epoch = BaseElement::new(333);
         let mint = BaseElement::new(444);
 
-        let (trace, nullifier, _) = build_pool_commitment_trace(np, secret, epoch, mint);
+        let (trace, nullifier, _) = build_pool_commitment_trace(np, secret, epoch, mint, &deterministic_test_mask());
 
         // Cycle 2 start: col[0] = nullifier
         assert_eq!(trace[0][64], nullifier);
@@ -436,7 +600,7 @@ mod tests {
         let epoch = BaseElement::new(333);
         let mint = BaseElement::new(444);
 
-        let (trace, nullifier, commitment) = build_pool_commitment_trace(np, secret, epoch, mint);
+        let (trace, nullifier, commitment) = build_pool_commitment_trace(np, secret, epoch, mint, &deterministic_test_mask());
 
         let pub_inputs = DenominatedPoolPublicInputs { nullifier, commitment };
 
@@ -456,7 +620,7 @@ mod tests {
         let epoch = BaseElement::new(333);
         let mint = BaseElement::new(444);
 
-        let (trace, _, commitment) = build_pool_commitment_trace(np, secret, epoch, mint);
+        let (trace, _, commitment) = build_pool_commitment_trace(np, secret, epoch, mint, &deterministic_test_mask());
 
         let wrong_pub_inputs = DenominatedPoolPublicInputs {
             nullifier: BaseElement::new(999),

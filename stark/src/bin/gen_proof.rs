@@ -19,7 +19,23 @@ fn main() {
             let epoch: u64 = args[4].parse().expect("Invalid epoch");
             let mint: u64 = args[5].parse().expect("Invalid mint");
 
-            let proof = p01_stark::compact::generate_pool_commitment_proof(np, secret, epoch, mint);
+            // The C1 blinding region. Same caveat as the other arms: a
+            // deterministic xorshift is adequate for generating a proof to
+            // inspect and INADEQUATE for anything whose secrecy matters.
+            let mask: Vec<u64> = {
+                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
+                (0..p01_stark::air::denominated_pool::MASK_LEN)
+                    .map(|_| {
+                        z ^= z << 13;
+                        z ^= z >> 7;
+                        z ^= z << 17;
+                        z % 0xFFFF_FFFF_0000_0001
+                    })
+                    .collect()
+            };
+            let proof = p01_stark::compact::generate_pool_commitment_proof(
+                np, secret, epoch, mint, &mask,
+            );
             println!("{{");
             println!("  \"circuit_id\": {},", proof.circuit_id);
             println!("  \"public_inputs\": [{}, {}],", proof.public_inputs[0], proof.public_inputs[1]);

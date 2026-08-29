@@ -146,16 +146,6 @@ const FIXTURES = [
     drive: () => [42n],
   },
   {
-    label: 'C1 pool_commitment',
-    bytes: 68_881,
-    bytesPreB2: 65_801,
-    b2: 'b41897fa3cb7b1f091e33fa89961d94124f56b3f944454e0a3f6b139487302ed',
-    b1: '935d918c0a6f06691b24568de75fc174586e02c09dc0ac27f2f14537bdef4e9b',
-    preB1: 'df52ee3c7047442813b6d9b844cc8e4d260cff8ed70af603250e006b914d961c',
-    entry: 'generate_pool_commitment_stark_proof',
-    drive: () => [42n, 17n, 7n, 11n],
-  },
-  {
     label: 'C2 balance_proof',
     bytes: 69_761,
     bytesPreB2: 66_681,
@@ -173,16 +163,6 @@ const FIXTURES = [
     preB1: '5171c80e65ba6ed63c0b5a58f58b0bad11a060a60445be483f797d4777cc7d33',
     entry: 'generate_balance_stark_proof',
     drive: () => [42n, 1000n, 777n, 999n],
-  },
-  {
-    label: 'C3 merkle_path',
-    bytes: 78_157,
-    bytesPreB2: 75_637,
-    b2: '86a572a2dbe86446ac46457de930001d0aa620db8b70a42b2fdd6f8afb1f4aca',
-    b1: '2d97f56ffc3157fe7c644679d2945130efed8ea39c890a24c6c16022e78d5d9c',
-    preB1: '0db183b6a257d03b15bd6439ff0ea554b7006dd134a3ccd6f3f6433b971c6bf3',
-    entry: 'generate_merkle_path_stark_proof',
-    drive: (w) => [777n, ...w.str(csv(15, (i) => 1000 + i)), ...w.str(csv(15, (i) => i % 2))],
   },
   {
     label: 'C4 confidential_balance',
@@ -207,16 +187,6 @@ const FIXTURES = [
     preB1: '373f74ccff5a6a1ff5cbbb284f670e1df66f6909ca5c7eb46d78aa872a5ff574',
     entry: 'generate_transfer_stark_proof',
     drive: () => [13n, 500n, 77n, 400n, 88n, 100n, 150n, 1234n, 555n, 65n, 2222n, 333n, 50n],
-  },
-  {
-    label: 'C6 merkle_update',
-    bytes: 81_037,
-    bytesPreB2: 78_517,
-    b2: '65497bd9d2b35feefb285101353d5b3485e27e00c2985bfbd3d20cb80196e47a',
-    b1: '8e1166f5d08bd948bc70a407d9261d6b88c1de5b257c4545918d9c36d94524fc',
-    preB1: '8f815c4c3c09fb141d6eb256a66e4fda612624c1af59971c0c28a40dd4c408a2',
-    entry: 'generate_merkle_update_stark_proof',
-    drive: (w) => [111n, 222n, ...w.str(csv(15, (i) => 100 + i * 13)), ...w.str(csv(15, (i) => i % 2))],
   },
 ];
 
@@ -255,8 +225,33 @@ const HEX64 = /^[0-9a-f]{64}$/;
  */
 export function fixtureTableProblem() {
   const lines = [];
-  if (FIXTURES.length !== 7) {
-    lines.push(`  the table has ${FIXTURES.length} circuits; all 7 shipping circuits must be driven`);
+  // 🚨 FOUR, NOT SEVEN, AND THE THREE THAT LEFT ARE NAMED SO NOBODY PUTS THEM
+  // BACK. C1, C3 and C6 joined C7 as MASKED circuits on 2026-08-29: each draws
+  // a fresh CSPRNG blinding region per proof and refuses to build without one,
+  // so two proofs of the same witness are different bytes by construction.
+  //
+  // ⛔ A DIGEST FIXTURE FOR THEM CANNOT EXIST. Re-adding one could only be made
+  // to pass by removing the masking, which is the underdetermination the whole
+  // privacy argument rests on — the change would look like a fixed test and be
+  // a privacy regression.
+  //
+  // The classifier does not lose its job. Its purpose is to separate proof-
+  // format GENERATIONS (b2 / b1 / pre-B1), and that is a property of the wire
+  // layout, which C0, C2, C4 and C5 exhibit identically. Four reproducible
+  // circuits still pin all three generations; a blob mixing generations still
+  // refuses to classify.
+  //
+  // ⚠️ What IS lost is per-circuit coverage: a blob whose C1 path alone
+  // regressed would classify clean here. That gap is covered by
+  // `wireFormat.test.ts`, which pins C1/C3/C6/C7 by LENGTH and by the freshness
+  // assertion, and by the Rust fixture table in `b1_deep_binding.rs`.
+  const EXPECTED_FIXTURES = 4;
+  if (FIXTURES.length !== EXPECTED_FIXTURES) {
+    lines.push(
+      `  the table has ${FIXTURES.length} circuits; the ${EXPECTED_FIXTURES} reproducible ` +
+      `shipping circuits (C0, C2, C4, C5) must be driven. C1, C3, C6 and C7 are masked ` +
+      `and cannot carry a digest fixture — see the note above.`,
+    );
   }
   for (const f of FIXTURES) {
     if (!HEX64.test(f.b2) || !HEX64.test(f.b1) || !HEX64.test(f.preB1)) {

@@ -117,7 +117,7 @@ fn recorded_proof_sizes_hold() {
     // (81,037) despite identical width, length, blowup and query count, because
     // `fri_final_poly_size = 32` drops one committed FRI layer.
     const RECORDED: [usize; 8] =
-        [47_641, 68_881, 69_761, 78_157, 81_457, 78_877, 81_037, 77_965];
+        [47_641, 80_577, 69_761, 78_157, 81_457, 78_877, 81_037, 77_965];
     let proofs = all_genuine();
     let mut measured = [0usize; 8];
     for (i, p) in proofs.iter().enumerate() {

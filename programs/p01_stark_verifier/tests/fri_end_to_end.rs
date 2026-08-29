@@ -103,7 +103,7 @@ fn final_poly_rejects_non_canonical_coefficients() {
     }
 
     // Generic path (C1).
-    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444);
+    let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask());
     let config = &CONFIG_POOL_COMMITMENT;
     let (off, fps) = final_poly_offset(&data.proof_bytes, config.trace_width, config.quotient_segments);
     assert_eq!(fps, config.fri_final_poly_size);
@@ -168,8 +168,7 @@ fn final_poly_rejects_non_canonical_coefficients() {
 #[test]
 fn generic_pool_commitment_roundtrip() {
     let data = p01_stark::compact::generate_pool_commitment_proof(
-        0xDEADBEEF_u64, 0xCAFEBABE_u64, 7, 0xA55A_u64,
-    );
+        0xDEADBEEF_u64, 0xCAFEBABE_u64, 7, 0xA55A_u64, &p01_stark::compact::c1_deterministic_probe_mask());
     let config = &CONFIG_POOL_COMMITMENT;
     let proof = GenericCompactProof::from_bytes(&data.proof_bytes, config)
         .expect("generic proof should parse");
@@ -179,7 +178,7 @@ fn generic_pool_commitment_roundtrip() {
 
 #[test]
 fn config_lookup_matches_prover_circuit_id() {
-    let data = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4);
+    let data = p01_stark::compact::generate_pool_commitment_proof(1, 2, 3, 4, &p01_stark::compact::c1_deterministic_probe_mask());
     let config = get_circuit_config(data.circuit_id).expect("config for circuit id");
     assert_eq!(config.lde_size, CONFIG_POOL_COMMITMENT.lde_size);
 }
