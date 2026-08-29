@@ -73,6 +73,7 @@ import {
 
 // STARK WASM prover singleton.
 import { starkProver } from './starkProver';
+import type { StoredMerklePath } from './unshieldFromPath';
 
 // NOTE: `./noteCrypto` (post-quantum note encryption) and
 // `./relayEphemeralRecovery` (deterministic ephemeral + crash breadcrumbs) used
@@ -2558,24 +2559,63 @@ export async function prepareUnshieldV4(
   poolConfig: PoolConfig,
   connection: Connection,
   onProgress?: (step: string) => void,
+  storedPath?: StoredMerklePath,
 ): Promise<PrepareUnshieldV4Result> {
   const { starkProver: prover } = await import('./starkProver');
 
-  onProgress?.('Fetching pool leaves from on-chain events...');
-  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
-    connection,
-    poolConfig.poolPDA,
-    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
-  );
-  if (missing.length > 0) {
-    console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+  // ── The stored-path fast path. ADDED 2026-08-29. ──────────────────────────
+  //
+  // 🚨 THIS FUNCTION'S ABSENCE OF A STORED-PATH ARM WAS THE REASON HALF THE
+  // FALLBACKS TO v3 HAPPENED, and it was a missing feature, not a privacy
+  // decision. `poolHandlers.ts` said so in as many words: "prepareUnshieldV4
+  // has no storedPath fast path, so a note whose root has aged out of the
+  // pool's 100-root ring still needs the v3 rebuild", and, two lines earlier,
+  // "a Merkle path the rebuild could not place in the pool's root ring is a
+  // note the STORED PATH MAY STILL SPEND".
+  //
+  // So a note carrying its own witness was routed to the pair that REPUBLISHES
+  // ITS COMMITMENT, purely because this function never looked at the witness.
+  // Every note the pre-deposited inventory hands a buyer carries
+  // `merklePath: 'stored'` (measured 2026-08-29 on leaf 86), so this was the
+  // common case and not the corner one.
+  //
+  // The stored path is the FIRST CANDIDATE, not a bypass: it flows into the
+  // same pre-flight below, which checks the root against the pool's current
+  // and historical ring. If it is stale the function falls through to the
+  // rebuild exactly as before, so a corrupt or aged stored path costs one
+  // account read and changes nothing else.
+  //
+  // ⛔ It is NOT trusted. `prepareUnshieldFromPath` (the v3 twin) takes the same
+  // shape and states the same reason: "if the path were stale or corrupted the
+  // on-chain root check would fail after we had already paid for the upload".
+  let merkleResult: ReturnType<typeof buildMerkleProofFromLeavesV3> | null = null;
+
+  if (storedPath && storedPath.pathElements.length >= C7_SUBTREE_DEPTH) {
+    onProgress?.('Using the note\'s own Merkle path...');
+    merkleResult = {
+      pathElements: storedPath.pathElements.map((e) => BigInt(e)),
+      pathIndices: storedPath.pathIndices,
+      root: BigInt(storedPath.root),
+    } as ReturnType<typeof buildMerkleProofFromLeavesV3>;
   }
 
-  onProgress?.('Building Merkle proof from leaf history...');
-  let merkleResult = buildMerkleProofFromLeavesV3({
-    leavesByIndex,
-    targetLeafIndex: receipt.leafIndex,
-  });
+  if (!merkleResult) {
+    onProgress?.('Fetching pool leaves from on-chain events...');
+    const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
+      connection,
+      poolConfig.poolPDA,
+      { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    );
+    if (missing.length > 0) {
+      console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+    }
+
+    onProgress?.('Building Merkle proof from leaf history...');
+    merkleResult = buildMerkleProofFromLeavesV3({
+      leavesByIndex,
+      targetLeafIndex: receipt.leafIndex,
+    });
+  }
 
   // Root pre-flight. A rebuilt root the pool has never published means the
   // proof would be refused at the END of a ~78-chunk upload, so this check
@@ -2590,6 +2630,10 @@ export async function prepareUnshieldV4(
         return bytesEqual(b, parsed.currentRoot) || parsed.historicalRoots.some((r) => bytesEqual(b, r));
       };
       if (!known(merkleResult.root)) {
+        // Reached either because the leaf scan was short, or because a STORED
+        // path has aged out of the ring. Both want the same answer: rebuild
+        // from a wider scan. The stored candidate is discarded here rather than
+        // patched, because a path whose root the pool never had is not a path.
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
         const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
         merkleResult = buildMerkleProofFromLeavesV3({

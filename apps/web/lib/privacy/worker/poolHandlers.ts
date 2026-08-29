@@ -2068,6 +2068,10 @@ async function handlePoolUnshieldPrepare(
         conn,
         candidate.seed,
         onProgress,
+        // The note's own witness, the same value the v3 branch below has always
+        // been handed. Passing it is what stops a stored-path note falling back
+        // to the pair that republishes its commitment.
+        storedPath,
       );
     } catch (err) {
       // ⛔ FALL BACK, OR THIS NOTE CANNOT BE WITHDRAWN FROM THE WEB APP AT ALL.

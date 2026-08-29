@@ -418,6 +418,7 @@ export async function prepareUnshieldJobV4(
   connection: Connection,
   walletSeed: Uint8Array,
   onProgress?: (step: string) => void,
+  storedPath?: StoredMerklePath,
 ): Promise<PreparedUnshieldV4> {
   // Same refusal as `executeUnshield`, same reason, moved to the first moment it
   // can be made. See the long note at that call site: paying the withdrawal back
@@ -484,7 +485,7 @@ export async function prepareUnshieldJobV4(
     throw new Error('This note has already been withdrawn.');
   }
 
-  const prepared = await prepareUnshieldV4(receipt, recipient, poolConfig, connection, onProgress);
+  const prepared = await prepareUnshieldV4(receipt, recipient, poolConfig, connection, onProgress, storedPath);
 
   onProgress?.('Pricing the withdrawal...');
   // ONE buffer. The v3 job adds two rent figures here because the handler reads
