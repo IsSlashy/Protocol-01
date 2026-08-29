@@ -3966,8 +3966,7 @@ fn all_cases() -> Vec<ProofCase> {
     // (value-conserving: 150+65 - 77-88 = 50 = public_amount).
     let (p5, ms) = timed(|| {
         p01_stark::compact::generate_transfer_compact_proof(
-            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-        )
+            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask())
     });
     cases.push(generic_case(5, "C5 transfer", p5, ms));
 
@@ -4351,8 +4350,7 @@ fn cu_budget_verify_uniform_path() {
             "C5 transfer",
             5,
             p01_stark::compact::generate_transfer_compact_proof(
-                13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-            ),
+                13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask()),
         ),
         (
             "C6 merkle_update",
@@ -4835,8 +4833,7 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
             "C5 transfer",
             5,
             p01_stark::compact::generate_transfer_compact_proof(
-                13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-            ),
+                13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask()),
         ),
         (
             "C6 merkle_update",

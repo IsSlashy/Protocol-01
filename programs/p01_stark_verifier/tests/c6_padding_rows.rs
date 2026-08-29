@@ -168,8 +168,7 @@ fn locate_the_c5_rows_that_reject_an_honest_trace() {
         // acc(385) = 50 == public_amount for every witness.
         let data = p01_stark::compact::generate_transfer_compact_proof(
             13 + s, 500 + s * 17, 77 + s, 400 + s * 17, 88 + s, 100, 150 + 2 * s, 1234 + s,
-            555 + s, 65, 2222 + s, 333 + s, 50,
-        );
+            555 + s, 65, 2222 + s, 333 + s, 50, &p01_stark::compact::c5_deterministic_probe_mask());
         let proof = GenericCompactProof::from_bytes(&data.proof_bytes, config).expect("parse");
         let rows: Vec<usize> = proof
             .queries

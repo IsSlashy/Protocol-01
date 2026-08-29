@@ -378,12 +378,29 @@ mod wasm_api {
         out_rand_2: u64,
         public_amount: u64,
     ) -> String {
-        let proof_data = generate_transfer_compact_proof(
+                // [C5-N1024] The blinding region, drawn fresh for THIS proof.
+        //
+        // ⛔ REFUSES RATHER THAN FALLING BACK. Until 2026-08-29 this entry drew
+        // NOTHING — it was the only shipping circuit with no mask at all, which
+        // is why `air_aware_recovery_c5.rs` recovered all four note amounts and
+        // `owner` from one honest proof.
+        let mask = match draw_blinding_mask(crate::air::transfer::MASK_LEN) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C5 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+
+let proof_data = generate_transfer_compact_proof(
             spending_key, token_mint,
             in_amount_1, in_rand_1, in_amount_2, in_rand_2,
             out_amount_1, out_recipient_1, out_rand_1,
             out_amount_2, out_recipient_2, out_rand_2,
             public_amount,
+            &mask
         );
         let proof_hex = proof_data.proof_bytes.iter()
             .map(|b| format!("{:02x}", b))

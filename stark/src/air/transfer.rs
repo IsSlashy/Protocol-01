@@ -69,9 +69,61 @@ use crate::poseidon;
 // ============================================================================
 
 pub const TRACE_WIDTH: usize = 7;
-pub const TRACE_LENGTH: usize = 512;
+
+/// CHANGED 512 -> 1024 on 2026-08-29. C5 is the SECOND circuit that could not
+/// be fixed by a depth cut, and it could not for a different reason from C1's.
+///
+/// C1 ran out of rows: its witness filled 96 of 128 and it needed 110 free.
+/// C5 has 512 rows and its walk ends at 447, so 64 rows LOOK free. They are
+/// not, and the reason is the carry columns:
+///
+///   col 3  `owner`      on every row past 30    — SECRET
+///   col 4  `owner_mint` on every row past 62    — SECRET
+///   col 5  `out2_rm`    on every row past 382   — SECRET
+///   col 6  `acc4`       on every row past 384   — equals public_amount
+///
+/// So there is no contiguous region where all seven columns are free, at ANY
+/// depth. Dropping the two padding cycles frees rows 448..511 = 64 rows against
+/// `R = 4*22 + 2 = 90`, which is 26 short. 14 real hash cycles x 32 = 448 rows
+/// is a floor no rearrangement beats: even at HASH_CYCLE_LEN = 31 it would be
+/// `512 - 434 = 78 < 90`.
+///
+/// ⚠️ I FIRST WROTE THAT CYCLES 14 AND 15 WERE REAL HASHES. They are not --
+/// `run_hash(&mut trace, 14, ZERO, ZERO)` is padding on a public constant. The
+/// conclusion survived the correction and got stronger: the blocker is the
+/// carry columns, which no depth cut touches.
+///
+/// At 1024 the walk still ends at 447 and rows 448..1023 are free: 576 rows,
+/// margin 486.
+pub const TRACE_LENGTH: usize = 1024;
+
 pub const HASH_CYCLE_LEN: usize = 32;
 pub const NUM_ROUNDS: usize = 30;
+
+/// The first cycle carrying no witness. Cycles 0..13 are the real walk.
+pub const FIRST_FREE_CYCLE: usize = 14;
+
+/// First trace row free on every one of the seven columns.
+///
+/// ⚠️ 448, AND THE LAST WITNESS ROW IS 447. `output_commitment_2` is boundary-
+/// asserted at row 446, inside cycle 13 (rows 416..447), so the walk genuinely
+/// ends at 447 and nothing below the mask depends on a padding cycle.
+pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 448
+
+/// Blinding positions per column.
+///
+/// ```text
+///   MASK_ROWS = 1024 - 448 = 576
+///   R         = 4 * 22 + 2 = 90
+///   576 > 90, margin 486.
+///
+///   n =  512 -> 64  free  < 90   <- impossible, see TRACE_LENGTH
+///   n = 1024 -> 576 free  > 90   margin 486   <- chosen
+/// ```
+pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 576
+
+/// Mask elements `build_transfer_trace` requires.
+pub const MASK_LEN: usize = MASK_ROWS * TRACE_WIDTH; // 4032
 
 /// Number of transition constraints in the transfer AIR (circuit 5).
 ///
@@ -82,8 +134,19 @@ pub const TRANSFER_NUM_CONSTRAINTS: usize = 28;
 
 /// Number of periodic columns: rc0, rc1, rc2, round_flag, is_boundary,
 /// 7 direct chain flags, 4 carry-capture flags, 6 carry→right-input flags,
-/// 1 carry-capture-any flag, 4 amount-capture flags, 1 acc-continuity flag.
-pub const TRANSFER_NUM_PERIODIC: usize = 28;
+/// 1 carry-capture-any flag, 4 amount-capture flags, 1 acc-continuity flag,
+/// plus `active` and `not_boundary_active`.
+///
+/// 28 -> 30 on 2026-08-29. ORDER IS FROZEN - the RLC uses `alpha^i` and the
+/// coefficient emitter indexes positionally. Append only, never insert.
+///
+/// ⚠️ TWO NEW COLUMNS HERE, NOT ONE. C1 needed only the pre-multiplied
+/// `not_boundary_active`, because its only gated constraints were three
+/// Poseidon rows already carrying `not_boundary`. C5 has four MORE constraints
+/// to switch off across the mask -- the two carry-continuity rows (11, 13), the
+/// out_rm continuity (22) and the accumulator continuity (27) -- and none of
+/// them is gated by `is_boundary`, so they need `active` on its own.
+pub const TRANSFER_NUM_PERIODIC: usize = 30;
 
 /// Trace rows where the four note amounts sit at col 0 (cycle-start rows).
 pub const ROW_IN_AMOUNT_1: usize = 2 * HASH_CYCLE_LEN;  // 64
@@ -195,7 +258,7 @@ impl Air for TransferAir {
         // + nullifier outputs + output commitment outputs + token_mint inputs
         // + acc(0)=0 (conservation accumulator starts empty)
         // + acc(ROW_ACC_FINAL)=public_amount (conservation relation)
-        let num_assertions = 26;
+        let num_assertions = 24;
         let context = AirContext::new(trace_info, degrees, num_assertions, options);
 
         Self {
@@ -229,8 +292,22 @@ impl Air for TransferAir {
     fn get_assertions(&self) -> Vec<Assertion<Self::BaseField>> {
         let mut assertions = Vec::new();
 
-        // Capacity (col 2) = 0 at start of each of 16 cycles
-        for cycle in 0..16 {
+        // Capacity (col 2) = 0 at start of each of the 14 REAL cycles.
+        //
+        // 🚨 16 -> 14 on 2026-08-29, AND THIS IS A WIRE BREAK IN BOTH
+        // DIRECTIONS. Cycles 14 and 15 started at rows 448 and 480, which are
+        // now inside the blinding region: asserting col 2 == 0 there would
+        // demand a masked cell take a fixed value, which is unsatisfiable with
+        // fresh randomness and would publish a known cell if it were satisfied.
+        //
+        // ⛔ THE ORDER OF THIS LIST IS LOAD-BEARING. `alpha_bnd^j` is indexed by
+        // POSITION, so removing two entries renumbers every one after them:
+        // what was j=16..25 becomes j=14..23. The prover's
+        // `boundary_assertions_for_circuit` and the verifier's
+        // `get_boundary_assertions` hold the same list and must be edited in
+        // the same commit -- an honest proof built against either old list
+        // fails DEEP-ALI against the new one, silently and completely.
+        for cycle in 0..FIRST_FREE_CYCLE {
             assertions.push(Assertion::single(2, cycle * HASH_CYCLE_LEN, BaseElement::ZERO));
         }
 
@@ -324,9 +401,18 @@ pub fn build_transfer_periodic_columns() -> Vec<Vec<BaseElement>> {
         round_flag[pos] = BaseElement::ONE;
     }
 
-    // Boundary flag: period 512
+    // Boundary flag, over the WALK's cycles only.
+    //
+    // [C5-N1024] `0..16` was a literal that happened to equal
+    // `TRACE_LENGTH / HASH_CYCLE_LEN` at 512. At 1024 it would have covered
+    // only the first half of the trace, which is a silent prover/verifier
+    // disagreement rather than a compile error.
+    //
+    // Bounded to the real cycles rather than the whole trace: `is_boundary`'s
+    // only use is inside `not_boundary_active`, which is zero across the mask
+    // anyway, so firing it there would cost a Horner term and mean nothing.
     let mut is_boundary = vec![BaseElement::ZERO; TRACE_LENGTH];
-    for cycle in 0..16 {
+    for cycle in 0..FIRST_FREE_CYCLE {
         let row = cycle * HASH_CYCLE_LEN + HASH_CYCLE_LEN - 1;
         if row < TRACE_LENGTH - 1 {
             is_boundary[row] = BaseElement::ONE;
@@ -377,9 +463,34 @@ pub fn build_transfer_periodic_columns() -> Vec<Vec<BaseElement>> {
     acc_continuity[ROW_OUT_AMOUNT_1] = BaseElement::ZERO;
     acc_continuity[ROW_OUT_AMOUNT_2] = BaseElement::ZERO;
 
+    // -- APPENDED 2026-08-29: the two gates that make C5 zero-knowledge --
+    //
+    // THE BOUND IS `FIRST_FREE_ROW - 1`, NOT `FIRST_FREE_ROW`.
+    //
+    // These are TRANSITION constraints: the one at row i reads row i+1. Row 447
+    // is the last witness row, and `acc_continuity[447] = 1`, so a gate left on
+    // there would demand `mask[448][6] == acc4` -- unsatisfiable with fresh
+    // randomness, and if it were satisfiable it would republish `public_amount`
+    // inside the blinding region. Stopping one row early makes the 447 -> 448
+    // transition entirely free.
+    //
+    // `not_boundary_active` is `active` pre-multiplied with `not_boundary`,
+    // as a SEPARATE column rather than a product in the constraint body: the
+    // degree-7 Poseidon constraints may carry exactly TWO periodic factors, and
+    // they already spend both on `not_boundary` and `round_flag`. A third takes
+    // ce_blowup_factor from 8 to 16.
+    let mut active = vec![BaseElement::ZERO; TRACE_LENGTH];
+    let mut not_boundary_active = vec![BaseElement::ZERO; TRACE_LENGTH];
+    for row in 0..(FIRST_FREE_ROW - 1) {
+        active[row] = BaseElement::ONE;
+        if row % HASH_CYCLE_LEN != HASH_CYCLE_LEN - 1 {
+            not_boundary_active[row] = BaseElement::ONE;
+        }
+    }
+
     vec![
         rc0, rc1, rc2, round_flag,       // 0-3: period 32
-        is_boundary,                      // 4: period 512
+        is_boundary,                      // 4
         chain_0_1, chain_2_3, chain_3_4,  // 5-7
         chain_5_6, chain_6_7,             // 8-9
         chain_9_10, chain_12_13,          // 10-11
@@ -392,6 +503,8 @@ pub fn build_transfer_periodic_columns() -> Vec<Vec<BaseElement>> {
         add_in1, add_in2,                // 23-24
         sub_out1, sub_out2,              // 25-26
         acc_continuity,                  // 27
+        active,                          // 28  APPENDED
+        not_boundary_active,             // 29  APPENDED
     ]
 }
 
@@ -432,8 +545,27 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
     let sub_out1 = periodic[25];
     let sub_out2 = periodic[26];
     let acc_continuity = periodic[27];
+    let active = periodic[28];
+    let nba = periodic[29];
 
-    let not_boundary = E::ONE - is_boundary;
+    // [C5-N1024] Every continuity constraint is pre-multiplied by `active`, and
+    // the Poseidon rows use `nba` instead of `1 - is_boundary`.
+    //
+    // 🚨 `let not_boundary = E::ONE - is_boundary` USED TO STAND HERE AND MUST
+    // NOT COME BACK. It and `nba` agree on every row of the fourteen real
+    // cycles and differ only across rows 448..1023, so the substitution rejects
+    // NO honest proof and passes every existing test -- while re-imposing the
+    // Poseidon rounds on the 576 blinding rows.
+    //
+    // ⚠️ AND THE FOUR CONTINUITY ROWS MATTER MORE HERE THAN IN ANY OTHER
+    // CIRCUIT. `result[11]`, `[13]`, `[22]` and `[27]` say "this carry column
+    // does not change". Left ungated they pin cols 3, 4, 5 and 6 CONSTANT
+    // across the whole mask -- one unknown per column instead of 576 -- which
+    // is exactly the shape `air_aware_recovery_c5.rs` solves for all four note
+    // amounts and for `owner`.
+    //
+    // ⚠️ COUNT THE PERIODIC FACTORS. `result[0..3]` carry `nba` and
+    // `round_flag` over a degree-7 body: two, the maximum.
 
     // ── Poseidon round ──
     let s0 = current[0] + rc0;
@@ -447,9 +579,9 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
     let ro1 = s0_7 + three * s1_7 + s2_7;
     let ro2 = s0_7 + s1_7 + three * s2_7;
 
-    result[0] = not_boundary * (next[0] - current[0] - round_flag * (ro0 - current[0]));
-    result[1] = not_boundary * (next[1] - current[1] - round_flag * (ro1 - current[1]));
-    result[2] = not_boundary * (next[2] - current[2] - round_flag * (ro2 - current[2]));
+    result[0] = nba * (next[0] - current[0] - round_flag * (ro0 - current[0]));
+    result[1] = nba * (next[1] - current[1] - round_flag * (ro1 - current[1]));
+    result[2] = nba * (next[2] - current[2] - round_flag * (ro2 - current[2]));
 
     // ── Direct col-0 chaining ──
     result[3] = chain_0_1 * (next[0] - current[0]);
@@ -462,11 +594,11 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
 
     // ── carry_owner (col 3) ──
     result[10] = capture_owner * (next[3] - current[0]);
-    result[11] = (E::ONE - capture_owner) * (next[3] - current[3]);
+    result[11] = active * (E::ONE - capture_owner) * (next[3] - current[3]);
 
     // ── carry_owner_mint (col 4) ──
     result[12] = capture_om * (next[4] - current[0]);
-    result[13] = (E::ONE - capture_om) * (next[4] - current[4]);
+    result[13] = active * (E::ONE - capture_om) * (next[4] - current[4]);
 
     // ── carry_owner_mint → right input ──
     result[14] = om_to_3 * (next[1] - current[4]);
@@ -483,7 +615,7 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
     result[21] = out2_rm_to_13 * (next[1] - current[5]);
 
     // carry_out_rm continuity (except at capture points)
-    result[22] = (E::ONE - out_rm_capture_any) * (next[5] - current[5]);
+    result[22] = active * (E::ONE - out_rm_capture_any) * (next[5] - current[5]);
 
     // ── Value conservation (col 6 = acc) ──
     // At each amount row the amount sits at current[0]; fold it (signed) into
@@ -498,7 +630,7 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
     result[24] = add_in2 * (next[6] - current[6] + current[0]);
     result[25] = sub_out1 * (next[6] - current[6] - current[0]);
     result[26] = sub_out2 * (next[6] - current[6] - current[0]);
-    result[27] = acc_continuity * (next[6] - current[6]);
+    result[27] = active * acc_continuity * (next[6] - current[6]);
 }
 
 // ============================================================================
@@ -529,7 +661,21 @@ pub fn build_transfer_trace(
     input_2: &TransferInput,
     output_1: &TransferOutput,
     output_2: &TransferOutput,
+    // The blinding region: `MASK_LEN` elements laid out ROW-MAJOR as
+    // `i * TRACE_WIDTH + col`.
+    //
+    // ⛔ REQUIRED, NOT AN `Option`. A default would be a zero-filled or
+    // witness-derived mask, which is exactly the failure this design exists to
+    // prevent, and a caller who has not thought about randomness should not
+    // compile. It MUST be fresh CSPRNG output, redrawn for every proof.
+    mask: &[BaseElement],
 ) -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement, BaseElement, BaseElement, BaseElement, BaseElement) {
+    assert_eq!(
+        mask.len(),
+        MASK_LEN,
+        "C5 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x {TRACE_WIDTH} columns), got {}",
+        mask.len(),
+    );
     let mut trace = vec![vec![BaseElement::ZERO; TRACE_LENGTH]; TRACE_WIDTH];
 
     let rc = &poseidon::constants::ROUND_CONSTANTS_T3;
@@ -609,23 +755,33 @@ pub fn build_transfer_trace(
     let out2_left = run_hash(&mut trace, 12, output_2.amount, output_2.randomness);
     // Cycle 13: output_commitment_2
     let output_commitment_2 = run_hash(&mut trace, 13, out2_left, out2_rm);
-    // Cycles 14-15: padding
-    let _ = run_hash(&mut trace, 14, BaseElement::ZERO, BaseElement::ZERO);
-    let _ = run_hash(&mut trace, 15, BaseElement::ZERO, BaseElement::ZERO);
+    // 🚨 CYCLES 14 AND 15 ARE GONE. They used to run `Poseidon(0, 0)` into rows
+    // 448..511 — padding on a public constant, which is why they were safe to
+    // delete and why they were never the reason C5 lacked a blinding region.
+    // Those rows are now the start of the mask.
 
-    // Fill carry columns
+    // Fill carry columns — ONLY over the witness region.
+    //
+    // 🚨 `0..TRACE_LENGTH` USED TO STAND IN ALL FOUR OF THESE LOOPS, AND THAT
+    // WAS THE LEAK. `owner`, `owner_mint` and `out2_rm` are secrets, and each
+    // was written into every remaining row of its column, so the tail was a
+    // FUNCTION of the witness rather than free. Combined with the continuity
+    // constraints — which say "this column does not change" — each column
+    // contributed ONE unknown across the whole tail instead of one per row,
+    // and `air_aware_recovery_c5.rs` solves that in closed form for all four
+    // note amounts and for `owner`.
     // col 3: carry_owner
-    for row in 0..TRACE_LENGTH {
+    for row in 0..FIRST_FREE_ROW {
         trace[3][row] = if row <= NUM_ROUNDS { BaseElement::ZERO } else { owner };
     }
     // col 4: carry_owner_mint
-    for row in 0..TRACE_LENGTH {
+    for row in 0..FIRST_FREE_ROW {
         trace[4][row] = if row <= HASH_CYCLE_LEN + NUM_ROUNDS { BaseElement::ZERO } else { owner_mint };
     }
     // col 5: carry_out_rm
     let capture1_row = 8 * HASH_CYCLE_LEN + NUM_ROUNDS;
     let capture2_row = 11 * HASH_CYCLE_LEN + NUM_ROUNDS;
-    for row in 0..TRACE_LENGTH {
+    for row in 0..FIRST_FREE_ROW {
         trace[5][row] = if row <= capture1_row {
             BaseElement::ZERO
         } else if row <= capture2_row {
@@ -652,7 +808,7 @@ pub fn build_transfer_trace(
     let acc2 = acc1 - a_in2;
     let acc3 = acc2 + a_out1;
     let acc4 = acc3 + a_out2;
-    for row in 0..TRACE_LENGTH {
+    for row in 0..FIRST_FREE_ROW {
         trace[6][row] = if row <= ROW_IN_AMOUNT_1 {
             BaseElement::ZERO
         } else if row <= ROW_IN_AMOUNT_2 {
@@ -664,6 +820,18 @@ pub fn build_transfer_trace(
         } else {
             acc4
         };
+    }
+
+    // -- THE BLINDING REGION, 2026-08-29 --
+    //
+    // 576 rows x 7 columns of fresh uniform values. Each cell is its own
+    // unknown, so the count runs against the wire instead of with it: 4,032
+    // unknowns against `R = 4*22 + 2 = 90` published openings per column.
+    for row in FIRST_FREE_ROW..TRACE_LENGTH {
+        let base = (row - FIRST_FREE_ROW) * TRACE_WIDTH;
+        for col in 0..TRACE_WIDTH {
+            trace[col][row] = mask[base + col];
+        }
     }
 
     (trace, nullifier_1, nullifier_2, in_commitment_1, in_commitment_2,
@@ -704,6 +872,22 @@ pub fn compute_transfer(
 // Tests
 // ============================================================================
 
+
+/// A deterministic mask for the tests in this file. Adequate for TRACE SHAPE,
+/// inadequate for any secrecy claim. The shipping path draws from `getrandom`.
+#[cfg(test)]
+fn deterministic_test_mask() -> Vec<BaseElement> {
+    let mut z: u64 = 0xC5_5EED_0002;
+    (0..MASK_LEN)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,7 +923,7 @@ mod tests {
         let (expected_n1, expected_n2, _, _, expected_oc1, expected_oc2) =
             compute_transfer(sk, m, &in1, &in2, &out1, &out2);
         let (trace, n1, n2, _, _, oc1, oc2) =
-            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         assert_eq!(n1, expected_n1);
         assert_eq!(n2, expected_n2);
@@ -756,7 +940,7 @@ mod tests {
     #[test]
     fn test_carry_columns() {
         let (sk, m, in1, in2, out1, out2) = test_transfer_data();
-        let (trace, _, _, _, _, _, _) = build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+        let (trace, _, _, _, _, _, _) = build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         let owner = poseidon::hash2(sk, BaseElement::ZERO);
         let owner_mint = poseidon::hash2(owner, m);
@@ -764,7 +948,23 @@ mod tests {
         // carry_owner
         assert_eq!(trace[3][0], BaseElement::ZERO);
         assert_eq!(trace[3][NUM_ROUNDS + 1], owner);
-        assert_eq!(trace[3][511], owner);
+        // [C5-N1024] 447, NOT 511. Row 511 is inside the blinding region now,
+        // and `owner` no longer appears there — that IS the change.
+        assert_eq!(trace[3][FIRST_FREE_ROW - 1], owner);
+
+        // ⛔ AND THE MASK MUST NOT CARRY IT. This is the assertion the old
+        // `trace[3][511] == owner` was hiding: `owner` is the persistent
+        // spender identity, and writing it into every remaining row made the
+        // tail a function of the witness. If a future edit restores the
+        // `0..TRACE_LENGTH` fill, this is what says so.
+        let owner_in_mask = (FIRST_FREE_ROW..TRACE_LENGTH)
+            .filter(|&r| trace[3][r] == owner)
+            .count();
+        assert_eq!(
+            owner_in_mask, 0,
+            "`owner` appears in {owner_in_mask} blinding rows; the carry fill has \
+             escaped the witness region again",
+        );
 
         // carry_owner_mint
         assert_eq!(trace[4][HASH_CYCLE_LEN + NUM_ROUNDS], BaseElement::ZERO);
@@ -774,7 +974,7 @@ mod tests {
     #[test]
     fn test_chaining() {
         let (sk, m, in1, in2, out1, out2) = test_transfer_data();
-        let (trace, _, _, _, _, _, _) = build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+        let (trace, _, _, _, _, _, _) = build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         let owner = poseidon::hash2(sk, BaseElement::ZERO);
         let owner_mint = poseidon::hash2(owner, m);
@@ -795,7 +995,7 @@ mod tests {
 
         let (sk, m, in1, in2, out1, out2) = test_transfer_data();
         let (trace, n1, n2, _, _, oc1, oc2) =
-            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         // public_amount: in1.amount + in2.amount - out1.amount - out2.amount = 100+50-80-70 = 0
         let pub_inputs = TransferPublicInputs {
@@ -831,7 +1031,7 @@ mod tests {
         };
 
         let (trace, n1, n2, _, _, oc1, oc2) =
-            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         let pub_inputs = TransferPublicInputs {
             nullifier_1: n1,
@@ -854,7 +1054,7 @@ mod tests {
     #[test]
     fn test_conservation_accumulator_column() {
         let (sk, m, in1, in2, out1, out2) = test_transfer_data();
-        let (trace, _, _, _, _, _, _) = build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+        let (trace, _, _, _, _, _, _) = build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         let z = BaseElement::ZERO;
         let expected_final = out1.amount + out2.amount - in1.amount - in2.amount;
@@ -864,7 +1064,22 @@ mod tests {
         assert_eq!(trace[6][ROW_IN_AMOUNT_2 + 1], z - in1.amount - in2.amount);
         assert_eq!(trace[6][ROW_OUT_AMOUNT_1 + 1], z - in1.amount - in2.amount + out1.amount);
         assert_eq!(trace[6][ROW_ACC_FINAL], expected_final);
-        assert_eq!(trace[6][TRACE_LENGTH - 1], expected_final);
+
+        // [C5-N1024] The accumulator holds its final value to the END OF THE
+        // WALK, not to the end of the trace.
+        assert_eq!(trace[6][FIRST_FREE_ROW - 1], expected_final);
+
+        // ⛔ And not one row further. `expected_final == public_amount`, which
+        // is a PUBLIC input — so leaving it in the mask would not leak a secret,
+        // but it would leave 576 rows of column 6 pinned to a known constant,
+        // and a pinned row is a row the counting argument cannot use.
+        let final_in_mask = (FIRST_FREE_ROW..TRACE_LENGTH)
+            .filter(|&r| trace[6][r] == expected_final)
+            .count();
+        assert_eq!(
+            final_in_mask, 0,
+            "the accumulator's final value appears in {final_in_mask} blinding rows",
+        );
     }
 
     /// [#2 voie A] (i) A valid conserving witness still proves and verifies.
@@ -874,7 +1089,7 @@ mod tests {
         use crate::prover::{prove_generic, verify_generic};
         let (sk, m, in1, in2, out1, out2) = test_transfer_data();
         let (trace, n1, n2, _, _, oc1, oc2) =
-            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         let pub_inputs = TransferPublicInputs {
             nullifier_1: n1,
@@ -908,7 +1123,7 @@ mod tests {
         let out2 = TransferOutput { amount: BaseElement::new(150), recipient: BaseElement::new(666), randomness: BaseElement::new(444) };
 
         let (trace, n1, n2, _, _, oc1, oc2) =
-            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         // Attacker claims a balanced public_amount of 0.
         let pub_inputs = TransferPublicInputs {
@@ -958,7 +1173,7 @@ mod tests {
         let out2 = TransferOutput { amount: huge, recipient: BaseElement::new(666), randomness: BaseElement::new(444) };
 
         let (trace, n1, n2, _, _, oc1, oc2) =
-            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2);
+            build_transfer_trace(sk, m, &in1, &in2, &out1, &out2, &deterministic_test_mask());
 
         // Attacker claims public_amount = 0 (a balanced transfer).
         let pub_inputs = TransferPublicInputs {

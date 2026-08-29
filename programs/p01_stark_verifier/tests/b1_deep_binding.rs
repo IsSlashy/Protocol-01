@@ -161,8 +161,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
             "C5",
             7,
             p01_stark::compact::generate_transfer_compact_proof(
-                13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-            ),
+                13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask()),
         ),
         (
             "C6",
@@ -991,8 +990,7 @@ fn t1_t2_t3_c4_coordinated_forgery() {
 fn t1_t2_t3_c5_coordinated_forgery() {
     let config = &CONFIG_TRANSFER;
     let honest = p01_stark::compact::generate_transfer_compact_proof(
-        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-    );
+        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask());
     let forged = p01_stark::compact::generate_transfer_compact_proof_with_forgery(
         13,
         500,
@@ -1006,10 +1004,9 @@ fn t1_t2_t3_c5_coordinated_forgery() {
         65,
         2222,
         333,
-        50,
+        50, &p01_stark::compact::c5_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest);
     let aliased = p01_stark::compact::generate_transfer_compact_proof_with_forgery(
         13,
         500,
@@ -1023,10 +1020,9 @@ fn t1_t2_t3_c5_coordinated_forgery() {
         65,
         2222,
         333,
-        50,
+        50, &p01_stark::compact::c5_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::AliasedFold,
-    );
+        TerminalPoly::AliasedFold);
     run_generic_forgery_case("C5", config, &honest, &forged, &aliased);
 }
 
@@ -1955,8 +1951,7 @@ fn fixture_c4() -> Vec<u8> {
 
 fn fixture_c5() -> Vec<u8> {
     p01_stark::compact::generate_transfer_compact_proof(
-        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-    )
+        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask())
     .proof_bytes
 }
 

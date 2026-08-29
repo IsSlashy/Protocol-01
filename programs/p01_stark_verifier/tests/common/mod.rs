@@ -206,8 +206,11 @@ pub fn w3(i: usize) -> W3 {
     let s = i as u64;
     W3 {
         leaf: 777 + s,
-        path_elements: (0..15u64).map(|j| 1000 + j + s * 31).collect(),
-        path_indices: (0..15u8).map(|j| ((j as usize + i) % 2) as u8).collect(),
+        // [C3-D12] 12, not 15. Sourced from the AIR through `CANONICAL_DEPTH`
+        // rather than a literal, because this pair went stale once already:
+        // the depth moved and the two `(0..15)` here did not.
+        path_elements: (0..CANONICAL_DEPTH as u64).map(|j| 1000 + j + s * 31).collect(),
+        path_indices: (0..CANONICAL_DEPTH).map(|j| ((j + i) % 2) as u8).collect(),
     }
 }
 
@@ -328,8 +331,7 @@ pub fn prove5(w: &W5) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_transfer_compact_proof(
         w.spending_key, w.token_mint, w.in_amount_1, w.in_rand_1, w.in_amount_2, w.in_rand_2,
         w.out_amount_1, w.out_recipient_1, w.out_rand_1, w.out_amount_2, w.out_recipient_2,
-        w.out_rand_2, w.public_amount,
-    )
+        w.out_rand_2, w.public_amount, &p01_stark::compact::c5_deterministic_probe_mask())
 }
 
 pub fn prove6(w: &W6) -> p01_stark::compact::GenericCompactProofData {
@@ -666,7 +668,7 @@ pub fn check_semantics_5(w: &W5, data: &p01_stark::compact::GenericCompactProofD
         amount: f(w.out_amount_2), recipient: f(w.out_recipient_2), randomness: f(w.out_rand_2),
     };
     let (trace, _, _, _, _, _, _) =
-        transfer::build_transfer_trace(sk, mint, &input_1, &input_2, &output_1, &output_2);
+        transfer::build_transfer_trace(sk, mint, &input_1, &input_2, &output_1, &output_2, &p01_stark::compact::c5_deterministic_probe_mask().iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>());
 
     assert_eq!(trace[0][158], nullifier_1, "C5: boundary row 158 (nullifier_1)");
     assert_eq!(trace[0][254], nullifier_2, "C5: boundary row 254 (nullifier_2)");

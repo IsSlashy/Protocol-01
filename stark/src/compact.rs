@@ -2044,7 +2044,14 @@ fn boundary_assertions_for_circuit(
         ],
         5 => {
             let mut a: Vec<(usize, usize, BaseElement)> = Vec::new();
-            for cycle in 0..16usize {
+            // [C5-N1024] 16 -> 14. Cycles 14 and 15 started at rows 448 and 480,
+        // which are now inside the blinding region.
+        //
+        // ⛔ ORDER IS LOAD-BEARING: `alpha_bnd^j` is indexed by POSITION, so
+        // dropping two entries renumbers every one after them. This list, the
+        // AIR's `get_assertions` and the verifier's `get_boundary_assertions`
+        // must move in the SAME commit.
+        for cycle in 0..14usize {
                 a.push((2, cycle * HASH_CYCLE_LEN, BaseElement::ZERO));
             }
             a.push((1, 0, BaseElement::ZERO));
@@ -2822,17 +2829,19 @@ mod tests {
     }
     #[test]
     fn test_wire_size_transfer_circuit_5() {
+        // [C5-N1024 2026-08-29] md 13 -> 14 and lde 8192 -> 16384.
+        // MEASURED 78,877 -> 89,821 bytes, +10,944 (+13.9%). Still inside
+        // UNIFORM_PROOF_SIZE = 145,000, with 55,179 to spare.
         // Circuit 5: tw=7, trace=512, blowup=16, md=13 (LDE=8192), num_queries=22
         // [P2.2g] num_queries dropped from 27→22 to fit phase-1 FRI under 1.4M CU.
         // [#2 voie A] trace width 6→7: added the value-conservation accumulator
         // column (col 6), which widens each OOD frame and per-query trace
         // opening — hence the larger wire size.
         let proof = generate_transfer_compact_proof(
-            42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
-        );
+            42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &c5_deterministic_probe_mask());
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(7, 13, 22, 8192, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
+            expected_wire_size(7, 14, 22, 16384, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "transfer wire size drift",
         );
     }
@@ -3126,7 +3135,7 @@ mod tests {
             70,   // out_amount_2
             666,  // out_recipient_2
             444,  // out_rand_2
-            0,    // public_amount (balanced: 100+50 = 80+70)
+            0, &c5_deterministic_probe_mask(),    // public_amount (balanced: 100+50 = 80+70)
         );
         assert_eq!(proof.circuit_id, CIRCUIT_TRANSFER);
         assert_eq!(proof.public_inputs.len(), 6);
@@ -3558,52 +3567,6 @@ mod tests {
         // chain_6_7, chain_9_10, chain_12_13, capture_owner, capture_om,
         // capture_out1_rm, capture_out2_rm, om_to_3, om_to_6, owner_to_4,
         // owner_to_7, out1_rm_to_10, out2_rm_to_13, out_rm_capture_any.
-        assert_eq!(c[0][0], 0xC1A9FC17AFE6859A);
-        assert_eq!(c[0][511], 0x0000000000000000);
-        assert_eq!(c[1][0], 0x8ADEDD292D895B59);
-        assert_eq!(c[1][511], 0x0000000000000000);
-        assert_eq!(c[2][0], 0xAC5D8A4EEAC6C386);
-        assert_eq!(c[2][511], 0x0000000000000000);
-        assert_eq!(c[3][0], 0x0FFFFFFFF0000001);
-        assert_eq!(c[3][511], 0x0000000000000000);
-        assert_eq!(c[4][0], 0xF87FFFFF07800001);
-        assert_eq!(c[4][511], 0x39E10F3192185B4B);
-        assert_eq!(c[5][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[5][511], 0xC92185B3E3406959);
-        assert_eq!(c[6][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[6][511], 0x4B539E10A7C92186);
-        assert_eq!(c[7][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[7][511], 0x95836DE70F31CBFA);
-        assert_eq!(c[8][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[8][511], 0x185B4AC60695836E);
-        assert_eq!(c[9][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[9][511], 0xBF96A7C861EF0CE4);
-        assert_eq!(c[10][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[10][511], 0xCE340694B539E110);
-        assert_eq!(c[11][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[11][511], 0x10F31CBF85B4AC62);
-        assert_eq!(c[12][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[12][511], 0x7202DAD8187E103F);
-        assert_eq!(c[13][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[13][511], 0x8E781EFB88A80EB2);
-        assert_eq!(c[14][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[14][511], 0x8DFD2526E781EFC2);
-        assert_eq!(c[15][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[15][511], 0xFC17202CB17187E2);
-        assert_eq!(c[16][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[16][511], 0x4B539E10A7C92186);
-        assert_eq!(c[17][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[17][511], 0x185B4AC60695836E);
-        assert_eq!(c[18][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[18][511], 0x95836DE70F31CBFA);
-        assert_eq!(c[19][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[19][511], 0xBF96A7C861EF0CE4);
-        assert_eq!(c[20][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[20][511], 0xCE340694B539E110);
-        assert_eq!(c[21][0], 0xFF7FFFFF00800001);
-        assert_eq!(c[21][511], 0x10F31CBF85B4AC62);
-        assert_eq!(c[22][0], 0xFEFFFFFF01000001);
-        assert_eq!(c[22][511], 0x8A14455498F377A3);
 
         // [#2 voie A] Value-conservation columns (indices 23-27): add_in1,
         // add_in2, sub_out1, sub_out2 (single-hot at rows 64/160/288/384) and
@@ -3611,17 +3574,64 @@ mod tests {
         // `C5_ACC_CONTINUITY_COEFFS` arrays appended to
         // `p01_stark_verifier/src/periodic_consts.rs`. All four single-hots
         // share constant term 1/N = 0xFF7FFFFF00800001; acc_continuity's is
-        // 1 - 4/N = 0x01FFFFFFFE000001.
-        assert_eq!(c[23][0], 0xFF7FFFFF00800001); // C5_ADD_IN1
-        assert_eq!(c[23][511], 0xFFFFFFFEFFFF8001);
-        assert_eq!(c[24][0], 0xFF7FFFFF00800001); // C5_ADD_IN2
-        assert_eq!(c[24][511], 0x0000000000000008);
-        assert_eq!(c[25][0], 0xFF7FFFFF00800001); // C5_SUB_OUT1
-        assert_eq!(c[25][511], 0x0008000000000000);
-        assert_eq!(c[26][0], 0xFF7FFFFF00800001); // C5_SUB_OUT2
-        assert_eq!(c[26][511], 0xFFFFFF7F00000001);
-        assert_eq!(c[27][0], 0x01FFFFFFFE000001); // C5_ACC_CONTINUITY
-        assert_eq!(c[27][511], 0xFFF8007F00007FF9);
+        // 1 - 4/N = 0x01FFFFFFFE000001. // C5_ADD_IN1 // C5_ADD_IN2 // C5_SUB_OUT1 // C5_SUB_OUT2 // C5_ACC_CONTINUITY
+
+        // [C5-N1024 2026-08-29] RE-PINNED, and re-shaped. The old form was ~60
+        // typed hex values at indices 0 and 511. At n = 1024 every one of them
+        // would have had to be retyped at 1023, which is exactly the edit that
+        // produces a green test asserting nothing — the values would have come
+        // from the same emitter run they are meant to check.
+        //
+        // So the typed pins are reduced to six anchors and the rest is stated as
+        // PROPERTIES, which is what actually has to hold.
+        assert_eq!(c.len(), crate::air::transfer::TRANSFER_NUM_PERIODIC, "thirty columns");
+        assert_eq!(trace_length, 1024, "C5's trace doubled on 2026-08-29");
+        for (i, col) in c.iter().enumerate() {
+            assert_eq!(col.len(), 1024, "C5 periodic column {i} is not 1024 long");
+        }
+
+        assert_eq!(c[0][0], 0xC1A9FC17AFE6859A);
+        assert_eq!(c[3][0], 0x0FFFFFFFF0000001);
+        assert_eq!(c[4][0], 0xFC7FFFFF03800001);
+        assert_eq!(c[27][0], 0x00FFFFFFFF000001);
+        assert_eq!(c[28][0], 0x903FFFFF6FC00001);
+        assert_eq!(c[29][0], 0x937FFFFF6C800001);
+
+        // 🚨 THE FOUR STRIDE COLUMNS ARE STRIDE-32 SPARSE, and this is what lets
+        // the verifier read 32 coefficients instead of 1024. `rc0`, `rc1`, `rc2`
+        // and `round_flag` are 32-periodic over ALL 1024 rows — the walk does not
+        // truncate them — so every coefficient at a non-multiple of 32 is zero.
+        //
+        // ⛔ IF ONE OF THEM WENT DENSE, `eval_periodic_stride32_at_z` WOULD READ
+        // THE WRONG POLYNOMIAL and its debug_assert would fire only in a debug
+        // build. This is the release-mode statement of the same property.
+        for (i, name) in [(0, "rc0"), (1, "rc1"), (2, "rc2"), (3, "round_flag")] {
+            for (k, coeff) in c[i].iter().enumerate() {
+                if k % 32 != 0 {
+                    assert_eq!(*coeff, 0, "C5 {name} lost stride-32 sparsity at coefficient {k}");
+                }
+            }
+        }
+
+        // And the two gates are DENSE, which is the other half: emitting either
+        // as stride-32 would be a different polynomial and would silently re-arm
+        // the 576 masked rows.
+        for i in [28usize, 29] {
+            assert!(
+                c[i].iter().enumerate().any(|(k, v)| k % 32 != 0 && *v != 0),
+                "C5 periodic column {i} must be DENSE",
+            );
+        }
+
+        // ✅ AND THE GATES ARE OFF WHERE THEY MUST BE, checked on the VALUES
+        // rather than the coefficients. This is the property; the pins above are
+        // only its fingerprint.
+        use crate::air::transfer::FIRST_FREE_ROW;
+        for row in (FIRST_FREE_ROW - 1)..trace_length {
+            assert_eq!(periodic[28][row], BaseElement::ZERO, "`active` is on at row {row}");
+            assert_eq!(periodic[29][row], BaseElement::ZERO, "`nba` is on at row {row}");
+        }
+        assert_ne!(periodic[28][0], BaseElement::ZERO, "`active` must be ON in the witness region");
     }
 
     /// [P1.1 PR 4] Sanity check: re-emitting coefficients via inverse_ntt matches
@@ -3978,7 +3988,7 @@ mod tests {
                    generate_confidential_balance_compact_proof(42, 1000, 111, 800, 222, 200, 333, 999)
                        .proof_bytes));
         rows.push(("C5 transfer", 7, GENERIC_QUOTIENT_SEGMENTS,
-                   generate_transfer_compact_proof(42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0)
+                   generate_transfer_compact_proof(42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &c5_deterministic_probe_mask())
                        .proof_bytes));
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
@@ -4389,7 +4399,7 @@ mod tests {
     fn emit_circuit_5_periodic_coeffs() {
         use crate::air::transfer::{build_transfer_periodic_columns, TRACE_LENGTH as TR_TRACE_LENGTH};
 
-        let trace_length = TR_TRACE_LENGTH; // 512
+        let trace_length = TR_TRACE_LENGTH; // 1024 since 2026-08-29
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic_raw = build_transfer_periodic_columns();
         let names = [
@@ -4422,7 +4432,13 @@ mod tests {
             "C5_SUB_OUT1_COEFFS",
             "C5_SUB_OUT2_COEFFS",
             "C5_ACC_CONTINUITY_COEFFS",
+            // [C5-N1024] The two row gates (indices 28-29).
+            "C5_ACTIVE_COEFFS",
+            "C5_NOT_BOUNDARY_ACTIVE_COEFFS",
         ];
+        // Tied to the AIR rather than to a literal, so the emitter cannot fall
+        // behind a column the AIR grew without failing here first.
+        assert_eq!(names.len(), crate::air::transfer::TRANSFER_NUM_PERIODIC);
 
         // Period-32 columns get tiled to full trace length before inverse NTT so
         // one polynomial suffices per column on-chain.
@@ -5161,8 +5177,7 @@ mod tests {
         };
 
         let proof = generate_transfer_compact_proof(
-            42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
-        );
+            42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &c5_deterministic_probe_mask());
         assert_eq!(proof.circuit_id, CIRCUIT_TRANSFER);
         assert_eq!(proof.public_inputs.len(), 6);
 
@@ -9501,6 +9516,27 @@ fn generate_confidential_balance_compact_proof_with_claim(
 /// Proves: nullifiers and output commitments are correctly derived from the spending key,
 /// input notes, and output notes.
 /// Public inputs: nullifier_1, nullifier_2, output_commitment_1, output_commitment_2, public_amount, token_mint
+/// A DETERMINISTIC, PUBLICLY REPRODUCIBLE C5 mask. Test scaffolding only.
+///
+/// ⛔ THIS MASK HIDES NOTHING. Adequate for trace SHAPE and for a RANK
+/// measurement; adequate for nothing else.
+///
+/// ✅ IT CANNOT REACH A SHIPPED BINARY, by construction: `test-probes` is off in
+/// `default`. The twins are `c1_deterministic_probe_mask`,
+/// `c3_deterministic_probe_mask` and `c6_deterministic_probe_mask`.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c5_deterministic_probe_mask() -> Vec<u64> {
+    let mut z: u64 = 0xC5_5EED_0001;
+    (0..crate::air::transfer::MASK_LEN)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
 pub fn generate_transfer_compact_proof(
     spending_key: u64,
     token_mint: u64,
@@ -9515,10 +9551,11 @@ pub fn generate_transfer_compact_proof(
     out_recipient_2: u64,
     out_rand_2: u64,
     public_amount: u64,
+    mask: &[u64],
 ) -> GenericCompactProofData {
     generate_transfer_compact_proof_inner(
         spending_key, token_mint, in_amount_1, in_rand_1, in_amount_2, in_rand_2, out_amount_1,
-        out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount,
+        out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount, mask,
         DeepProbe::HONEST,
     )
 }
@@ -9548,12 +9585,13 @@ pub fn generate_transfer_compact_proof_with_forgery(
     out_recipient_2: u64,
     out_rand_2: u64,
     public_amount: u64,
+    mask: &[u64],
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
     generate_transfer_compact_proof_inner(
         spending_key, token_mint, in_amount_1, in_rand_1, in_amount_2, in_rand_2, out_amount_1,
-        out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount,
+        out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount, mask,
         DeepProbe { ood_forgery, terminal_poly },
     )
 }
@@ -9573,6 +9611,7 @@ fn generate_transfer_compact_proof_inner(
     out_recipient_2: u64,
     out_rand_2: u64,
     public_amount: u64,
+    mask: &[u64],
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     use crate::air::transfer::{TransferInput, TransferOutput, build_transfer_trace};
@@ -9593,7 +9632,15 @@ fn generate_transfer_compact_proof_inner(
     };
 
     let (trace, n1, n2, _, _, oc1, oc2) =
-        build_transfer_trace(sk, mint, &input_1, &input_2, &output_1, &output_2);
+        build_transfer_trace(
+            sk,
+            mint,
+            &input_1,
+            &input_2,
+            &output_1,
+            &output_2,
+            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+        );
 
     let n1_u64 = n1.as_int();
     let n2_u64 = n2.as_int();

@@ -26,8 +26,7 @@ fn honest_c5(s: u64) -> p01_stark::compact::GenericCompactProofData {
     // Conserving: out1 + out2 - in1 - in2 == 50 == public_amount.
     p01_stark::compact::generate_transfer_compact_proof(
         13 + s, 500 + s * 17, 77 + s, 400 + s * 17, 88 + s, 100, 150 + 2 * s, 1234 + s, 555 + s,
-        65, 2222 + s, 333 + s, 50,
-    )
+        65, 2222 + s, 333 + s, 50, &p01_stark::compact::c5_deterministic_probe_mask())
 }
 
 fn honest_c6(s: u64) -> p01_stark::compact::GenericCompactProofData {

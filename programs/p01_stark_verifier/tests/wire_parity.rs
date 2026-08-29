@@ -67,8 +67,7 @@ fn fixture_c4() -> Vec<u8> {
 }
 fn fixture_c5() -> Vec<u8> {
     p01_stark::compact::generate_transfer_compact_proof(
-        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-    )
+        13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask())
     .proof_bytes
 }
 fn fixture_c6() -> Vec<u8> {

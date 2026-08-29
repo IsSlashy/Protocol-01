@@ -140,8 +140,7 @@ fn c5() -> Vec<Vec<u8>> {
     .iter()
     .map(|t| {
         p01_stark::compact::generate_transfer_compact_proof(
-            t.0, t.1, t.2, t.3, t.4, t.5, t.6, t.7, t.8, t.9, t.10, t.11, t.12,
-        )
+            t.0, t.1, t.2, t.3, t.4, t.5, t.6, t.7, t.8, t.9, t.10, t.11, t.12, &p01_stark::compact::c5_deterministic_probe_mask())
         .proof_bytes
     })
     .collect()

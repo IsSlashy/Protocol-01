@@ -184,8 +184,7 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
         )
         .proof_bytes,
         5 => p01_stark::compact::generate_transfer_compact_proof_with_forgery(
-            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, f, t,
-        )
+            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask(), f, t)
         .proof_bytes,
         6 => {
             let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
@@ -238,8 +237,7 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
                     65,
                     2222,
                     333,
-                    50,
-                ),
+                    50, &p01_stark::compact::c5_deterministic_probe_mask()),
                 6 => {
                     let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13 + s).collect();
                     let pi: Vec<u8> = (0..12).map(|i| ((i as u64 + s) % 2) as u8).collect();

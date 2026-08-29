@@ -65,7 +65,7 @@ fn prove_c5(s: u64, in1: u64, in2: u64, out1: u64, out2: u64, public_amount: u64
         out2,          // out_amount_2
         2222 + s,      // out_recipient_2
         333 + s,       // out_rand_2
-        public_amount, // public_amount
+        public_amount, &p01_stark::compact::c5_deterministic_probe_mask(), // public_amount
     );
     let config = get_circuit_config(5).expect("C5 config");
     let proof = GenericCompactProof::from_bytes(&data.proof_bytes, config)

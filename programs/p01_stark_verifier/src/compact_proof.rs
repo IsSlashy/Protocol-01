@@ -173,8 +173,8 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     trace_width: 6,
     trace_length: 512, // depth 15: 15 * 32 = 480, next_pow2 = 512
     blowup: 16,
-    lde_size: 8192,
-    merkle_depth: 13,  // log2(8192) = 13
+    lde_size: 16384,
+    merkle_depth: 14,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
     fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
@@ -219,10 +219,27 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
 /// width-7 / 28-constraint format and re-validated under the 1.4M-CU SBF cap.
 pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
     trace_width: 7,
-    trace_length: 512,
+    // [C5-N1024 2026-08-29] 512 -> 1024, and a HARD WIRE BREAK in both
+    // directions: `num_fri_layers` goes 8 -> 9 and the parser checks it.
+    //
+    // C5 is the second circuit a depth cut could not save, and for a different
+    // reason from C1's. C1 ran out of rows. C5 has 64 rows past its walk, but
+    // its carry columns 3, 4, 5 and 6 hold `owner`, `owner_mint`, `out2_rm` and
+    // the accumulator on EVERY row — so there is no region where all seven
+    // columns are free, at any depth. 14 real cycles x 32 = 448 rows is a floor
+    // no rearrangement beats, and 512 - 448 = 64 < R = 90.
+    //
+    // At 1024 there are 576 free rows, margin 486.
+    //
+    // ⚠️ ITS BOUNDARY ASSERTIONS ALSO MOVE, 26 -> 24: the capacity assertions
+    // at rows 448 and 480 belonged to the two padding cycles, which are now
+    // inside the blinding region. The ORDER of that list fixes the `alpha_bnd`
+    // exponents, so the AIR, the prover and this crate move together or every
+    // honest proof fails DEEP-ALI.
+    trace_length: 1024,
     blowup: 16,
-    lde_size: 8192,
-    merkle_depth: 13,  // log2(8192) = 13
+    lde_size: 16384,
+    merkle_depth: 14,  // log2(16384) = 14
     num_rounds: 30,
     fri_final_poly_size: 16,
     fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation

@@ -88,20 +88,23 @@ fn fneg(a: u64) -> u64 {
 }
 
 // C5 geometry. Verifier twin: `CONFIG_TRANSFER`, compact_proof.rs:205-216.
-const GEN_512: u64 = 0x1905_D02A_5C41_1F4E;
-const GEN_8192: u64 = 0x1544_EF23_35D1_7997;
+// MOVED 2026-08-29: n 512 -> 1024, LDE 8192 -> 16384. Both generators were
+// derived from the standard Goldilocks 2^32-th root and validated against the
+// seven the verifier already carried before either was used.
+const GEN_1024: u64 = 0x9D8F_2AD7_8BFE_D972;
+const GEN_16384: u64 = 0xE0EE_0993_10BB_A1E2;
 const COSET_SHIFT: u64 = 7;
 
-const TRACE_LEN: usize = 512;
+const TRACE_LEN: usize = 1024;
 const TRACE_WIDTH: usize = 7;
-const LDE_SIZE: u64 = 8192;
+const LDE_SIZE: u64 = 16384;
 const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 22;
 const QUOTIENT_SEGMENTS: usize = 8;
 
 fn self_check_field() {
-    assert_eq!(fpow(GEN_512, 512), 1, "GEN_512 is not a 512th root");
-    assert_eq!(fpow(GEN_8192, BLOWUP), GEN_512, "g_lde^blowup must be g_trace");
+    assert_eq!(fpow(GEN_1024, 1024), 1, "GEN_1024 is not a 1024th root");
+    assert_eq!(fpow(GEN_16384, BLOWUP), GEN_1024, "g_lde^blowup must be g_trace");
     assert_ne!(fpow(COSET_SHIFT, 8192), 1, "the coset is not disjoint");
     assert_eq!(fadd(fneg(7), 7), 0, "negation is broken");
 }
@@ -183,11 +186,11 @@ fn published_nodes(op: &Openings, col: usize) -> Vec<(u64, u64)> {
             nodes.push((x, y));
         }
     };
-    let at = |pos: u64| fmul(COSET_SHIFT, fpow(GEN_8192, pos));
+    let at = |pos: u64| fmul(COSET_SHIFT, fpow(GEN_16384, pos));
     let half = LDE_SIZE / 2;
 
     push(op.ood_z, op.ood_cur[col], &mut nodes);
-    push(fmul(op.ood_z, GEN_512), op.ood_next[col], &mut nodes);
+    push(fmul(op.ood_z, GEN_1024), op.ood_next[col], &mut nodes);
 
     for (pos, cur, mir, next, next_mir) in &op.queries {
         let next_pos = (pos + BLOWUP) % LDE_SIZE;
@@ -207,7 +210,7 @@ fn system(nodes: &[(u64, u64)], segs: &[Vec<usize>]) -> Vec<Vec<u64>> {
                 .iter()
                 .map(|seg| {
                     seg.iter().fold(0u64, |acc, &i| {
-                        fadd(acc, lagrange_basis_at(i, x, TRACE_LEN, GEN_512))
+                        fadd(acc, lagrange_basis_at(i, x, TRACE_LEN, GEN_1024))
                     })
                 })
                 .collect();
@@ -217,6 +220,56 @@ fn system(nodes: &[(u64, u64)], segs: &[Vec<usize>]) -> Vec<Vec<u64>> {
         .collect()
 }
 
+/// The same system, with a block of cells whose values are KNOWN folded into the
+/// right-hand side instead of carried as unknowns.
+///
+/// ⛔ THIS IS NOT AN ATTACK, IT IS THE CONTROL. An attacker does not know the
+/// mask; this function exists only so a test can prove that the parser, the
+/// Lagrange basis and the solver are correct, by handing them a system that
+/// SHOULD close and checking it closes on values the test already knows.
+///
+/// Without it, "the masked system does not solve" is indistinguishable from
+/// "the harness is broken" — and `solve` cannot tell the difference either,
+/// because it decides rank, not consistency.
+fn system_with_known(
+    nodes: &[(u64, u64)],
+    segs: &[Vec<usize>],
+    known: &[(usize, u64)],
+) -> Vec<Vec<u64>> {
+    nodes
+        .iter()
+        .map(|&(x, y)| {
+            let mut row: Vec<u64> = segs
+                .iter()
+                .map(|seg| {
+                    seg.iter().fold(0u64, |acc, &i| {
+                        fadd(acc, lagrange_basis_at(i, x, TRACE_LEN, GEN_1024))
+                    })
+                })
+                .collect();
+            // Subtract the known cells' contribution from the observed value.
+            let contributed = known.iter().fold(0u64, |acc, &(i, v)| {
+                fadd(acc, fmul(v, lagrange_basis_at(i, x, TRACE_LEN, GEN_1024)))
+            });
+            row.push(fsub(y, contributed));
+            row
+        })
+        .collect()
+}
+
+/// Gaussian elimination over Goldilocks.
+///
+/// 🚨 `None` MEANS UNDER-DETERMINED, NOT INCONSISTENT, and the difference
+/// decides what these tests can claim. The function returns `None` only when
+/// some column ends with no pivot, i.e. when rank < n. It never inspects the
+/// residual rows, so a FULL-RANK but inconsistent system returns `Some(garbage)`
+/// rather than `None`.
+///
+/// That is exactly the property the mask tests need — "the openings no longer
+/// pin the unknowns" is a statement about RANK — but it means a `Some` proves
+/// nothing on its own. Any test that reads a recovered value must compare it
+/// against the real witness, or it will pass on noise. One in this file did
+/// (see `the_single_unknown_model_now_recovers_noise`).
 fn solve(mut rows: Vec<Vec<u64>>, n: usize) -> Option<Vec<u64>> {
     let mut pivot_row = 0usize;
     let mut where_pivot = vec![usize::MAX; n];
@@ -253,11 +306,59 @@ fn seg(lo: usize, hi: usize) -> Vec<usize> {
     (lo..hi).collect()
 }
 
-/// Column 6, the accumulator. All FIVE segments are carried as unknowns even
-/// though two are publicly known — the known pair is then used as a self-check
-/// that the solve is real rather than folded into the right-hand side.
+/// Column 6, the accumulator, as the attacker models it TODAY.
+///
+/// 🚨 THE FIFTH SEGMENT IS THE WHOLE EXPERIMENT. It used to run `385..512` — one
+/// unknown covering the entire tail, because `acc_continuity` pinned the column
+/// constant there. It now runs `385..448` and stops at the last witness row;
+/// everything past 448 is `MASK_ROWS` INDEPENDENT uniform values, one unknown
+/// each.
+///
+/// That is the difference between 5 unknowns and 5 + 576.
 fn acc_segments() -> Vec<Vec<usize>> {
+    let mut v = vec![
+        seg(0, 65), seg(65, 161), seg(161, 289), seg(289, 385),
+        seg(385, FIRST_FREE_ROW),
+    ];
+    for row in FIRST_FREE_ROW..TRACE_LEN {
+        v.push(vec![row]);
+    }
+    v
+}
+
+/// The PRE-MASK model, kept as the counterfactual.
+///
+/// ⛔ It does not describe the trace any more. It exists so the failures below
+/// can be attributed: the same solver, over the same published bytes, closes
+/// under this model and does not close under the real one. Without it, a `None`
+/// from the solver is indistinguishable from a broken parser or a wrong
+/// generator.
+fn acc_segments_pre_mask() -> Vec<Vec<usize>> {
     vec![seg(0, 65), seg(65, 161), seg(161, 289), seg(289, 385), seg(385, TRACE_LEN)]
+}
+
+/// First trace row free on every one of the seven columns.
+const FIRST_FREE_ROW: usize = 448;
+
+/// `MASK_ROWS * TRACE_WIDTH`, the arity the prover now demands.
+fn mask_len() -> usize {
+    (TRACE_LEN - FIRST_FREE_ROW) * 7
+}
+
+/// A deterministic mask. Adequate for a RANK measurement — the rank does not
+/// care how the values were drawn, only that the rows are independent unknowns —
+/// and inadequate for a secrecy claim, which is why the shipping path draws from
+/// getrandom and refuses to build without it.
+fn test_mask(seed: u64) -> Vec<u64> {
+    let mut z = seed | 1;
+    (0..mask_len())
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
 }
 
 // The witness. Conservation must hold: out1 + out2 - in1 - in2 == public_amount.
@@ -290,6 +391,7 @@ fn transfer_proof() -> p01_stark::compact::GenericCompactProofData {
         OUT_REC_2,
         OUT_RAND_2,
         PUBLIC_AMOUNT,
+        &test_mask(0xC5_5EED_0003),
     )
 }
 
@@ -298,7 +400,7 @@ fn transfer_proof() -> p01_stark::compact::GenericCompactProofData {
 // ===========================================================================
 
 #[test]
-fn c5_private_note_amounts_are_recovered_from_published_bytes() {
+fn the_mask_closes_the_accumulator_that_gave_up_four_amounts() {
     self_check_field();
 
     let proof = transfer_proof();
@@ -306,38 +408,50 @@ fn c5_private_note_amounts_are_recovered_from_published_bytes() {
     assert_eq!(op.num_queries, NUM_QUERIES, "C5 ships {NUM_QUERIES} queries");
 
     let nodes = published_nodes(&op, 6);
-    let segs = acc_segments();
-    let acc = solve(system(&nodes, &segs), segs.len())
-        .expect("the accumulator column must solve: 5 unknowns against ~90 equations");
 
-    // The two publicly-known segments, used as the control on the solve. If
-    // these are wrong the parser or the basis is wrong and the amounts below
-    // would be meaningless.
-    assert_eq!(acc[0], 0, "segment 0 of the accumulator is a pinned ZERO (transfer.rs:255)");
-    assert_eq!(
-        acc[4], PUBLIC_AMOUNT,
-        "segment 4 is pinned to public_amount (transfer.rs:256)",
+    // The attack, run exactly as it was. What changed is the ANSWER.
+    let segs = acc_segments();
+    println!("published equations : {}", nodes.len());
+    println!("unknowns, masked    : {}  (5 walk segments + {} free rows)",
+             segs.len(), TRACE_LEN - FIRST_FREE_ROW);
+    assert!(
+        solve(system(&nodes, &segs), segs.len()).is_none(),
+        "the accumulator column still solves: {} unknowns against {} equations",
+        segs.len(), nodes.len(),
     );
 
-    let in1 = fneg(acc[1]);
-    let in2 = fsub(acc[1], acc[2]);
-    let out1 = fsub(acc[3], acc[2]);
-    let out2 = fsub(acc[4], acc[3]);
+    // ⚠️ ANTI-VACUITY, and it took two attempts to get right. Recording both,
+    // because the wrong one looks convincing.
+    //
+    // ⛔ WHAT DOES NOT WORK: running the PRE-MASK model (fifth segment to the
+    // end of the trace) against a MASKED trace. It returns `Some` — one block
+    // of 576 random cells modelled as a single unknown is still full rank — and
+    // the answer is noise. `solve` decides rank, not consistency, so it cannot
+    // tell you that. A counterfactual that returns garbage proves nothing.
+    //
+    // ✅ WHAT DOES: hand the solver the mask as KNOWN and require the five walk
+    // segments to come back on their true values. The attacker has no such
+    // knowledge — this is a control on the HARNESS, not a weaker attack. If the
+    // parser, the Lagrange basis or the abscissae were wrong, this would fail,
+    // and then the `None` above would mean nothing.
+    let mask = test_mask(0xC5_5EED_0003);
+    let known: Vec<(usize, u64)> = (FIRST_FREE_ROW..TRACE_LEN)
+        .map(|row| (row, mask[(row - FIRST_FREE_ROW) * 7 + 6]))
+        .collect();
+    let walk = vec![
+        seg(0, 65), seg(65, 161), seg(161, 289), seg(289, 385),
+        seg(385, FIRST_FREE_ROW),
+    ];
+    let acc = solve(system_with_known(&nodes, &walk, &known), walk.len())
+        .expect("the control must close: 5 unknowns against ~90 equations");
 
-    println!("published equations : {}", nodes.len());
-    println!("unknowns            : {}", segs.len());
-    println!("over-determined by  : {}", nodes.len() as i64 - segs.len() as i64);
-    println!();
-    println!("in_amount_1   expected {IN_1:>10}   recovered {in1:>10}");
-    println!("in_amount_2   expected {IN_2:>10}   recovered {in2:>10}");
-    println!("out_amount_1  expected {OUT_1:>10}   recovered {out1:>10}");
-    println!("out_amount_2  expected {OUT_2:>10}   recovered {out2:>10}");
-    println!("\npublic inputs carry only the SUM: public_amount = {PUBLIC_AMOUNT}");
+    // The two publicly-known segments, which is what makes the control a
+    // control rather than another `Some` on noise.
+    assert_eq!(acc[0], 0, "segment 0 of the accumulator is a pinned ZERO");
+    assert_eq!(acc[4], PUBLIC_AMOUNT, "segment 4 is pinned to public_amount");
 
-    assert_eq!(in1, IN_1, "in_amount_1 not recovered");
-    assert_eq!(in2, IN_2, "in_amount_2 not recovered");
-    assert_eq!(out1, OUT_1, "out_amount_1 not recovered");
-    assert_eq!(out2, OUT_2, "out_amount_2 not recovered");
+    println!("\ncontrol (mask supplied as known): SOLVES, on the public values —");
+    println!("so the harness is sound and the difference above is the mask itself");
 }
 
 // ===========================================================================
@@ -345,36 +459,61 @@ fn c5_private_note_amounts_are_recovered_from_published_bytes() {
 // ===========================================================================
 
 #[test]
-fn c5_owner_identity_is_a_single_unknown() {
+fn the_single_unknown_model_now_recovers_noise() {
     self_check_field();
 
     let proof = transfer_proof();
     let op = parse_generic(&proof.proof_bytes);
 
-    // col 3 is ZERO on rows 0..=30 and `owner` on 31..=511 (transfer.rs:618-620).
-    // The zero block is not an unknown, so the whole column is ONE value.
+    // `owner = Poseidon(spending_key, 0)` is the persistent spender identity:
+    // the same value in every transfer that key ever makes, which is what made
+    // recovering it a linkability primitive rather than a curiosity.
+    let owner_true = p01_stark::poseidon::hash2(
+        p01_stark::BaseElement::new(SPENDING_KEY),
+        p01_stark::BaseElement::new(0),
+    );
+
+    // The attack's model: col 3 is ZERO on rows 0..=30 and `owner` everywhere
+    // after, so the whole column is ONE unknown. That WAS true and is not any
+    // more — rows 448..1023 are fresh randomness.
     let nodes = published_nodes(&op, 3);
-    let owner = solve(system(&nodes, &[seg(31, TRACE_LEN)]), 1)
-        .expect("one unknown against ~90 equations must solve");
+    let one_unknown = solve(system(&nodes, &[seg(31, TRACE_LEN)]), 1);
 
-    // col 4 is the same shape, offset by one cycle.
-    let mint_nodes = published_nodes(&op, 4);
-    let owner_mint = solve(system(&mint_nodes, &[seg(63, TRACE_LEN)]), 1)
-        .expect("col 4 must solve");
+    // 🚨 IT STILL RETURNS `Some`, AND THAT IS THE POINT OF THIS TEST.
+    //
+    // One unknown against ~90 equations is full rank whatever the values are,
+    // and `solve` does not check consistency — see its doc comment. So the
+    // model returns an answer. The answer is now NOISE.
+    //
+    // ⛔ THE OLD TEST NEVER NOTICED, because it only asserted the recovered
+    // value was nonzero and differed from `owner_mint`. Both hold for garbage.
+    // It would have gone on passing after the mask landed while measuring
+    // nothing at all. The assertion that matters is this one:
+    if let Some(v) = &one_unknown {
+        println!("owner  true      {:#018x}", owner_true.as_int());
+        println!("owner  recovered {:#018x}", v[0]);
+        assert_ne!(
+            v[0], owner_true.as_int(),
+            "⛔ the single-unknown model STILL recovers the real owner: the carry \
+             fill has escaped the witness region again",
+        );
+    }
 
-    println!("owner       = Poseidon(spending_key, 0) -> {:#018x}", owner[0]);
-    println!("owner_mint  = Poseidon(owner, mint)     -> {:#018x}", owner_mint[0]);
-    println!("unknowns per column: 1, against {} equations", nodes.len());
+    // And the honest model — the walk block plus one unknown per masked row —
+    // is under-determined, which is the real statement.
+    let mut segs = vec![seg(31, FIRST_FREE_ROW)];
+    for row in FIRST_FREE_ROW..TRACE_LEN {
+        segs.push(vec![row]);
+    }
+    assert!(
+        solve(system(&nodes, &segs), segs.len()).is_none(),
+        "the masked model must be under-determined",
+    );
 
-    assert_ne!(owner[0], 0, "a zero owner would mean the model picked the wrong block");
-    assert_ne!(owner_mint[0], 0, "likewise for owner_mint");
-    assert_ne!(owner[0], owner_mint[0], "the two carries must differ");
-
-    // ⛔ These are not public inputs. `owner` is a function of the spending key
-    // alone, so it is the same value in every transfer that key ever makes —
-    // which is what turns a recovered `owner` into a linkability primitive.
-    println!("\n⛔ neither is a public input; `owner` is constant across every");
-    println!("   transfer made by the same spending key.");
+    // ⚠️ ANTI-VACUITY: the pre-mask column really was one unknown, and it really
+    // did give up `owner`. That is what the fill bound at FIRST_FREE_ROW removed.
+    println!("\nmasked model: {} unknowns against {} equations -> no solve",
+             segs.len(), nodes.len());
 }
 
 // ===========================================================================

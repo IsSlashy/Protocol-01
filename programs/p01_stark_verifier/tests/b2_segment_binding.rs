@@ -183,8 +183,7 @@ fn generic_case(
             42, 1000, 111, 800, 222, 200, 333, 999, ood, term,
         ),
         5 => c::generate_transfer_compact_proof_with_forgery(
-            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, ood, term,
-        ),
+            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask(), ood, term),
         6 => {
             let (pe, pi) = merkle_update_witness();
             c::generate_merkle_update_compact_proof_with_forgery(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()), ood, term)
@@ -592,8 +591,7 @@ fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofD
             65,
             2222,
             333,
-            50,
-        ),
+            50, &p01_stark::compact::c5_deterministic_probe_mask()),
         6 => {
             let (mut pe, pi) = merkle_update_witness();
             pe[0] += seed;

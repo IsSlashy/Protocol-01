@@ -171,9 +171,23 @@ fn main() {
             let out2_rand: u64 = args[13].parse().expect("Invalid out2_rand");
             let pub_amt: u64 = args[14].parse().expect("Invalid pub_amt");
 
+            // The C5 blinding region. Same caveat as the other arms: adequate
+            // for generating a proof to inspect, INADEQUATE for secrecy.
+            let mask: Vec<u64> = {
+                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
+                (0..p01_stark::air::transfer::MASK_LEN)
+                    .map(|_| {
+                        z ^= z << 13;
+                        z ^= z >> 7;
+                        z ^= z << 17;
+                        z % 0xFFFF_FFFF_0000_0001
+                    })
+                    .collect()
+            };
             let proof = p01_stark::compact::generate_transfer_compact_proof(
                 sk, mint, in1_amt, in1_rand, in2_amt, in2_rand,
                 out1_amt, out1_rcpt, out1_rand, out2_amt, out2_rcpt, out2_rand, pub_amt,
+                &mask,
             );
             println!("{{");
             println!("  \"circuit_id\": {},", proof.circuit_id);

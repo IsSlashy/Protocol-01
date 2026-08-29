@@ -140,11 +140,22 @@ const GENERATOR_256: u64 = 0xBF79143CE60CA966;
 /// 512th root of unity (LDE domain for circuit 0, trace for circuits 3,5)
 const GENERATOR_512: u64 = 0x1905D02A5C411F4E;
 /// 2048th root of unity (LDE domain for circuits 1,2)
+/// [C5-N1024] Trace generator for 1024 rows.
+///
+/// DERIVED, not copied: `g_n = w^(2^32 / n)` where `w = 0x185629DCDA58878C` is
+/// the standard Goldilocks 2^32-th root of unity. The derivation was validated
+/// by reproducing ALL SEVEN generators already in this file — 32, 128, 256,
+/// 512, 2048, 4096 and 8192 — exactly, before either new value was used.
+const GENERATOR_1024: u64 = 0x9D8F2AD78BFED972;
 const GENERATOR_2048: u64 = 0x0653B4801DA1C8CF;
 /// 4096th root of unity (LDE domain for circuit 4)
 const GENERATOR_4096: u64 = 0xF2C35199959DFCB6;
 /// 8192nd root of unity (LDE domain for circuits 3,5)
 const GENERATOR_8192: u64 = 0x1544EF2335D17997;
+/// [C5-N1024] LDE generator for 16384 points. Same derivation as
+/// `GENERATOR_1024`, and the relation the domain self-check asserts holds:
+/// `GENERATOR_16384^16 == GENERATOR_1024`, verified before use.
+const GENERATOR_16384: u64 = 0xE0EE099310BBA1E2;
 
 /// [B7] The multiplicative shift `h` of the LDE evaluation coset.
 ///
@@ -196,6 +207,7 @@ pub fn get_lde_generator(lde_size: usize) -> Result<Felt, VerifyError> {
         2048 => Ok(Felt::new(GENERATOR_2048)),
         4096 => Ok(Felt::new(GENERATOR_4096)),
         8192 => Ok(Felt::new(GENERATOR_8192)),
+        16384 => Ok(Felt::new(GENERATOR_16384)),
         _ => Err(VerifyError::UnsupportedDomainSize),
     }
 }
@@ -213,6 +225,7 @@ fn get_trace_generator(trace_length: usize) -> Result<Felt, VerifyError> {
         128 => Ok(Felt::new(GENERATOR_128)),
         256 => Ok(Felt::new(GENERATOR_256)),
         512 => Ok(Felt::new(GENERATOR_512)),
+        1024 => Ok(Felt::new(GENERATOR_1024)),
         _ => Err(VerifyError::UnsupportedDomainSize),
     }
 }
@@ -258,18 +271,22 @@ mod domain_generator_tests {
 
     /// Sizes reachable via `CircuitConfig.lde_size` for circuits 0..=6 plus the
     /// legacy circuit-0 path, mapped to the constant each must keep returning.
-    const LISTED_LDE: [(usize, u64); 4] = [
+    const LISTED_LDE: [(usize, u64); 5] = [
         (512, GENERATOR_512),
         (2048, GENERATOR_2048),
         (4096, GENERATOR_4096),
         (8192, GENERATOR_8192),
+        // [C5-N1024] C5's LDE doubled with its trace.
+        (16384, GENERATOR_16384),
     ];
 
-    const LISTED_TRACE: [(usize, u64); 4] = [
+    const LISTED_TRACE: [(usize, u64); 5] = [
         (32, GENERATOR_32),
         (128, GENERATOR_128),
         (256, GENERATOR_256),
         (512, GENERATOR_512),
+        // [C5-N1024] C5 is the only circuit at this length.
+        (1024, GENERATOR_1024),
     ];
 
     #[test]
@@ -1350,8 +1367,25 @@ fn get_boundary_assertions(
             let public_amount = Felt::new(public_inputs[4]);
             let token_mint = Felt::new(public_inputs[5]);
             let mut assertions = Vec::new();
-            // Capacity = 0 at start of each of 16 cycles
-            for cycle in 0..16usize {
+            // Capacity = 0 at start of each of the 14 REAL cycles.
+            //
+            // 🚨 16 -> 14 on 2026-08-29, AND THE ORDER OF THIS LIST IS THE WIRE.
+            // `alpha_bnd^j` is indexed by POSITION, so dropping the two entries
+            // for cycles 14 and 15 renumbers every assertion after them: what
+            // was j=16..25 becomes j=14..23.
+            //
+            // ⛔ THIS LIST, `transfer.rs::get_assertions` AND
+            // `compact.rs::boundary_assertions_for_circuit` ARE ONE OBJECT IN
+            // THREE FILES. An honest proof built against any older copy fails
+            // DEEP-ALI against a newer one, silently and completely, so the
+            // three move in the same commit or none of them moves.
+            //
+            // The two that left were the capacity assertions at rows 448 and
+            // 480 — the starts of the padding cycles, which are now inside the
+            // blinding region. Demanding a masked cell equal zero is
+            // unsatisfiable with fresh randomness, and satisfying it would
+            // publish a known cell.
+            for cycle in 0..14usize {
                 assertions.push(BoundaryAssertion {
                     col: 2,
                     row: cycle * HASH_CYCLE_LEN,
@@ -3002,6 +3036,40 @@ fn eval_periodic_stride_at_z(coeffs: &[u64], z: Felt, stride: usize) -> Felt {
 }
 
 #[inline(never)]
+/// [C5-N1024] The stride-32 twin, for a circuit whose trace is 1024 rows.
+///
+/// A 32-periodic column interpolated over a domain of size `n` is sparse at
+/// stride `n / 32`. At n = 512 that is 16 and at n = 1024 it is 32, so the two
+/// functions differ ONLY in the stride and in the exponent of `z` — both still
+/// read exactly 32 compressed coefficients and both still cost 32 Horner steps.
+///
+/// ⛔ WRITTEN AS A SEPARATE FUNCTION RATHER THAN A GENERIC, ON PURPOSE. The
+/// stride is `n / 32`, so a generic over the array length would let a caller
+/// pass a 512-long table and get a silently wrong evaluation if the constant
+/// were ever mis-derived. Two functions, two array types, and the type checker
+/// refuses the mix.
+fn eval_periodic_stride32_at_z(coeffs: &[u64; 1024], z: Felt) -> Felt {
+    // Paranoia in tests: non-stride positions must be zero.
+    #[cfg(debug_assertions)]
+    {
+        for (i, &c) in coeffs.iter().enumerate() {
+            if i % 32 != 0 {
+                debug_assert_eq!(c, 0, "stride-32 violation at index {}", i);
+            }
+        }
+    }
+
+    let y = z.exp(32);
+    let mut acc = Felt::ZERO;
+    // Horner over the 32 compressed coefficients c[0], c[32], ..., c[992].
+    let mut k = 32;
+    while k > 0 {
+        k -= 1;
+        acc = acc.mul(y).add(Felt::new(coeffs[k * 32]));
+    }
+    acc
+}
+
 fn eval_periodic_stride16_at_z(coeffs: &[u64; 512], z: Felt) -> Felt {
     // Paranoia in tests: non-stride positions must be zero.
     #[cfg(debug_assertions)]
@@ -4814,7 +4882,7 @@ pub fn verify_deep_ali_circuit_4(
 fn evaluate_transition_at_ood_circuit_5(
     ood_current: &[Felt; 7],
     ood_next: &[Felt; 7],
-    periodic_at_z: &[Felt; 28],
+    periodic_at_z: &[Felt; 30],
     alpha: Felt,
 ) -> Felt {
     let rc0 = periodic_at_z[0];
@@ -4846,6 +4914,26 @@ fn evaluate_transition_at_ood_circuit_5(
     let sub_out1 = periodic_at_z[25];
     let sub_out2 = periodic_at_z[26];
     let acc_continuity = periodic_at_z[27];
+    let active = periodic_at_z[28];
+    let nba = periodic_at_z[29];
+
+    // [C5-N1024] Every continuity constraint is pre-multiplied by `active`, and
+    // the Poseidon rows use `nba`.
+    //
+    // 🚨 `one.sub(is_boundary)` MUST NOT COME BACK ON cs[0..3]. It and `nba`
+    // agree on every row of the fourteen real cycles and differ only across
+    // rows 448..1023, so the substitution rejects NO honest proof while
+    // re-imposing the Poseidon rounds on the 576 blinding rows.
+    //
+    // ⚠️ AND THE FOUR CONTINUITY ROWS ARE THE BIGGER HALF HERE. cs[11], [13],
+    // [22] and [27] each say "this carry column does not change". Ungated they
+    // pin cols 3, 4, 5 and 6 constant across the whole mask -- one unknown per
+    // column instead of 576 -- which is the shape `air_aware_recovery_c5.rs`
+    // solves for all four note amounts and for `owner`.
+    //
+    // ⛔ EACH LINE CARRIES AT MOST TWO PERIODIC FACTORS. cs[0..3] spend theirs
+    // on `nba` and `round_flag`; the four continuity rows spend one on `active`
+    // and one on their own flag. A third takes ce_blowup_factor from 8 to 16.
 
     let one = Felt::ONE;
     let three = Felt::new(3);
@@ -4886,11 +4974,11 @@ fn evaluate_transition_at_ood_circuit_5(
 
     // [10-11] carry_owner (col 3).
     cs[10] = capture_owner.mul(ood_next[3].sub(ood_current[0]));
-    cs[11] = one.sub(capture_owner).mul(ood_next[3].sub(ood_current[3]));
+    cs[11] = active.mul(one.sub(capture_owner).mul(ood_next[3].sub(ood_current[3])));
 
     // [12-13] carry_owner_mint (col 4).
     cs[12] = capture_om.mul(ood_next[4].sub(ood_current[0]));
-    cs[13] = one.sub(capture_om).mul(ood_next[4].sub(ood_current[4]));
+    cs[13] = active.mul(one.sub(capture_om).mul(ood_next[4].sub(ood_current[4])));
 
     // [14-15] carry_owner_mint → right input.
     cs[14] = om_to_3.mul(ood_next[1].sub(ood_current[4]));
@@ -4907,7 +4995,7 @@ fn evaluate_transition_at_ood_circuit_5(
     cs[21] = out2_rm_to_13.mul(ood_next[1].sub(ood_current[5]));
 
     // [22] carry_out_rm continuity (except at capture points).
-    cs[22] = one.sub(out_rm_capture_any).mul(ood_next[5].sub(ood_current[5]));
+    cs[22] = active.mul(one.sub(out_rm_capture_any).mul(ood_next[5].sub(ood_current[5])));
 
     // [#2 voie A] [23-27] Value conservation (col 6 = acc). EXACT same order
     // and sign as the prover's `evaluate_transfer_transition`
@@ -4921,7 +5009,7 @@ fn evaluate_transition_at_ood_circuit_5(
     cs[24] = add_in2.mul(ood_next[6].sub(ood_current[6]).add(ood_current[0]));
     cs[25] = sub_out1.mul(ood_next[6].sub(ood_current[6]).sub(ood_current[0]));
     cs[26] = sub_out2.mul(ood_next[6].sub(ood_current[6]).sub(ood_current[0]));
-    cs[27] = acc_continuity.mul(ood_next[6].sub(ood_current[6]));
+    cs[27] = active.mul(acc_continuity.mul(ood_next[6].sub(ood_current[6])));
 
     // Horner RLC: Σ α^i · cs[i].
     let mut combined = Felt::ZERO;
@@ -4953,16 +5041,19 @@ fn evaluate_transition_at_ood_circuit_5(
 ///     rather than a 512-coeff dense Horner.
 ///   - Col 4 (is_boundary, 15-hot): dense Horner (cheaper than 15 Lagrange).
 #[inline(never)]
-fn compute_c5_periodic_at_z(z: Felt) -> Result<[Felt; 28], VerifyError> {
+fn compute_c5_periodic_at_z(z: Felt) -> Result<[Felt; 30], VerifyError> {
     use crate::periodic_consts::{
-        C5_IS_BOUNDARY_COEFFS, C5_RC0_COEFFS, C5_RC1_COEFFS, C5_RC2_COEFFS,
-        C5_ROUND_FLAG_COEFFS,
+        C5_ACTIVE_COEFFS, C5_IS_BOUNDARY_COEFFS, C5_NOT_BOUNDARY_ACTIVE_COEFFS,
+        C5_RC0_COEFFS, C5_RC1_COEFFS, C5_RC2_COEFFS, C5_ROUND_FLAG_COEFFS,
     };
 
-    let g_512 = Felt::new(GENERATOR_512);
-    let n_felt = Felt::new(512);
+    // [C5-N1024] The one-hot Lagrange basis lives on the TRACE subgroup, so all
+    // four of these move with n. The flag ROWS below do not — they are absolute
+    // positions inside the walk, which did not move.
+    let g_1024 = Felt::new(GENERATOR_1024);
+    let n_felt = Felt::new(1024);
     let inv_n = n_felt.inv();
-    let z_n = z.exp(512);
+    let z_n = z.exp(1024);
     let z_n_minus_one = z_n.add(Felt::new(crate::goldilocks::MODULUS - 1));
 
     // 15 unique trace-row positions hit by the 21 single-hot flag columns and
@@ -4991,7 +5082,7 @@ fn compute_c5_periodic_at_z(z: Felt) -> Result<[Felt; 28], VerifyError> {
     let mut g_pows = [Felt::ZERO; 15];
     let mut diffs = [Felt::ZERO; 15];
     for i in 0..15 {
-        let g_k = g_512.exp(FLAG_ROWS[i]);
+        let g_k = g_1024.exp(FLAG_ROWS[i]);
         g_pows[i] = g_k;
         // z − g^k = z + (p − g^k)
         diffs[i] = z.add(Felt::new(crate::goldilocks::MODULUS - g_k.as_u64()));
@@ -5031,10 +5122,10 @@ fn compute_c5_periodic_at_z(z: Felt) -> Result<[Felt; 28], VerifyError> {
         .sub(l_sub_out2);
 
     Ok([
-        eval_periodic_stride16_at_z(&C5_RC0_COEFFS, z),
-        eval_periodic_stride16_at_z(&C5_RC1_COEFFS, z),
-        eval_periodic_stride16_at_z(&C5_RC2_COEFFS, z),
-        eval_periodic_stride16_at_z(&C5_ROUND_FLAG_COEFFS, z),
+        eval_periodic_stride32_at_z(&C5_RC0_COEFFS, z),
+        eval_periodic_stride32_at_z(&C5_RC1_COEFFS, z),
+        eval_periodic_stride32_at_z(&C5_RC2_COEFFS, z),
+        eval_periodic_stride32_at_z(&C5_ROUND_FLAG_COEFFS, z),
         eval_periodic_at_z(&C5_IS_BOUNDARY_COEFFS, z), // 15-hot → dense Horner
         l_chain_0_1,                                    // chain_0_1 (row 31)
         l_row_95,                                       // chain_2_3
@@ -5059,7 +5150,19 @@ fn compute_c5_periodic_at_z(z: Felt) -> Result<[Felt; 28], VerifyError> {
         l_add_in2,                                      // add_in2  (row 160)
         l_sub_out1,                                     // sub_out1 (row 288)
         l_sub_out2,                                     // sub_out2 (row 384)
-        l_acc_continuity,                               // acc_continuity (508-hot)
+        l_acc_continuity,                               // acc_continuity
+        // [C5-N1024] The two row gates, APPENDED. Genuinely dense: they are 1
+        // on rows 0..=446 and 0 from 447 on, which has no period, so unlike the
+        // four stride tables above they cost a full-length Horner each.
+        //
+        // ⛔ RETURNING 28 INSTEAD OF 30 WOULD BE A SILENT PRIVACY REGRESSION.
+        // It rejects no honest proof: drop slots 28 and 29 and the verifier
+        // re-imposes the Poseidon rounds AND the four carry-continuity rows
+        // across rows 448..1023. The continuity rows are the worse half — they
+        // pin cols 3, 4, 5 and 6 constant, which is what
+        // `air_aware_recovery_c5.rs` solves for all four note amounts.
+        eval_periodic_at_z(&C5_ACTIVE_COEFFS, z),
+        eval_periodic_at_z(&C5_NOT_BOUNDARY_ACTIVE_COEFFS, z),
     ])
 }
 
@@ -5068,7 +5171,7 @@ fn compute_c5_periodic_at_z(z: Felt) -> Result<[Felt; 28], VerifyError> {
 /// Computes:
 ///   1. α from the Fiat-Shamir transcript (`trace_root || pub_inputs ||
 ///      "rlc-c5\0\0"`).
-///   2. The 28 periodic polynomials evaluated at z (via
+///   2. The 30 periodic polynomials evaluated at z (via
 ///      `compute_c5_periodic_at_z`).
 ///   3. The 28 transition constraints on the opened OOD trace (width 7),
 ///      RLC-combined with α to produce `C(z)`.
@@ -5128,7 +5231,9 @@ pub fn verify_deep_ali_circuit_5(
     );
 
     // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 512.
-    const TRACE_LENGTH_C5: usize = 512;
+    // [C5-N1024] 512 -> 1024. `quotient_segments` stays 8 and rho stays
+    // 1/16; both are scale-invariant in n.
+    const TRACE_LENGTH_C5: usize = 1024;
     let z_d = vanishing_poly(z, TRACE_LENGTH_C5);
     let g = Felt::new(GENERATOR_512);
     let last_row_x = g.exp((TRACE_LENGTH_C5 - 1) as u64);
@@ -7256,8 +7361,7 @@ mod merkle_update_e2e {
     /// out1+out2-in1-in2 = 150-150 = 0 = public_amount(0).
     fn c5_sample_proof() -> p01_stark::compact::GenericCompactProofData {
         p01_stark::compact::generate_transfer_compact_proof(
-            42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
-        )
+            42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &p01_stark::compact::c5_deterministic_probe_mask())
     }
 
     /// [P2.2d-C5] Positive: `verify_generic` accepts an honest transfer
@@ -7295,8 +7399,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_transfer_compact_proof(
-            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50,
-        );
+            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask());
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7343,8 +7446,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_transfer_compact_proof(
-            1, 2, 3, 4, 5, 6, 2, 8, 9, 6, 11, 12, 0,
-        );
+            1, 2, 3, 4, 5, 6, 2, 8, 9, 6, 11, 12, 0, &p01_stark::compact::c5_deterministic_probe_mask());
 
         let mut tampered = proof_data.proof_bytes.clone();
         tampered[184] ^= 0x02;
@@ -7407,8 +7509,7 @@ mod merkle_update_e2e {
 
         // out1+out2-in1-in2 = 300-150 = 150, but public_amount claimed = 0.
         let proof_data = p01_stark::compact::generate_transfer_compact_proof(
-            42, 999, 100, 111, 50, 222, 150, 555, 333, 150, 666, 444, 0,
-        );
+            42, 999, 100, 111, 50, 222, 150, 555, 333, 150, 666, 444, 0, &p01_stark::compact::c5_deterministic_probe_mask());
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7450,8 +7551,7 @@ mod merkle_update_e2e {
         // out2 near 2^64 (> 2^63); claims a balanced public_amount = 0.
         let huge: u64 = 0xFFFF_FFFF_0000_0000;
         let proof_data = p01_stark::compact::generate_transfer_compact_proof(
-            42, 999, 100, 111, 50, 222, 80, 555, 333, huge, 666, 444, 0,
-        );
+            42, 999, 100, 111, 50, 222, 80, 555, 333, huge, 666, 444, 0, &p01_stark::compact::c5_deterministic_probe_mask());
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7734,8 +7834,7 @@ mod merkle_update_e2e {
             // Conserving witness: in1+in2 == out1+out2, public_amount 0.
             |s| {
                 p01_stark::compact::generate_transfer_compact_proof(
-                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
-                )
+                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &p01_stark::compact::c5_deterministic_probe_mask())
             },
             verify_constraints_transfer,
         );
@@ -7985,8 +8084,7 @@ mod merkle_update_e2e {
             8,
             |s| {
                 p01_stark::compact::generate_transfer_compact_proof(
-                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0,
-                )
+                    42 + s, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &p01_stark::compact::c5_deterministic_probe_mask())
             },
         );
     }
