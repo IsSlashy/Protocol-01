@@ -1,8 +1,9 @@
 //! Does additive `Z_H·r` trace masking fit the DEPLOYED DEEP-ALI verifier?
 //!
 //! Companion to `zk_feasibility.rs` (same self-contained Goldilocks arithmetic,
-//! same "measure, don't assume" contract). That file answered the hiding half:
-//! blinding with r ≥ 46 free coefficients defeats Lagrange recovery.
+//! same "measure, don't assume" contract). That file answered the hiding half.
+//! ⚠️ Its `r ≥ 46` is the TWO-row-per-query figure and is wrong on this wire;
+//! the budget is `4q + 2`, so 90 here and 110 on the 27-query circuits.
 //!
 //! ⚠️ `stark/tests/zk_feasibility.rs` NO LONGER EXISTS. It was deleted in
 //! `dc9dd515` because it was calibrated to master's superseded
@@ -27,25 +28,29 @@
 //!     `check_final_poly_degree_bound` before the FRI query loop. The bound is
 //!     the statement `deg(D) <= trace_length - 2`, which is only true while
 //!     every trace column has degree < n. Masking makes deg(T') = n + r - 1,
-//!     so the DEEP composition's trace part has degree n + r - 3 and its
+//!     so at r = 90 the DEEP composition's trace part has degree 599 and its
 //!     9-fold fold-down has degree 1, not 0 → `FriFinalPolyDegreeTooHigh`.
 //!
 //!   * `quotient_segments = 8` = ceil((8n-7)/n), pinned in the same config and
 //!     asserted in BOTH directions by the prover's `segment_quotient_poly`.
 //!     The degree-7 Poseidon S-box multiplies the mask's degree contribution
-//!     by 7: deg(Q') grows by 7r = 322, past the 8×512 coefficient budget →
-//!     the masked quotient needs a 9th segment the wire format cannot carry.
+//!     by 7: deg(Q') grows by 7r = 630, past the 8×512 coefficient budget →
+//!     the masked quotient needs TWO more segments the wire cannot carry.
 //!
 //! Everything below is either computed from first principles and validated
 //! in-file (the fold rule, the coset non-vanishing, the ×7 degree growth), or
 //! imported as a named measurement with its provenance stated (the 4088).
 //!
-//! The current branch's working-tree verifier (pre-B1) has NO terminal degree
-//! bound and NO coset — against it, honest masked proofs would pass, but it is
-//! not the deployed artifact and its FRI enforces no degree at all. The
-//! deployed program is `DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs`
-//! (elf sha256 3ba71cdd…, attested 2026-08-04, generation b2+coset), built
-//! from `b7-drop-aligned-checks`.
+//! ⚠️ THIS USED TO SAY the working tree is pre-B1, with no terminal bound and
+//! no coset. That is STALE: `140dcb3e` brought b7 onto master, and master
+//! carries `LDE_COSET_SHIFT = 7` (`verify.rs:165`) and
+//! `check_final_poly_degree_bound` (`verify.rs:1561`) today. The tree and the
+//! deployment agree.
+//!
+//! The deployed program is `DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs`.
+//! ⚠️ The `3ba71cdd…` hash this file used to name is the 2026-08-04 build and is
+//! superseded: `deployed-verifier.json` records elf sha256 `54d01a06…`,
+//! 725,673 B, slot 487886926, generation b2.
 //!
 //! Run: `cargo test -p p01-stark --release --test masking_deep_degree_gate -- --nocapture`
 
@@ -108,8 +113,21 @@ const DEPLOYED_QUOTIENT_SEGMENTS: usize = 8;
 const MEASURED_UNMASKED_Q_DEG: usize = 4088;
 /// Poseidon S-box exponent: the AIR's maximal degree in the trace variables.
 const SBOX_DEGREE: usize = 7;
-/// The ZK gate's mask budget: 2 openings × 22 queries + 2 OOD points.
-const MASK_COEFFS_R: usize = 46;
+/// The ZK gate's mask budget: **4** opened rows × 22 queries + 2 OOD points.
+///
+/// 🚨 THIS WAS 46 AND 46 IS WRONG. It counted TWO rows per query, which was the
+/// pre-Route-C wire. The wire that ships publishes four — `row(pos) |
+/// row(pos^half) | row(next) | row(next^half)` (`compact.rs:2536-2552`,
+/// `wire_parity.rs:188`) — so the budget is `4q + 2`, measured green in
+/// `air_aware_recovery_c1.rs` and in `witness_recovery_positive_control.rs`.
+///
+/// It is per circuit, and 90 is the value for the n=512 circuits this file is
+/// about (C3/C5/C6, 22 queries). The 27-query circuits (C0/C1/C2/C4) are at
+/// `4·27 + 2 = 110`.
+///
+/// ⛔ Everything downstream moves with it: the DEEP degree, the quotient growth
+/// and the segment count. Do not restore 46 without re-deriving all three.
+const MASK_COEFFS_R: usize = 90;
 
 /// LDE generator for size 8192 (verify.rs `GENERATOR_8192`, both branches).
 const GEN_8192: u64 = 0x1544_EF23_35D1_7997;
@@ -270,7 +288,14 @@ fn masked_deep_composition_fails_deployed_terminal_degree_bound() {
 
     // The smallest bound that accepts the masked fold-down is 2 — the concrete
     // soundness price: rho 1/16 → 2/16, i.e. 4 → 3 bits per query.
-    assert!(final_deg < 2, "bound 2 should be sufficient for r = 46");
+    // At r = 90 the DEEP part is degree 599 and nine folds take it to 1, so a
+    // bound of 2 is still enough HERE — on the ffps-16, nine-fold circuits.
+    // ⚠️ It is NOT enough on C7: ffps 32 stops the fold one layer early, eight
+    // folds leave degree 2, and C7's bound is already 2, so C7 needs 3.
+    assert!(
+        final_deg < 2,
+        "bound 2 must still admit the masked fold-down at r = {MASK_COEFFS_R}",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -338,6 +363,10 @@ fn masked_quotient_overflows_deployed_segment_budget() {
     // And the margin is not close: the conclusion only flips if today's real
     // quotient degree were ≤ 3773, contradicting the 4088 measurement by 315.
     assert!(MEASURED_UNMASKED_Q_DEG > budget - SBOX_DEGREE * MASK_COEFFS_R + 300);
-    // A 9th segment carries it: ceil((4410+1)/512) = 9.
-    assert_eq!((masked_q_deg + 1).div_ceil(N), DEPLOYED_QUOTIENT_SEGMENTS + 1);
+    // ⚠️ TWO more segments, not one: ceil((4718+1)/512) = 10. At the old r = 46
+    // this read 9, and 9 is the number quoted in four places in the memory. The
+    // wire cost is ~360 B per segment at 22 queries — negligible — but `k` is a
+    // program constant the parser reads (`compact_proof.rs:795`), so a 10-segment
+    // proof does not verify-and-fail, it does not PARSE.
+    assert_eq!((masked_q_deg + 1).div_ceil(N), DEPLOYED_QUOTIENT_SEGMENTS + 2);
 }
