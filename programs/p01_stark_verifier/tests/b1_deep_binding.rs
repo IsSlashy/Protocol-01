@@ -389,7 +389,7 @@ fn terminal_degree_bound_check_in_isolation() {
 /// ~21-26 bits post-B2. Nothing here is publishable as a security level. Lifting
 /// the floor needs the challenges drawn from an extension field, which is a
 /// separate change and another wire break.
-const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [ 52, 48, 50, 47, 48, 47, 47];
+const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [52, 48, 50, 47, 48, 47, 47];
 const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
 
 /// The DERIVED twin of the two arrays above.

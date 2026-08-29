@@ -415,7 +415,15 @@ fn terminal_query_indices_cover_the_whole_terminal_domain() {
 
 /// The shipped post-B2 columns, transcribed from `b1_deep_binding.rs`.
 /// `the_two_files_agree_on_the_post_b2_columns` ties these to that file's text.
-const B2_CONJECTURED: [u32; 7] = [52, 50, 50, 47, 48, 47, 47];
+// [C1-N256 2026-08-29] index 1: 50 -> 48. C1's LDE doubled with its trace, and
+// the field floor is `64 - log2(8n + w+k+1 + folds*lde)`, so the conjectured
+// column lost two bits. The unconditional column is unmoved at 46.
+//
+// This array is a SECOND, INDEPENDENT derivation of the same quantity that
+// `b1_deep_binding.rs::B2_CONJECTURED_FORGERY_BITS` holds. Both had to move,
+// and the test below is what makes that a check rather than a chore: if only
+// one of them had been edited, the disagreement would have said so by name.
+const B2_CONJECTURED: [u32; 7] = [52, 48, 50, 47, 48, 47, 47];
 const B2_UNCONDITIONAL: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
 
 /// The B1-era columns, derived from constants transcribed out of git at

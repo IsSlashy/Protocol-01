@@ -356,7 +356,13 @@ pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
 // proximity lottery wins with zero grinding. Post-B2 the query term OVERSHOOTS
 // the floor on all seven circuits, so the honest conjectured figure IS the floor:
 //
-//     conjectured  52 / 50 / 50 / 47 / 48 / 47 / 47   (C0..C6)
+//     conjectured  52 / 48 / 50 / 47 / 48 / 47 / 47   (C0..C6)
+//
+//     [C1-N256 2026-08-29] C1: 50 -> 48. Its LDE doubled with its trace, and the
+//     field floor is `64 - log2(8n + w+k+1 + folds*lde)`, so the conjectured
+//     column lost two bits. That is a real cost of freeing C1's blinding region
+//     and it is recorded here rather than absorbed. The unconditional column
+//     below is unmoved.
 //     unconditional 46 / 46 / 46 / 42 / 46 / 42 / 42
 //
 // The unconditional column is unique-decoding (`log2(2/(1+rho))` = 0.913 bits per
