@@ -29,6 +29,7 @@ import {
   type PoolConfig,
   type PrepareUnshieldResult,
   type ShieldReceipt,
+  C3_SUBTREE_DEPTH,
 } from './denominatedPool';
 import { starkProver } from './starkProver';
 
@@ -133,10 +134,23 @@ export async function prepareUnshieldFromPath(
 
     stage = 'Proving the note is in the pool';
     onProgress?.('Generating C3 (merkle_path) STARK proof from the stored path...');
+    // [C3-D11] The circuit proves the bottom ELEVEN levels; the instruction
+    // walks the remaining four. Handing the prover the full stored path panics
+    // inside the wasm, mid-proof.
+    //
+    // 🚨 THIS FILE WAS MISSED when C3 was first cut on 2026-08-29 — it is a
+    // SECOND construction site for `PrepareUnshieldResult`, and it is the one
+    // the silent C1+C3 fallback reaches.
+    if (path.pathElements.length < C3_SUBTREE_DEPTH) {
+      throw new Error(
+        `Stored Merkle path has ${path.pathElements.length} elements, need at least ` +
+        `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+      );
+    }
     c3Raw = await starkProver.generateMerklePathProof(
       receipt.commitment.toString(),
-      path.pathElements,
-      path.pathIndices,
+      path.pathElements.slice(0, C3_SUBTREE_DEPTH),
+      path.pathIndices.slice(0, C3_SUBTREE_DEPTH),
     );
   } finally {
     clearInterval(proofHeartbeat);
@@ -145,16 +159,28 @@ export async function prepareUnshieldFromPath(
   const c1PublicInputs = c1Raw.publicInputs.map((s) => BigInt(s));
   const c3PublicInputs = c3Raw.publicInputs.map((s) => BigInt(s));
 
-  // The proof's own root must equal the stored one; if the path were stale or
-  // corrupted the on-chain root check would fail after we had already paid for
-  // the upload.
-  const provenRoot = c3PublicInputs[1] ?? 0n;
-  if (provenRoot !== storedRoot) {
+  // 🚨 THIS COMPARED THE PROOF'S ROOT TO THE STORED POOL ROOT. Since the depth
+  // cut `c3PublicInputs[1]` is a SUBTREE root, so the comparison could never
+  // hold again and this branch would have refused every note it was built for.
+  //
+  // The staleness check it performed is still worth having, so it moves to a
+  // form that survives: the DEPTH the prover actually proved must be the depth
+  // this client sliced for. A stale wasm blob is the failure it now names, and
+  // that is the failure most likely to be real.
+  const subtreeRoot = c3PublicInputs[1] ?? 0n;
+  if (c3PublicInputs[2] !== BigInt(C3_SUBTREE_DEPTH)) {
     throw new Error(
-      `Stored Merkle path does not reproduce its root (${provenRoot} vs ${storedRoot}). ` +
-        'Falling back to a full history rebuild is required for this note.',
+      `C3 proved depth ${c3PublicInputs[2]}, expected ${C3_SUBTREE_DEPTH}. The shipped ` +
+      `wasm prover is stale — it predates the depth cut, and the on-chain verifier ` +
+      `rejects every proof it makes. Reship the blob.`,
     );
   }
+
+  // The stored path's own root is the POOL root, and `isRootAccepted` above has
+  // already checked it against the pool's ring — which is the check the removed
+  // comparison was really standing in for.
+  const siblings = path.pathElements.slice(C3_SUBTREE_DEPTH).map((e) => BigInt(e));
+  const directions = path.pathIndices.slice(C3_SUBTREE_DEPTH);
 
   void CIRCUIT_MERKLE_PATH;
   return {
@@ -168,7 +194,10 @@ export async function prepareUnshieldFromPath(
       publicInputs: c3PublicInputs,
       proofSize: c3Raw.proofSize,
     },
-    merkleRoot: provenRoot,
+    merkleRoot: storedRoot,
+    subtreeRoot,
+    siblings,
+    directions,
     nullifierGoldilocks: c1PublicInputs[0] ?? 0n,
     starkCommitment: c1PublicInputs[1] ?? 0n,
   };

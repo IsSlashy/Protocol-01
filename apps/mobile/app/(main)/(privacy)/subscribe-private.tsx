@@ -23,6 +23,7 @@ import {
   ALL_POOLS_V3,
   fetchPoolLeavesByIndex,
   buildMerkleProofFromLeavesV3,
+  C3_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
@@ -244,15 +245,29 @@ export default function SubscribePrivateScreen() {
         leavesByIndex: leafScan.leavesByIndex,
         targetLeafIndex: receipt.leafIndex,
       });
-      const { pathElements: c3Path, pathIndices: c3Indices } = merkleProof;
+      const { root: c3Root, pathElements: c3Path, pathIndices: c3Indices } = merkleProof;
 
       setStarkStatus('Generating Merkle path proof (C3)...');
+      // [C3-D12] Bottom 12 levels into the circuit; the top 3 travel to the
+      // instruction for the on-chain walk.
       const U64 = (1n << 64n) - 1n;
+      if (c3Path.length < C3_SUBTREE_DEPTH) {
+        throw new Error(
+          `Merkle path has ${c3Path.length} elements, need at least ` +
+          `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+        );
+      }
       const c3Result = await generateMerklePathProof(
         (receipt.commitment & U64).toString(),
-        c3Path.map(e => (e & U64).toString()),
-        c3Indices,
+        c3Path.slice(0, C3_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+        c3Indices.slice(0, C3_SUBTREE_DEPTH),
       );
+      // ⛔ POOL root from the walk, not the proof's public input 1.
+      const c3Walk = {
+        merkleRoot: c3Root,
+        siblings: c3Path.slice(C3_SUBTREE_DEPTH).map(e => e & U64),
+        directions: c3Indices.slice(C3_SUBTREE_DEPTH),
+      };
       const c3Bytes = Buffer.from(c3Result.proofHex, 'hex');
       const c3Inputs = c3Result.publicInputs.map((s: string) => BigInt(s));
       if (__DEV__) {
@@ -260,8 +275,8 @@ export default function SubscribePrivateScreen() {
           circuitId: c3Result.circuitId,
           proofSize: c3Result.proofSize,
           publicInputsCount: c3Inputs.length,
-          // [leaf, root, depth] — root prefix safe to log (public on-chain).
-          rootPrefix: c3Inputs[1]?.toString(16).slice(0, 16) ?? 'none',
+          // [leaf, subtree_root, depth] — prefix safe to log (public on-chain).
+          subtreeRootPrefix: c3Inputs[1]?.toString(16).slice(0, 16) ?? 'none',
           depth: c3Inputs[2]?.toString() ?? 'none',
           durationMs: c3Result.durationMs,
         });
@@ -285,6 +300,7 @@ export default function SubscribePrivateScreen() {
           publicInputs: c3Inputs,
           proofSize: c3Result.proofSize,
         },
+        c3Walk,
         // Service tag for the license-key commitment. This screen has no
         // Service Registry slug (free-form retailer), so the rule resolves to
         // the retailer address — the same value LicenseKeyCard now uses.

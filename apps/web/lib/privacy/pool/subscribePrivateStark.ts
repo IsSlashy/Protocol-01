@@ -337,7 +337,10 @@ export async function subscribePrivateStark(
     //
     // 400,000 matches what every other v3/v4 path on this surface requests.
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(400_000));
+    // [ZK-DEPTH-11 2026-08-30] 400,000 -> 500,000. `resolve_pool_root` walks
+    // FOUR levels now: ~137,876 CU at the ~34,469 measured per on-chain `hash2`,
+    // up from ~103,407. ⚠️ Headroom, not an end-to-end measurement.
+    tx.add(...buildComputeBudgetIxs(500_000));
     tx.add(ix);
     const { signature: txSig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
       connection,

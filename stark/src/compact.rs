@@ -6723,9 +6723,16 @@ pub fn measure_aliased_terminal_agreement() -> (Vec<usize>, Vec<usize>) {
         OodForgery::Coordinated { col: 0, delta: 1 },
         TerminalPoly::Honest);
 
-    // C1 header: 32 + 32 + 3*8 + 3*8 + 8 + 8k, then layers, then fps + poly.
+    // C1 header: 32 + 32 + w*8 + w*8 + 8 + 8k, then layers, then fps + poly.
+    //
+    // [ZK-RANDOMIZER] `w` is READ OFF THE AIR. It was the literal 3 until the
+    // randomizer column widened C1 to 4, and a stale width here does not fail
+    // loudly -- it walks the cursor into the middle of the OOD frame and reads
+    // trace claims as a layer count. The panic that surfaced it was an
+    // out-of-range slice 6 KB further down the wire.
     let bytes = &forged.proof_bytes;
-    let mut off = 32 + 32 + 3 * 8 * 2 + 8 + GENERIC_QUOTIENT_SEGMENTS * 8;
+    let w = crate::air::denominated_pool::TRACE_WIDTH;
+    let mut off = 32 + 32 + w * 8 * 2 + 8 + GENERIC_QUOTIENT_SEGMENTS * 8;
     let num_layers = bytes[off] as usize;
     off += 1 + num_layers * 32;
     let fps = u16::from_le_bytes([bytes[off], bytes[off + 1]]) as usize;

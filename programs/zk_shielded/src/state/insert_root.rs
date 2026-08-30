@@ -92,7 +92,14 @@ use super::poseidon_gl::{hash2, MODULUS};
 /// name, two values, four files. `spend_root.rs` avoided it for the same reason
 /// and recorded what happened when it was not avoided: a probe hashing at row
 /// 478 instead of 382.
-pub const INSERT_SUBTREE_DEPTH: u8 = 12;
+// [ZK-DEPTH-11 2026-08-30] 12 -> 11. The circuit gave up one level so its
+// blinding region could grow; this instruction takes it. The walk is now
+// FOUR levels on a depth-15 pool, at ~34,469 CU per on-chain `hash2`.
+//
+// ⛔ IT MUST EQUAL THE CIRCUIT'S `CANONICAL_DEPTH`. They are one number in
+// two crates: too small and the walk folds a root the proof never attested,
+// too large and it folds past the pool's own depth.
+pub const INSERT_SUBTREE_DEPTH: u8 = 11;
 
 /// The most top levels this program will ever walk: the depth-20 ceiling that
 /// `MerkleTreeStateV3::LEN` budgets for, minus 12.
@@ -482,12 +489,16 @@ mod tests {
         );
     }
 
-    /// The default pool needs three levels, and the walk is not a no-op.
+    /// The default pool needs four levels, and the walk is not a no-op.
+    ///
+    /// [ZK-DEPTH-11 2026-08-30] 3 -> 4. The fold now does EIGHT `hash2` calls,
+    /// not six -- four levels, old root and new root -- so ~275,752 CU at the
+    /// ~34,469 measured per hash. The shield compute budget must follow.
     #[test]
-    fn the_default_pool_needs_three_levels() {
+    fn the_default_pool_needs_four_levels() {
         assert_eq!(
             crate::state::pool_v3::DenominatedPoolV3::DEFAULT_TREE_DEPTH - INSERT_SUBTREE_DEPTH,
-            3,
+            4,
             "the levels this module walks changed; the CU budget and the shield \
              compute-unit limit both move with it",
         );

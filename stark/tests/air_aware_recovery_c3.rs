@@ -78,14 +78,23 @@ const GEN_512: u64 = 0x1905_D02A_5C41_1F4E; // trace generator, 512 rows
 const GEN_8192: u64 = 0x1544_EF23_35D1_7997; // LDE generator, 8192 points
 const COSET_SHIFT: u64 = 7;
 
+// [ZK-RANDOMIZER + ZK-DEPTH-11 2026-08-30] ⛔ THESE ARE DERIVED NOW, NOT TYPED.
+// Every one of them was a literal, and every one of them was wrong within a day:
+// the depth cut moved DEPTH, the randomizer column moved TRACE_WIDTH, and the
+// mask arity moved with both. The harness then PANICKED before building a proof,
+// which took the repository's only executable evidence offline without anyone
+// noticing -- the tests simply stopped running.
+//
+// A harness that re-derives the circuit's geometry is a second source of truth
+// for a number that has exactly one. Read the circuit.
 const TRACE_LEN: usize = 512;
-const TRACE_WIDTH: usize = 6;
+const TRACE_WIDTH: usize = p01_stark::air::merkle_path::TRACE_WIDTH;
 const LDE_SIZE: u64 = 8192;
 const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 22;
 const QUOTIENT_SEGMENTS: usize = 8;
 const HASH_CYCLE_LEN: usize = 32;
-const DEPTH: usize = 12;
+const DEPTH: usize = p01_stark::air::merkle_path::CANONICAL_DEPTH;
 
 fn self_check_field() {
     assert_eq!(fpow(GEN_512, 512), 1, "GEN_512 is not a 512th root");
@@ -229,7 +238,7 @@ fn segments(held_tail: bool) -> Vec<Vec<usize>> {
 
 /// `MASK_ROWS * TRACE_WIDTH`, the arity the prover now demands.
 fn mask_len() -> usize {
-    (TRACE_LEN - DEPTH * HASH_CYCLE_LEN) * 6
+    p01_stark::air::merkle_path::mask_len_for_depth(DEPTH)
 }
 
 /// A deterministic mask. Adequate for a RANK measurement -- the rank does not

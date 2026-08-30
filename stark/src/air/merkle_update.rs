@@ -102,7 +102,34 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-pub const TRACE_WIDTH: usize = 10;
+/// Columns the AIR constrains. Every transition, boundary assertion and
+/// periodic gate lives inside this range.
+pub const CONSTRAINED_TRACE_WIDTH: usize = 10;
+
+/// [ZK-RANDOMIZER 2026-08-30] The committed trace is ONE column wider than the
+/// circuit: column `RANDOMIZER_COL` is uniform on ALL rows and enters NO
+/// constraint, NO periodic gate and NO boundary assertion.
+///
+/// The row mask covers the TRACE openings and, through them, the quotient
+/// openings. It never reached the FRI layers or the terminal polynomial, which
+/// are functionals of the DEEP composition `D` -- and `D` had no randomness of
+/// its own at all. `stark/tests/full_wire_ledger.rs` measures that ledger.
+///
+/// `deep_composition_lde` sums its gamma-RLC over ALL committed columns, so this
+/// one enters `D` with no other change to the fold or the transcript. It enters
+/// no constraint, so `deg(C)` and `quotient_segments` are unchanged; it has
+/// degree `n - 1` like every other column, so `deg(D) = n - 2` holds and
+/// `fri_final_poly_degree_bound` is unchanged. MEASURED on C7: the whole change
+/// cost 720 wire bytes and moved neither constant.
+///
+/// ⛔ UNCONSTRAINED ON PURPOSE, AND NOT A SOUNDNESS HOLE: nothing reads it, so a
+/// prover writing anything there proves nothing extra. What WOULD be a hole is a
+/// per-query identity check that swept it up -- `verify.rs`'s phase-1 arms
+/// iterate `0..config.trace_width` and are retired post-B7; if one is revived it
+/// must stop at `CONSTRAINED_TRACE_WIDTH`.
+pub const RANDOMIZER_COL: usize = CONSTRAINED_TRACE_WIDTH;
+
+pub const TRACE_WIDTH: usize = CONSTRAINED_TRACE_WIDTH + 1;
 pub const HASH_CYCLE_LEN: usize = 32;
 const NUM_ROUNDS: usize = 30;
 
@@ -126,7 +153,19 @@ pub fn trace_length_for_depth(depth: usize) -> usize {
 ///
 /// Unlike C7 and C3, `filled_subtrees` IS the right source here: C6 proves an
 /// INSERTION, and an insertion is always at the frontier.
-pub const CANONICAL_DEPTH: usize = 12;
+/// [ZK-DEPTH-11 2026-08-30] 12 -> 11, and it is FREE ON THE WIRE for the same
+/// reason the 15 -> 12 cut was: `trace_length_for_depth(11) = next_pow2(353) =
+/// 512`, unchanged. What it buys is 32 more mask rows (128 -> 160), and that was
+/// not cosmetic — `stark/tests/full_wire_ledger.rs::the_split_that_decides_per_channel`
+/// MEASURED channel A short by 132 on C3 and standing on a margin of 20 on C6
+/// and C7. A margin of 20 does not survive one more opening.
+///
+/// ⛔ THE RANDOMIZER COLUMN CANNOT SUBSTITUTE FOR THIS. It enters no constraint,
+/// so it never reaches the quotient openings; only MASK ROWS cover channel A.
+///
+/// 🚩 The price is on chain, not on the wire: the instruction walks 15 - 11 = 4
+/// levels instead of 3, at ~34,469 CU per `hash2`.
+pub const CANONICAL_DEPTH: usize = 11;
 
 /// `trace_length_for_depth(12) = next_pow2(384+1) = 512`, IDENTICAL to what
 /// depth 15 gave. So `n`, `deg(Q)`, `quotient_segments = 8` and rho all stay
@@ -156,7 +195,10 @@ pub const MASK_ROWS: usize = CANONICAL_TRACE_LENGTH - FIRST_FREE_ROW; // 128
 /// Mask elements `build_merkle_update_trace` requires at `depth`. Kept
 /// depth-generic so the shallow-depth tests in this file keep compiling.
 pub fn mask_len_for_depth(depth: usize) -> usize {
-    (trace_length_for_depth(depth) - depth * HASH_CYCLE_LEN) * TRACE_WIDTH
+    // [ZK-RANDOMIZER] Two regions in one flat slice: the row mask over the
+    // CONSTRAINED columns, then the randomizer column over every row.
+    let n = trace_length_for_depth(depth);
+    (n - depth * HASH_CYCLE_LEN) * CONSTRAINED_TRACE_WIDTH + n
 }
 
 // ============================================================================
@@ -696,9 +738,17 @@ pub fn build_merkle_update_trace(
     // freedom and the attack comes straight back.
     let first_free_row = depth * HASH_CYCLE_LEN;
     for (i, row) in (first_free_row..trace_length).enumerate() {
-        for col in 0..TRACE_WIDTH {
-            trace[col][row] = mask[i * TRACE_WIDTH + col];
+        for col in 0..CONSTRAINED_TRACE_WIDTH {
+            trace[col][row] = mask[i * CONSTRAINED_TRACE_WIDTH + col];
         }
+    }
+
+    // [ZK-RANDOMIZER] The tail fills the randomizer column on EVERY row, not
+    // only the free ones: what it masks is `D`, which is built from the whole
+    // LDE of every column.
+    let randomizer_base = (trace_length - first_free_row) * CONSTRAINED_TRACE_WIDTH;
+    for row in 0..trace_length {
+        trace[RANDOMIZER_COL][row] = mask[randomizer_base + row];
     }
     // `old_carry` / `new_carry` are no longer read after the walk; the blinding
     // region replaces the copy that used to consume them.

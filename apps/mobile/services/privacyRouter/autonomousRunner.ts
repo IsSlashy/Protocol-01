@@ -20,7 +20,7 @@ import {
   isPrivacyRouterAvailable,
 } from './index';
 import { checkPendingRoutes, executeHop } from './scheduler';
-import { findPool } from '../denominatedPool';
+import { findPool, C3_SUBTREE_DEPTH } from '../denominatedPool';
 import { useDenominatedPoolStore } from '../../stores/denominatedPoolStore';
 import { useWalletStore } from '../../stores/walletStore';
 import type { HopExecutionCallbacks } from './types';
@@ -241,14 +241,29 @@ function buildCallbacks(): HopExecutionCallbacks {
         leavesByIndex: leafScan.leavesByIndex,
         targetLeafIndex: receipt.leafIndex,
       });
+      // [C3-D12] Bottom 12 levels into the circuit; the top 3 travel to the
+      // instruction for the on-chain walk. This runner is UNATTENDED, so a
+      // 15-element path would panic inside the wasm with nobody watching.
       const U64 = (1n << 64n) - 1n;
+      if (merkleProof.pathElements.length < C3_SUBTREE_DEPTH) {
+        throw new Error(
+          `Merkle path has ${merkleProof.pathElements.length} elements, need at ` +
+          `least ${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+        );
+      }
       const c3Result = await prover.generateMerklePathProof(
         (receipt.commitment & U64).toString(),
-        merkleProof.pathElements.map(e => (e & U64).toString()),
-        merkleProof.pathIndices,
+        merkleProof.pathElements.slice(0, C3_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+        merkleProof.pathIndices.slice(0, C3_SUBTREE_DEPTH),
       );
       const c3Bytes = Buffer.from(c3Result.proofHex, 'hex');
       const c3Inputs = c3Result.publicInputs.map((s: string) => BigInt(s));
+      // ⛔ POOL root from the walk, not the proof's public input 1.
+      const c3Walk = {
+        merkleRoot: merkleProof.root,
+        siblings: merkleProof.pathElements.slice(C3_SUBTREE_DEPTH).map(e => e & U64),
+        directions: merkleProof.pathIndices.slice(C3_SUBTREE_DEPTH),
+      };
 
       try {
         const { txSignature, outputCommitments } = await store.splitNoteStark(
@@ -257,6 +272,7 @@ function buildCallbacks(): HopExecutionCallbacks {
           outputSecrets,
           { proofBytes, publicInputs, proofSize: proofResult.proofSize },
           { proofBytes: c3Bytes, publicInputs: c3Inputs, proofSize: c3Result.proofSize },
+          c3Walk,
         );
         console.log(`[AutoRunner] ✂️ Split confirmed: ${txSignature.slice(0, 16)}...`);
         return {

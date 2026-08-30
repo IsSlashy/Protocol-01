@@ -106,6 +106,23 @@ export const MEASURED_PROOF_BYTES = {
   // [C1-N256 2026-08-29] 68,881 -> 80,577. C1 was the one circuit the depth cut
   // could not save, so its geometry moved (n 128 -> 256) and its wire grew with
   // it. C3 and C7 took depth cuts instead and their sizes did not move.
+  //
+  // 🚨 THIS TABLE TRACKS THE BRANCH, NOT THE SHIPPED BLOB, AND THE TWO HAVE
+  // DIVERGED TWICE. The wasm the web app actually loads was built 2026-08-25 and
+  // emits the PRE-doubling C1 (68,881). Moving c1 to 80,577 on 08-29 is why
+  // `subscribeFloat.test.ts` has two red assertions: the computed pair float is
+  // 1,117,129,200 while `prefundAmount.ts` still records the 1,035,725,040 that
+  // devnet charged four times. Neither number is wrong; they describe different
+  // builds, and nothing reconciles them until the reship.
+  //
+  // ⛔ AND THE BRANCH MOVED AGAIN ON 2026-08-30: c1 94,017, c3 78,877, c7 78,685
+  // (randomizer columns on all four live circuits, plus a second trace doubling
+  // for C1; the depth cut 12 -> 11 cost zero bytes). MEASURED by
+  // `stark/tests/full_wire_ledger.rs`. Those figures are deliberately NOT
+  // written in below: this table drives the pre-fund the app sends, and the app
+  // still builds proofs with the old blob. All three move in the reship commit,
+  // together with `deployed-verifier.json` and the devnet float — and the float
+  // has to be OBSERVED again, not computed and declared.
   c1: 80_577,
   c3: 78_157,
   c7: 77_965,

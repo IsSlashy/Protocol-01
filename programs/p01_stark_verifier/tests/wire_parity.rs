@@ -55,8 +55,8 @@ fn fixture_c2() -> Vec<u8> {
     p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes
 }
 fn fixture_c3() -> Vec<u8> {
-    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len())).proof_bytes
 }
 fn fixture_c4() -> Vec<u8> {
@@ -71,24 +71,24 @@ fn fixture_c5() -> Vec<u8> {
     .proof_bytes
 }
 fn fixture_c6() -> Vec<u8> {
-    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())).proof_bytes
 }
 
 fn fixture_c7() -> Vec<u8> {
-    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_LEN, TRACE_WIDTH};
     const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
 
     let pe: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
     let pi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     // Deterministic: a wire-size pin needs the same bytes every run. ⛔ NOT the
-    // shape a spend uses -- that draws MASK_ROWS * TRACE_WIDTH fresh CSPRNG
+    // shape a spend uses -- that draws MASK_LEN fresh CSPRNG
     // elements for every proof, and reusing a mask across two proofs of one
     // note relates two traces that must be independent.
     let mut st = 0x9E37_79B9_7F4A_7C15u64;
-    let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
-    for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+    let mut mask = Vec::with_capacity(MASK_LEN);
+    for _ in 0..(MASK_LEN) {
         st ^= st >> 12;
         st ^= st << 25;
         st ^= st >> 27;

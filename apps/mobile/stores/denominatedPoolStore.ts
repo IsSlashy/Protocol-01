@@ -269,6 +269,17 @@ interface DenominatedPoolState {
     recipient: string,
     c1ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
     c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    /**
+     * [C3-D12] The Merkle levels ABOVE the depth-12 C3 circuit, plus the pool
+     * root the screen's own tree walk produced.
+     *
+     * ⛔ REQUIRED. Since 2026-08-29 a C3 proof attests membership in a
+     * twelve-level SUBTREE only; the instruction walks the rest on chain. And
+     * `merkleRoot` is NOT `c3ProofData.publicInputs[1]` — that is the subtree
+     * root now, and passing it as the pool root names a root no pool ever
+     * published.
+     */
+    walk: { merkleRoot: bigint; siblings: bigint[]; directions: number[] },
     emergency?: boolean,
   ) => Promise<string>;
   /** Quantum-resistant STARK peer-to-peer transfer */
@@ -297,6 +308,17 @@ interface DenominatedPoolState {
       newDepositEpoch: bigint;
       newLeafIndex: number;
     },
+    /**
+     * [C3-D12] The Merkle levels ABOVE the depth-12 C3 circuit, plus the pool
+     * root the screen's own tree walk produced.
+     *
+     * ⛔ REQUIRED. Since 2026-08-29 a C3 proof attests membership in a
+     * twelve-level SUBTREE only; the instruction walks the rest on chain. And
+     * `merkleRoot` is NOT `c3ProofData.publicInputs[1]` — that is the subtree
+     * root now, and passing it as the pool root names a root no pool ever
+     * published.
+     */
+    walk: { merkleRoot: bigint; siblings: bigint[]; directions: number[] },
   ) => Promise<{ txSig: string; shareableNote: string }>;
   /** Quantum-resistant STARK split across denominations (same token).
    * Requires TWO proofs: C1 (pool_commitment) + C3 (merkle_path) — the latter
@@ -308,6 +330,17 @@ interface DenominatedPoolState {
     outputSecrets: bigint[],
     starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
     c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+    /**
+     * [C3-D12] The Merkle levels ABOVE the depth-12 C3 circuit, plus the pool
+     * root the screen's own tree walk produced.
+     *
+     * ⛔ REQUIRED. Since 2026-08-29 a C3 proof attests membership in a
+     * twelve-level SUBTREE only; the instruction walks the rest on chain. And
+     * `merkleRoot` is NOT `c3ProofData.publicInputs[1]` — that is the subtree
+     * root now, and passing it as the pool root names a root no pool ever
+     * published.
+     */
+    walk: { merkleRoot: bigint; siblings: bigint[]; directions: number[] },
   ) => Promise<{ txSignature: string; outputCommitments: bigint[] }>;
   /**
    * Import fresh notes re-shielded during subscription cancellation. Takes
@@ -1679,7 +1712,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       //   - 3 tx round-trips instead of 2 (~+6s on devnet)
       //   - Service helper closes BOTH buffers in `finally` for rent recovery
       // ------------------------------------------------------------------
-      unshieldNoteStarkV3: async (noteId, recipientAddress, c1ProofData, c3ProofData, _emergency) => {
+      unshieldNoteStarkV3: async (noteId, recipientAddress, c1ProofData, c3ProofData, walk, _emergency) => {
         if (_starkOpInFlight || get().isLoading) {
           console.warn('[DenomStore] unshieldNoteStarkV3 ignored — another STARK op in progress');
           throw new Error('Another shield/unshield is already in progress. Please wait.');
@@ -1855,6 +1888,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const sig = await unshieldDenominatedStarkV3(
             receipt, pool, stealthRecipient,
             c1ProofData, c3ProofData,
+            walk,
             (step) => {
               const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK') || step.includes('C1') || step.includes('C3');
               set({ progress: step, isProving: proving });
@@ -2138,7 +2172,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       // STARK Transfer Note V3 (4-tx: C1 + C3 + C6 + transfer_v3)
       // ------------------------------------------------------------------
 
-      transferNoteStarkV3: async (noteId, c1ProofData, c3ProofData, c6ProofData, insertParams) => {
+      transferNoteStarkV3: async (noteId, c1ProofData, c3ProofData, c6ProofData, insertParams, walk) => {
         if (get().isLoading) {
           console.warn('[DenomStore] transferNoteStarkV3 ignored — another operation in progress');
           throw new Error('Another shield/unshield is already in progress. Please wait.');
@@ -2235,6 +2269,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             c3ProofData,
             c6ProofData,
             insertParams,
+            walk,
             (step) => {
               const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK') || step.includes('C1') || step.includes('C3') || step.includes('C6');
               set({ progress: step, isProving: proving });
@@ -2301,7 +2336,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       // STARK Split Note (quantum-resistant, cross-denomination)
       // ------------------------------------------------------------------
 
-      splitNoteStark: async (noteId, targetPoolPDA, outputSecrets, starkProofData, c3ProofData) => {
+      splitNoteStark: async (noteId, targetPoolPDA, outputSecrets, starkProofData, c3ProofData, walk) => {
         const note = get().notes.find(n => n.id === noteId);
         if (!note) throw new Error('Note not found');
         if (note.status === 'spent') throw new Error('Note already spent');
@@ -2341,6 +2376,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             outputSecrets,
             starkProofData,
             c3ProofData,
+            walk,
             walletSigner,
             (step) => {
               const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK');

@@ -30,8 +30,13 @@ fn honest_c5(s: u64) -> p01_stark::compact::GenericCompactProofData {
 }
 
 fn honest_c6(s: u64) -> p01_stark::compact::GenericCompactProofData {
-    let pe: Vec<u64> = (0..12u64).map(|j| 100 + j * 13 + s * 37).collect();
-    let pi: Vec<u8> = (0..12u8).map(|j| ((j as usize + s as usize) % 2) as u8).collect();
+    // [ZK-DEPTH-11 2026-08-30] Was a literal 12. A fixture at the wrong depth is
+    // rejected by the verifier's depth guard, and the symptom is 24 of 24 honest
+    // proofs failing DEEP-ALI — which reads as "the padding fix bricked C6"
+    // rather than "the fixture is stale".
+    let d = p01_stark::air::merkle_update::CANONICAL_DEPTH;
+    let pe: Vec<u64> = (0..d as u64).map(|j| 100 + j * 13 + s * 37).collect();
+    let pi: Vec<u8> = (0..d).map(|j| ((j + s as usize) % 2) as u8).collect();
     p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222 + s * 3, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
 }
 

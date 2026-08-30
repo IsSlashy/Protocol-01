@@ -332,12 +332,23 @@ fn default_entry_points_are_canonical() {
 /// second path is caught. Sizes are computed from the format, not hard-coded.
 #[test]
 fn pair_leaf_wire_size_matches_the_format() {
-    // C1: tw=3, md=12, num_queries=27, lde=4096, final_poly=16, segments=8.
-    //
-    // [C1-N256 2026-08-29] md 11 -> 12 and lde 2048 -> 4096. The size is still
-    // COMPUTED from the format rather than typed, which is why only the two
-    // geometry arguments move here and no literal does.
-    let expect = expected_wire_size(3, 12, 27, 4096, 16, 8);
+    // [ZK-RANDOMIZER 2026-08-30] Every argument now comes OFF THE SHIPPED
+    // CONFIG. The predecessor typed `(3, 12, 27, 4096, 16, 8)` and had to be
+    // re-typed by hand at each of C1's geometry moves; the latest one (width
+    // 3 -> 4 for the randomizer column) is what caught it here, 13,440 bytes
+    // late. The FORMAT is still the thing under test -- `expected_wire_size`
+    // computes it -- but the geometry is no longer a second opinion about the
+    // config.
+    let c1 = p01_stark_verifier::compact_proof::get_circuit_config(1)
+        .expect("C1 must have a shipped config");
+    let expect = expected_wire_size(
+        c1.trace_width,
+        c1.merkle_depth,
+        c1.num_queries,
+        c1.lde_size,
+        c1.fri_final_poly_size,
+        c1.quotient_segments,
+    );
     let data = p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask());
     assert_eq!(data.proof_bytes.len(), expect, "C1 wire size drift");
 

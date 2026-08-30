@@ -66,7 +66,14 @@ use super::poseidon_gl::hash2;
 /// the C7 CU probe ended up hashing at row 478 -- `(15-1)*32+30` -- instead of
 /// row 382, and 478 sits inside the circuit's blinding region where nothing is
 /// constrained at all.
-pub const SPEND_SUBTREE_DEPTH: u8 = 12;
+// [ZK-DEPTH-11 2026-08-30] 12 -> 11. The circuit gave up one level so its
+// blinding region could grow; this instruction takes it. The walk is now
+// FOUR levels on a depth-15 pool, at ~34,469 CU per on-chain `hash2`.
+//
+// ⛔ IT MUST EQUAL THE CIRCUIT'S `CANONICAL_DEPTH`. They are one number in
+// two crates: too small and the walk folds a root the proof never attested,
+// too large and it folds past the pool's own depth.
+pub const SPEND_SUBTREE_DEPTH: u8 = 11;
 
 /// Errors that are the CALLER's fault, kept distinct from "the root is not in
 /// the pool" so the instruction can report which of the two happened.
@@ -153,11 +160,18 @@ mod tests {
         cur
     }
 
+    /// [ZK-DEPTH-11 2026-08-30] Four levels, not three. The fixtures below were
+    /// written as literal 3-element walks; they now derive their length from
+    /// `DEPTH - SPEND_SUBTREE_DEPTH` so the next cut cannot leave them stale
+    /// while still passing on a shorter walk.
+    const LEVELS: usize = (15 - SPEND_SUBTREE_DEPTH) as usize;
+
     #[test]
     fn resolves_the_same_root_the_honest_walk_produces() {
-        let sibs = [111u64, 222, 333];
-        for bits in 0..8u8 {
-            let dirs = [bits & 1, (bits >> 1) & 1, (bits >> 2) & 1];
+        assert_eq!(LEVELS, 4, "a depth-15 pool over a depth-11 circuit walks four");
+        let sibs = [111u64, 222, 333, 444];
+        for bits in 0..(1u8 << LEVELS) {
+            let dirs = [bits & 1, (bits >> 1) & 1, (bits >> 2) & 1, (bits >> 3) & 1];
             let got = resolve_pool_root(0xABCD_EF01_2345_6789, &sibs, &dirs, 15).unwrap();
             assert_eq!(got, walk(0xABCD_EF01_2345_6789, &sibs, &dirs), "bits {bits}");
         }
@@ -169,8 +183,8 @@ mod tests {
     /// a root the pool published except by breaking Poseidon.
     #[test]
     fn a_forged_subtree_root_does_not_reach_the_same_pool_root() {
-        let sibs = [7u64, 8, 9];
-        let dirs = [0u8, 1, 0];
+        let sibs = [7u64, 8, 9, 10];
+        let dirs = [0u8, 1, 0, 1];
         let honest = resolve_pool_root(42, &sibs, &dirs, 15).unwrap();
         for forged in [43u64, 0, 1, MODULUS - 1, 0xDEAD_BEEF] {
             let got = resolve_pool_root(forged, &sibs, &dirs, 15).unwrap();
@@ -182,10 +196,10 @@ mod tests {
     /// caller cannot re-point a valid path at another bucket.
     #[test]
     fn the_direction_bits_are_bound_into_the_result() {
-        let sibs = [7u64, 8, 9];
-        let base = resolve_pool_root(42, &sibs, &[0, 0, 0], 15).unwrap();
-        for bits in 1..8u8 {
-            let dirs = [bits & 1, (bits >> 1) & 1, (bits >> 2) & 1];
+        let sibs = [7u64, 8, 9, 10];
+        let base = resolve_pool_root(42, &sibs, &[0, 0, 0, 0], 15).unwrap();
+        for bits in 1..(1u8 << LEVELS) {
+            let dirs = [bits & 1, (bits >> 1) & 1, (bits >> 2) & 1, (bits >> 3) & 1];
             assert_ne!(
                 resolve_pool_root(42, &sibs, &dirs, 15).unwrap(),
                 base,
@@ -196,9 +210,14 @@ mod tests {
 
     #[test]
     fn every_caller_error_is_reported_and_not_swallowed() {
-        let sibs = [1u64, 2, 3];
+        let sibs = [1u64, 2, 3, 4];
+        // [ZK-DEPTH-11] A pool at the circuit's own depth is still "shallower
+        // than the circuit" -- the walk needs at least one level. This was 12
+        // when the circuit was 12; at 11 a depth-12 pool is legal and the call
+        // fell through to WrongSiblingCount instead, which is a DIFFERENT error
+        // and would have let this test pass for the wrong reason.
         assert_eq!(
-            resolve_pool_root(1, &sibs, &[0, 0, 0], 12),
+            resolve_pool_root(1, &sibs, &[0, 0, 0, 0], SPEND_SUBTREE_DEPTH),
             Err(SpendRootError::PoolShallowerThanCircuit),
         );
         assert_eq!(
@@ -206,25 +225,29 @@ mod tests {
             Err(SpendRootError::WrongSiblingCount),
         );
         assert_eq!(
-            resolve_pool_root(1, &sibs, &[0, 2, 0], 15),
+            resolve_pool_root(1, &sibs, &[0, 2, 0, 0], 15),
             Err(SpendRootError::NonBinaryDirection),
         );
         assert_eq!(
-            resolve_pool_root(MODULUS, &sibs, &[0, 0, 0], 15),
+            resolve_pool_root(MODULUS, &sibs, &[0, 0, 0, 0], 15),
             Err(SpendRootError::NonCanonicalFelt),
         );
         assert_eq!(
-            resolve_pool_root(1, &[MODULUS, 2, 3], &[0, 0, 0], 15),
+            resolve_pool_root(1, &[MODULUS, 2, 3, 4], &[0, 0, 0, 0], 15),
             Err(SpendRootError::NonCanonicalFelt),
         );
     }
 
-    /// A depth-15 pool needs exactly three levels walked on chain.
+    /// A depth-15 pool needs exactly four levels walked on chain.
+    ///
+    /// [ZK-DEPTH-11 2026-08-30] 3 -> 4. The circuit gave up a level so its
+    /// blinding region could grow; this side pays for it in `hash2` calls
+    /// (~34,469 CU each), and every consumer's compute budget moves with it.
     #[test]
-    fn the_default_pool_needs_three_levels() {
+    fn the_default_pool_needs_four_levels() {
         assert_eq!(
             crate::state::pool_v3::DenominatedPoolV3::DEFAULT_TREE_DEPTH - SPEND_SUBTREE_DEPTH,
-            3,
+            4,
         );
     }
 
@@ -237,13 +260,23 @@ mod tests {
     /// should learn about the boundary from a user.
     #[test]
     fn the_bucket_index_is_free_only_while_one_bucket_is_occupied() {
-        let leaves_per_bucket: u64 = 1 << SPEND_SUBTREE_DEPTH; // 4096
-        assert_eq!(leaves_per_bucket, 4096);
+        let leaves_per_bucket: u64 = 1 << SPEND_SUBTREE_DEPTH;
+        // [ZK-DEPTH-11 2026-08-30] 4096 -> 2048, AND THIS IS THE PRICE OF THE
+        // CUT. The depth bought 32 mask rows for the proof's channel A; it paid
+        // in anonymity here. The boundary below arrives at leaf 2,049 instead of
+        // 4,097, and 4,096 left the "stays in bucket 0" list because it no
+        // longer does.
+        //
+        // ⚠️ THE POOL'S CAPACITY DID NOT MOVE. `DEFAULT_TREE_DEPTH` is still 15,
+        // so the tree still holds 2^15 notes. What halved is the bucket the walk
+        // names, not the tree.
+        assert_eq!(leaves_per_bucket, 2048);
 
         // Measured 2026-08-22: 73 deposited on the 1 SOL pool, 82 on the 0.1.
-        for live in [73u64, 82, 155, 4096] {
+        for live in [73u64, 82, 155, 2048] {
             assert_eq!(live.div_ceil(leaves_per_bucket), 1, "{live} leaves stay in bucket 0");
         }
+        assert_eq!(4096u64.div_ceil(leaves_per_bucket), 2, "4,096 now spans two buckets");
         // And the boundary.
         assert_eq!((leaves_per_bucket + 1).div_ceil(leaves_per_bucket), 2);
         assert_eq!(bucket_index(&[1, 0, 0]), 1);

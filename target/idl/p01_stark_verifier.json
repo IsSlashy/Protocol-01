@@ -1,5 +1,5 @@
 {
-  "address": "EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z",
+  "address": "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs",
   "metadata": {
     "name": "p01_stark_verifier",
     "version": "0.1.0",
@@ -76,6 +76,121 @@
         {
           "name": "circuit_id",
           "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "init_proof_buffer_v2",
+      "docs": [
+        "Phase C v1 — Initialize a proof buffer WITHOUT exposing circuit_id at",
+        "init time. The buffer's PDA seed uses a 16-byte caller-supplied nonce",
+        "instead of `[circuit_id]`, and `circuit_id` is stored as a sentinel",
+        "(u8::MAX = \"unknown\") until `verify_uniform` probes it.",
+        "",
+        "Combined with `verify_uniform` and uniform padding (mobile pads proofs",
+        "to `UNIFORM_PROOF_SIZE = 145_000` bytes regardless of circuit), the",
+        "init/chunk **envelopes** carry no circuit id: the seeds do not, the",
+        "account length does not, and the chunk count does not — MEASURED at 162",
+        "chunks for every one of the four probed circuits in",
+        "`cu_budget.rs::l13_is_not_closed_by_deleting_logs_two_public_channels_survive`.",
+        "",
+        "# L13 is NOT closed, and this doc used to say it was",
+        "",
+        "What it said, verbatim: \"an indexer cannot infer which circuit the user",
+        "is proving from the init/chunk/verify tx envelopes. Closes leaks L13",
+        "(circuit_id) + L14 (proof_size variable).\" The first half is right about",
+        "init and chunk and wrong about verify. Measured on 2026-08-03 against",
+        "real transaction metadata, three channels disclosed the circuit and only",
+        "one of them was closable by editing this program's logs:",
+        "",
+        "1. **Program logs.** `verify_uniform` ended with",
+        "`msg!(\"verify_uniform: probed circuit {}\")`, and `verify.rs`'s step-2a",
+        "marker printed `expected=27` for C1 against `expected=22` for",
+        "C3/C5/C6. `verify_deep_ali_phase2`, the very next transaction in this",
+        "flow, printed the id again. **All three are now gone**, and",
+        "`l13_uniform_path_program_logs_are_identical_across_circuits` plus its",
+        "phase-2 sibling hold the four transcripts byte-identical.",
+        "2. **Compute units.** The runtime — not this program — writes",
+        "`Program <id> consumed N of 1400000 compute units`, and N was",
+        "751,058 / 785,945 / 794,048 / 810,040 for C1 / C3 / C5 / C6. Distinct,",
+        "deterministic, and unreachable from any `msg!` edit. **OPEN.**",
+        "3. **Account data.** `verify_uniform` writes the circuit it probed into",
+        "`ProofBuffer::circuit_id` because `verify_deep_ali_phase2` reads it",
+        "back. Account data is public for as long as the buffer lives.",
+        "**OPEN.**",
+        "",
+        "L14 (variable `proof_size`) IS closed by the padding, and that half is",
+        "measured rather than asserted — see the chunk column of the same test."
+      ],
+      "discriminator": [
+        195,
+        42,
+        231,
+        101,
+        125,
+        247,
+        122,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "proof_buffer",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  116,
+                  97,
+                  114,
+                  107,
+                  95,
+                  112,
+                  114,
+                  111,
+                  111,
+                  102,
+                  95,
+                  118,
+                  50
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "authority"
+              },
+              {
+                "kind": "arg",
+                "path": "nonce"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "proof_size",
+          "type": "u32"
+        },
+        {
+          "name": "_nonce",
+          "type": {
+            "array": [
+              "u8",
+              16
+            ]
+          }
         }
       ]
     },
@@ -253,7 +368,17 @@
       "docs": [
         "Verify a STARK proof with multiple public inputs.",
         "",
-        "Used for circuits that need more than one public input value."
+        "Used for circuits that need more than one public input value.",
+        "",
+        "**Circuits 1..=6 only.** `circuit_id == 0` is refused here, not routed:",
+        "C0 has exactly one verifier, the legacy `verify_stark_proof` path, and the",
+        "generic path cannot verify an honest C0 proof (wrong vanishing polynomial,",
+        "no recomputation of C0's folded boundary term). See",
+        "`verify::VerifyError::CircuitZeroIsLegacyOnly`. Four shipped instructions",
+        "hard-require `circuit_id == 0`",
+        "(`zk_shielded::{pause,resume,cancel_private_stark}`,",
+        "`p01_quantum_wallet/src/stark.rs:42`), so the legacy path stays and this",
+        "one says no."
       ],
       "discriminator": [
         149,
@@ -264,6 +389,55 @@
         68,
         8,
         233
+      ],
+      "accounts": [
+        {
+          "name": "proof_buffer",
+          "writable": true
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "proof_buffer"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "public_inputs",
+          "type": {
+            "vec": "u64"
+          }
+        }
+      ]
+    },
+    {
+      "name": "verify_uniform",
+      "docs": [
+        "Phase C v1 — Verify a STARK proof without exposing `circuit_id` in the",
+        "instruction data. Probes the V3 active circuit configs in fixed order",
+        "(1, 3, 5, 6) — the first config whose `from_bytes` succeeds is the",
+        "candidate. After parse succeeds, runs ONE `verify_generic` against",
+        "that config; if it fails, errors (does NOT fall through to the next",
+        "config — that would multiply CU cost beyond the 1.4M cap).",
+        "",
+        "CU cost: ~3-12K CU for failed parses (length-check arithmetic only)",
+        "+ ~700K-1.3M CU for the matched circuit's verify_generic. Stays under",
+        "the per-ix 1.4M cap.",
+        "",
+        "On success, stores the discovered `circuit_id` in the buffer for",
+        "downstream `verify_deep_ali_phase2` consumption."
+      ],
+      "discriminator": [
+        132,
+        164,
+        86,
+        87,
+        3,
+        165,
+        212,
+        103
       ],
       "accounts": [
         {
@@ -342,6 +516,48 @@
       ]
     }
   ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "AlreadyVerified",
+      "msg": "Proof has already been verified"
+    },
+    {
+      "code": 6001,
+      "name": "ChunkOutOfBounds",
+      "msg": "Proof chunk exceeds buffer bounds"
+    },
+    {
+      "code": 6002,
+      "name": "IncompleteProof",
+      "msg": "Proof upload incomplete"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidProof",
+      "msg": "Invalid proof: verification failed"
+    },
+    {
+      "code": 6004,
+      "name": "DeserializationError",
+      "msg": "Failed to deserialize proof bytes"
+    },
+    {
+      "code": 6005,
+      "name": "UnsupportedCircuit",
+      "msg": "Unsupported circuit ID"
+    },
+    {
+      "code": 6006,
+      "name": "NotYetVerified",
+      "msg": "Proof has not been verified yet"
+    },
+    {
+      "code": 6007,
+      "name": "CircuitZeroIsLegacyOnly",
+      "msg": "Circuit 0 is verified only by the legacy verify_stark_proof path"
+    }
+  ],
   "types": [
     {
       "name": "ProofBuffer",
@@ -395,45 +611,6 @@
           }
         ]
       }
-    }
-  ],
-  "constants": [],
-  "events": [],
-  "errors": [
-    {
-      "code": 6000,
-      "name": "AlreadyVerified",
-      "msg": "Proof has already been verified"
-    },
-    {
-      "code": 6001,
-      "name": "ChunkOutOfBounds",
-      "msg": "Proof chunk exceeds buffer bounds"
-    },
-    {
-      "code": 6002,
-      "name": "IncompleteProof",
-      "msg": "Proof upload incomplete"
-    },
-    {
-      "code": 6003,
-      "name": "InvalidProof",
-      "msg": "Invalid proof: verification failed"
-    },
-    {
-      "code": 6004,
-      "name": "DeserializationError",
-      "msg": "Failed to deserialize proof bytes"
-    },
-    {
-      "code": 6005,
-      "name": "UnsupportedCircuit",
-      "msg": "Unsupported circuit ID"
-    },
-    {
-      "code": 6006,
-      "name": "NotYetVerified",
-      "msg": "Proof has not been verified yet"
     }
   ]
 }

@@ -62,6 +62,17 @@ const merkleRootBytes = new Array(32).fill(0x22);
 const FIXTURE_DEPOSIT_EPOCH = 123_456n;
 const STARK_COMMITMENT = 0xdead_beef_cafe_f00dn;
 
+// [C3-D12] The walk above the depth-12 C3 circuit. Three levels, because the
+// pool tree is MERKLE_DEPTH (15) and the circuit covers its bottom twelve.
+//
+// ⚠️ These values are deliberately far from FIXTURE_DEPOSIT_EPOCH: the leak scan
+// below reads EVERY 8-byte window of the instruction, and the walk is now inside
+// that range. A sibling that happened to equal the epoch would fail the scan for
+// a reason having nothing to do with min_epoch.
+const SUBTREE_ROOT = 0x5151_5151_5151_5151n;
+const SIBLINGS = [0xa1a1_a1a1_a1a1_a1a1n, 0xb2b2_b2b2_b2b2_b2b2n, 0xc3c3_c3c3_c3c3_c3c3n];
+const DIRECTIONS = [1, 0, 1];
+
 const payer = Keypair.generate().publicKey;
 const recipient = Keypair.generate().publicKey;
 const pool = Keypair.generate().publicKey;
@@ -89,6 +100,7 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
   const ix = buildUnshieldDenominatedStarkV3Ix(
     payer, recipient, pool, tree, nullifierPDA, bufA, bufB,
     nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
+    SUBTREE_ROOT, SIBLINGS, DIRECTIONS,
   );
 
   it('targets zk_shielded with the right discriminator', () => {
@@ -99,9 +111,43 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
     expect(Buffer.from(ix.data.subarray(0, 8)).equals(expected)).toBe(true);
   });
 
-  it('has the exact data length (8+32+32+8+8+32 = 120)', () => {
-    expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32);
-    expect(ix.data.length).toBe(120);
+  it('has the exact data length — the fixed head plus the C3-D12 walk', () => {
+    // [C3-D12] 120 -> 163 for a three-level walk. The head is UNCHANGED at 120
+    // bytes and the walk is appended, which is the whole point of the argument
+    // ordering: every offset asserted below still means what it meant.
+    const head = 8 + 32 + 32 + 8 + 8 + 32;
+    const walk = 8 + (4 + SIBLINGS.length * 8) + (4 + DIRECTIONS.length);
+    expect(head).toBe(120);
+    expect(ix.data.length).toBe(head + walk);
+  });
+
+  it('appends the walk after the head, and the head keeps its length', () => {
+    let off = 120;
+    expect(ix.data.readBigUInt64LE(off)).toBe(SUBTREE_ROOT); off += 8;
+    expect(ix.data.readUInt32LE(off)).toBe(SIBLINGS.length); off += 4;
+    for (const sib of SIBLINGS) {
+      expect(ix.data.readBigUInt64LE(off)).toBe(sib); off += 8;
+    }
+    expect(ix.data.readUInt32LE(off)).toBe(DIRECTIONS.length); off += 4;
+    for (const dir of DIRECTIONS) {
+      expect(ix.data.readUInt8(off)).toBe(dir); off += 1;
+    }
+    expect(off).toBe(ix.data.length);
+  });
+
+  it('refuses a walk whose two halves disagree, before it reaches the chain', () => {
+    // The on-chain failure is `WrongSiblingCount`, at the END of two proof
+    // uploads. This is the same refusal, for free.
+    expect(() => buildUnshieldDenominatedStarkV3Ix(
+      payer, recipient, pool, tree, nullifierPDA, bufA, bufB,
+      nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
+      SUBTREE_ROOT, SIBLINGS, [1, 0],
+    )).toThrow(/equal length/);
+    expect(() => buildUnshieldDenominatedStarkV3Ix(
+      payer, recipient, pool, tree, nullifierPDA, bufA, bufB,
+      nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
+      SUBTREE_ROOT, SIBLINGS, [1, 0, 2],
+    )).toThrow(/0 or 1/);
   });
 
   it('writes eight zero bytes at offset 72 — the same offset as the web client', () => {

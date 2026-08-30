@@ -107,6 +107,32 @@ export const USDC_DEVNET_MINT = new PublicKey(
 /** Tree depth — matches mobile line 77. */
 export const MERKLE_DEPTH = 15;
 
+/**
+ * The depth circuit 6 proves, since 2026-08-29.
+ *
+ * C6 was cut from 15 to 12 to free 128 unconstrained trace rows for a blinding
+ * region. The pool tree is still MERKLE_DEPTH (15) deep; the circuit now covers
+ * only its bottom 12 levels, and `shield_denominated_v3` folds the remaining 3
+ * on chain against the pool account's own `filled_subtrees`.
+ *
+ * ⛔ SENDING 15 PATH ELEMENTS INTO THE C6 PROVER PANICS INSIDE THE WASM. The
+ * trace builder asserts the mask length for the depth it was handed, so the
+ * failure lands mid-proof on the deposit path with no useful message. Slice
+ * first — the same shape C7 already uses for its own depth-12 cut.
+ */
+export const C6_SUBTREE_DEPTH = 12;
+
+/**
+ * The depth circuit 3 proves, since 2026-08-29. Same cut, same reason.
+ *
+ * Numerically equal to `C6_SUBTREE_DEPTH` and `C7_SUBTREE_DEPTH`, and
+ * deliberately a SEPARATE constant: nothing requires the three circuits to move
+ * together, and one shared constant is exactly what would make the next
+ * divergence invisible. The on-chain side keeps them separate for the same
+ * reason (`spend_root::SPEND_SUBTREE_DEPTH` vs `insert_root::INSERT_SUBTREE_DEPTH`).
+ */
+export const C3_SUBTREE_DEPTH = 12;
+
 /** Slots per epoch — matches mobile line 78. */
 const SLOTS_PER_EPOCH = 7200;
 
@@ -695,9 +721,17 @@ async function signSendV3(
 /**
  * Build `shield_denominated_v3` instruction.
  *
- * Args: commitment[32] | new_root[32] | Vec<[u8;32]> new_subtrees.
- * Account order mirrors mobile lines 2895-2905 (and shield_denominated_v3.rs
- * account order).
+ * Args: commitment[32] | old_subtree_root[32] | new_subtree_root[32] |
+ *       Vec<[u8;32]> new_subtrees.
+ *
+ * ⛔ `new_root` IS NO LONGER AN ARGUMENT. Since the C6 depth cut the program
+ * COMPUTES the pool root by folding the top 3 levels against the pool account's
+ * own `filled_subtrees`; a caller-supplied pool root is precisely what that fold
+ * exists to refuse. Adding it back here would shift every following byte and the
+ * instruction would fail to deserialize, which is the good case. The bad case is
+ * adding it back on BOTH sides.
+ *
+ * Account order mirrors shield_denominated_v3.rs.
  */
 function buildShieldDenominatedV3Ix(
   depositor: PublicKey,
@@ -705,7 +739,8 @@ function buildShieldDenominatedV3Ix(
   treePDA: PublicKey,
   c6ProofBuffer: PublicKey,
   commitment: number[],
-  newRoot: number[],
+  oldSubtreeRoot: number[],
+  newSubtreeRoot: number[],
   newSubtrees: number[][],
   tokenProgram?: PublicKey,
   userTokenAccount?: PublicKey,
@@ -713,11 +748,12 @@ function buildShieldDenominatedV3Ix(
 ): TransactionInstruction {
   const disc = getDiscriminator('shield_denominated_v3');
   const subtreesBytesLen = 4 + newSubtrees.length * 32;
-  const data = Buffer.alloc(8 + 32 + 32 + subtreesBytesLen);
+  const data = Buffer.alloc(8 + 32 + 32 + 32 + subtreesBytesLen);
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(commitment).copy(data, offset); offset += 32;
-  Buffer.from(newRoot).copy(data, offset); offset += 32;
+  Buffer.from(oldSubtreeRoot).copy(data, offset); offset += 32;
+  Buffer.from(newSubtreeRoot).copy(data, offset); offset += 32;
   data.writeUInt32LE(newSubtrees.length, offset); offset += 4;
   for (const st of newSubtrees) {
     Buffer.from(st).copy(data, offset);
@@ -761,7 +797,12 @@ export async function shieldV3(
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number },
   insertParams: {
     commitment: bigint;
+    /** Client-side tree bookkeeping only; NOT sent to the program any more. */
     newRoot: bigint;
+    /** C6 public input 2. Must fold back to the pool's current root on chain. */
+    oldSubtreeRoot: bigint;
+    /** C6 public input 3. */
+    newSubtreeRoot: bigint;
     newSubtrees: bigint[];
     secret: bigint;
     nullifierPreimage: bigint;
@@ -804,7 +845,8 @@ export async function shieldV3(
     }
 
     const commitmentBytes = goldilocksToLeBytes32(insertParams.commitment);
-    const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
+    const oldSubtreeRootBytes = goldilocksToLeBytes32(insertParams.oldSubtreeRoot);
+    const newSubtreeRootBytes = goldilocksToLeBytes32(insertParams.newSubtreeRoot);
     const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
 
     const ix = buildShieldDenominatedV3Ix(
@@ -813,7 +855,8 @@ export async function shieldV3(
       poolConfig.treePDA,
       c6ProofBuffer,
       commitmentBytes,
-      newRootBytes,
+      oldSubtreeRootBytes,
+      newSubtreeRootBytes,
       newSubtreesBytes,
       tokenProgram,
       userTokenAccount,
@@ -821,7 +864,19 @@ export async function shieldV3(
     );
 
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
+    // [C6-D12] 300,000 -> 600,000.
+    //
+    // MEASURED 2026-08-29 on the litesvm SBF VM: one on-chain Poseidon-GL
+    // `hash2` costs ~34,469 CU. The fold does SIX of them — three levels, old
+    // root and new root — so it adds ~206,814 CU by itself, before any of the
+    // deposit's existing work. 300,000 was not enough, and the failure would
+    // land at the END of the whole proof-upload sequence.
+    //
+    // ⚠️ 600,000 IS A HEADROOM CHOICE, NOT A MEASUREMENT OF THIS PATH. What is
+    // measured is the fold's cost; this handler's own total has not been
+    // measured on the SBF VM since the fold landed. Erring high costs only a
+    // marginally higher priority fee. Matches the web app.
+    tx.add(...buildComputeBudgetIxs(600_000));
     if (!isNativeSOL && userTokenAccount) {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -890,7 +945,12 @@ export async function prepareShieldInsert(
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
   insertParams: {
     commitment: bigint;
+    /** Client-side tree bookkeeping only; NOT sent to the program any more. */
     newRoot: bigint;
+    /** C6 public input 2. Must fold back to the pool's current root on chain. */
+    oldSubtreeRoot: bigint;
+    /** C6 public input 3. */
+    newSubtreeRoot: bigint;
     newSubtrees: bigint[];
     secret: bigint;
     nullifierPreimage: bigint;
@@ -974,25 +1034,60 @@ export async function prepareShieldInsert(
   // 6. Generate C6 STARK proof.
   onProgress?.('Generating C6 (merkle_update) STARK proof (30-60s)...');
   await starkProver.start();
+  // [C6-D12] Only the bottom 12 levels go into the circuit. The top 3 are the
+  // program's job now, and it does NOT accept them from us — see
+  // `state::insert_root` for why a caller-supplied top level is the whole
+  // vulnerability.
+  if (pathElements.length < C6_SUBTREE_DEPTH) {
+    throw new Error(
+      `Merkle insertion path has ${pathElements.length} elements, need at least ` +
+      `${C6_SUBTREE_DEPTH} for the C6 circuit.`,
+    );
+  }
   const c6Result = await starkProver.generateMerkleUpdateProof(
     '0',                          // oldLeaf = 0 (empty slot)
     newLeaf.toString(),           // newLeaf = commitment u64
-    pathElements.map(e => e.toString()),
-    pathIndices,
+    pathElements.slice(0, C6_SUBTREE_DEPTH).map(e => e.toString()),
+    pathIndices.slice(0, C6_SUBTREE_DEPTH),
   );
 
   const proofBytes = hexToBytes(c6Result.proofHex);
+  const c6PublicInputs = c6Result.publicInputs.map(s => BigInt(s));
+
+  // [C6-D12] The two SUBTREE roots the instruction now takes, read back from the
+  // proof's own public inputs rather than recomputed here. The layout is
+  // [old_leaf, new_leaf, old_root, new_root, depth]. Reading them from the proof
+  // is deliberate: the circuit derived them from the same 12 path elements it
+  // proved over, so there is no second implementation of the walk to disagree
+  // with the first.
+  if (c6PublicInputs.length !== 5) {
+    throw new Error(
+      `C6 returned ${c6PublicInputs.length} public inputs, expected 5 ` +
+      `[old_leaf, new_leaf, old_root, new_root, depth]. The prover wire changed.`,
+    );
+  }
+  if (c6PublicInputs[4] !== BigInt(C6_SUBTREE_DEPTH)) {
+    throw new Error(
+      `C6 proved depth ${c6PublicInputs[4]}, expected ${C6_SUBTREE_DEPTH}. ` +
+      `The shipped wasm prover is stale — it predates the depth cut, and the ` +
+      `on-chain verifier rejects every proof it makes. Reship the blob.`,
+    );
+  }
 
   return {
     c6ProofResult: {
       proofBytes,
-      publicInputs: c6Result.publicInputs.map(s => BigInt(s)),
+      publicInputs: c6PublicInputs,
       proofSize: c6Result.proofSize,
       circuitId: CIRCUIT_MERKLE_UPDATE,
     },
     insertParams: {
       commitment,
+      // Kept for the CLIENT's own tree bookkeeping. ⛔ No longer sent to the
+      // program, which computes the pool root itself.
       newRoot,
+      oldSubtreeRoot: c6PublicInputs[2],
+      newSubtreeRoot: c6PublicInputs[3],
       newSubtrees: updatedSubtrees,
       secret,
       nullifierPreimage,
@@ -1451,13 +1546,34 @@ export function buildUnshieldDenominatedStarkV3Ix(
   nullifierBytes: number[],
   merkleRootBytes: number[],
   starkCommitment: bigint,
+  subtreeRoot: bigint,
+  siblings: bigint[],
+  directions: number[],
   tokenProgram?: PublicKey,
   poolVault?: PublicKey,
   recipientTokenAccount?: PublicKey,
 ): TransactionInstruction {
   const disc = getDiscriminator('unshield_denominated_stark_v3');
-  // Args layout: nullifier[32] + merkle_root[32] + min_epoch u64 + stark_commitment u64 + recipient[32]
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8 + 32);
+  // Args layout: nullifier[32] + merkle_root[32] + min_epoch u64
+  //            + stark_commitment u64 + recipient[32]
+  //            + subtree_root u64 + Vec<u64> siblings + Vec<u8> directions
+  //
+  // ⛔ THE LAST THREE ARE NOT OPTIONAL. Since 2026-08-29 the C3 proof attests
+  // membership in a depth-12 SUBTREE, so the handler walks the remaining levels
+  // to reach a pool root. Without them a C3 proof means "this leaf is in SOME
+  // tree", which anyone satisfies with a tree they built themselves.
+  if (siblings.length !== directions.length) {
+    throw new Error(
+      `siblings (${siblings.length}) and directions (${directions.length}) must have ` +
+      `equal length — the on-chain walk refuses a mismatch with WrongSiblingCount.`,
+    );
+  }
+  if (directions.some((d) => d !== 0 && d !== 1)) {
+    throw new Error('direction bits must be 0 or 1 — NonBinaryDirection on chain.');
+  }
+  const data = Buffer.alloc(
+    8 + 32 + 32 + 8 + 8 + 32 + 8 + (4 + siblings.length * 8) + (4 + directions.length),
+  );
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -1466,7 +1582,12 @@ export function buildUnshieldDenominatedStarkV3Ix(
   data.writeBigUInt64LE(UNSHIELD_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
   // recipient as 32-byte arg (matches `recipient: [u8; 32]` in Rust)
-  Buffer.from(recipient.toBytes()).copy(data, offset);
+  Buffer.from(recipient.toBytes()).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(subtreeRoot, offset); offset += 8;
+  data.writeUInt32LE(siblings.length, offset); offset += 4;
+  for (const sib of siblings) { data.writeBigUInt64LE(sib, offset); offset += 8; }
+  data.writeUInt32LE(directions.length, offset); offset += 4;
+  for (const dir of directions) { data.writeUInt8(dir, offset); offset += 1; }
 
   const [feeEscrowPDA] = deriveFeeEscrowPDA(poolPDA);
 
@@ -1507,7 +1628,14 @@ export function buildUnshieldDenominatedStarkV3Ix(
 export interface PrepareUnshieldResult {
   c1ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
   c3ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  /** The POOL root, from the client's own tree walk. NOT `c3PublicInputs[1]`. */
   merkleRoot: bigint;
+  /** C3 public input 1: the depth-12 subtree root the on-chain walk starts from. */
+  subtreeRoot: bigint;
+  /** Path elements above the circuit, bottom-up. Levels 12.. */
+  siblings: bigint[];
+  /** Direction bits above the circuit, same order. */
+  directions: number[];
   nullifierGoldilocks: bigint;
   starkCommitment: bigint;
 }
@@ -1594,13 +1722,25 @@ export async function prepareUnshield(
   );
 
   // --- Generate C3 (merkle_path) proof ---
-  // publicInputs layout: [leaf_u64, root_u64, depth] — depth bound on-chain.
-  // starkProver.generateMerklePathProof(leaf, pathElements, pathIndices)
+  //
+  // publicInputs layout: [leaf_u64, subtree_root_u64, depth].
+  //
+  // 🚨 PUBLIC INPUT 1 IS A SUBTREE ROOT SINCE 2026-08-29, NOT THE POOL ROOT.
+  // C3 was cut to depth 12 to free 128 trace rows for a blinding region, so it
+  // proves membership in the bottom twelve levels only. The instruction walks
+  // the remaining three on chain, against these siblings, and requires the
+  // result to be a root the pool already published.
   onProgress?.('Generating C3 (merkle_path) STARK proof (~60s)...');
+  if (merkleResult.pathElements.length < C3_SUBTREE_DEPTH) {
+    throw new Error(
+      `Merkle path has ${merkleResult.pathElements.length} elements, need at least ` +
+      `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+    );
+  }
   const c3Raw = await prover.generateMerklePathProof(
     receipt.commitment.toString(),
-    merkleResult.pathElements.map((e) => e.toString()),
-    merkleResult.pathIndices,
+    merkleResult.pathElements.slice(0, C3_SUBTREE_DEPTH).map((e) => e.toString()),
+    merkleResult.pathIndices.slice(0, C3_SUBTREE_DEPTH),
   );
 
   const c1ProofBytes = hexToBytes(c1Raw.proofHex);
@@ -1611,13 +1751,35 @@ export async function prepareUnshield(
   // nullifier and commitment come from C1 public inputs.
   const nullifierGoldilocks = c1PublicInputs[0] ?? 0n;
   const starkCommitment = c1PublicInputs[1] ?? 0n;
-  // root comes from C3 public inputs (layout [leaf, root]).
-  const merkleRoot = c3PublicInputs[1] ?? merkleResult.root;
+  // ⛔ `merkleRoot` NO LONGER COMES FROM THE PROOF. `c3PublicInputs[1]` is the
+  // depth-12 SUBTREE root, and using it as the pool root — which this line did
+  // until 2026-08-29 — would name a root no pool has ever published, so the
+  // instruction's ring check would refuse every withdrawal.
+  //
+  // The pool root comes from the client's own tree walk; the subtree root comes
+  // from the proof; the on-chain walk is what ties one to the other.
+  const subtreeRoot = c3PublicInputs[1] ?? 0n;
+  const merkleRoot = merkleResult.root;
+  if (c3PublicInputs[2] !== BigInt(C3_SUBTREE_DEPTH)) {
+    throw new Error(
+      `C3 proved depth ${c3PublicInputs[2]}, expected ${C3_SUBTREE_DEPTH}. The shipped ` +
+      `wasm prover is stale — it predates the depth cut, and the on-chain verifier ` +
+      `rejects every proof it makes. Reship the blob.`,
+    );
+  }
+
+  // The three levels above the circuit. `pathIndices` is bottom-up, so the tail
+  // is the top of the tree, which is the order `resolve_pool_root` walks in.
+  const siblings = merkleResult.pathElements.slice(C3_SUBTREE_DEPTH);
+  const directions = merkleResult.pathIndices.slice(C3_SUBTREE_DEPTH);
 
   return {
     c1ProofResult: { proofBytes: c1ProofBytes, publicInputs: c1PublicInputs, proofSize: c1Raw.proofSize },
     c3ProofResult: { proofBytes: c3ProofBytes, publicInputs: c3PublicInputs, proofSize: c3Raw.proofSize },
     merkleRoot,
+    subtreeRoot,
+    siblings,
+    directions,
     nullifierGoldilocks,
     starkCommitment,
   };
@@ -1657,7 +1819,12 @@ export async function unshieldDenominatedStarkV3(
   onProgress?: (step: string) => void,
   emergency = false,
 ): Promise<string> {
-  const { c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment } = preparedResult;
+  const {
+    c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment,
+    // [C3-D12] The three values the on-chain walk needs. See `prepareUnshield`
+    // for why `merkleRoot` is NOT `c3PublicInputs[1]`.
+    subtreeRoot, siblings, directions,
+  } = preparedResult;
 
   const createdBuffers: PublicKey[] = [];
   let c1ProofBuffer: PublicKey | undefined;
@@ -1724,13 +1891,20 @@ export async function unshieldDenominatedStarkV3(
       nullifierBytes,
       merkleRootBytes,
       starkCommitment,
+      subtreeRoot,
+      siblings,
+      directions,
       tokenProgram,
       poolVault,
       recipientTokenAccount,
     );
 
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
+    // [C3-D12] 300,000 -> 400,000. One on-chain `hash2` is ~34,469 CU (measured
+    // 2026-08-29 on the litesvm SBF VM), so the three levels the handler now
+    // walks add ~103,400. 400,000 is what the v4 path already requests for the
+    // identical walk.
+    tx.add(...buildComputeBudgetIxs(400_000));
     if (!isNativeSOL && recipientTokenAccount) {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -2335,8 +2509,17 @@ export const TRANSFER_MIN_EPOCH = 0n;
  *
  * Matches transfer_denominated_stark_v3.rs exactly:
  *   Args : nullifier[32] | merkle_root[32] | min_epoch u64 | stark_commitment u64
- *          | new_commitment[32] | new_root[32] | Vec<[u8;32]> new_subtrees
- *   (data length = 8+32+32+8+8+32+32+4 + 32*N = 636 for N=15)
+ *          | new_commitment[32] | c6_old_subtree_root u64 | c6_new_subtree_root u64
+ *          | Vec<[u8;32]> new_subtrees
+ *          | subtree_root u64 | Vec<u64> siblings | Vec<u8> directions
+ *
+ * ⛔ `new_root[32]` LEFT THIS LAYOUT ON 2026-08-29, and TWO walks took its place.
+ * Transfer is the only path that pays for both: it READS a note (C3, depth 12 →
+ * `spend_root::resolve_pool_root` over `siblings`) and WRITES one (C6, depth 12 →
+ * `insert_root::fold_insertion` against the POOL ACCOUNT's `filled_subtrees`).
+ * The read side takes caller-supplied siblings because its resolved root must
+ * already be in the pool's history; the write side must not, because there is no
+ * history to check a freshly written root against.
  *   Accounts (8, order critical): payer(signer,mut), denominated_pool(mut),
  *   merkle_tree(MUT — a leaf is inserted), nullifier_record(init,mut),
  *   c1_proof_buffer(ro), c3_proof_buffer(ro), c6_proof_buffer(ro), system_program.
@@ -2356,12 +2539,28 @@ export function buildTransferDenominatedStarkV3Ix(
   merkleRootBytes: number[],
   starkCommitment: bigint,
   newCommitmentBytes: number[],
-  newRootBytes: number[],
+  c6OldSubtreeRoot: bigint,
+  c6NewSubtreeRoot: bigint,
   newSubtreesBytes: number[][],
+  subtreeRoot: bigint,
+  siblings: bigint[],
+  directions: number[],
 ): TransactionInstruction {
   const disc = getDiscriminator('transfer_denominated_stark_v3');
+  if (siblings.length !== directions.length) {
+    throw new Error(
+      `siblings (${siblings.length}) and directions (${directions.length}) must have ` +
+      `equal length — the on-chain walk refuses a mismatch with WrongSiblingCount.`,
+    );
+  }
+  if (directions.some((d) => d !== 0 && d !== 1)) {
+    throw new Error('direction bits must be 0 or 1 — NonBinaryDirection on chain.');
+  }
   const subtreesBytesLen = 4 + newSubtreesBytes.length * 32;
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 8 + 32 + 32 + subtreesBytesLen);
+  const data = Buffer.alloc(
+    8 + 32 + 32 + 8 + 8 + 32 + 8 + 8 + subtreesBytesLen
+      + 8 + (4 + siblings.length * 8) + (4 + directions.length),
+  );
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -2370,12 +2569,18 @@ export function buildTransferDenominatedStarkV3Ix(
   data.writeBigUInt64LE(TRANSFER_MIN_EPOCH, offset); offset += 8;
   data.writeBigUInt64LE(starkCommitment, offset); offset += 8;
   Buffer.from(newCommitmentBytes).copy(data, offset); offset += 32;
-  Buffer.from(newRootBytes).copy(data, offset); offset += 32;
+  data.writeBigUInt64LE(c6OldSubtreeRoot, offset); offset += 8;
+  data.writeBigUInt64LE(c6NewSubtreeRoot, offset); offset += 8;
   data.writeUInt32LE(newSubtreesBytes.length, offset); offset += 4;
   for (const st of newSubtreesBytes) {
     Buffer.from(st).copy(data, offset);
     offset += 32;
   }
+  data.writeBigUInt64LE(subtreeRoot, offset); offset += 8;
+  data.writeUInt32LE(siblings.length, offset); offset += 4;
+  for (const sib of siblings) { data.writeBigUInt64LE(sib, offset); offset += 8; }
+  data.writeUInt32LE(directions.length, offset); offset += 4;
+  for (const dir of directions) { data.writeUInt8(dir, offset); offset += 1; }
 
   const keys = [
     { pubkey: payer,                   isSigner: true,  isWritable: true  },
@@ -2397,14 +2602,26 @@ export interface PrepareTransferResult {
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
   insertParams: {
     newCommitment: bigint;
+    /** Client-side tree bookkeeping only; NOT sent to the program any more. */
     newRoot: bigint;
+    /** C6 public input 2. Must fold back to the pool's current root on chain. */
+    oldSubtreeRoot: bigint;
+    /** C6 public input 3. */
+    newSubtreeRoot: bigint;
     newSubtrees: bigint[];
     newSecret: bigint;
     newNullifierPreimage: bigint;
     newDepositEpoch: bigint;
     newLeafIndex: number;
   };
+  /** The POOL root of the note being SPENT, from the client's own tree walk. */
   merkleRoot: bigint;
+  /** C3 public input 1: the depth-12 subtree root the on-chain walk starts from. */
+  subtreeRoot: bigint;
+  /** Path elements above the C3 circuit, bottom-up. Levels 12.. */
+  siblings: bigint[];
+  /** Direction bits above the C3 circuit, same order. */
+  directions: number[];
   nullifierGoldilocks: bigint;
   starkCommitment: bigint;
 }
@@ -2473,27 +2690,53 @@ export async function prepareTransfer(
   const { newRoot, updatedSubtrees, pathElements, pathIndices } = chosen;
 
   // 5. Generate C6 (merkle_update) proof for the new leaf.
+  //
+  // [C6-D12] Bottom 12 levels only; the top 3 are folded on chain against the
+  // POOL ACCOUNT's `filled_subtrees`, never against anything sent from here.
   onProgress?.('Generating C6 (merkle_update) STARK proof (~60s)...');
   await starkProver.start();
+  if (pathElements.length < C6_SUBTREE_DEPTH) {
+    throw new Error(
+      `Merkle insertion path has ${pathElements.length} elements, need at least ` +
+      `${C6_SUBTREE_DEPTH} for the C6 circuit.`,
+    );
+  }
   const c6Raw = await starkProver.generateMerkleUpdateProof(
     '0',
     newLeaf.toString(),
-    pathElements.map((e) => e.toString()),
-    pathIndices,
+    pathElements.slice(0, C6_SUBTREE_DEPTH).map((e) => e.toString()),
+    pathIndices.slice(0, C6_SUBTREE_DEPTH),
   );
+  const c6PublicInputs = c6Raw.publicInputs.map((s) => BigInt(s));
+  if (c6PublicInputs.length !== 5) {
+    throw new Error(
+      `C6 returned ${c6PublicInputs.length} public inputs, expected 5 ` +
+      `[old_leaf, new_leaf, old_root, new_root, depth]. The prover wire changed.`,
+    );
+  }
+  if (c6PublicInputs[4] !== BigInt(C6_SUBTREE_DEPTH)) {
+    throw new Error(
+      `C6 proved depth ${c6PublicInputs[4]}, expected ${C6_SUBTREE_DEPTH}. ` +
+      `The shipped wasm prover is stale — it predates the depth cut, and the ` +
+      `on-chain verifier rejects every proof it makes. Reship the blob.`,
+    );
+  }
 
   return {
     c1ProofResult: prep.c1ProofResult,
     c3ProofResult: prep.c3ProofResult,
     c6ProofResult: {
       proofBytes: hexToBytes(c6Raw.proofHex),
-      publicInputs: c6Raw.publicInputs.map((s) => BigInt(s)),
+      publicInputs: c6PublicInputs,
       proofSize: c6Raw.proofSize,
       circuitId: CIRCUIT_MERKLE_UPDATE,
     },
     insertParams: {
       newCommitment,
+      // Kept for the CLIENT's own tree bookkeeping. ⛔ No longer sent.
       newRoot,
+      oldSubtreeRoot: c6PublicInputs[2],
+      newSubtreeRoot: c6PublicInputs[3],
       newSubtrees: updatedSubtrees,
       newSecret,
       newNullifierPreimage,
@@ -2501,6 +2744,9 @@ export async function prepareTransfer(
       newLeafIndex: leafCount,
     },
     merkleRoot: prep.merkleRoot,
+    subtreeRoot: prep.subtreeRoot,
+    siblings: prep.siblings,
+    directions: prep.directions,
     nullifierGoldilocks: prep.nullifierGoldilocks,
     starkCommitment: prep.starkCommitment,
   };
@@ -2548,6 +2794,9 @@ export async function transferDenominatedStarkV3(
   const {
     c1ProofResult, c3ProofResult, c6ProofResult,
     insertParams, merkleRoot, nullifierGoldilocks, starkCommitment,
+    // [C3-D12] The read side's walk. `merkleRoot` is the POOL root from the
+    // client's own tree; `subtreeRoot` is what C3 actually proved.
+    subtreeRoot, siblings, directions,
   } = prepared;
 
   const createdBuffers: PublicKey[] = [];
@@ -2645,7 +2894,6 @@ export async function transferDenominatedStarkV3(
     const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
     const merkleRootBytes = goldilocksToLeBytes32(merkleRoot);
     const newCommitmentBytes = goldilocksToLeBytes32(insertParams.newCommitment);
-    const newRootBytes = goldilocksToLeBytes32(insertParams.newRoot);
     const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
     // min_epoch is no longer a parameter: the builder pins it to
     // TRANSFER_MIN_EPOCH (0). It used to be `receipt.depositEpoch`, which both
@@ -2666,12 +2914,30 @@ export async function transferDenominatedStarkV3(
       merkleRootBytes,
       starkCommitment,
       newCommitmentBytes,
-      newRootBytes,
+      insertParams.oldSubtreeRoot,
+      insertParams.newSubtreeRoot,
       newSubtreesBytes,
+      subtreeRoot,
+      siblings,
+      directions,
     );
 
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
+    // [C3-D12 + C6-D12] 300,000 -> 800,000. Transfer is the ONLY path that pays
+    // for both walks in one instruction:
+    //
+    //   `resolve_pool_root` (read side)  3 hashes  ~103,400 CU
+    //   `fold_insertion`    (write side) 6 hashes  ~206,814 CU
+    //
+    // at the ~34,469 CU per on-chain `hash2` measured 2026-08-29 on the litesvm
+    // SBF VM. That is ~310,000 CU of new work on top of a handler that already
+    // used to want 300,000.
+    //
+    // ⚠️ 800,000 IS DERIVED FROM TWO MEASURED WALKS PLUS THE OLD BUDGET, NOT
+    // MEASURED END TO END. This handler's total has not been run on the SBF VM
+    // since the walks landed. It stays well under the 1,400,000 cap, and the
+    // failure it guards against would land at the END of three proof uploads.
+    tx.add(...buildComputeBudgetIxs(800_000));
     tx.add(ix);
 
     onProgress?.('Sending V3 transfer transaction...');

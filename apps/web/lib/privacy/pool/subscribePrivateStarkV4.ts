@@ -696,7 +696,10 @@ export async function subscribePrivateStarkV4(
     // well as the nullifier record). v3 subscribe measured 28,918..40,721 CU of
     // spread from those PDA searches alone. Measure on the first devnet send and
     // pin the real number here.
-    tx.add(...buildComputeBudgetIxs(400_000));
+    // [ZK-DEPTH-11 2026-08-30] 400,000 -> 500,000. `resolve_pool_root` walks
+    // FOUR levels now: ~137,876 CU at the ~34,469 measured per on-chain `hash2`,
+    // up from ~103,407. ⚠️ Headroom, not an end-to-end measurement.
+    tx.add(...buildComputeBudgetIxs(500_000));
     tx.add(ix);
 
     // The blockhash is set HERE rather than left to the signer's fallback, which

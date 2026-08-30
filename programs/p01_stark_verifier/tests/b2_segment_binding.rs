@@ -154,16 +154,24 @@ fn phase2(
 // The six generic witnesses, one place.
 // ============================================================================
 
+/// [ZK-DEPTH 2026-08-30] READ OFF THE AIR, both of them.
+///
+/// These were the literal 12, left behind by the 12 -> 11 cut. The literal does
+/// NOT fail loudly: `trace_length_for_depth` rounds `12*32` and `11*32` to the
+/// same 512, so the proof still builds, still parses, and still matches the
+/// shipped geometry -- but its Merkle root lands on a different trace row than
+/// the AIR now asserts, so phase 2 rejects a witness the FRI stage had already
+/// rejected for the intended reason. That combination reads as "S1 works" on
+/// the failing arm and only surfaces in the CONTROL, which is the one arm that
+/// has to pass.
 fn merkle_witness() -> (Vec<u64>, Vec<u8>) {
-    // [C3-D12] 12, not 15. C3 took the depth cut on 2026-08-29, the same day as
-    // C6 (`merkle_update_witness` below).
-    ((0..12u64).map(|i| 1000 + i).collect(), (0..12u8).map(|i| i % 2).collect())
+    let d = p01_stark::air::merkle_path::CANONICAL_DEPTH;
+    ((0..d as u64).map(|i| 1000 + i).collect(), (0..d).map(|i| (i % 2) as u8).collect())
 }
 
 fn merkle_update_witness() -> (Vec<u64>, Vec<u8>) {
-    // [C6-D12] 12, not 15. `merkle_witness` above stays at 15: that is C3, and
-    // only C6 took the depth cut.
-    ((0..12).map(|i| 100u64 + i * 13).collect(), (0..12).map(|i| (i % 2) as u8).collect())
+    let d = p01_stark::air::merkle_update::CANONICAL_DEPTH;
+    ((0..d).map(|i| 100u64 + i as u64 * 13).collect(), (0..d).map(|i| (i % 2) as u8).collect())
 }
 
 fn generic_case(

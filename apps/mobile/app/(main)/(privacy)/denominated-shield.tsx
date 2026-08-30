@@ -66,6 +66,7 @@ import {
   deriveNoteMaterial,
   deriveNoteBlinding,
   pubkeyToField,
+  C6_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
 import { getKeypair } from '@/services/solana/wallet';
@@ -296,30 +297,66 @@ export default function DenominatedShieldScreen() {
           //
           // generateMerkleUpdateProof signature:
           //   (oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[])
+          //
+          // [C6-D12] Only the bottom 12 levels go into the circuit, since the
+          // depth cut that freed 128 trace rows for a blinding region. Handing
+          // it 15 elements panics inside the wasm, mid-proof, on the deposit
+          // path. The top 3 are the program's job: `shield_denominated_v3`
+          // folds them against the POOL ACCOUNT's own `filled_subtrees`, and it
+          // does NOT accept them from here — see `state::insert_root`.
           const oldLeafGl = '0';
           const newLeafGl = (commitment & ((1n << 64n) - 1n)).toString();
-          const pathElementsGl = _pathElements.map(e => (e & ((1n << 64n) - 1n)).toString());
+          if (_pathElements.length < C6_SUBTREE_DEPTH) {
+            throw new Error(
+              `Merkle insertion path has ${_pathElements.length} elements, need at ` +
+              `least ${C6_SUBTREE_DEPTH} for the C6 circuit.`,
+            );
+          }
+          const pathElementsGl = _pathElements
+            .slice(0, C6_SUBTREE_DEPTH)
+            .map(e => (e & ((1n << 64n) - 1n)).toString());
           const c6Result = await generateMerkleUpdateProof(
             oldLeafGl,
             newLeafGl,
             pathElementsGl,
-            _pathIndices,
+            _pathIndices.slice(0, C6_SUBTREE_DEPTH),
           );
 
           const c6ProofBytes = Buffer.from(c6Result.proofHex, 'hex');
           const c6PublicInputs = c6Result.publicInputs.map((s: string) => BigInt(s));
 
-          // Defensive invariant: the prover's public inputs MUST match what the
-          // on-chain handler binds — old_root = merkle_tree.root (shield_v3.rs
-          // :92-94 low 8 LE), new_root = the `newRoot` arg. The chooser already
-          // guarantees this (it picks the layout whose fold reproduces
-          // onChainRoot), so this only fires if the prover's fold ever diverges
-          // from computeNewRootFromSubtreesV3 — in which case abort before
-          // burning ~0.04 SOL of relay/proof rent on a guaranteed InvalidProof.
-          if (c6PublicInputs[2] !== onChainRoot || c6PublicInputs[3] !== (newRoot & ((1n << 64n) - 1n))) {
+          // 🚨 THIS COMPARED c6PublicInputs[2]/[3] TO THE POOL ROOTS UNTIL
+          // 2026-08-29, and at depth 12 those public inputs are SUBTREE roots.
+          // Left as it was, it would abort EVERY deposit — detecting the depth
+          // cut, but reporting it as "tree state diverged".
+          //
+          // What replaced it is not weaker. The binding it guarded is now
+          // enforced on chain and against better data: `insert_root::
+          // fold_insertion` folds THIS old subtree root through the POOL
+          // ACCOUNT's own `filled_subtrees` and requires the result to equal the
+          // pool's current root. That is authoritative state no depositor
+          // writes, where this check read a root the client had just computed.
+          //
+          // The client-side pool-root guarantee also survives untouched, one
+          // step above: the direct-vs-sliced chooser already refuses to prove at
+          // all unless its reconstruction reproduces `onChainRoot`.
+          if (c6PublicInputs.length !== 5) {
             throw new Error(
-              `Shield aborted: prover/chain public-input mismatch (old_root ` +
-              `prover=${c6PublicInputs[2]} chain=${onChainRoot}). Tree state diverged — retry shortly.`,
+              `C6 returned ${c6PublicInputs.length} public inputs, expected 5 ` +
+              `[old_leaf, new_leaf, old_root, new_root, depth]. The prover wire changed.`,
+            );
+          }
+          if (c6PublicInputs[4] !== BigInt(C6_SUBTREE_DEPTH)) {
+            throw new Error(
+              `C6 proved depth ${c6PublicInputs[4]}, expected ${C6_SUBTREE_DEPTH}. The ` +
+              `shipped wasm prover is stale — it predates the depth cut, and the ` +
+              `on-chain verifier rejects every proof it makes. Reship the blob.`,
+            );
+          }
+          if (c6PublicInputs[1] !== (commitment & ((1n << 64n) - 1n))) {
+            throw new Error(
+              `Shield aborted: the proof commits to leaf ${c6PublicInputs[1]}, not to ` +
+              `this note's commitment. Abort before burning proof rent.`,
             );
           }
 

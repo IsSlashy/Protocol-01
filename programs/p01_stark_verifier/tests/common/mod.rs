@@ -252,7 +252,7 @@ pub fn w5(i: usize) -> W5 {
 }
 
 pub fn w7(i: usize) -> W7 {
-    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_LEN, TRACE_WIDTH};
     const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
 
     let s = i as u64;
@@ -264,8 +264,8 @@ pub fn w7(i: usize) -> W7 {
     if st == 0 {
         st = 0x9E37_79B9_7F4A_7C15;
     }
-    let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
-    for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+    let mut mask = Vec::with_capacity(MASK_LEN);
+    for _ in 0..(MASK_LEN) {
         st ^= st >> 12;
         st ^= st << 25;
         st ^= st >> 27;
@@ -291,8 +291,15 @@ pub fn w6(i: usize) -> W6 {
         new_leaf: 222 + s * 3,
         // [C6-D12] 12, not 15. `w3` above is also 12 now — C3 took the same cut
         // later the same day.
-        path_elements: (0..12u64).map(|j| 100 + j * 13 + s * 37).collect(),
-        path_indices: (0..12u8).map(|j| ((j as usize + i) % 2) as u8).collect(),
+        // [ZK-DEPTH-11 2026-08-30] Was a literal 12 while its two siblings above
+        // already read CANONICAL_DEPTH. A witness built at the wrong depth fails
+        // its own AIR, which reads as a broken circuit.
+        path_elements: (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64)
+            .map(|j| 100 + j * 13 + s * 37)
+            .collect(),
+        path_indices: (0..p01_stark::air::merkle_update::CANONICAL_DEPTH)
+            .map(|j| ((j + i) % 2) as u8)
+            .collect(),
     }
 }
 
@@ -527,12 +534,15 @@ pub fn check_semantics_3(w: &W3, data: &p01_stark::compact::GenericCompactProofD
     // failed loudly, which is the good case; the bad case is the reader who
     // "fixes" it by deleting the assertion.
     const C3_ROW_ROOT: usize = (p01_stark::air::merkle_path::CANONICAL_DEPTH - 1) * 32 + 30;
-    assert_eq!(C3_ROW_ROOT, 382);
+    // [ZK-DEPTH-11 2026-08-30] 382 -> 350. The row is DERIVED from
+    // CANONICAL_DEPTH one line above; this pin is the tripwire that says the
+    // derivation and the number were both looked at.
+    assert_eq!(C3_ROW_ROOT, 350);
     assert!(
         C3_ROW_ROOT < p01_stark::air::merkle_path::FIRST_FREE_ROW,
         "the root row must stay OUT of the blinding region",
     );
-    assert_eq!(trace[0][C3_ROW_ROOT], root, "C3: boundary row 382 (root)");
+    assert_eq!(trace[0][C3_ROW_ROOT], root, "C3: boundary row {C3_ROW_ROOT} (root)");
     sweep_transitions(
         "C3",
         &trace,

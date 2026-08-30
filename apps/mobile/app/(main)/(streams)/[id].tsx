@@ -26,6 +26,7 @@ import {
   fetchPoolLeavesByIndex,
   buildMerkleProofFromLeavesV3,
   goldilocksToLeBytes32,
+  C3_SUBTREE_DEPTH,
 } from '../../../services/denominatedPool';
 import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { getServiceById, CATEGORY_CONFIG, ServiceCategory } from '../../../services/subscriptions/serviceRegistry';
@@ -384,12 +385,27 @@ function DetailContent() {
             receipt.merklePathIndices = c3Indices;
 
             // C3 — merkle_path proof.
+            //
+            // [C3-D12] Bottom 12 levels into the circuit; the top 3 travel to
+            // the instruction for the on-chain walk.
             const U64 = (1n << 64n) - 1n;
+            if (c3Path.length < C3_SUBTREE_DEPTH) {
+              throw new Error(
+                `Merkle path has ${c3Path.length} elements, need at least ` +
+                `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+              );
+            }
             const c3Result = await generateMerklePathProof(
               (receipt.commitment & U64).toString(),
-              c3Path.map(e => (e & U64).toString()),
-              c3Indices,
+              c3Path.slice(0, C3_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+              c3Indices.slice(0, C3_SUBTREE_DEPTH),
             );
+            // ⛔ POOL root from the walk, not the proof's public input 1.
+            const c3Walk = {
+              merkleRoot: c3Root,
+              siblings: c3Path.slice(C3_SUBTREE_DEPTH).map(e => e & U64),
+              directions: c3Indices.slice(C3_SUBTREE_DEPTH),
+            };
             console.log('[Sub:Renew:PayNow] V3 C3 ready', { proofSize: c3Result.proofSize });
 
             setPayProgress(t('shieldUnshield.sendingTransaction'));
@@ -406,6 +422,7 @@ function DetailContent() {
                 publicInputs: c3Result.publicInputs.map((s: string) => BigInt(s)),
                 proofSize: c3Result.proofSize,
               },
+              c3Walk,
               false,
             );
             console.log('[Sub:Renew:PayNow] V3 sig', { sigPrefix: sig.slice(0, 16) });

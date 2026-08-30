@@ -95,6 +95,15 @@ const GEN_1024: u64 = 0x9D8F_2AD7_8BFE_D972;
 const GEN_16384: u64 = 0xE0EE_0993_10BB_A1E2;
 const COSET_SHIFT: u64 = 7;
 
+// [ZK-RANDOMIZER + ZK-DEPTH-11 2026-08-30] ⛔ THESE ARE DERIVED NOW, NOT TYPED.
+// Every one of them was a literal, and every one of them was wrong within a day:
+// the depth cut moved DEPTH, the randomizer column moved TRACE_WIDTH, and the
+// mask arity moved with both. The harness then PANICKED before building a proof,
+// which took the repository's only executable evidence offline without anyone
+// noticing -- the tests simply stopped running.
+//
+// A harness that re-derives the circuit's geometry is a second source of truth
+// for a number that has exactly one. Read the circuit.
 const TRACE_LEN: usize = 1024;
 const TRACE_WIDTH: usize = 7;
 const LDE_SIZE: u64 = 16384;
@@ -342,7 +351,7 @@ const FIRST_FREE_ROW: usize = 448;
 
 /// `MASK_ROWS * TRACE_WIDTH`, the arity the prover now demands.
 fn mask_len() -> usize {
-    (TRACE_LEN - FIRST_FREE_ROW) * 7
+    p01_stark::air::transfer::MASK_LEN
 }
 
 /// A deterministic mask. Adequate for a RANK measurement — the rank does not

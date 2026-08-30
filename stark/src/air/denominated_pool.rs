@@ -34,7 +34,20 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-pub const TRACE_WIDTH: usize = 3;
+/// Columns the AIR constrains.
+pub const CONSTRAINED_TRACE_WIDTH: usize = 3;
+
+/// [ZK-RANDOMIZER 2026-08-30] One extra committed column, uniform on ALL rows,
+/// entering NO constraint. It exists to put randomness into the DEEP
+/// composition, which the row mask never reached — see
+/// `stark/tests/full_wire_ledger.rs` for the ledger it closes.
+///
+/// ⚠️ C1 IS THE ONE CIRCUIT WHERE THE COLUMN ALONE WAS NOT ENOUGH. At n = 256 it
+/// contributes 256 random coefficients against 301 published functionals: it did
+/// not even cover itself. That is why `TRACE_LENGTH` doubles in the same change.
+pub const RANDOMIZER_COL: usize = CONSTRAINED_TRACE_WIDTH;
+
+pub const TRACE_WIDTH: usize = CONSTRAINED_TRACE_WIDTH + 1;
 
 /// CHANGED 128 -> 256 on 2026-08-29, and C1 is the one circuit where the DEPTH
 /// TRICK DOES NOT WORK.
@@ -64,7 +77,14 @@ pub const TRACE_WIDTH: usize = 3;
 /// `fri_final_poly_degree_bound` stays 1. No new domain-generator constants are
 /// needed either: 256 and 4096 are already listed in the verifier's tables,
 /// because C4 uses 4096 already.
-pub const TRACE_LENGTH: usize = 256;
+/// [ZK-RANDOMIZER 2026-08-30] 256 -> 512, and this one is NOT free.
+///
+/// C1 has no Merkle depth to cut — it is a hash chain, not a path — so the only
+/// way to grow its row mask is to grow the trace. MEASURED at the previous
+/// doubling (128 -> 256): +101,482 CU on phase 1, +97,088 on phase 2, +11,696
+/// wire bytes, and the conjectured forgery bound fell 50 -> 48 bits because the
+/// LDE grew. Expect the same shape again; ⛔ re-measure, do not extrapolate.
+pub const TRACE_LENGTH: usize = 512;
 
 pub const HASH_CYCLE_LEN: usize = 32;
 pub const NUM_ROUNDS: usize = 30;
@@ -96,7 +116,9 @@ pub const FIRST_FREE_ROW: usize = NUM_HASH_CYCLES * HASH_CYCLE_LEN; // 96
 pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 160
 
 /// Mask elements `build_pool_commitment_trace` requires.
-pub const MASK_LEN: usize = MASK_ROWS * TRACE_WIDTH; // 480
+/// Row mask over the CONSTRAINED columns, then the randomizer column over every
+/// row: 416*3 + 512 = 1760.
+pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH;
 
 /// Number of transition constraints in the pool-commitment AIR.
 ///
@@ -395,7 +417,7 @@ pub fn build_pool_commitment_trace(
     assert_eq!(
         mask.len(),
         MASK_LEN,
-        "C1 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x {TRACE_WIDTH} columns), got {}",
+        "C1 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x          {CONSTRAINED_TRACE_WIDTH} constrained columns, then {TRACE_LENGTH} for the          randomizer column), got {}",
         mask.len(),
     );
     let mut trace = vec![vec![BaseElement::ZERO; TRACE_LENGTH]; TRACE_WIDTH];
@@ -474,10 +496,17 @@ pub fn build_pool_commitment_trace(
     // Fresh uniform values make each of the 160 rows its own unknown, so the
     // count runs the other way: 160 * 3 unknowns against 110 openings.
     for row in FIRST_FREE_ROW..TRACE_LENGTH {
-        let base = (row - FIRST_FREE_ROW) * TRACE_WIDTH;
-        for col in 0..TRACE_WIDTH {
+        let base = (row - FIRST_FREE_ROW) * CONSTRAINED_TRACE_WIDTH;
+        for col in 0..CONSTRAINED_TRACE_WIDTH {
             trace[col][row] = mask[base + col];
         }
+    }
+
+    // [ZK-RANDOMIZER] Every row, not only the free ones — what it masks is `D`,
+    // built from the whole LDE of every column.
+    let randomizer_base = MASK_ROWS * CONSTRAINED_TRACE_WIDTH;
+    for row in 0..TRACE_LENGTH {
+        trace[RANDOMIZER_COL][row] = mask[randomizer_base + row];
     }
 
     (trace, nullifier, commitment)

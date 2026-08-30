@@ -783,16 +783,39 @@ function buildSubscribePrivateStarkIx(
   intervalSlots: bigint,
   vkHashSubscriber: Uint8Array,
   starkCommitment: bigint,
-  licenseCommitment?: Uint8Array,
+  licenseCommitment: Uint8Array | undefined,
+  // [C3-D12] The walk arguments follow `license_commitment`, matching the Rust
+  // parameter order. They are the LAST three, so every absolute offset the
+  // encoding tests decode at is untouched.
+  //
+  // ⛔ NOT OPTIONAL. Since 2026-08-29 the C3 proof attests membership in a
+  // depth-12 SUBTREE; the handler walks the remaining levels to reach a pool
+  // root. Without them the proof means "this leaf is in SOME tree", which
+  // anyone satisfies with a tree they built themselves.
+  subtreeRoot: bigint,
+  siblings: bigint[],
+  directions: number[],
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_private_stark');
+  if (siblings.length !== directions.length) {
+    throw new Error(
+      `siblings (${siblings.length}) and directions (${directions.length}) must have ` +
+      `equal length — the on-chain walk refuses a mismatch with WrongSiblingCount.`,
+    );
+  }
+  if (directions.some((d) => d !== 0 && d !== 1)) {
+    throw new Error('direction bits must be 0 or 1 — NonBinaryDirection on chain.');
+  }
 
   // arg #9 (LAST) — Borsh Option<[u8;32]> license_commitment (1-byte tag + 32 if
   // Some). This is blake3(licenseSecret); the chain stores it verbatim with NO
   // verification. A merchant later checks blake3(decode(presentedKey)) == it.
   const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
   const licenseOptionSize = 1 + (hasLicense ? 32 : 0);
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + licenseOptionSize);
+  const walkBytes = 8 + (4 + siblings.length * 8) + (4 + directions.length);
+  const data = Buffer.alloc(
+    8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + licenseOptionSize + walkBytes,
+  );
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -810,6 +833,12 @@ function buildSubscribePrivateStarkIx(
   } else {
     data.writeUInt8(0, offset); offset += 1;
   }
+  // [C3-D12] args #10-#12 — subtree_root u64 | Vec<u64> siblings | Vec<u8> directions.
+  data.writeBigUInt64LE(subtreeRoot, offset); offset += 8;
+  data.writeUInt32LE(siblings.length, offset); offset += 4;
+  for (const sib of siblings) { data.writeBigUInt64LE(sib, offset); offset += 8; }
+  data.writeUInt32LE(directions.length, offset); offset += 4;
+  for (const dir of directions) { data.writeUInt8(dir, offset); offset += 1; }
 
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },
@@ -986,7 +1015,12 @@ export async function subscribePrivate(params: {
   // exact public-input layout the on-chain handler reconstructs. ──
   onProgress?.('Generating C1 + C3 STARK proofs (~2 min)...');
   const prepared = await prepareUnshield(receipt, poolConfig, connection, onProgress);
-  const { c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment } = prepared;
+  const {
+    c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment,
+    // [C3-D12] `merkleRoot` is the POOL root from the client's own tree walk;
+    // `subtreeRoot` is what C3 actually proved. See `prepareUnshield`.
+    subtreeRoot, siblings, directions,
+  } = prepared;
 
   const nullifierBytes = goldilocksToLeBytes32(nullifierGoldilocks);
   // merkle_root arg: low 8 bytes carry the Goldilocks root felt the C3 hash
@@ -1058,12 +1092,18 @@ export async function subscribePrivate(params: {
       intervalSlots,
       vkHashSubscriber,
       starkCommitment,
-      licenseCommitmentBytes, // arg #9 (LAST) — Option<[u8;32]> license_commitment.
+      licenseCommitmentBytes, // arg #9 — Option<[u8;32]> license_commitment.
+      subtreeRoot,            // arg #10
+      siblings,               // arg #11
+      directions,             // arg #12
     );
 
     onProgress?.('Sending subscription transaction...');
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
+    // [C3-D12] 300,000 -> 400,000. One on-chain `hash2` is ~34,469 CU (measured
+    // 2026-08-29 on the litesvm SBF VM), so the three levels the handler now
+    // walks add ~103,400. Matches the web app and the v4 path.
+    tx.add(...buildComputeBudgetIxs(400_000));
     tx.add(ix);
     const sig = await signSendConfirmTx(connection, tx, signer);
 

@@ -1171,8 +1171,8 @@ fn route_c_wire_sizes_match_the_closed_form() {
             p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)
                 .proof_bytes.len()),
         ("C3", 74_933, &CONFIG_MERKLE_PATH, {
-            let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-            let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+            let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
+            let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
             p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()))
                 .proof_bytes
                 .len()
@@ -1191,8 +1191,8 @@ fn route_c_wire_sizes_match_the_closed_form() {
             .proof_bytes
             .len()),
         ("C6", 76_405, &CONFIG_MERKLE_UPDATE, {
-            let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-            let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+            let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
+            let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
             p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
                 .proof_bytes
                 .len()

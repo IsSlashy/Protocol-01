@@ -119,7 +119,23 @@ export const MERKLE_DEPTH = 15;
  * failure lands mid-proof on the deposit path with no useful message. Slice
  * first -- the same shape C7 already uses for its own depth-12 cut.
  */
-const C6_SUBTREE_DEPTH = 12;
+/**
+ * [ZK-DEPTH-11 2026-08-30] 12 -> 11.
+ *
+ * The circuit gave up one Merkle level so its blinding region could grow from
+ * 128 rows to 160. That was not cosmetic: `full_wire_ledger.rs` MEASURED the
+ * row mask short of what the constrained openings plus the quotient publish on
+ * C3, and standing on a margin of 20 on C6 and C7.
+ *
+ * ⛔ THE WALK IS NOW FOUR LEVELS, NOT THREE. Slice 11 for the circuit and send
+ * 15 - 11 = 4 siblings/directions to the instruction. Sending three is a root
+ * the handler folds short, which fails the ring check after the whole upload.
+ *
+ * ⚠️ The pool tree is STILL MERKLE_DEPTH (15) deep and still holds 2^15 notes.
+ * This constant moves the split between circuit and instruction, never the
+ * capacity.
+ */
+const C6_SUBTREE_DEPTH = 11;
 
 /** Slots per epoch — matches mobile line 78. */
 const SLOTS_PER_EPOCH = 7200;
@@ -1445,7 +1461,12 @@ export async function shieldV3(
     // not been measured on the SBF VM since the fold landed. It is well under
     // the 1,400,000 cap and requesting more than needed costs only a marginally
     // higher priority fee, so erring high is the cheap direction here.
-    tx.add(...buildComputeBudgetIxs(600_000));
+    // [ZK-DEPTH-11 2026-08-30] 600,000 -> 700,000. The fold walks FOUR levels
+    // now, so it does EIGHT `hash2` calls (four levels x old root and new root)
+    // instead of six: ~275,752 CU at the ~34,469 measured per hash, up from
+    // ~206,814. ⚠️ Still headroom rather than a measurement of this handler's
+    // total, which has not been run on the SBF VM since the cut.
+    tx.add(...buildComputeBudgetIxs(700_000));
     if (!isNativeSOL && userTokenAccount) {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -2513,7 +2534,10 @@ export async function unshieldDenominatedStarkV3(
     // by `subscribe_v4_adversarial::the_walk_is_what_the_new_instruction_pays_for`),
     // so the walk adds ~103,400. 400,000 is what the v4 path already uses for
     // the identical walk, which is the closest thing to a measured precedent.
-    tx.add(...buildComputeBudgetIxs(400_000));
+    // [ZK-DEPTH-11 2026-08-30] 400,000 -> 500,000. `resolve_pool_root` walks
+    // FOUR levels now: ~137,876 CU at the ~34,469 measured per on-chain `hash2`,
+    // up from ~103,407. ⚠️ Headroom, not an end-to-end measurement.
+    tx.add(...buildComputeBudgetIxs(500_000));
     if (!isNativeSOL && recipientTokenAccount) {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -2583,7 +2607,23 @@ export async function unshieldDenominatedStarkV3(
 // ---------------------------------------------------------------------------
 
 /** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */
-export const C7_SUBTREE_DEPTH = 12;
+/**
+ * [ZK-DEPTH-11 2026-08-30] 12 -> 11.
+ *
+ * The circuit gave up one Merkle level so its blinding region could grow from
+ * 128 rows to 160. That was not cosmetic: `full_wire_ledger.rs` MEASURED the
+ * row mask short of what the constrained openings plus the quotient publish on
+ * C3, and standing on a margin of 20 on C6 and C7.
+ *
+ * ⛔ THE WALK IS NOW FOUR LEVELS, NOT THREE. Slice 11 for the circuit and send
+ * 15 - 11 = 4 siblings/directions to the instruction. Sending three is a root
+ * the handler folds short, which fails the ring check after the whole upload.
+ *
+ * ⚠️ The pool tree is STILL MERKLE_DEPTH (15) deep and still holds 2^15 notes.
+ * This constant moves the split between circuit and instruction, never the
+ * capacity.
+ */
+export const C7_SUBTREE_DEPTH = 11;
 
 /**
  * The depth circuit 3 proves, since 2026-08-29.
@@ -2594,7 +2634,23 @@ export const C7_SUBTREE_DEPTH = 12;
  * separate for the same reason (`spend_root::SPEND_SUBTREE_DEPTH` vs
  * `insert_root::INSERT_SUBTREE_DEPTH`).
  */
-export const C3_SUBTREE_DEPTH = 12;
+/**
+ * [ZK-DEPTH-11 2026-08-30] 12 -> 11.
+ *
+ * The circuit gave up one Merkle level so its blinding region could grow from
+ * 128 rows to 160. That was not cosmetic: `full_wire_ledger.rs` MEASURED the
+ * row mask short of what the constrained openings plus the quotient publish on
+ * C3, and standing on a margin of 20 on C6 and C7.
+ *
+ * ⛔ THE WALK IS NOW FOUR LEVELS, NOT THREE. Slice 11 for the circuit and send
+ * 15 - 11 = 4 siblings/directions to the instruction. Sending three is a root
+ * the handler folds short, which fails the ring check after the whole upload.
+ *
+ * ⚠️ The pool tree is STILL MERKLE_DEPTH (15) deep and still holds 2^15 notes.
+ * This constant moves the split between circuit and instruction, never the
+ * capacity.
+ */
+export const C3_SUBTREE_DEPTH = 11;
 
 /**
  * sha256(recipient) as the four little-endian u64 limbs circuit 7 takes.
@@ -2974,7 +3030,10 @@ export async function unshieldDenominatedStarkV4(
     const tx = new Transaction();
     // The handler walks three Poseidon levels on top of the v3 work; measured
     // headroom, not a guess carried over.
-    tx.add(...buildComputeBudgetIxs(400_000));
+    // [ZK-DEPTH-11 2026-08-30] 400,000 -> 500,000. `resolve_pool_root` walks
+    // FOUR levels now: ~137,876 CU at the ~34,469 measured per on-chain `hash2`,
+    // up from ~103,407. ⚠️ Headroom, not an end-to-end measurement.
+    tx.add(...buildComputeBudgetIxs(500_000));
     if (!isNativeSOL && recipientTokenAccount) {
       tx.add(
         createAssociatedTokenAccountIdempotentInstruction(
@@ -3150,7 +3209,10 @@ export async function buildRelayedUnshieldV4Batch(
   const spend = new Transaction();
   spend.feePayer = relayer;
   spend.recentBlockhash = RELAY_PLACEHOLDER_BLOCKHASH;
-  spend.add(...buildComputeBudgetIxs(400_000));
+  // [ZK-DEPTH-11 2026-08-30] 400,000 -> 500,000. `resolve_pool_root` walks
+  // FOUR levels now: ~137,876 CU at the ~34,469 measured per on-chain `hash2`,
+  // up from ~103,407. ⚠️ Headroom, not an end-to-end measurement.
+  spend.add(...buildComputeBudgetIxs(500_000));
   spend.add(
     buildUnshieldDenominatedStarkV4Ix(
       relayer,

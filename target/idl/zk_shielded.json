@@ -1002,6 +1002,9 @@
     {
       "name": "resize_denominated_pool",
       "docs": [
+        "Shield tokens into a denominated pool (deposit exactly denomination amount)",
+        "Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)",
+        "No amount in the commitment — denomination enforced at program level",
         "Resize an existing denominated pool to accommodate new fields"
       ],
       "discriminator": [
@@ -1220,343 +1223,18 @@
       "args": []
     },
     {
-      "name": "shield",
-      "docs": [
-        "Shield tokens using STARK circuit 6 (merkle_update) — quantum-resistant.",
-        "Proves old_root -> new_root given insertion of commitment.",
-        "Requires a pre-verified STARK proof buffer from p01_stark_verifier."
-      ],
-      "discriminator": [
-        220,
-        198,
-        253,
-        246,
-        231,
-        84,
-        147,
-        98
-      ],
-      "accounts": [
-        {
-          "name": "depositor",
-          "docs": [
-            "User depositing tokens — must be the STARK proof authority."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "shielded_pool",
-          "docs": [
-            "Shielded pool"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  105,
-                  101,
-                  108,
-                  100,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool.token_mint",
-                "account": "ShieldedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "merkle_tree",
-          "docs": [
-            "Merkle tree state — mutable, we insert the new commitment."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "stark_proof_buffer",
-          "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 6: merkle_update).",
-            "- Owner is p01_stark_verifier program",
-            "- Discriminator matches ProofBuffer",
-            "- Authority matches depositor",
-            "- Circuit ID is 6 (merkle_update)",
-            "- Both verified and deep_ali_verified flags are true",
-            "- Public inputs hash matches sha256([old_leaf=0 || new_leaf=commitment_u64",
-            "|| old_root_u64 || new_root_u64 || depth=15] — each u64 LE)"
-          ]
-        },
-        {
-          "name": "system_program",
-          "docs": [
-            "System program (required for native SOL transfers)"
-          ],
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "token_program",
-          "docs": [
-            "Token program (optional, for SPL token transfers)"
-          ],
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "user_token_account",
-          "docs": [
-            "User's token account (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "pool_vault",
-          "docs": [
-            "Pool's token vault (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        }
-      ],
-      "args": [
-        {
-          "name": "commitment",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "old_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "new_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "amount",
-          "type": "u64"
-        }
-      ]
-    },
-    {
-      "name": "shield_denominated",
-      "docs": [
-        "Shield tokens into a denominated pool (deposit exactly denomination amount)",
-        "Commitment = Poseidon(nullifier_preimage, secret, deposit_epoch, token_mint)",
-        "No amount in the commitment — denomination enforced at program level"
-      ],
-      "discriminator": [
-        149,
-        186,
-        236,
-        93,
-        191,
-        61,
-        119,
-        100
-      ],
-      "accounts": [
-        {
-          "name": "depositor",
-          "docs": [
-            "User depositing tokens"
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "denominated_pool",
-          "docs": [
-            "Denominated pool"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  50
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPool"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "merkle_tree",
-          "docs": [
-            "Merkle tree state"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "system_program",
-          "docs": [
-            "System program (required for native SOL transfers)"
-          ],
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "token_program",
-          "docs": [
-            "Token program (optional, for SPL token transfers)"
-          ],
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "user_token_account",
-          "docs": [
-            "User's token account (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "pool_vault",
-          "docs": [
-            "Pool's token vault (optional, only for SPL tokens)"
-          ],
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "protocol_fee_wallet",
-          "docs": [
-            "Protocol fee wallet — receives shield fee (0.3%)"
-          ],
-          "writable": true
-        }
-      ],
-      "args": [
-        {
-          "name": "commitment",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "new_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        }
-      ]
-    },
-    {
       "name": "shield_denominated_v3",
       "docs": [
-        "Shield into a V3 pool. Requires a pre-verified C6 (merkle_update)",
-        "STARK proof buffer attesting that (old_root → new_root + leaf +",
-        "new_subtrees) is a valid insertion."
+        "Shield into a V3 pool. Requires a pre-verified C6 (merkle_update) STARK",
+        "proof buffer attesting the depth-12 SUBTREE transition",
+        "`old_subtree_root -> new_subtree_root` for this leaf.",
+        "",
+        "⛔ `new_root` IS NO LONGER AN ARGUMENT, and reintroducing it is the one",
+        "change that would undo this instruction's security. Since 2026-08-29 C6",
+        "proves an insertion into a 12-level subtree, not the whole tree, so the",
+        "pool root is COMPUTED here by folding the top levels against the pool",
+        "account's own `filled_subtrees` -- see `state::insert_root`. A",
+        "caller-supplied pool root is precisely what that fold exists to refuse."
       ],
       "discriminator": [
         207,
@@ -1744,7 +1422,16 @@
           }
         },
         {
-          "name": "new_root",
+          "name": "old_subtree_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "new_subtree_root",
           "type": {
             "array": [
               "u8",
@@ -2076,6 +1763,20 @@
               ]
             }
           }
+        },
+        {
+          "name": "subtree_root",
+          "type": "u64"
+        },
+        {
+          "name": "siblings",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "directions",
+          "type": "bytes"
         }
       ]
     },
@@ -2099,7 +1800,26 @@
         "The `SubscriptionVault::client_stealth_meta` FIELD is untouched and",
         "still occupies its 65 bytes, always `None`, so `SubscriptionVault::LEN`",
         "and every account decoder keep working against the vaults already live",
-        "on devnet."
+        "on devnet.",
+        "",
+        "ARGUMENTS NOT ADDED — `vault_bump: u8` and `nullifier_record_bump: u8`.",
+        "Ten subscriptions at identical denomination and vault size consumed",
+        "28,918 to 40,721 CU, all ten distinct, because `vault` and",
+        "`nullifier_record` are the two PDAs derived at runtime with a bare",
+        "`bump`. Taking both bumps as arguments and writing `bump = <arg>` looks",
+        "like a five-line fix for that and is not one: on an `init` account",
+        "anchor-syn 0.32.1 runs `find_program_address` either way and a bump",
+        "target only adds an equality check on top, so the change buys zero",
+        "compute units while forcing a coordinated encoder update in apps/web,",
+        "apps/extension and apps/mobile — every one of which hand-rolls this",
+        "payload. Going further and dropping `init` to reach the constant-cost",
+        "`create_program_address` form would hand the caller ~128 valid record",
+        "addresses for one nullifier, i.e. a pool drain. Measurements, citations",
+        "and the answer to \"does a public bump reveal anything new\" are in the",
+        "block at the END of `instructions/subscribe_private_stark.rs` (it sits",
+        "there, not next to the fields it describes, so that it shifts none of",
+        "the 38 numbered citations that point into that file), pinned by",
+        "`pda_bump_guard` in the same place."
       ],
       "discriminator": [
         187,
@@ -2396,6 +2116,410 @@
               ]
             }
           }
+        },
+        {
+          "name": "subtree_root",
+          "type": "u64"
+        },
+        {
+          "name": "siblings",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "directions",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "subscribe_private_stark_v4",
+      "docs": [
+        "[C7] Open a private subscription vault on ONE circuit-7 proof.",
+        "",
+        "v3 above stays registered and UNTOUCHED. It is the only path a note whose",
+        "blinding is unknown can be spent on, and apps/mobile still spends on the",
+        "C1+C3 pair; removing it strands those notes.",
+        "",
+        "What it buys over v3:",
+        "* The note commitment is never published. v3 has to publish it to tie",
+        "C1 and C3 together, which points at the deposit that funded the",
+        "subscription — the linkage the circuit exists to remove.",
+        "* `min_epoch` is gone, removed rather than ignored: every shipped",
+        "surface already sends 0, because since commitment blinding shipped",
+        "the `deposit_epoch` slot carries a 63-bit PRF secret and passing the",
+        "real value would publish the blinding in the clear AND make the note",
+        "permanently un-subscribable. An ignored parameter still puts its",
+        "bytes on the wire.",
+        "* One `ProofBuffer` rent instead of two.",
+        "",
+        "🚨 THE PROOF BINDS A DOMAIN-TAGGED COMPOSITE, NOT A PUBKEY. Four of the",
+        "six public inputs are",
+        "`sha256(\"P01:C7:SUBSCRIBE:v1\" || vault || rate || interval_slots ||",
+        "vk_hash_subscriber || license)`. Binding the vault alone is NOT enough",
+        "here, and that is the one place this instruction departs from",
+        "`unshield_denominated_stark_v4`: in an unshield the destination is the",
+        "whole economic statement, but in a subscribe `rate` and `interval_slots`",
+        "decide how fast the retailer empties the vault. `claim_period` is",
+        "permissionless and there is no cancel and no refund, so a relayer holding",
+        "the buffer who could choose the terms would set `rate = denomination`,",
+        "`interval_slots = 1` and hand the retailer the subscriber's whole prepaid",
+        "envelope one slot after subscribe. The domain tag is the other half: it",
+        "is what stops a buffer minted for an unshield being spent here.",
+        "",
+        "⛔ `subtree_root` is a DEPTH-12 root, not the pool root. The handler walks",
+        "the remaining `tree_depth - 12` levels against `siblings` / `directions`",
+        "and requires the result to equal `merkle_root`, which must itself be a",
+        "root the pool published. Skipping that walk makes this a fund-loss",
+        "instruction: anyone can build their own twelve levels over an invented",
+        "leaf. v3 subscribe needs no walk because C3 proves the full-depth path.",
+        "",
+        "⛔ NO PROTOCOL FEE, deliberately. `vault.total_deposited` is what",
+        "`funded_periods()` divides; netting a fee out of it makes the final",
+        "`claim_period` revert on its rent-floor require, and `claim_period` is the",
+        "only instruction that can close a vault. Charging one is a MONEY DECISION",
+        "and it arrives together with `total_deposited = recipient_amount`.",
+        "",
+        "ARGUMENTS NOT ADDED — `vault_bump: u8` and `nullifier_record_bump: u8`.",
+        "Same measurement as v3: on an `init` account anchor-syn 0.32.1 runs",
+        "`find_program_address` either way, so a bump target buys zero compute",
+        "units, and dropping `init` to reach the constant-cost form would hand the",
+        "caller ~128 valid record addresses for one nullifier. Pinned by",
+        "`pda_bump_guard` in the instruction file."
+      ],
+      "discriminator": [
+        111,
+        188,
+        183,
+        35,
+        213,
+        205,
+        69,
+        20
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Transaction payer. Nothing on its own — it is pinned to `c7_authority`",
+            "in the handler, and THAT is what makes the buffer non-transferable",
+            "between keys."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "retailer",
+          "docs": [
+            "Retailer who will receive periodic payments.",
+            "",
+            "Deliberately unvalidated: any pubkey may be a retailer. Its identity is",
+            "bound TRANSITIVELY — it is a vault seed, and the vault is in the C7",
+            "digest, so re-pointing it would need a PDA collision."
+          ]
+        },
+        {
+          "name": "vault",
+          "docs": [
+            "Subscription vault PDA, keyed by commitment instead of pubkey.",
+            "",
+            "`init` is the double-open guard: one commitment, one vault, forever.",
+            "",
+            "⛔ BARE `bump`, never `bump = <arg>`. On an `init` account anchor-syn",
+            "0.32.1 runs `find_program_address` either way, so a bump target buys",
+            "ZERO compute units while breaking three hand-rolled encoders; and a",
+            "stored bump that is not the derived one bricks `claim_period`, `pause`",
+            "and `resume` permanently — all three re-derive this address with",
+            "`bump = vault.bump`, and `claim_period` is the only closer. ⛔ Never drop",
+            "`init` for `create_program_address`: roughly 128 addresses are valid per",
+            "seed set. Both measurements live at the end of",
+            "`subscribe_private_stark.rs`; `pda_bump_guard` below pins the shape.",
+            "",
+            "`space = LEN` (361) is right HERE AND ONLY HERE. Three vault sizes exist",
+            "on devnet (263 / 328 / 361), which is why `claim_period` reads its rent",
+            "floor off `data_len()` instead. This instruction only ever creates",
+            "361-byte vaults."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  117,
+                  98,
+                  115,
+                  99,
+                  114,
+                  105,
+                  112,
+                  116,
+                  105,
+                  111,
+                  110,
+                  95,
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "retailer"
+              },
+              {
+                "kind": "arg",
+                "path": "subscriber_commitment"
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.token_mint",
+                "account": "DenominatedPoolV3"
+              }
+            ]
+          }
+        },
+        {
+          "name": "denominated_pool",
+          "docs": [
+            "Source denominated pool, pinned to its own seeds so a foreign account",
+            "cannot pose as it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  110,
+                  111,
+                  109,
+                  105,
+                  110,
+                  97,
+                  116,
+                  101,
+                  100,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.token_mint",
+                "account": "DenominatedPoolV3"
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.denomination",
+                "account": "DenominatedPoolV3"
+              }
+            ]
+          }
+        },
+        {
+          "name": "merkle_tree",
+          "docs": [
+            "Merkle tree state. In v3 subscribe this account is loaded and then never",
+            "read. Here it is load-bearing: `pool.tree_depth == merkle_tree.depth`",
+            "sizes the walk, and the two fields are written by different instructions",
+            "with nothing else comparing them."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "nullifier_record",
+          "docs": [
+            "Nullifier record PDA — double-spend prevention by EXISTENCE at ONE",
+            "address.",
+            "",
+            "⛔ These seeds are byte-identical to v3 subscribe's and to v4 unshield's,",
+            "prefix `b\"nullifier\"`. That sameness is what stops one note being spent",
+            "once through unshield and again through subscribe. \"Disambiguating the",
+            "two instructions' seeds\" would be a pool drain dressed as tidiness."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  117,
+                  108,
+                  108,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              },
+              {
+                "kind": "arg",
+                "path": "nullifier"
+              }
+            ]
+          }
+        },
+        {
+          "name": "c7_proof_buffer",
+          "docs": [
+            "C7 (spend) STARK proof buffer — the ONLY proof this instruction reads.",
+            "It replaces the `c1_proof_buffer` + `c3_proof_buffer` pair, and proves,",
+            "in one trace, that the nullifier derives from a well-formed commitment",
+            "AND that the commitment is a leaf under `subtree_root`.",
+            "verified, deep_ali_verified, public_inputs_hash)."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "docs": [
+            "Token program (optional, for SPL tokens)."
+          ],
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "pool_vault",
+          "docs": [
+            "Pool's token vault (optional, only for SPL tokens). Validated in the",
+            "handler: `mint == pool.token_mint`, `owner == pool.key()`."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "vault_token_account",
+          "docs": [
+            "Vault's token account (optional, only for SPL tokens).",
+            "",
+            "🚨 Validated in the handler with BOTH `mint` and `owner`. The owner check",
+            "is the one genuinely new require in this file — see the block at its call",
+            "site.",
+            "",
+            "NOTE: there is deliberately NO `fee_escrow` account. See the module",
+            "header: charging a fee here strands the deposit AND the rent."
+          ],
+          "writable": true,
+          "optional": true
+        }
+      ],
+      "args": [
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "subtree_root",
+          "type": "u64"
+        },
+        {
+          "name": "siblings",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "directions",
+          "type": "bytes"
+        },
+        {
+          "name": "subscriber_commitment",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "rate",
+          "type": "u64"
+        },
+        {
+          "name": "interval_slots",
+          "type": "u64"
+        },
+        {
+          "name": "vk_hash_subscriber",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "license_commitment",
+          "type": {
+            "option": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
         }
       ]
     },
@@ -2520,232 +2644,6 @@
         {
           "name": "slot",
           "type": "u64"
-        }
-      ]
-    },
-    {
-      "name": "transfer",
-      "docs": [
-        "Transfer shielded tokens privately using STARK circuit 5 (transfer) —",
-        "quantum-resistant. Spends two input notes and creates two output",
-        "commitments. public_amount = 0 (no net value change).",
-        "Requires a pre-verified STARK proof buffer from p01_stark_verifier."
-      ],
-      "discriminator": [
-        163,
-        52,
-        200,
-        231,
-        140,
-        3,
-        69,
-        186
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "docs": [
-            "Transaction payer — must be the STARK proof authority."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "shielded_pool",
-          "docs": [
-            "Shielded pool"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  105,
-                  101,
-                  108,
-                  100,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool.token_mint",
-                "account": "ShieldedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "merkle_tree",
-          "docs": [
-            "Merkle tree state"
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "nullifier_record_1",
-          "docs": [
-            "Nullifier 1 PDA — created on first use."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              },
-              {
-                "kind": "arg",
-                "path": "nullifier_1"
-              }
-            ]
-          }
-        },
-        {
-          "name": "nullifier_record_2",
-          "docs": [
-            "Nullifier 2 PDA — created on first use."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              },
-              {
-                "kind": "arg",
-                "path": "nullifier_2"
-              }
-            ]
-          }
-        },
-        {
-          "name": "stark_proof_buffer",
-          "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 5: transfer)."
-          ]
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        }
-      ],
-      "args": [
-        {
-          "name": "nullifier_1",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "nullifier_2",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "output_commitment_1",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "output_commitment_2",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "merkle_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "new_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
         }
       ]
     },
@@ -2957,13 +2855,12 @@
           }
         },
         {
-          "name": "new_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
+          "name": "c6_old_subtree_root",
+          "type": "u64"
+        },
+        {
+          "name": "c6_new_subtree_root",
+          "type": "u64"
         },
         {
           "name": "new_subtrees",
@@ -2975,244 +2872,20 @@
               ]
             }
           }
-        }
-      ]
-    },
-    {
-      "name": "unshield",
-      "docs": [
-        "Unshield tokens from the base pool using STARK circuit 5 (transfer) —",
-        "quantum-resistant. public_amount = -amount (two's complement u64)",
-        "ensures value conservation between the two output notes and the",
-        "withdrawn `amount`.",
-        "Requires a pre-verified STARK proof buffer from p01_stark_verifier."
-      ],
-      "discriminator": [
-        21,
-        228,
-        55,
-        24,
-        194,
-        10,
-        21,
-        22
-      ],
-      "accounts": [
-        {
-          "name": "payer",
-          "writable": true,
-          "signer": true
         },
         {
-          "name": "recipient",
-          "docs": [
-            "Recipient of the unshielded tokens."
-          ],
-          "writable": true
-        },
-        {
-          "name": "shielded_pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  115,
-                  104,
-                  105,
-                  101,
-                  108,
-                  100,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool.token_mint",
-                "account": "ShieldedPool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "merkle_tree",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  109,
-                  101,
-                  114,
-                  107,
-                  108,
-                  101,
-                  95,
-                  116,
-                  114,
-                  101,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              }
-            ]
-          }
-        },
-        {
-          "name": "nullifier_record_1",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              },
-              {
-                "kind": "arg",
-                "path": "nullifier_1"
-              }
-            ]
-          }
-        },
-        {
-          "name": "nullifier_record_2",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  110,
-                  117,
-                  108,
-                  108,
-                  105,
-                  102,
-                  105,
-                  101,
-                  114
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "shielded_pool"
-              },
-              {
-                "kind": "arg",
-                "path": "nullifier_2"
-              }
-            ]
-          }
-        },
-        {
-          "name": "stark_proof_buffer",
-          "docs": [
-            "STARK proof buffer from p01_stark_verifier (circuit 5: transfer)."
-          ]
-        },
-        {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
-        },
-        {
-          "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "pool_vault",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "recipient_token_account",
-          "writable": true,
-          "optional": true
-        }
-      ],
-      "args": [
-        {
-          "name": "nullifier_1",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "nullifier_2",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "output_commitment_1",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "output_commitment_2",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "merkle_root",
-          "type": {
-            "array": [
-              "u8",
-              32
-            ]
-          }
-        },
-        {
-          "name": "amount",
+          "name": "subtree_root",
           "type": "u64"
         },
         {
-          "name": "new_root",
+          "name": "siblings",
           "type": {
-            "array": [
-              "u8",
-              32
-            ]
+            "vec": "u64"
           }
+        },
+        {
+          "name": "directions",
+          "type": "bytes"
         }
       ]
     },
@@ -3223,7 +2896,15 @@
         "- C1 (pool_commitment): proves nullifier + commitment.",
         "- C3 (merkle_path): proves the commitment is at the supplied",
         "merkle root (closes the v2 trust gap where membership was",
-        "never proven on-chain)."
+        "never proven on-chain).",
+        "⛔ `subtree_root`, `siblings` and `directions` ARE NOT OPTIONAL, and they",
+        "are not a convenience. Since 2026-08-29 the C3 proof attests membership",
+        "in a depth-12 SUBTREE, so the handler must walk the remaining levels to",
+        "reach a pool root. Without them a C3 proof means \"this leaf is in SOME",
+        "tree\", which anyone satisfies with a tree they built themselves.",
+        "",
+        "None of the three is trusted: the walk's result must equal the named",
+        "`merkle_root`, and that root must already be in the pool's ring."
       ],
       "discriminator": [
         119,
@@ -3438,6 +3119,525 @@
         {
           "name": "stark_commitment",
           "type": "u64"
+        },
+        {
+          "name": "recipient",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "subtree_root",
+          "type": "u64"
+        },
+        {
+          "name": "siblings",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "directions",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "unshield_denominated_stark_v4",
+      "docs": [
+        "[C7] Unshield from a V3 pool on ONE circuit-7 proof.",
+        "",
+        "v3 above stays registered and is still the only path that works against",
+        "the verifier deployed on devnet today. This one requires the C7-aware",
+        "verifier; until that binary is live, a proof built for it is rejected at",
+        "the END of a ~150-transaction upload.",
+        "",
+        "What it buys over v3:",
+        "* The note commitment is never published. v3 has to publish it to tie",
+        "C1 and C3 together, which points at the deposit that funded the",
+        "spend — the linkage the circuit exists to remove.",
+        "* The recipient is bound by the proof transcript",
+        "(`sha256(recipient_pubkey)` is four of the six public inputs), not",
+        "just by the payer signature.",
+        "* One `ProofBuffer` rent instead of two, on a 77,965-byte wire",
+        "instead of 147,038 — a 1.9x cut, not the 3.3x this comment used to",
+        "claim. 147,038 is MEASURED, not derived: a live scan of a real",
+        "C1+C3 upload read 148 chunks / 147,038 bytes (verify/p01-verify.mjs,",
+        "probe P3/P3b). 258,958 is the pre-B4 pair-leaf figure.",
+        "",
+        "⛔ `subtree_root` is a DEPTH-12 root, not the pool root. The handler",
+        "walks the remaining `tree_depth - 12` levels against `siblings` /",
+        "`directions` and requires the result to equal `merkle_root`, which must",
+        "itself be a root the pool published. Skipping that walk makes this a",
+        "fund-loss instruction: anyone can build their own twelve levels over an",
+        "invented leaf."
+      ],
+      "discriminator": [
+        159,
+        58,
+        182,
+        151,
+        223,
+        104,
+        159,
+        35
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "denominated_pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  110,
+                  111,
+                  109,
+                  105,
+                  110,
+                  97,
+                  116,
+                  101,
+                  100,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.token_mint",
+                "account": "DenominatedPoolV3"
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.denomination",
+                "account": "DenominatedPoolV3"
+              }
+            ]
+          }
+        },
+        {
+          "name": "merkle_tree",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "nullifier_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  117,
+                  108,
+                  108,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              },
+              {
+                "kind": "arg",
+                "path": "nullifier"
+              }
+            ]
+          }
+        },
+        {
+          "name": "c7_proof_buffer",
+          "docs": [
+            "C7 (spend) STARK proof buffer — the ONLY proof this instruction reads.",
+            "It proves, in one trace, that the nullifier derives from a well-formed",
+            "commitment AND that the commitment is a leaf under `subtree_root`.",
+            "verified, deep_ali_verified, public_inputs_hash)."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "fee_escrow",
+          "docs": [
+            "Per-pool fee escrow PDA. Seeds: [b\"fee_escrow\", pool.key()]."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "subtree_root",
+          "type": "u64"
+        },
+        {
+          "name": "siblings",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "directions",
+          "type": "bytes"
+        },
+        {
+          "name": "recipient",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "unshield_denominated_stark_v4_relayed",
+      "docs": [
+        "The same spend, submitted by somebody else, paid for out of the note.",
+        "",
+        "Same accounts, same arguments, same handler — only the last literal",
+        "differs. It is a SIBLING instruction and not a flag on the existing one",
+        "because a flag is a field a caller controls, and because the demo path",
+        "must stay byte-identical: `unshield_denominated_stark_v4` still calls",
+        "the handler with `false` and cannot be talked into paying anybody.",
+        "",
+        "# What this buys, and what it does not",
+        "",
+        "It is BUILT to close P11 — the last `[open]` probe in",
+        "verify/p01-verify.mjs — by making the fee payer somebody with no funding",
+        "edge to the buyer. ⚠️ As of writing that is intent, not measurement: no",
+        "relayed spend has landed on chain and P11 has not been re-run against",
+        "one. Do not repeat \"P11 is closed\" anywhere until this instruction has",
+        "executed on devnet and the probe says PASS on that signature. It is",
+        "only safe to hand a proof to a stranger because circuit 7 binds the",
+        "recipient: substituting it changes `public_inputs_hash` and the spend is",
+        "refused. v3 had no such binding, which is why its relayer could only",
+        "ever be trusted infrastructure.",
+        "",
+        "⚠️ P6 stays FAIL and always will: every Solana transaction has a fee",
+        "payer with a funding history. What changes is WHO it is, never that one",
+        "exists. The deposit side (P8/P9) is untouched by this instruction.",
+        "",
+        "🚨 A relayer only hides a crowd. One user routing through one relayer",
+        "partitions the anonymity set back to one, and the relayer operator key",
+        "must not itself be a public name — the retired nodes signed with",
+        "`TREASURY_AUTHORITY`, which made the whole exercise self-defeating."
+      ],
+      "discriminator": [
+        148,
+        87,
+        153,
+        164,
+        152,
+        83,
+        72,
+        109
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "denominated_pool",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  110,
+                  111,
+                  109,
+                  105,
+                  110,
+                  97,
+                  116,
+                  101,
+                  100,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.token_mint",
+                "account": "DenominatedPoolV3"
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.denomination",
+                "account": "DenominatedPoolV3"
+              }
+            ]
+          }
+        },
+        {
+          "name": "merkle_tree",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "nullifier_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  110,
+                  117,
+                  108,
+                  108,
+                  105,
+                  102,
+                  105,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              },
+              {
+                "kind": "arg",
+                "path": "nullifier"
+              }
+            ]
+          }
+        },
+        {
+          "name": "c7_proof_buffer",
+          "docs": [
+            "C7 (spend) STARK proof buffer — the ONLY proof this instruction reads.",
+            "It proves, in one trace, that the nullifier derives from a well-formed",
+            "commitment AND that the commitment is a leaf under `subtree_root`.",
+            "verified, deep_ali_verified, public_inputs_hash)."
+          ]
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "token_program",
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "pool_vault",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "recipient_token_account",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "fee_escrow",
+          "docs": [
+            "Per-pool fee escrow PDA. Seeds: [b\"fee_escrow\", pool.key()]."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  102,
+                  101,
+                  101,
+                  95,
+                  101,
+                  115,
+                  99,
+                  114,
+                  111,
+                  119
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "nullifier",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "merkle_root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "subtree_root",
+          "type": "u64"
+        },
+        {
+          "name": "siblings",
+          "type": {
+            "vec": "u64"
+          }
+        },
+        {
+          "name": "directions",
+          "type": "bytes"
         },
         {
           "name": "recipient",
@@ -4250,6 +4450,41 @@
       "code": 6055,
       "name": "SlotMismatch",
       "msg": "Slot mismatch — caller-supplied slot must match current clock within drift window"
+    },
+    {
+      "code": 6056,
+      "name": "SpendPoolShallowerThanCircuit",
+      "msg": "Pool tree is not deeper than the depth-12 subtree circuit 7 proves"
+    },
+    {
+      "code": 6057,
+      "name": "SpendWrongSiblingCount",
+      "msg": "Sibling/direction count must equal tree_depth - 12"
+    },
+    {
+      "code": 6058,
+      "name": "SpendNonBinaryDirection",
+      "msg": "A Merkle direction bit was neither 0 nor 1"
+    },
+    {
+      "code": 6059,
+      "name": "SpendNonCanonicalFelt",
+      "msg": "A supplied value is not a canonical Goldilocks element"
+    },
+    {
+      "code": 6060,
+      "name": "SpendRootMismatch",
+      "msg": "Derived pool root does not match the named merkle_root"
+    },
+    {
+      "code": 6061,
+      "name": "RelayerRewardUnsupportedForSpl",
+      "msg": "The relayed spend path is native-SOL only; this pool is SPL"
+    },
+    {
+      "code": 6062,
+      "name": "RelayerRewardExceedsNote",
+      "msg": "This pool's protocol fee is smaller than the relayer reward"
     }
   ],
   "types": [

@@ -1,5 +1,16 @@
 //! Generate compact STARK proofs for all circuit types.
 //!
+//! 🚨 THE BLINDING MASKS HERE WERE A DETERMINISTIC XORSHIFT UNTIL 2026-08-30, all
+//! four arms seeded on the same literal `0x9E37_79B9_7F4A_7C15`. The header called
+//! that "adequate for generating a proof to inspect", which was true of the intent
+//! and false of the artefact: the bytes are indistinguishable from a real proof,
+//! and a proof whose mask is a known constant blinds NOTHING -- the recovery
+//! harnesses in `stark/tests/air_aware_recovery_c*.rs` solve it outright.
+//!
+//! It now draws from the OS CSPRNG like the shipping path, and REFUSES to emit a
+//! proof if there is none. A development CLI that emits a plausible-looking proof
+//! with no blinding is exactly the artefact that ends up pasted somewhere real.
+//!
 //! Usage:
 //!   cargo run --bin gen_proof -p p01-stark -- <secret>
 //!   cargo run --bin gen_proof -p p01-stark -- pool <np> <secret> <epoch> <mint>
@@ -22,17 +33,8 @@ fn main() {
             // The C1 blinding region. Same caveat as the other arms: a
             // deterministic xorshift is adequate for generating a proof to
             // inspect and INADEQUATE for anything whose secrecy matters.
-            let mask: Vec<u64> = {
-                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
-                (0..p01_stark::air::denominated_pool::MASK_LEN)
-                    .map(|_| {
-                        z ^= z << 13;
-                        z ^= z >> 7;
-                        z ^= z << 17;
-                        z % 0xFFFF_FFFF_0000_0001
-                    })
-                    .collect()
-            };
+            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::denominated_pool::MASK_LEN)
+                .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_pool_commitment_proof(
                 np, secret, epoch, mint, &mask,
             );
@@ -63,21 +65,14 @@ fn main() {
             let indices: Vec<u8> = args[4].split(',').map(|s| s.trim().parse().unwrap()).collect();
 
             // The C3 blinding region. Same caveat as the C6 arm below: a
-            // deterministic xorshift is adequate for generating a proof to
-            // inspect and INADEQUATE for anything whose secrecy matters. The
-            // shipping path draws from getrandom inside the wasm entry.
-            let mask: Vec<u64> = {
-                let n = p01_stark::air::merkle_path::mask_len_for_depth(elements.len());
-                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
-                (0..n)
-                    .map(|_| {
-                        z ^= z << 13;
-                        z ^= z >> 7;
-                        z ^= z << 17;
-                        z % 0xFFFF_FFFF_0000_0001
-                    })
-                    .collect()
-            };
+            // [ZK-RANDOMIZER 2026-08-30] Was a deterministic xorshift. The old
+            // comment called that "adequate for a proof to inspect" -- but the
+            // bytes are indistinguishable from a real proof, and the mask hid
+            // nothing.
+            let mask: Vec<u64> = p01_stark::draw_blinding_mask(
+                p01_stark::air::merkle_path::mask_len_for_depth(elements.len()),
+            )
+                .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_merkle_path_compact_proof(
                 leaf, &elements, &indices, &mask,
             );
@@ -103,21 +98,12 @@ fn main() {
             //
             // It is adequate for generating a proof to inspect and INADEQUATE
             // for anything whose secrecy matters: the blinding region is only
-            // hiding if its values are unpredictable. The shipping path draws
-            // from getrandom inside the wasm entry and refuses to build without
-            // a CSPRNG. Do not copy this into one.
-            let mask: Vec<u64> = {
-                let n = p01_stark::air::merkle_update::mask_len_for_depth(elements.len());
-                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
-                (0..n)
-                    .map(|_| {
-                        z ^= z << 13;
-                        z ^= z >> 7;
-                        z ^= z << 17;
-                        z % 0xFFFF_FFFF_0000_0001
-                    })
-                    .collect()
-            };
+            // hiding if its values are unpredictable -- which is exactly why
+            // this arm no longer rolls its own. Same draw as the shipping path.
+            let mask: Vec<u64> = p01_stark::draw_blinding_mask(
+                p01_stark::air::merkle_update::mask_len_for_depth(elements.len()),
+            )
+                .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_merkle_update_compact_proof(
                 old_leaf, new_leaf, &elements, &indices, &mask,
             );
@@ -173,17 +159,8 @@ fn main() {
 
             // The C5 blinding region. Same caveat as the other arms: adequate
             // for generating a proof to inspect, INADEQUATE for secrecy.
-            let mask: Vec<u64> = {
-                let mut z: u64 = 0x9E37_79B9_7F4A_7C15;
-                (0..p01_stark::air::transfer::MASK_LEN)
-                    .map(|_| {
-                        z ^= z << 13;
-                        z ^= z >> 7;
-                        z ^= z << 17;
-                        z % 0xFFFF_FFFF_0000_0001
-                    })
-                    .collect()
-            };
+            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::transfer::MASK_LEN)
+                .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_transfer_compact_proof(
                 sk, mint, in1_amt, in1_rand, in2_amt, in2_rand,
                 out1_amt, out1_rcpt, out1_rand, out2_amt, out2_rcpt, out2_rand, pub_amt,

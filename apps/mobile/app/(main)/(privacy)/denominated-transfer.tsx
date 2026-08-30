@@ -53,6 +53,8 @@ import {
   createCommitmentV3,
   pubkeyToField,
   slotToEpoch,
+  C3_SUBTREE_DEPTH,
+  C6_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getConnection } from '@/services/solana/connection';
@@ -177,16 +179,31 @@ function TransferScreenContent() {
             leavesByIndex,
             targetLeafIndex: receipt.leafIndex,
           });
+        // [C3-D12] Bottom 12 levels into the circuit; the top 3 travel to the
+        // instruction for the on-chain walk.
         const U64 = (1n << 64n) - 1n;
+        if (c3Path.length < C3_SUBTREE_DEPTH) {
+          throw new Error(
+            `Merkle path has ${c3Path.length} elements, need at least ` +
+            `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+          );
+        }
         const c3Result = await generateMerklePathProof(
           (receipt.commitment & U64).toString(),
-          c3Path.map(e => (e & U64).toString()),
-          c3Indices,
+          c3Path.slice(0, C3_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+          c3Indices.slice(0, C3_SUBTREE_DEPTH),
         );
-        // Receipt mutation purely for parity with unshield V3 — the SDK reads
-        // the C3 root straight from `c3Result.publicInputs[1]`, so this is
-        // belt-and-braces only.
+        // ⛔ THE COMMENT THAT STOOD HERE WAS WHAT WENT WRONG: "the SDK reads the
+        // C3 root straight from `c3Result.publicInputs[1]`, so this is
+        // belt-and-braces only". Since 2026-08-29 that public input is the
+        // depth-12 SUBTREE root, so the POOL root is no longer available
+        // anywhere downstream — it has to travel from here, with the walk.
         receipt.merkleRoot = c3Root;
+        const c3Walk = {
+          merkleRoot: c3Root,
+          siblings: c3Path.slice(C3_SUBTREE_DEPTH).map(e => e & U64),
+          directions: c3Indices.slice(C3_SUBTREE_DEPTH),
+        };
 
         // 4. Generate fresh secrets for the recipient (RANDOM — the recipient
         //    is unrelated to the sender's seed; deterministic recovery does
@@ -224,11 +241,20 @@ function TransferScreenContent() {
         }
         const { newRoot, updatedSubtrees, pathElements: c6Path, pathIndices: c6Indices } = t_chosen;
 
+        // [C6-D12] Same cut on the write side. The top 3 levels are NOT sent:
+        // the program folds them against the pool account's own
+        // `filled_subtrees`, which is the whole point of `insert_root`.
+        if (c6Path.length < C6_SUBTREE_DEPTH) {
+          throw new Error(
+            `Merkle insertion path has ${c6Path.length} elements, need at least ` +
+            `${C6_SUBTREE_DEPTH} for the C6 circuit.`,
+          );
+        }
         const c6Result = await generateMerkleUpdateProof(
           '0',
           (newCommitment & U64).toString(),
-          c6Path.map(e => (e & U64).toString()),
-          c6Indices,
+          c6Path.slice(0, C6_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+          c6Indices.slice(0, C6_SUBTREE_DEPTH),
         );
 
         const c1Bytes = Buffer.from(c1Result.proofHex, 'hex');
@@ -257,6 +283,7 @@ function TransferScreenContent() {
             newDepositEpoch,
             newLeafIndex: leafCount,
           },
+          c3Walk,
         );
         setResult(res);
       } else {

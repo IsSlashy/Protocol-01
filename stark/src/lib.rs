@@ -102,6 +102,44 @@ pub use winterfell::math::{FieldElement, StarkField};
 #[cfg(feature = "std")]
 pub use verifier::verify_subscriber_ownership;
 
+/// Draw `n` uniform Goldilocks elements from the OS CSPRNG, by rejection.
+///
+/// ⛔ MOVED OUT OF `mod wasm_api` ON 2026-08-30, and the move is the point. While
+/// it lived behind `#[cfg(feature = "wasm")]` every other caller wrote its own
+/// mask, and every one of them wrote a deterministic xorshift. A mask that is
+/// deterministic hides nothing -- it is the one input where "close enough"
+/// silently voids the whole blinding argument.
+#[cfg(feature = "csprng")]
+
+/// Draw a blinding mask from the platform CSPRNG.
+///
+/// 🚨 SHARED BY C7 AND C6 SINCE 2026-08-29, and it was renamed off
+/// `draw_spend_mask` for exactly that reason: a C7-shaped name on the only
+/// CSPRNG path in the crate is how a second circuit ends up quietly reusing
+/// something else, or nothing.
+///
+/// Rejection-samples into the Goldilocks field instead of reducing a u64.
+/// Reducing biases the low ~2^32 of the field by a factor of two, and this
+/// mask is the only thing standing between an observer and the rows the
+/// counting argument in `air/spend.rs` assumes are uniform. The bias is
+/// small; the cost of not having it is one extra draw per ~2^32 samples.
+///
+/// Returns `Err` rather than falling back to anything. A weak mask is worse
+/// than no proof: no proof fails loudly, a weak mask succeeds and leaks.
+pub fn draw_blinding_mask(n: usize) -> Result<Vec<u64>, getrandom::Error> {
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+    let mut out = Vec::with_capacity(n);
+    let mut buf = [0u8; 8];
+    while out.len() < n {
+        getrandom::getrandom(&mut buf)?;
+        let v = u64::from_le_bytes(buf);
+        if v < GOLDILOCKS {
+            out.push(v);
+        }
+    }
+    Ok(out)
+}
+
 // WASM bindings for browser/WebView proof generation
 #[cfg(feature = "wasm")]
 mod wasm_api {
@@ -429,35 +467,6 @@ let proof_data = generate_transfer_compact_proof(
         crate::air::merkle_update::mask_len_for_depth(depth)
     }
 
-    /// Draw a blinding mask from the platform CSPRNG.
-    ///
-    /// 🚨 SHARED BY C7 AND C6 SINCE 2026-08-29, and it was renamed off
-    /// `draw_spend_mask` for exactly that reason: a C7-shaped name on the only
-    /// CSPRNG path in the crate is how a second circuit ends up quietly reusing
-    /// something else, or nothing.
-    ///
-    /// Rejection-samples into the Goldilocks field instead of reducing a u64.
-    /// Reducing biases the low ~2^32 of the field by a factor of two, and this
-    /// mask is the only thing standing between an observer and the rows the
-    /// counting argument in `air/spend.rs` assumes are uniform. The bias is
-    /// small; the cost of not having it is one extra draw per ~2^32 samples.
-    ///
-    /// Returns `Err` rather than falling back to anything. A weak mask is worse
-    /// than no proof: no proof fails loudly, a weak mask succeeds and leaks.
-    fn draw_blinding_mask(n: usize) -> Result<Vec<u64>, getrandom::Error> {
-        const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
-        let mut out = Vec::with_capacity(n);
-        let mut buf = [0u8; 8];
-        while out.len() < n {
-            getrandom::getrandom(&mut buf)?;
-            let v = u64::from_le_bytes(buf);
-            if v < GOLDILOCKS {
-                out.push(v);
-            }
-        }
-        Ok(out)
-    }
-
     /// [C7] Generate a compact STARK proof for an unlinkable denominated spend.
     ///
     /// Returns JSON: { circuit_id: 7, nullifier, root, recipient_hash[4],
@@ -482,7 +491,7 @@ let proof_data = generate_transfer_compact_proof(
         path_indices_csv: &str,
         recipient_hash_csv: &str,
     ) -> String {
-        use crate::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+        use crate::air::spend::CANONICAL_DEPTH;
 
         let path_elements: Vec<u64> = path_elements_csv
             .split(',')
@@ -515,7 +524,11 @@ let proof_data = generate_transfer_compact_proof(
             );
         }
 
-        let mask = match draw_blinding_mask(MASK_ROWS * TRACE_WIDTH) {
+        // [ZK-RANDOMIZER] MASK_LEN, not MASK_LEN. The second
+        // form was right until column 10 existed; it is now SHORT by
+        // TRACE_LENGTH and `build_spend_trace` refuses it, which is the whole
+        // reason the mask is one slice with one length constant.
+        let mask = match draw_blinding_mask(crate::air::spend::MASK_LEN) {
             Ok(m) => m,
             Err(e) => {
                 return format!(

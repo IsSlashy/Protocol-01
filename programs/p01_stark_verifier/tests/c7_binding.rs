@@ -119,14 +119,14 @@ fn an_honest_spend_proof_passes_both_phases() {
 /// that note permanently, and the money is not recoverable by any other path.
 #[test]
 fn a_legacy_small_blinding_still_proves_and_verifies() {
-    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+    use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_LEN, TRACE_WIDTH};
     const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
 
     let path_elements: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|j| 1000 + j * 37).collect();
     let path_indices: Vec<u8> = (0..CANONICAL_DEPTH).map(|j| (j % 2) as u8).collect();
     let mut st = 0x9E37_79B9_7F4A_7C15u64;
-    let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
-    for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+    let mut mask = Vec::with_capacity(MASK_LEN);
+    for _ in 0..(MASK_LEN) {
         st ^= st >> 12;
         st ^= st << 25;
         st ^= st >> 27;

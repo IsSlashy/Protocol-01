@@ -48,7 +48,10 @@ fn coset_shift_is_outside_every_shipping_lde_domain() {
     assert_ne!(h, Felt::new(0), "a zero shift collapses the domain");
     assert_ne!(h, Felt::new(1), "a shift of one IS the unshifted domain — the leak stays open");
 
-    for size in [512u64, 2048, 4096, 8192] {
+    // [ZK-MASK 2026-08-30] 16384 joined the list: C5's blinding region took its
+    // trace to 1024 rows, so its LDE domain is a shipping domain now and the
+    // shift has to clear it like every other.
+    for size in [512u64, 2048, 4096, 8192, 16384] {
         assert_ne!(
             h.exp(size),
             Felt::new(1),
@@ -66,13 +69,13 @@ fn coset_shift_is_outside_every_shipping_lde_domain() {
 /// generator table rather than restated.
 #[test]
 fn the_checked_sizes_are_the_shipping_sizes() {
-    for size in [512usize, 2048, 4096, 8192] {
+    for size in [512usize, 2048, 4096, 8192, 16384] {
         assert!(
             p01_stark_verifier::verify::get_lde_generator(size).is_ok(),
             "size {size} is checked by the shift test but the verifier has no generator for it",
         );
     }
-    for size in [1024usize, 16384] {
+    for size in [1024usize] {
         assert!(
             p01_stark_verifier::verify::get_lde_generator(size).is_err(),
             "size {size} now HAS a generator, so it is a shipping LDE size and must be added \

@@ -8,9 +8,19 @@ description = "Protocol 01 - STARK proof system (quantum-resistant, no trusted s
 crate-type = ["cdylib", "rlib"]
 
 [features]
-default = ["std"]
+default = ["std", "csprng"]
 std = ["winterfell/std"]
-wasm = ["wasm-bindgen", "serde", "serde_json", "getrandom"]
+
+# [ZK-RANDOMIZER 2026-08-30] The CSPRNG was reachable ONLY through `wasm`, so
+# every non-wasm caller that needed a blinding mask wrote its own -- and each one
+# wrote a DETERMINISTIC xorshift. `bin/gen_proof.rs` seeded all four of its arms
+# with the same literal, which means a proof it emits blinds nothing at all.
+#
+# The fix is the one the plan already called for: give the draw its own feature,
+# ON by default, and let `wasm` depend on it. The crate is not `no_std` and the
+# on-chain verifier only dev-depends on it, so this costs nothing anywhere.
+csprng = ["getrandom"]
+wasm = ["wasm-bindgen", "serde", "serde_json", "csprng"]
 
 # [B1 defect 1] Fails-closed probe knobs: the coordinated OOD forgery and its
 # `ood_quotient` re-solve, the `AliasedFold` terminal play, the pre-Route-C

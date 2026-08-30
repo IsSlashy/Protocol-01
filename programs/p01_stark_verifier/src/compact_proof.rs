@@ -117,7 +117,11 @@ pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
 
 /// pool_commitment: 3 cols, 128 rows
 pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
-    trace_width: 3,
+    // [ZK-RANDOMIZER 2026-08-30] 3 -> 4, and n 256 -> 512 below. C1 is the one
+    // circuit whose randomizer column did not pay for itself at its old length:
+    // 256 random coefficients against 301 published functionals. The trace had
+    // to grow with it. ⛔ HARD WIRE BREAK in both directions.
+    trace_width: 4,
     // [C1-N256 2026-08-29] 128 -> 256, and this is a HARD WIRE BREAK in both
     // directions: `num_fri_layers` goes 6 -> 7 and the parser checks it, so the
     // deployed verifier cannot read a new proof and this one cannot read an old
@@ -133,10 +137,14 @@ pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     // 80,577 bytes (+11,696), chunk uploads go 69 -> 81, and conjectured
     // soundness drops 50 -> 48 bits because the field floor depends on the LDE
     // size. The unconditional column stays at 46.
-    trace_length: 256,
+    // [ZK-RANDOMIZER 2026-08-30] 256 -> 512, and the two lines below are
+    // DERIVED from it: lde = n * blowup, merkle_depth = log2(lde). C1 has no
+    // Merkle depth to cut -- it is a hash chain, not a path -- so growing the
+    // trace was the only way to grow its row mask past what the wire publishes.
+    trace_length: 512,
     blowup: 16,
-    lde_size: 4096,
-    merkle_depth: 12,  // log2(4096) = 12
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
     fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
@@ -170,11 +178,28 @@ pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
 /// measurement), but the base-field Fiat-Shamir floor is ~47.8 bits and the
 /// query term never reaches it. See `num_queries` on `CircuitConfig`.
 pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
-    trace_width: 6,
-    trace_length: 512, // depth 15: 15 * 32 = 480, next_pow2 = 512
+    // [ZK-RANDOMIZER 2026-08-30] +1. The last column is uniform on all rows and
+    // enters NO constraint; it puts randomness into the DEEP composition, which
+    // the row mask never reached. See the circuit's `RANDOMIZER_COL`.
+    //
+    // ⛔ HARD WIRE BREAK IN BOTH DIRECTIONS: `from_bytes` sizes every query block
+    // from `trace_width`.
+    trace_width: 7,
+    // [C3-D12 2026-08-29] The depth cut 15 -> 12 does NOT move `n`:
+    // 12 * 32 = 384 and next_pow2(384) = 512, the same 512 depth 15 needed.
+    // That is the whole reason the cut was free — see the C6 twin below.
+    trace_length: 512,
     blowup: 16,
-    lde_size: 16384,
-    merkle_depth: 14,  // log2(8192) = 13
+    // ⛔ 8192 = 512 * 16, and `merkle_depth` = log2(lde_size) = 13. These two
+    // are DERIVED from the two lines above; they are not free parameters. On
+    // 2026-08-29 C5's geometry change (n 512 -> 1024, lde 8192 -> 16384) was
+    // pasted into THIS config as well, and the tell was left in the comment:
+    // `merkle_depth: 14` sitting beside `// log2(8192) = 13`. The parser sizes
+    // every query path from `merkle_depth`, so every honest C3 proof stopped
+    // deserializing — six tests, all reporting `deserialize`, none of them
+    // naming C3's geometry.
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
     fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
@@ -269,7 +294,13 @@ pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
 /// level: the base-field Fiat-Shamir floor is ~47.8 bits and it binds. See
 /// `num_queries` on `CircuitConfig`.
 pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
-    trace_width: 10,
+    // [ZK-RANDOMIZER 2026-08-30] +1. The last column is uniform on all rows and
+    // enters NO constraint; it puts randomness into the DEEP composition, which
+    // the row mask never reached. See the circuit's `RANDOMIZER_COL`.
+    //
+    // ⛔ HARD WIRE BREAK IN BOTH DIRECTIONS: `from_bytes` sizes every query block
+    // from `trace_width`.
+    trace_width: 11,
     trace_length: 512,
     blowup: 16,
     lde_size: 8192,
@@ -307,7 +338,15 @@ pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
 /// stops that, because the parser never reads this field and no wire check
 /// covers it.
 pub const CONFIG_SPEND: CircuitConfig = CircuitConfig {
-    trace_width: 10,
+    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11. Column 10 is uniform on all 512 rows
+    // and enters NO constraint; it exists to put randomness into the DEEP
+    // composition, which the row mask never reached. See
+    // `air/spend.rs::RANDOMIZER_COL` and `stark/tests/full_wire_ledger.rs`.
+    //
+    // ⛔ HARD WIRE BREAK IN BOTH DIRECTIONS. `from_bytes` sizes every query
+    // block from `trace_width`, so a proof built at 10 does not parse at 11 and
+    // vice versa. Same class as the C1 128->256 and C5 512->1024 breaks.
+    trace_width: 11,
     trace_length: 512,
     blowup: 16,
     lde_size: 8192,
@@ -373,7 +412,7 @@ pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
 // proximity lottery wins with zero grinding. Post-B2 the query term OVERSHOOTS
 // the floor on all seven circuits, so the honest conjectured figure IS the floor:
 //
-//     conjectured  52 / 48 / 50 / 47 / 48 / 47 / 47   (C0..C6)
+//     conjectured  52 / 47 / 50 / 47 / 48 / 46 / 47   (C0..C6)
 //
 //     [C1-N256 2026-08-29] C1: 50 -> 48. Its LDE doubled with its trace, and the
 //     field floor is `64 - log2(8n + w+k+1 + folds*lde)`, so the conjectured

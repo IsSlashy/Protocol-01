@@ -65,18 +65,51 @@ function borshLenWithOptionsNone(type: unknown): number {
   if (type === 'u64' || type === 'i64') return 8;
   if (type === 'u8' || type === 'bool') return 1;
   if (type === 'pubkey') return 32;
+  // [C3-D12] Anchor emits `Vec<u8>` as the shorthand `"bytes"`, NOT as
+  // `{ vec: "u8" }` — so `directions` and `siblings` reach this table by two
+  // different spellings of the same shape.
+  if (type === 'bytes') return 4 + WALK_LEVELS;
   if (typeof type === 'object' && type !== null) {
     const t = type as Record<string, unknown>;
     if ('option' in t) return 1;
     if (Array.isArray(t.array)) return Number(t.array[1]);
+    // [C3-D12] Borsh Vec: a u32 length prefix plus WALK_LEVELS elements. A Vec
+    // has no constant size, so this table is only meaningful because both Vecs
+    // in this instruction are the walk, and the walk has exactly one length —
+    // MERKLE_DEPTH minus the depth C3 proves.
+    if ('vec' in t) return 4 + WALK_LEVELS * borshLenWithOptionsNone(t.vec);
   }
   throw new Error(`unhandled IDL type in the size table: ${JSON.stringify(type)}`);
 }
+
+/**
+ * [C3-D12] Merkle levels ABOVE the depth-12 C3 circuit: 15 - 12 = 3.
+ *
+ * The client walks them on chain to turn C3's subtree root into a pool root.
+ * Both `Vec`s in `subscribe_private_stark` carry exactly this many entries, so
+ * the instruction has ONE size and the table below is well defined.
+ */
+const WALK_LEVELS = 3;
 
 const source = readFileSync(
   resolve(process.cwd(), 'src/shared/services/subscriptionVault.ts'),
   'utf8',
 );
+
+/**
+ * The non-literal terms of the encoder's `Buffer.alloc(...)`, and what each is
+ * worth in the default path.
+ *
+ * ⚠️ THIS USED TO BE "one byte per named term", which was right only while every
+ * named term was an absent Option. `walkBytes` is not: it is 43 bytes for a
+ * three-level walk. A named term the parser does not recognise now FAILS rather
+ * than silently counting as 1 — the direction that catches a drift instead of
+ * absorbing it.
+ */
+const NAMED_ALLOC_TERMS: Record<string, number> = {
+  licenseOptionSize: 1,
+  walkBytes: 8 + (4 + WALK_LEVELS * 8) + (4 + WALK_LEVELS),
+};
 
 /**
  * The numeric literals of a `Buffer.alloc(...)` expression, summed.
@@ -95,8 +128,22 @@ function allocatedBytesWithOptionsNone(fnName: string): number {
   const terms = source
     .slice(open, close)
     .split('+')
-    .map((t) => t.trim());
-  return terms.reduce((sum, term) => sum + (/^\d+$/.test(term) ? Number(term) : 1), 0);
+    // The encoder's alloc is now a multi-line expression with a trailing comma,
+    // so a term can arrive as `walkBytes,`. Strip it — a comma is not part of
+    // the name, and leaving it on made the lookup miss and the test fail with a
+    // message about a term the source does not contain.
+    .map((t) => t.trim().replace(/,$/, ''));
+  return terms.reduce((sum, term) => {
+    if (/^\d+$/.test(term)) return sum + Number(term);
+    const named = NAMED_ALLOC_TERMS[term];
+    if (named === undefined) {
+      throw new Error(
+        `unknown term \`${term}\` in ${fnName}'s Buffer.alloc — add it to ` +
+        `NAMED_ALLOC_TERMS with its size, or this test silently counts it as 1`,
+      );
+    }
+    return sum + named;
+  }, 0);
 }
 
 describe('subscribe_private_stark — hand-rolled Borsh vs the program IDL', () => {
@@ -119,9 +166,36 @@ describe('subscribe_private_stark — hand-rolled Borsh vs the program IDL', () 
     expect(allocatedBytesWithOptionsNone('buildSubscribePrivateStarkIx')).toBe(expected);
   });
 
-  it('keeps license_commitment LAST, which is what makes a stray tag byte silent', () => {
-    const args = instruction('subscribe_private_stark').args;
-    expect(args[args.length - 1]!.name).toBe('license_commitment');
+  it('puts the C3-D12 walk after license_commitment, and nothing else after it', () => {
+    // 🚨 THE OLD ASSERTION WAS "license_commitment is LAST", and its rationale
+    // was that nothing sits after it to be shifted by a mis-sized Option tag.
+    // Three arguments sit after it since 2026-08-29, so that protection is
+    // GONE: a stray tag byte now lands the walk at the wrong offset and the
+    // handler folds garbage siblings into a root that matches nothing.
+    //
+    // The replacement pins the exact order, because the order is what the
+    // hand-rolled encoder assumes when it appends the walk at the end.
+    const names = instruction('subscribe_private_stark').args.map((a) => a.name);
+    expect(names.slice(-4)).toEqual([
+      'license_commitment', 'subtree_root', 'siblings', 'directions',
+    ]);
+  });
+
+  it('the walk is the LAST thing the encoder writes, in that same order', () => {
+    // The source-level twin of the assertion above: the IDL order and the
+    // encoder's write order are two files that must agree, and only one of them
+    // is generated.
+    const at = source.indexOf('function buildSubscribePrivateStarkIx(');
+    expect(at, 'buildSubscribePrivateStarkIx is gone').toBeGreaterThan(-1);
+    const body = source.slice(at, source.indexOf('const keys = [', at));
+    const order = ['subtreeRoot, offset', 'siblings.length, offset', 'directions.length, offset'];
+    let cursor = body.indexOf('licenseCommitment!');
+    expect(cursor).toBeGreaterThan(-1);
+    for (const marker of order) {
+      const next = body.indexOf(marker, cursor);
+      expect(next, `${marker} is not written after the license option`).toBeGreaterThan(cursor);
+      cursor = next;
+    }
   });
 });
 

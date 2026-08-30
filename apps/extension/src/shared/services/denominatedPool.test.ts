@@ -353,7 +353,6 @@ describe('buildTransferDenominatedStarkV3Ix', () => {
   const nullifierBytes = new Array(32).fill(0x11);
   const merkleRootBytes = new Array(32).fill(0x22);
   const newCommitmentBytes = new Array(32).fill(0x33);
-  const newRootBytes = new Array(32).fill(0x44);
   const subtrees = Array.from({ length: MERKLE_DEPTH }, () => new Array(32).fill(0x55));
 
   const payer = Keypair.generate().publicKey;
@@ -364,12 +363,28 @@ describe('buildTransferDenominatedStarkV3Ix', () => {
   const c3 = Keypair.generate().publicKey;
   const c6 = Keypair.generate().publicKey;
 
+  // [C3-D12] The walk above the depth-12 C3 circuit: three levels, because the
+  // pool tree is MERKLE_DEPTH (15) and the circuit covers its bottom twelve.
+  //
+  // ⚠️ Values chosen far from FIXTURE_DEPOSIT_EPOCH: the leak scans below read
+  // EVERY 8-byte window and the walk now sits inside that range.
+  const SUBTREE_ROOT = 0x5151_5151_5151_5151n;
+  const SIBLINGS = [0xa1a1_a1a1_a1a1_a1a1n, 0xb2b2_b2b2_b2b2_b2b2n, 0xc3c3_c3c3_c3c3_c3c3n];
+  const DIRECTIONS = [1, 0, 1];
+
+  // [C6-D12] `new_root[32]` left the layout; two u64 SUBTREE roots took its
+  // place, and the pool root is computed on chain by folding against the pool
+  // ACCOUNT's own filled_subtrees.
+  const C6_OLD_SUBTREE_ROOT = 0x0d0d_0d0d_0d0d_0d0dn;
+  const C6_NEW_SUBTREE_ROOT = 0x0e0e_0e0e_0e0e_0e0en;
+
   // The builder takes NO min_epoch parameter — it writes TRANSFER_MIN_EPOCH
   // itself. See the dedicated min_epoch@72 suite below.
   const ix = buildTransferDenominatedStarkV3Ix(
     payer, pool, tree, nullifierPDA, c1, c3, c6,
     nullifierBytes, merkleRootBytes, 7n,
-    newCommitmentBytes, newRootBytes, subtrees,
+    newCommitmentBytes, C6_OLD_SUBTREE_ROOT, C6_NEW_SUBTREE_ROOT, subtrees,
+    SUBTREE_ROOT, SIBLINGS, DIRECTIONS,
   );
 
   it('targets the zk_shielded program', () => {
@@ -383,9 +398,12 @@ describe('buildTransferDenominatedStarkV3Ix', () => {
     expect(Array.from(ix.data.subarray(0, 8))).toEqual([196, 150, 11, 141, 91, 208, 60, 22]);
   });
 
-  it('has the exact data length (8+32+32+8+8+32+32+4 + 15*32 = 636)', () => {
-    expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32 + 32 + 4 + MERKLE_DEPTH * 32);
-    expect(ix.data.length).toBe(636);
+  it('has the exact data length — DERIVED, not retyped', () => {
+    // 636 -> 663 on 2026-08-29. `new_root[32]` became two u64 subtree roots
+    // (-16) and the C3 walk was appended (+43 for three levels).
+    const head = 8 + 32 + 32 + 8 + 8 + 32 + 8 + 8 + 4 + MERKLE_DEPTH * 32;
+    const walk = 8 + (4 + SIBLINGS.length * 8) + (4 + DIRECTIONS.length);
+    expect(ix.data.length).toBe(head + walk);
   });
 
   it('lays out args at the correct offsets', () => {
@@ -395,8 +413,37 @@ describe('buildTransferDenominatedStarkV3Ix', () => {
     expect(d.readBigUInt64LE(72)).toBe(0n); // min_epoch — always TRANSFER_MIN_EPOCH
     expect(d.readBigUInt64LE(80)).toBe(7n); // stark_commitment
     expect(Array.from(d.subarray(88, 120))).toEqual(newCommitmentBytes);
-    expect(Array.from(d.subarray(120, 152))).toEqual(newRootBytes);
-    expect(d.readUInt32LE(152)).toBe(MERKLE_DEPTH); // Vec length prefix
+    // [C6-D12] Bytes 120..152 used to be `new_root[32]`. They are now the two
+    // u64 subtree roots the fold consumes.
+    expect(d.readBigUInt64LE(120)).toBe(C6_OLD_SUBTREE_ROOT);
+    expect(d.readBigUInt64LE(128)).toBe(C6_NEW_SUBTREE_ROOT);
+    expect(d.readUInt32LE(136)).toBe(MERKLE_DEPTH); // new_subtrees Vec length prefix
+
+    // [C3-D12] The read side's walk, after the subtrees.
+    let off = 140 + MERKLE_DEPTH * 32;
+    expect(d.readBigUInt64LE(off)).toBe(SUBTREE_ROOT); off += 8;
+    expect(d.readUInt32LE(off)).toBe(SIBLINGS.length); off += 4;
+    for (const sib of SIBLINGS) { expect(d.readBigUInt64LE(off)).toBe(sib); off += 8; }
+    expect(d.readUInt32LE(off)).toBe(DIRECTIONS.length); off += 4;
+    for (const dir of DIRECTIONS) { expect(d.readUInt8(off)).toBe(dir); off += 1; }
+    expect(off).toBe(d.length);
+  });
+
+  it('refuses a walk whose two halves disagree, before it reaches the chain', () => {
+    // The on-chain failure is `WrongSiblingCount`, at the END of three proof
+    // uploads. This is the same refusal, for free.
+    expect(() => buildTransferDenominatedStarkV3Ix(
+      payer, pool, tree, nullifierPDA, c1, c3, c6,
+      nullifierBytes, merkleRootBytes, 7n,
+      newCommitmentBytes, C6_OLD_SUBTREE_ROOT, C6_NEW_SUBTREE_ROOT, subtrees,
+      SUBTREE_ROOT, SIBLINGS, [1, 0],
+    )).toThrow(/equal length/);
+    expect(() => buildTransferDenominatedStarkV3Ix(
+      payer, pool, tree, nullifierPDA, c1, c3, c6,
+      nullifierBytes, merkleRootBytes, 7n,
+      newCommitmentBytes, C6_OLD_SUBTREE_ROOT, C6_NEW_SUBTREE_ROOT, subtrees,
+      SUBTREE_ROOT, SIBLINGS, [1, 0, 2],
+    )).toThrow(/0 or 1/);
   });
 
   it('has 8 accounts in the exact handler order with correct flags', () => {
@@ -540,11 +587,19 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
   const c1 = Keypair.generate().publicKey;
   const c3 = Keypair.generate().publicKey;
 
+  // [C3-D12] Three levels above the depth-12 circuit. Values chosen far from
+  // FIXTURE_DEPOSIT_EPOCH — the leak scan below reads every 8-byte window and
+  // the walk now sits inside that range.
+  const SUBTREE_ROOT = 0x5151_5151_5151_5151n;
+  const SIBLINGS = [0xa1a1_a1a1_a1a1_a1a1n, 0xb2b2_b2b2_b2b2_b2b2n, 0xc3c3_c3c3_c3c3_c3c3n];
+  const DIRECTIONS = [1, 0, 1];
+
   // The builder takes NO min_epoch parameter — it writes UNSHIELD_MIN_EPOCH
   // itself, so no call site can reintroduce a note-derived value.
   const ix = buildUnshieldDenominatedStarkV3Ix(
     payer, recipient, pool, tree, nullifierPDA, c1, c3,
     nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
+    SUBTREE_ROOT, SIBLINGS, DIRECTIONS,
   );
 
   it('UNSHIELD_MIN_EPOCH is exactly zero', () => {
@@ -559,9 +614,23 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
     expect(Buffer.from(ix.data.subarray(0, 8)).equals(expected)).toBe(true);
   });
 
-  it('has the exact data length (8+32+32+8+8+32 = 120)', () => {
-    expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 32);
-    expect(ix.data.length).toBe(120);
+  it('has the exact data length — the 120-byte head plus the C3-D12 walk', () => {
+    // The head is UNCHANGED and the walk is appended, which is the whole point
+    // of the argument ordering: every offset asserted below still holds.
+    const head = 8 + 32 + 32 + 8 + 8 + 32;
+    const walk = 8 + (4 + SIBLINGS.length * 8) + (4 + DIRECTIONS.length);
+    expect(head).toBe(120);
+    expect(ix.data.length).toBe(head + walk);
+  });
+
+  it('appends the walk after the head', () => {
+    let off = 120;
+    expect(ix.data.readBigUInt64LE(off)).toBe(SUBTREE_ROOT); off += 8;
+    expect(ix.data.readUInt32LE(off)).toBe(SIBLINGS.length); off += 4;
+    for (const sib of SIBLINGS) { expect(ix.data.readBigUInt64LE(off)).toBe(sib); off += 8; }
+    expect(ix.data.readUInt32LE(off)).toBe(DIRECTIONS.length); off += 4;
+    for (const dir of DIRECTIONS) { expect(ix.data.readUInt8(off)).toBe(dir); off += 1; }
+    expect(off).toBe(ix.data.length);
   });
 
   it('writes eight zero bytes at offset 72 — the same offset as the web client', () => {
@@ -629,7 +698,6 @@ describe('buildTransferDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
   const nullifierBytes = new Array(32).fill(0x11);
   const merkleRootBytes = new Array(32).fill(0x22);
   const newCommitmentBytes = new Array(32).fill(0x33);
-  const newRootBytes = new Array(32).fill(0x44);
   const subtrees = Array.from({ length: MERKLE_DEPTH }, () => new Array(32).fill(0x55));
 
   // A REAL devnet deposit epoch: slot 480,000,000 / SLOTS_PER_EPOCH (7200,
@@ -646,10 +714,18 @@ describe('buildTransferDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
   const c3 = Keypair.generate().publicKey;
   const c6 = Keypair.generate().publicKey;
 
+  // [C3-D12 / C6-D12] Same shapes as the suite above.
+  const SUBTREE_ROOT = 0x5151_5151_5151_5151n;
+  const SIBLINGS = [0xa1a1_a1a1_a1a1_a1a1n, 0xb2b2_b2b2_b2b2_b2b2n, 0xc3c3_c3c3_c3c3_c3c3n];
+  const DIRECTIONS = [1, 0, 1];
+  const C6_OLD_SUBTREE_ROOT = 0x0d0d_0d0d_0d0d_0d0dn;
+  const C6_NEW_SUBTREE_ROOT = 0x0e0e_0e0e_0e0e_0e0en;
+
   const ix = buildTransferDenominatedStarkV3Ix(
     payer, pool, tree, nullifierPDA, c1, c3, c6,
     nullifierBytes, merkleRootBytes, STARK_COMMITMENT,
-    newCommitmentBytes, newRootBytes, subtrees,
+    newCommitmentBytes, C6_OLD_SUBTREE_ROOT, C6_NEW_SUBTREE_ROOT, subtrees,
+    SUBTREE_ROOT, SIBLINGS, DIRECTIONS,
   );
 
   it('TRANSFER_MIN_EPOCH is exactly zero', () => {
@@ -666,7 +742,9 @@ describe('buildTransferDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
     expect(Array.from(ix.data.subarray(40, 72))).toEqual(merkleRootBytes);
     expect(ix.data.readBigUInt64LE(80)).toBe(STARK_COMMITMENT);
     expect(Array.from(ix.data.subarray(88, 120))).toEqual(newCommitmentBytes);
-    expect(Array.from(ix.data.subarray(120, 152))).toEqual(newRootBytes);
+    // [C6-D12] `new_root[32]` at 120..152 became two u64 subtree roots.
+    expect(ix.data.readBigUInt64LE(120)).toBe(C6_OLD_SUBTREE_ROOT);
+    expect(ix.data.readBigUInt64LE(128)).toBe(C6_NEW_SUBTREE_ROOT);
   });
 
   it('does not carry the deposit epoch in ANY 8-byte window of ix.data', () => {

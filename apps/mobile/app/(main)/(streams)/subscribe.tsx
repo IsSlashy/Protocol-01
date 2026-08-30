@@ -30,6 +30,7 @@ import {
   fetchPoolLeavesByIndex,
   buildMerkleProofFromLeavesV3,
   goldilocksToLeBytes32,
+  C3_SUBTREE_DEPTH,
 } from '../../../services/denominatedPool';
 import { vaultDecrypt } from '../../../utils/crypto/noteVault';
 import { iconKeyToIonicons, formatPriceSOL, formatInterval } from '../../../services/solana/serviceRegistry';
@@ -290,6 +291,9 @@ function SubscribeContent() {
         // tree at `merkle_root`). Generated inside the V3 block below once the
         // fresh merkle path is rebuilt; the action ships it as a second buffer.
         let c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number } | null = null;
+        // [C3-D12] Travels with the proof and is just as required: the pool root
+        // plus the levels above the depth-12 circuit.
+        let c3WalkData: { merkleRoot: bigint; siblings: bigint[]; directions: number[] } | null = null;
 
         // V3 receipts don't carry merkle proof data (built fresh from chain
         // each time). subscribe_private_stark on-chain ix needs the current
@@ -343,25 +347,39 @@ function SubscribeContent() {
           receipt.merklePathIndices = merkleProof.pathIndices;
 
           // Generate the C3 (merkle_path) proof against the freshly-rebuilt
-          // path. publicInputs = [leaf_u64, root_u64, depth(=15)]; the service
-          // derives the ix `merkle_root` from publicInputs[1]. Mirrors the C3
-          // flow in (privacy)/denominated-unshield.tsx so the public-inputs
-          // hashing matches the on-chain sha256(leaf || root[..8] || depth=15).
+          // path. publicInputs = [leaf_u64, subtree_root_u64, depth(=12)].
+          //
+          // 🚨 THE COMMENT HERE SAID depth(=15) AND "the service derives the ix
+          // `merkle_root` from publicInputs[1]". Both stopped being true on
+          // 2026-08-29: the circuit proves the bottom TWELVE levels, so
+          // publicInputs[1] is a SUBTREE root and the pool root has to travel
+          // separately, with the three levels above the circuit.
           setProgressStep(1, 4, 'Generating Merkle path proof (C3)');
           const U64 = (1n << 64n) - 1n;
+          if (merkleProof.pathElements.length < C3_SUBTREE_DEPTH) {
+            throw new Error(
+              `Merkle path has ${merkleProof.pathElements.length} elements, need at ` +
+              `least ${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+            );
+          }
           const c3Result = await generateMerklePathProof(
             (receipt.commitment & U64).toString(),
-            merkleProof.pathElements.map(e => (e & U64).toString()),
-            merkleProof.pathIndices,
+            merkleProof.pathElements.slice(0, C3_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+            merkleProof.pathIndices.slice(0, C3_SUBTREE_DEPTH),
           );
           c3ProofData = {
             proofBytes: Buffer.from(c3Result.proofHex, 'hex'),
             publicInputs: c3Result.publicInputs.map((s: string) => BigInt(s)),
             proofSize: c3Result.proofSize,
           };
+          c3WalkData = {
+            merkleRoot: merkleProof.root,
+            siblings: merkleProof.pathElements.slice(C3_SUBTREE_DEPTH).map(e => e & U64),
+            directions: merkleProof.pathIndices.slice(C3_SUBTREE_DEPTH),
+          };
         }
 
-        if (!c3ProofData) {
+        if (!c3ProofData || !c3WalkData) {
           // subscribe_private_stark is V3-only (DenominatedPoolV3 / MerkleTreeStateV3
           // + merkle_path C3 gate). A non-V3 note can't satisfy the on-chain C3
           // requirement, so fail fast instead of reverting after burning proof rent.
@@ -407,6 +425,7 @@ function SubscribeContent() {
             proofSize: poolProof.proofSize,
           },
           c3ProofData,
+          c3WalkData,
           // Service tag for the license-key commitment (HKDF info). ONE rule,
           // shared with LicenseKeyCard — see licenseServiceTag. Inlining the
           // fallback on both sides is what let them drift apart.
@@ -524,13 +543,28 @@ function SubscribeContent() {
           receipt.merklePathIndices = c3Indices;
 
           // C3 — merkle_path proof.
+          //
+          // [C3-D12] Bottom 12 levels into the circuit; the top 3 travel to the
+          // instruction for the on-chain walk.
           setProgressStep(3, 4, 'Generating Merkle path proof');
           const U64 = (1n << 64n) - 1n;
+          if (c3Path.length < C3_SUBTREE_DEPTH) {
+            throw new Error(
+              `Merkle path has ${c3Path.length} elements, need at least ` +
+              `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+            );
+          }
           const c3Result = await generateMerklePathProof(
             (receipt.commitment & U64).toString(),
-            c3Path.map(e => (e & U64).toString()),
-            c3Indices,
+            c3Path.slice(0, C3_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+            c3Indices.slice(0, C3_SUBTREE_DEPTH),
           );
+          // ⛔ POOL root from the walk, not the proof's public input 1.
+          const c3Walk = {
+            merkleRoot: c3Root,
+            siblings: c3Path.slice(C3_SUBTREE_DEPTH).map(e => e & U64),
+            directions: c3Indices.slice(C3_SUBTREE_DEPTH),
+          };
           console.log('[Sub:OneShot] V3 C3 ready', { proofSize: c3Result.proofSize });
 
           setProgressStep(4, 4, 'Uploading proof & sending transaction');
@@ -547,6 +581,7 @@ function SubscribeContent() {
               publicInputs: c3Result.publicInputs.map((s: string) => BigInt(s)),
               proofSize: c3Result.proofSize,
             },
+            c3Walk,
             false,
           );
           console.log('[Sub:OneShot] V3 sig', { sigPrefix: sig.slice(0, 16) });

@@ -30,6 +30,7 @@ import type { PoolConfig, ShieldReceipt } from '../denominatedPool';
 import {
   bigintToLeBytes32,
   deriveNullifierPDA,
+  C3_SUBTREE_DEPTH,
 } from '../denominatedPool';
 import { payLog, markPayComplete, inspectPayError } from '../payments/diagnostics';
 
@@ -416,11 +417,15 @@ export async function resumeNormal(
  * The C3 (merkle_path) proof is a hardening requirement added on-chain: without
  * it a quantum/forging attacker could synthesize a valid C1 proof for a
  * never-deposited commitment and drain `denomination` per call. The handler
- * reconstructs `sha256(stark_commitment_u64_le || merkle_root[..8] || depth=15_u64_le)`
- * and compares it to the C3 buffer's stored public_inputs hash, so the
- * `merkle_root` passed to the ix MUST be the root the C3 proof targeted —
- * we therefore derive it from `c3ProofData.publicInputs[1]` (the Goldilocks
- * root the prover witnessed), NOT from the possibly-stale receipt.
+ * reconstructs `sha256(stark_commitment_u64_le || subtree_root_u64_le || 12_u64_le)`
+ * and compares it to the C3 buffer's stored public_inputs hash.
+ *
+ * 🚨 THAT HASH TOOK `merkle_root[..8]` AND `depth = 15` UNTIL 2026-08-29. The
+ * C3 depth cut changed both: what the proof binds is the root of the twelve-level
+ * SUBTREE the note sits in, and the depth is the CONSTANT 12 — not the pool's
+ * tree depth. So `subtree_root` comes from `c3ProofData.publicInputs[1]`, while
+ * `merkle_root` — which the pool's known-root ring still checks — comes from the
+ * caller's own tree walk and is derived on chain from the two by the walk.
  */
 export async function subscribePrivateStark(
   receipt: ShieldReceipt,
@@ -430,6 +435,10 @@ export async function subscribePrivateStark(
   vkHashSubscriber: Uint8Array,
   starkProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
   c3ProofData: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number },
+  // [C3-D12] REQUIRED and positional so an un-updated caller fails to COMPILE.
+  // `merkleRoot` is the POOL root from the caller's own tree walk — ⛔ NOT
+  // `c3ProofData.publicInputs[1]`, which is the depth-12 subtree root now.
+  walk: { merkleRoot: bigint; siblings: bigint[]; directions: number[] },
   onProgress?: (step: string) => void,
   walletSigner?: WalletSigner,
   /**
@@ -489,8 +498,20 @@ export async function subscribePrivateStark(
   // `goldilocksU64To32` (and bigintToLeBytes32 on a u64-masked value) both put
   // the u64 LE into bytes[0..8], so `merkleRootBytes[..8] == root_u64 LE`.
   // Falling back to receipt.merkleRoot only if the proof omitted it (shouldn't).
-  const merkleRootGl = c3ProofData.publicInputs[1] ?? receipt.merkleRoot ?? 0n;
-  const merkleRootBytes = bigintToLeBytes32(merkleRootGl & 0xFFFFFFFFFFFFFFFFn);
+  //
+  // 🚨 THIS READ `c3ProofData.publicInputs[1]` UNTIL 2026-08-29. Since the depth
+  // cut that value is the root of the twelve-level SUBTREE the note sits in, so
+  // it names a root no pool ever published and the `is_valid_root` constraint
+  // would refuse every subscription.
+  const subtreeRootGl = (c3ProofData.publicInputs[1] ?? 0n) & 0xFFFFFFFFFFFFFFFFn;
+  if (c3ProofData.publicInputs[2] !== BigInt(C3_SUBTREE_DEPTH)) {
+    throw new Error(
+      `C3 proved depth ${c3ProofData.publicInputs[2]}, expected ${C3_SUBTREE_DEPTH}. ` +
+      `The shipped wasm prover is stale — it predates the depth cut, and the ` +
+      `on-chain verifier rejects every proof it makes. Reship the blob.`,
+    );
+  }
+  const merkleRootBytes = bigintToLeBytes32(walk.merkleRoot & 0xFFFFFFFFFFFFFFFFn);
   // min_epoch must satisfy: current_epoch >= min_epoch + dynamic_delay (where
   // dynamic_delay scales with pool activity, often 0..N). Setting min_epoch
   // to the note's deposit epoch lets the on-chain check evaluate as
@@ -566,11 +587,17 @@ export async function subscribePrivateStark(
       vkHashSubscriber,
       starkCommitment,
       licenseCommitment,
+      subtreeRootGl,
+      walk.siblings,
+      walk.directions,
     );
 
     onProgress?.('Sending subscription transaction...');
     const tx = new Transaction();
-    tx.add(...buildComputeBudgetIxs(300_000));
+    // [C3-D12] 300,000 -> 400,000. One on-chain `hash2` is ~34,469 CU (measured
+    // 2026-08-29, litesvm SBF VM), so the three levels the handler now walks add
+    // ~103,400. Matches web, extension and the v4 path.
+    tx.add(...buildComputeBudgetIxs(400_000));
     tx.add(ix);
     let sig: string;
     try {
@@ -751,9 +778,27 @@ function buildSubscribePrivateStarkIx(
   intervalSlots: bigint,
   vkHashSubscriber: Uint8Array,
   starkCommitment: bigint,
-  licenseCommitment?: Uint8Array,
+  licenseCommitment: Uint8Array | undefined,
+  // [C3-D12] Args #10-#12, AFTER `license_commitment`, matching the Rust
+  // parameter order — so every absolute offset above is untouched.
+  //
+  // ⛔ NOT OPTIONAL. Since 2026-08-29 the C3 proof attests membership in a
+  // depth-12 SUBTREE; the handler walks the remaining levels to reach a pool
+  // root. Without them the proof means "this leaf is in SOME tree".
+  subtreeRoot: bigint,
+  siblings: bigint[],
+  directions: number[],
 ): TransactionInstruction {
   const disc = getDiscriminator('subscribe_private_stark');
+  if (siblings.length !== directions.length) {
+    throw new Error(
+      `siblings (${siblings.length}) and directions (${directions.length}) must have ` +
+      `equal length — the on-chain walk refuses a mismatch with WrongSiblingCount.`,
+    );
+  }
+  if (directions.some((d) => d !== 0 && d !== 1)) {
+    throw new Error('direction bits must be 0 or 1 — NonBinaryDirection on chain.');
+  }
 
   // Args (in on-chain order): nullifier: [u8;32], merkle_root: [u8;32],
   //   min_epoch: u64, subscriber_commitment: [u8;32], rate: u64,
@@ -767,7 +812,10 @@ function buildSubscribePrivateStarkIx(
   // the program's `license_commitment` deserialises from the wrong offset.
   const hasLicense = !!licenseCommitment && licenseCommitment.length === 32;
   const licenseOptionSize = 1 + (hasLicense ? 32 : 0);
-  const data = Buffer.alloc(8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + licenseOptionSize);
+  const walkBytes = 8 + (4 + siblings.length * 8) + (4 + directions.length);
+  const data = Buffer.alloc(
+    8 + 32 + 32 + 8 + 32 + 8 + 8 + 32 + 8 + licenseOptionSize + walkBytes,
+  );
   let offset = 0;
   disc.copy(data, offset); offset += 8;
   Buffer.from(nullifierBytes).copy(data, offset); offset += 32;
@@ -789,6 +837,13 @@ function buildSubscribePrivateStarkIx(
   } else {
     data.writeUInt8(0, offset); offset += 1;
   }
+
+  // [C3-D12] args #10-#12 — subtree_root u64 | Vec<u64> siblings | Vec<u8> directions.
+  data.writeBigUInt64LE(subtreeRoot, offset); offset += 8;
+  data.writeUInt32LE(siblings.length, offset); offset += 4;
+  for (const sib of siblings) { data.writeBigUInt64LE(sib, offset); offset += 8; }
+  data.writeUInt32LE(directions.length, offset); offset += 4;
+  for (const dir of directions) { data.writeUInt8(dir, offset); offset += 1; }
 
   const keys = [
     { pubkey: payer, isSigner: true, isWritable: true },

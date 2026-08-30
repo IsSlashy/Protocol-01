@@ -137,38 +137,38 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
 
     // C1..C6, generic path.
     let generic: Vec<(&str, usize, p01_stark::compact::GenericCompactProofData)> = vec![
-        ("C1", 3, p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask())),
-        ("C2", 4, p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)),
+        ("C1", p01_stark::air::denominated_pool::TRACE_WIDTH, p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask())),
+        ("C2", p01_stark::air::balance_proof::TRACE_WIDTH, p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)),
         (
             "C3",
-            6,
+            p01_stark::air::merkle_path::TRACE_WIDTH,
             {
                 // Canonical depth 15 — CONFIG_MERKLE_PATH pins trace_length 512,
                 // which only a depth-15 witness produces. Same args cu_budget uses.
-                let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-                let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+                let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
+                let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
                 p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()))
             },
         ),
         (
             "C4",
-            4,
+            p01_stark::air::confidential_balance::TRACE_WIDTH,
             p01_stark::compact::generate_confidential_balance_compact_proof(
                 42, 1000, 111, 800, 222, 200, 333, 999,
             ),
         ),
         (
             "C5",
-            7,
+            p01_stark::air::transfer::TRACE_WIDTH,
             p01_stark::compact::generate_transfer_compact_proof(
                 13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask()),
         ),
         (
             "C6",
-            10,
+            p01_stark::air::merkle_update::TRACE_WIDTH,
             {
-                let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-                let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+                let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
+                let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
                 p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
             },
         ),
@@ -388,7 +388,7 @@ fn terminal_degree_bound_check_in_isolation() {
 /// ~21-26 bits post-B2. Nothing here is publishable as a security level. Lifting
 /// the floor needs the challenges drawn from an extension field, which is a
 /// separate change and another wire break.
-const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [52, 48, 50, 47, 48, 47, 47];
+const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [52, 47, 50, 47, 48, 46, 47];
 const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
 
 /// The DERIVED twin of the two arrays above.
@@ -677,8 +677,8 @@ fn t1_t2_t3_c1_coordinated_forgery_matrix() {
 fn t1_t2_t3_c6_coordinated_forgery() {
     let config = &CONFIG_MERKLE_UPDATE;
     // Canonical depth 15 — CONFIG_MERKLE_UPDATE pins trace_length 512.
-    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     let honest = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()));
     let forged = p01_stark::compact::generate_merkle_update_compact_proof_with_forgery(
         111,
@@ -922,8 +922,8 @@ fn t1_t2_t3_c2_coordinated_forgery() {
 #[test]
 fn t1_t2_t3_c3_coordinated_forgery() {
     let config = &CONFIG_MERKLE_PATH;
-    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     let honest = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()));
     let forged = p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(
         777,
@@ -1896,8 +1896,12 @@ const FIXTURE_C2_SHA256: &str =
 /// unchanged.
 const FIXTURE_C4_SHA256: &str =
     "6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0";
+/// [ZK-MASK 2026-08-30] MOVED with the C5 row mask: the blinding region is now
+/// committed, so the wire grew from 78,877 to 89,821 bytes and every byte after
+/// the trace root changed. The digest still pins because `fixture_c5` feeds a
+/// FIXED mask -- the shipped prover draws a fresh one and is not reproducible.
 const FIXTURE_C5_SHA256: &str =
-    "a9e3805e504ac0468632739d615ac7d90e34843f27442685f8b30efb7723b5ed";
+    "b892fa78dee24fd75678ffa80000ad6bc4fab8a31f70c4313957b42b8e3f2715";
 // ⛔ FIXTURE_C6_SHA256 IS GONE, AND IT MUST NOT COME BACK. Retired 2026-08-29.
 //
 // C6 draws a fresh CSPRNG blinding region for every proof
@@ -1937,8 +1941,8 @@ fn fixture_c2() -> Vec<u8> {
 }
 
 fn fixture_c3() -> Vec<u8> {
-    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len())).proof_bytes
 }
 
@@ -1956,8 +1960,8 @@ fn fixture_c5() -> Vec<u8> {
 }
 
 fn fixture_c6() -> Vec<u8> {
-    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())).proof_bytes
 }
 
@@ -1976,14 +1980,14 @@ struct Fixture {
 const FIXTURES: [Fixture; 7] = [
     Fixture { label: "C0", len: 47_641, sha256: Some(FIXTURE_C0_SHA256), build: fixture_c0 },
     // [C1-N256] Length pinned and MOVED; digest deliberately absent.
-    Fixture { label: "C1", len: 80_577, sha256: None, build: fixture_c1 },
+    Fixture { label: "C1", len: 94_017, sha256: None, build: fixture_c1 },
     Fixture { label: "C2", len: 69_761, sha256: Some(FIXTURE_C2_SHA256), build: fixture_c2 },
     // [C3-D12] Length pinned, digest deliberately absent. See the note above.
-    Fixture { label: "C3", len: 78_157, sha256: None, build: fixture_c3 },
+    Fixture { label: "C3", len: 78_877, sha256: None, build: fixture_c3 },
     Fixture { label: "C4", len: 81_457, sha256: Some(FIXTURE_C4_SHA256), build: fixture_c4 },
-    Fixture { label: "C5", len: 78_877, sha256: Some(FIXTURE_C5_SHA256), build: fixture_c5 },
+    Fixture { label: "C5", len: 89_821, sha256: Some(FIXTURE_C5_SHA256), build: fixture_c5 },
     // [C6-D12] Length pinned, digest deliberately absent. See the note above.
-    Fixture { label: "C6", len: 81_037, sha256: None, build: fixture_c6 },
+    Fixture { label: "C6", len: 81_757, sha256: None, build: fixture_c6 },
 ];
 
 /// The prover core is a function of its inputs.
@@ -2017,8 +2021,10 @@ fn fixture_proofs_are_deterministic() {
 /// the two calls agree regardless of what is passed.
 #[test]
 fn c6_proof_bytes_change_when_the_mask_changes() {
-    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64)
+        .map(|i| 100u64 + i * 13)
+        .collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
 
     let m1 = p01_stark::compact::c6_deterministic_probe_mask(pe.len());
     let mut m2 = m1.clone();
@@ -2053,8 +2059,10 @@ fn c6_proof_bytes_change_when_the_mask_changes() {
 /// green.
 #[test]
 fn c3_proof_bytes_change_when_the_mask_changes() {
-    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-    let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64)
+        .map(|i| 1000 + i)
+        .collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
 
     let m1 = p01_stark::compact::c3_deterministic_probe_mask(pe.len());
     let mut m2 = m1.clone();

@@ -100,8 +100,8 @@ fn c2() -> Vec<Vec<u8>> {
 fn c3() -> Vec<Vec<u8>> {
     (0..WITNESSES)
         .map(|w| {
-            let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i + (w as u64) * 97).collect();
-            let pi: Vec<u8> = (0..12u8).map(|i| ((i as usize + w) % 2) as u8).collect();
+            let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i + (w as u64) * 97).collect();
+            let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| ((i + w) % 2) as u8).collect();
             p01_stark::compact::generate_merkle_path_compact_proof(
                 777 + (w as u64) * 31,
                 &pe,
@@ -149,8 +149,8 @@ fn c5() -> Vec<Vec<u8>> {
 fn c6() -> Vec<Vec<u8>> {
     (0..WITNESSES)
         .map(|w| {
-            let pe: Vec<u64> = (0..12u64).map(|i| 100 + i * 13 + (w as u64) * 71).collect();
-            let pi: Vec<u8> = (0..12u8).map(|i| ((i as usize + w) % 2) as u8).collect();
+            let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100 + i * 13 + (w as u64) * 71).collect();
+            let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| ((i + w) % 2) as u8).collect();
             p01_stark::compact::generate_merkle_update_compact_proof(
                 111 + (w as u64) * 17,
                 222 + (w as u64) * 19,
@@ -185,10 +185,14 @@ fn c7() -> Vec<Vec<u8>> {
                 z ^= z << 17;
                 z % 0xFFFF_FFFF_0000_0001
             };
-            // 128 mask rows x 10 columns, per `air::spend::{MASK_ROWS, TRACE_WIDTH}`.
-            let mask: Vec<u64> = (0..128 * 10).map(|_| next()).collect();
-            let pe: Vec<u64> = (0..12u64).map(|i| 0x51A7 + i * 7919 + (w as u64) * 131).collect();
-            let pi: Vec<u8> = (0..12u8).map(|i| ((i as usize + w) % 2) as u8).collect();
+            // The whole blinding region, read off the AIR: `MASK_ROWS` rows over
+            // the CONSTRAINED columns, then the randomizer column's own row per
+            // trace row. The literal `128 * 10` here predated both the depth cut
+            // and the randomizer column.
+            let mask: Vec<u64> =
+                (0..p01_stark::air::spend::MASK_LEN).map(|_| next()).collect();
+            let pe: Vec<u64> = (0..p01_stark::air::spend::CANONICAL_DEPTH as u64).map(|i| 0x51A7 + i * 7919 + (w as u64) * 131).collect();
+            let pi: Vec<u8> = (0..p01_stark::air::spend::CANONICAL_DEPTH).map(|i| ((i + w) % 2) as u8).collect();
             let rh = [
                 0x1111_1111 + w as u64,
                 0x2222_2222,

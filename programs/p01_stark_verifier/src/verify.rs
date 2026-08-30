@@ -328,10 +328,18 @@ mod domain_generator_tests {
     }
 
     /// The footgun itself: previously each of these returned `Felt::ONE`.
-    /// 1024 / 16384 are the sizes a concatenated-trace C7 would have used.
+    ///
+    /// ⚠️ 16384 LEFT THIS LIST ON 2026-08-29 and is not a hole: it is C5's real
+    /// LDE size since `n` went 512 -> 1024, so it is covered POSITIVELY by
+    /// `domain_generators_match_config`, which walks every live `CircuitConfig`
+    /// and requires the resolved generator to equal the listed constant. A size
+    /// belongs here only while NO circuit uses it; the day one does, it moves to
+    /// the positive test rather than being deleted from both.
+    ///
+    /// 1024 stays: it is a trace length, never an LDE size.
     #[test]
     fn lde_generator_rejects_unlisted_sizes() {
-        for size in [0usize, 1, 2, 16, 32, 64, 128, 256, 1024, 16384, 65536, usize::MAX] {
+        for size in [0usize, 1, 2, 16, 32, 64, 128, 256, 1024, 65536, usize::MAX] {
             match get_lde_generator(size) {
                 Err(VerifyError::UnsupportedDomainSize) => {}
                 Err(other) => panic!("LDE size {size}: wrong error {other:?}"),
@@ -340,9 +348,12 @@ mod domain_generator_tests {
         }
     }
 
+    /// ⚠️ 1024 LEFT THIS LIST ON 2026-08-29: it is C5's trace length since the
+    /// mask forced `n` 512 -> 1024, and `domain_generators_match_config` covers
+    /// it positively. Same rule as the LDE twin above.
     #[test]
     fn trace_generator_rejects_unlisted_sizes() {
-        for size in [0usize, 1, 2, 16, 64, 100, 1024, 2048, 8192, usize::MAX] {
+        for size in [0usize, 1, 2, 16, 64, 100, 2048, 8192, usize::MAX] {
             match get_trace_generator(size) {
                 Err(VerifyError::UnsupportedDomainSize) => {}
                 Err(other) => panic!("trace length {size}: wrong error {other:?}"),
@@ -416,8 +427,8 @@ mod domain_generator_tests {
 
         // The row that the CANONICAL_DEPTH name collision gets wrong. 12, not
         // 15; 382, not 478. 478 is inside the blinding region.
-        assert_eq!(CANONICAL_DEPTH, 12, "C7 is depth 12");
-        assert_eq!(ROW_MERKLE_ROOT_OUT, 382, "(12-1)*32+30");
+        assert_eq!(CANONICAL_DEPTH, 11, "C7 is depth 11 since 2026-08-30");
+        assert_eq!(ROW_MERKLE_ROOT_OUT, 350, "(11-1)*32+30");
         assert_eq!(got[5].row, ROW_MERKLE_ROOT_OUT, "root row drifted");
         assert_ne!(got[5].value, Felt::ZERO, "the root was bound to ZERO");
 
@@ -454,17 +465,24 @@ mod domain_generator_tests {
 
         assert_eq!(SPEND_NUM_CONSTRAINTS, 18);
         assert_eq!(SPEND_NUM_PERIODIC, 13);
-        assert_eq!(TRACE_WIDTH, 10);
+        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
+        // fewer, and the extra column is the randomizer. Both numbers matter.
+        assert_eq!(TRACE_WIDTH, 11);
 
+        // [ZK-RANDOMIZER 2026-08-30] The frame is 11 wide now. Slot 10 is fed
+        // NON-ZERO random values on purpose: the whole property under test is
+        // that neither side reads it, and a zero there would let a reader that
+        // DOES touch it pass by accident.
+        const W: usize = 11;
         for seed in 0..64u64 {
-            let raw = c7_stream(seed, 10 + 10 + 13 + 1);
+            let raw = c7_stream(seed, W + W + 13 + 1);
             let cur_air: Vec<BaseElement> =
-                raw[0..10].iter().map(|&v| BaseElement::new(v)).collect();
+                raw[0..W].iter().map(|&v| BaseElement::new(v)).collect();
             let nxt_air: Vec<BaseElement> =
-                raw[10..20].iter().map(|&v| BaseElement::new(v)).collect();
+                raw[W..2 * W].iter().map(|&v| BaseElement::new(v)).collect();
             let per_air: Vec<BaseElement> =
-                raw[20..33].iter().map(|&v| BaseElement::new(v)).collect();
-            let alpha_air = BaseElement::new(raw[33]);
+                raw[2 * W..2 * W + 13].iter().map(|&v| BaseElement::new(v)).collect();
+            let alpha_air = BaseElement::new(raw[2 * W + 13]);
 
             let mut air_out = vec![BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
             evaluate_spend_transition(&cur_air, &nxt_air, &per_air, &mut air_out);
@@ -475,18 +493,18 @@ mod domain_generator_tests {
                 p *= alpha_air;
             }
 
-            let mut cur_v = [Felt::ZERO; 10];
-            let mut nxt_v = [Felt::ZERO; 10];
+            let mut cur_v = [Felt::ZERO; W];
+            let mut nxt_v = [Felt::ZERO; W];
             let mut per_v = [Felt::ZERO; 13];
-            for i in 0..10 {
+            for i in 0..W {
                 cur_v[i] = Felt::new(raw[i]);
-                nxt_v[i] = Felt::new(raw[10 + i]);
+                nxt_v[i] = Felt::new(raw[W + i]);
             }
             for i in 0..13 {
-                per_v[i] = Felt::new(raw[20 + i]);
+                per_v[i] = Felt::new(raw[2 * W + i]);
             }
             let got = evaluate_transition_at_ood_circuit_7(
-                &cur_v, &nxt_v, &per_v, Felt::new(raw[33]),
+                &cur_v, &nxt_v, &per_v, Felt::new(raw[2 * W + 13]),
             );
 
             assert_eq!(
@@ -642,7 +660,9 @@ mod domain_generator_tests {
 
         assert_eq!(MERKLE_PATH_NUM_CONSTRAINTS, 11);
         assert_eq!(MERKLE_PATH_NUM_PERIODIC, 9, "seven columns plus the two gates");
-        assert_eq!(TRACE_WIDTH, 6);
+        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
+        // fewer, and the extra column is the randomizer. Both numbers matter.
+        assert_eq!(TRACE_WIDTH, 7);
 
         let w = TRACE_WIDTH;
         let np = MERKLE_PATH_NUM_PERIODIC;
@@ -667,8 +687,11 @@ mod domain_generator_tests {
                 pw *= alpha_air;
             }
 
-            let mut cur_v = [Felt::ZERO; 6];
-            let mut nxt_v = [Felt::ZERO; 6];
+            // [ZK-RANDOMIZER] 6 -> 7. The frame carries the randomizer column and
+            // it is fed NON-ZERO random values on purpose: the property under
+            // test is that neither side reads it.
+            let mut cur_v = [Felt::ZERO; 7];
+            let mut nxt_v = [Felt::ZERO; 7];
             let mut per_v = [Felt::ZERO; 9];
             for i in 0..w {
                 cur_v[i] = Felt::new(raw[i]);
@@ -714,7 +737,9 @@ mod domain_generator_tests {
 
         assert_eq!(MERKLE_UPDATE_NUM_CONSTRAINTS, 19);
         assert_eq!(MERKLE_UPDATE_NUM_PERIODIC, 9, "seven columns plus the two gates");
-        assert_eq!(TRACE_WIDTH, 10);
+        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
+        // fewer, and the extra column is the randomizer. Both numbers matter.
+        assert_eq!(TRACE_WIDTH, 11);
 
         let w = TRACE_WIDTH;
         let np = MERKLE_UPDATE_NUM_PERIODIC;
@@ -753,6 +778,150 @@ mod domain_generator_tests {
                 got.as_u64(),
                 want.as_int(),
                 "C6 transition drift at seed {seed}: the verifier and the AIR disagree",
+            );
+        }
+    }
+
+    /// [C5-N1024] The C5 OOD evaluator agrees with the C5 AIR on random frames.
+    ///
+    /// 🚨 THIS TEST EXISTS BECAUSE ITS ABSENCE COST A DAY. C5 was masked on
+    /// 2026-08-29 with the C3/C6/C7 differentials already in the file and no C5
+    /// twin. `transfer.rs::evaluate_transfer_transition` moved `result[0..3]` to
+    /// `nba`; `evaluate_transition_at_ood_circuit_5` kept `1 - is_boundary`, and
+    /// the only symptom was `transfer_verify_deep_ali_accepts_honest_proof`
+    /// failing with a blanket `DeepAliFailed` that named neither the constraint
+    /// nor the gate. Every other C5 test stayed green, `verify_generic` still
+    /// accepted the proof, and the wire was byte-identical.
+    ///
+    /// ⚠️ AND THE OPPOSITE SLIP IS THE SILENT ONE. Here the wrong gate happened
+    /// to break acceptance, which is luck: `nba` and `1 - is_boundary` differ
+    /// only across rows 448..1023, so on any circuit where the prover kept the
+    /// old gate too, the substitution rejects NOTHING and simply re-imposes the
+    /// Poseidon rounds on all 576 blinding rows. A random frame with a nonzero
+    /// `is_boundary` and a zero `nba` separates the two; no honest-proof test
+    /// can, in either direction.
+    #[test]
+    fn c5_ood_evaluator_matches_the_air_on_random_frames() {
+        use p01_stark::air::transfer::{
+            evaluate_transfer_transition, TRACE_WIDTH, TRANSFER_NUM_CONSTRAINTS,
+            TRANSFER_NUM_PERIODIC,
+        };
+        use p01_stark::{BaseElement, FieldElement, StarkField};
+
+        assert_eq!(TRANSFER_NUM_CONSTRAINTS, 28);
+        assert_eq!(TRANSFER_NUM_PERIODIC, 30, "28 columns plus the two gates");
+        assert_eq!(TRACE_WIDTH, 7);
+
+        let w = TRACE_WIDTH;
+        let np = TRANSFER_NUM_PERIODIC;
+        for seed in 0..64u64 {
+            let raw = c7_stream(0xC5_0000 ^ seed, w + w + np + 1);
+            let cur_air: Vec<BaseElement> =
+                raw[0..w].iter().map(|&v| BaseElement::new(v)).collect();
+            let nxt_air: Vec<BaseElement> =
+                raw[w..2 * w].iter().map(|&v| BaseElement::new(v)).collect();
+            let per_air: Vec<BaseElement> = raw[2 * w..2 * w + np]
+                .iter()
+                .map(|&v| BaseElement::new(v))
+                .collect();
+            let alpha_air = BaseElement::new(raw[2 * w + np]);
+
+            let mut air_out = vec![BaseElement::ZERO; TRANSFER_NUM_CONSTRAINTS];
+            evaluate_transfer_transition(&cur_air, &nxt_air, &per_air, &mut air_out);
+            let mut want = BaseElement::ZERO;
+            let mut pw = BaseElement::ONE;
+            for v in air_out.iter() {
+                want += pw * *v;
+                pw *= alpha_air;
+            }
+
+            let mut cur_v = [Felt::ZERO; 7];
+            let mut nxt_v = [Felt::ZERO; 7];
+            let mut per_v = [Felt::ZERO; 30];
+            for i in 0..w {
+                cur_v[i] = Felt::new(raw[i]);
+                nxt_v[i] = Felt::new(raw[w + i]);
+            }
+            for i in 0..np {
+                per_v[i] = Felt::new(raw[2 * w + i]);
+            }
+            let got = evaluate_transition_at_ood_circuit_5(
+                &cur_v, &nxt_v, &per_v, Felt::new(raw[2 * w + np]),
+            );
+
+            assert_eq!(
+                got.as_u64(),
+                want.as_int(),
+                "C5 transition drift at seed {seed}: the verifier and the AIR disagree",
+            );
+        }
+    }
+
+    /// [C1-N256] The C1 OOD evaluator agrees with the C1 AIR on random frames.
+    ///
+    /// The fifth and last of these, closing the set over every live circuit.
+    /// C1 was the other circuit masked without a differential, and it is the odd
+    /// one: it gained ONE periodic column, not two, because its only gated
+    /// constraints are the Poseidon rows and those already spent both permitted
+    /// factors on `not_boundary` and `round_flag` — so the substitution is
+    /// pre-multiplied rather than added. That is a subtler edit than C3/C6/C7's
+    /// and there was nothing pinning it.
+    #[test]
+    fn c1_ood_evaluator_matches_the_air_on_random_frames() {
+        use p01_stark::air::denominated_pool::{
+            evaluate_pool_commitment_transition, POOL_COMMITMENT_NUM_CONSTRAINTS,
+            POOL_COMMITMENT_NUM_PERIODIC, TRACE_WIDTH,
+        };
+        use p01_stark::{BaseElement, FieldElement, StarkField};
+
+        assert_eq!(POOL_COMMITMENT_NUM_CONSTRAINTS, 4);
+        assert_eq!(POOL_COMMITMENT_NUM_PERIODIC, 7, "six columns plus the one gate");
+        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
+        // fewer, and the extra column is the randomizer. Both numbers matter.
+        assert_eq!(TRACE_WIDTH, 4);
+
+        let w = TRACE_WIDTH;
+        let np = POOL_COMMITMENT_NUM_PERIODIC;
+        for seed in 0..64u64 {
+            let raw = c7_stream(0xC1_0000 ^ seed, w + w + np + 1);
+            let cur_air: Vec<BaseElement> =
+                raw[0..w].iter().map(|&v| BaseElement::new(v)).collect();
+            let nxt_air: Vec<BaseElement> =
+                raw[w..2 * w].iter().map(|&v| BaseElement::new(v)).collect();
+            let per_air: Vec<BaseElement> = raw[2 * w..2 * w + np]
+                .iter()
+                .map(|&v| BaseElement::new(v))
+                .collect();
+            let alpha_air = BaseElement::new(raw[2 * w + np]);
+
+            let mut air_out = vec![BaseElement::ZERO; POOL_COMMITMENT_NUM_CONSTRAINTS];
+            evaluate_pool_commitment_transition(&cur_air, &nxt_air, &per_air, &mut air_out);
+            let mut want = BaseElement::ZERO;
+            let mut pw = BaseElement::ONE;
+            for v in air_out.iter() {
+                want += pw * *v;
+                pw *= alpha_air;
+            }
+
+            // [ZK-RANDOMIZER] 3 -> 4, same reason as the C3 twin above.
+            let mut cur_v = [Felt::ZERO; 4];
+            let mut nxt_v = [Felt::ZERO; 4];
+            let mut per_v = [Felt::ZERO; 7];
+            for i in 0..w {
+                cur_v[i] = Felt::new(raw[i]);
+                nxt_v[i] = Felt::new(raw[w + i]);
+            }
+            for i in 0..np {
+                per_v[i] = Felt::new(raw[2 * w + i]);
+            }
+            let got = evaluate_transition_at_ood_circuit_1(
+                &cur_v, &nxt_v, &per_v, Felt::new(raw[2 * w + np]),
+            );
+
+            assert_eq!(
+                got.as_u64(),
+                want.as_int(),
+                "C1 transition drift at seed {seed}: the verifier and the AIR disagree",
             );
         }
     }
@@ -867,7 +1036,9 @@ mod domain_generator_tests {
             "C3 and C7 stopped agreeing on where the blinding region starts, and C3              evaluates C7's gate tables",
         );
         assert_eq!(c3::TRACE_LENGTH, 512);
-        assert_eq!(c3::MASK_ROWS, 128, "128 free rows against R = 4*22 + 2 = 90");
+        // [ZK-DEPTH-11 2026-08-30] 128 -> 160. The cut bought exactly these 32
+        // rows, and channel A on C3 was SHORT by 132 without them.
+        assert_eq!(c3::MASK_ROWS, 160, "160 free rows against R = 4*22 + 2 = 90");
         use crate::periodic_consts::{
             C6_ACTIVE_COEFFS, C6_NOT_BOUNDARY_ACTIVE_COEFFS, C7_ACTIVE_COEFFS,
             C7_NOT_BOUNDARY_ACTIVE_COEFFS,
@@ -878,7 +1049,7 @@ mod domain_generator_tests {
             "the two circuits stopped agreeing on where the blinding region starts",
         );
         assert_eq!(c6::CANONICAL_TRACE_LENGTH, 512);
-        assert_eq!(c6::MASK_ROWS, 128, "128 free rows against R = 4*22 + 2 = 90");
+        assert_eq!(c6::MASK_ROWS, 160, "160 free rows against R = 4*22 + 2 = 90");
 
         assert_eq!(
             C6_ACTIVE_COEFFS, C7_ACTIVE_COEFFS,
@@ -952,7 +1123,11 @@ mod domain_generator_tests {
             (2, &[1, 2], 7),
             (3, &[1, 2, 15], 2),
             (4, &[1, 2, 3, 4], 12),
-            (5, &[1, 2, 3, 4, 5, 6], 26),
+            // [C5-N1024 2026-08-29] 26 -> 24. The capacity assertions for cycles
+            // 14 and 15 (rows 448, 480) left the list: those two cycles were
+            // padding on a public constant, and their rows are now inside the
+            // blinding region. See `get_boundary_assertions`, arm 5.
+            (5, &[1, 2, 3, 4, 5, 6], 24),
             (6, &[1, 2, 3, 4, 15], 4),
         ];
         for (circuit_id, pub_inputs, expected) in cases {
@@ -1415,7 +1590,8 @@ fn get_boundary_assertions(
             // MUST be appended in the SAME order as the prover's `get_assertions`
             // (acc@row0 = 0, then acc@row385 = public_amount) so the per-term
             // `alpha_bnd^j` powers in `boundary_fold_at_ood` line up. This takes
-            // the assertion count from 24 → 26.
+            // the assertion count from 22 → 24 (it read 24 → 26 while the two
+            // padding cycles still carried capacity assertions).
             assertions.push(BoundaryAssertion { col: 6, row: 0, value: Felt::ZERO });
             assertions.push(BoundaryAssertion {
                 col: 6, row: ROW_ACC_FINAL_C5, value: public_amount,
@@ -1465,11 +1641,19 @@ fn get_boundary_assertions(
         // constrained inside the circuit.
         7 => {
             // 🚨 DO NOT WRITE `CANONICAL_DEPTH` HERE. That name exists three
-            // times in this file and means 15 every time; C7's is 12, and the
-            // difference is (15-1)*32+30 = 478 versus (12-1)*32+30 = 382. Row
+            // times in this file and means 15 every time; C7's is 11, and the
+            // difference is (15-1)*32+30 = 478 versus (11-1)*32+30 = 350. Row
             // 478 is inside C7's blinding region, where nothing is constrained
             // at all. That exact slip is what `tests/c7_probe` is built on.
-            const ROW_MERKLE_ROOT_OUT_C7: usize = 11 * HASH_CYCLE_LEN + NUM_ROUNDS; // 382
+            //
+            // ⛔ [ZK-DEPTH-11 2026-08-30] 382 -> 350, AND THIS LINE IS A SECOND
+            // COPY OF THE CIRCUIT'S GEOMETRY. `air/spend.rs::ROW_MERKLE_ROOT_OUT`
+            // moved with the depth cut; this one did not, and the whole C7 suite
+            // went red with `DeepAliFailed` on every honest proof — the boundary
+            // fold was binding the root at a row the trace no longer puts it on.
+            // The warning above says not to write `CANONICAL_DEPTH`; it does not
+            // say the number is fixed.
+            const ROW_MERKLE_ROOT_OUT_C7: usize = 10 * HASH_CYCLE_LEN + NUM_ROUNDS; // 350
             //
             // ⛔ AND THIS ROOT IS A DEPTH-12 SUBTREE ROOT, NOT THE POOL ROOT.
             // Binding it here proves membership of a subtree. Anyone holding a
@@ -3821,7 +4005,7 @@ pub fn verify_deep_ali_circuit_6(
     // `output_row = (depth - 1) * 32 + 30` from `public_inputs[4]`, so the two
     // root rows move 478 -> 382 on their own, and 382 < 384 keeps them clear of
     // the blinding region by two rows.
-    const CANONICAL_DEPTH: u64 = 12;
+    const CANONICAL_DEPTH: u64 = 11;
     if public_inputs.len() != 5 || public_inputs[4] != CANONICAL_DEPTH {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -3870,7 +4054,19 @@ pub fn verify_deep_ali_circuit_6(
     // Collect OOD trace values. Circuit 6 is width-10.
     let ood_current: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next: Vec<Felt> = proof.ood_next_iter().collect();
-    if ood_current.len() != 10 || ood_next.len() != 10 {
+    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11, AND THIS LINE COST AN HOUR. Every
+    // component of C6's DEEP-ALI agreed — the nine periodic values matched the
+    // prover's columns exactly at the proof's own z, the evaluator matched the
+    // AIR on random frames, the boundary rows and alpha tags matched, and a
+    // hand-run of the identity gave lhs == rhs. The function still returned
+    // `DeepAliFailed`, because it never reached the identity: it bailed here.
+    //
+    // ⛔ IT HID FROM A GREP. C1, C3 and C7 name this vector `ood_current_vec`;
+    // C6 names it `ood_current`, so a sweep for `ood_current_vec.len() != ` — the
+    // one that found the other three — walked straight past it. The arity guard
+    // must move with `CONFIG_MERKLE_UPDATE.trace_width`, and there is nothing in
+    // the type system that says so.
+    if ood_current.len() != 11 || ood_next.len() != 11 {
         return Err(VerifyError::DeepAliFailed);
     }
 
@@ -3962,8 +4158,11 @@ pub fn verify_deep_ali_circuit_6(
 /// `[rc0, rc1, rc2, round_flag, chain_flag, is_boundary]`.
 #[inline(never)]
 fn evaluate_transition_at_ood_circuit_1(
-    ood_current: &[Felt; 3],
-    ood_next: &[Felt; 3],
+    // [ZK-RANDOMIZER 2026-08-30] 3 -> 4. Index 3 is the randomizer column and
+    // nothing below reads it; it is carried because the DEEP recombination sums
+    // a gamma power over every committed column.
+    ood_current: &[Felt; 4],
+    ood_next: &[Felt; 4],
     periodic_at_z: &[Felt; 7],
     alpha: Felt,
 ) -> Felt {
@@ -4072,11 +4271,16 @@ pub fn verify_deep_ali_circuit_1(
     // Collect OOD trace values. Circuit 1 is width-3.
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    if ood_current_vec.len() != 3 || ood_next_vec.len() != 3 {
+    // [ZK-RANDOMIZER 2026-08-30] 3 -> 4. This guard sits BEFORE the frame is
+    // built, so left behind it rejects every honest proof with `DeepAliFailed`
+    // -- the same trap C7's guard sprang in this change.
+    if ood_current_vec.len() != 4 || ood_next_vec.len() != 4 {
         return Err(VerifyError::DeepAliFailed);
     }
-    let ood_current = [ood_current_vec[0], ood_current_vec[1], ood_current_vec[2]];
-    let ood_next = [ood_next_vec[0], ood_next_vec[1], ood_next_vec[2]];
+    // [ZK-RANDOMIZER] Slot 3 carried, read by nothing.
+    let ood_current =
+        [ood_current_vec[0], ood_current_vec[1], ood_current_vec[2], ood_current_vec[3]];
+    let ood_next = [ood_next_vec[0], ood_next_vec[1], ood_next_vec[2], ood_next_vec[3]];
 
     // Derive α exactly like the prover (C1-specific domain tag).
     let pub_bytes = public_inputs_to_bytes(public_inputs);
@@ -4089,10 +4293,14 @@ pub fn verify_deep_ali_circuit_1(
     // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 128.
     // [C1-N256] 128 -> 256. `quotient_segments` stays 8 and rho stays 1/16;
     // both are scale-invariant in n. See CONFIG_POOL_COMMITMENT.
-    const TRACE_LENGTH_C1: usize = 256;
+    // [ZK-RANDOMIZER 2026-08-30] 256 -> 512.
+    const TRACE_LENGTH_C1: usize = 512;
     let z_d = vanishing_poly(z, TRACE_LENGTH_C1);
     // GENERATOR_256 already existed, carried as dead code. No new constant.
-    let g = Felt::new(GENERATOR_256);
+    // ⛔ THE GENERATOR MOVES WITH `n`, AND NOTHING TYPE-CHECKS THAT IT DID. This
+    // is the exact defect that made every honest C5 proof fail DEEP-ALI on
+    // 2026-08-29: `g^(n-1)` must generate the TRACE subgroup.
+    let g = Felt::new(GENERATOR_512);
     let last_row_x = g.exp((TRACE_LENGTH_C1 - 1) as u64);
     let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
     let z_minus_last = z.add(neg_last);
@@ -4351,8 +4559,11 @@ pub fn verify_deep_ali_circuit_2(
 ///   col 5:   carry (previous hash output; leaf for first cycle)
 #[inline(never)]
 fn evaluate_transition_at_ood_circuit_3(
-    ood_current: &[Felt; 6],
-    ood_next: &[Felt; 6],
+    // [ZK-RANDOMIZER 2026-08-30] 6 -> 7. Index 6 is the randomizer column and
+    // nothing below reads it. It is carried because the DEEP recombination sums
+    // a gamma power over every committed column.
+    ood_current: &[Felt; 7],
+    ood_next: &[Felt; 7],
     periodic_at_z: &[Felt; 9],
     alpha: Felt,
 ) -> Felt {
@@ -4517,7 +4728,7 @@ pub fn verify_deep_ali_circuit_3(
     // write-side twin, built for C6's insertion, and it reads the pool's own
     // `filled_subtrees` because an insertion produces a root no history can
     // check. Swapping the two is wrong in both directions.
-    const CANONICAL_DEPTH: u64 = 12;
+    const CANONICAL_DEPTH: u64 = 11;
     if public_inputs.len() != 3 || public_inputs[2] != CANONICAL_DEPTH {
         return Err(VerifyError::DeepAliFailed);
     }
@@ -4567,16 +4778,21 @@ pub fn verify_deep_ali_circuit_3(
     // Collect OOD trace values. Circuit 3 is width-6.
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    if ood_current_vec.len() != 6 || ood_next_vec.len() != 6 {
+    // [ZK-RANDOMIZER 2026-08-30] 6 -> 7. This arity check is what refuses a
+    // pre-randomizer proof, and it must move with the config or the frame is
+    // built from a short vector.
+    if ood_current_vec.len() != 7 || ood_next_vec.len() != 7 {
         return Err(VerifyError::DeepAliFailed);
     }
     let ood_current = [
         ood_current_vec[0], ood_current_vec[1], ood_current_vec[2],
         ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
+        ood_current_vec[6],
     ];
     let ood_next = [
         ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
         ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
+        ood_next_vec[6],
     ];
 
     // Derive α exactly like the prover (C3-specific domain tag).
@@ -4889,7 +5105,11 @@ fn evaluate_transition_at_ood_circuit_5(
     let rc1 = periodic_at_z[1];
     let rc2 = periodic_at_z[2];
     let round_flag = periodic_at_z[3];
-    let is_boundary = periodic_at_z[4];
+    // Slot 4 stays bound so this block remains a COMPLETE map of the 30
+    // periodic columns, but nothing in C5 gates on `is_boundary` any more --
+    // `nba` (slot 29) and `active` (slot 28) do. Deleting the line would make
+    // the index map lie by omission.
+    let _is_boundary = periodic_at_z[4];
     let chain_0_1 = periodic_at_z[5];
     let chain_2_3 = periodic_at_z[6];
     let chain_3_4 = periodic_at_z[7];
@@ -4937,7 +5157,19 @@ fn evaluate_transition_at_ood_circuit_5(
 
     let one = Felt::ONE;
     let three = Felt::new(3);
-    let not_boundary = one.sub(is_boundary);
+    // 🚨 `let not_boundary = one.sub(is_boundary)` STOOD HERE UNTIL 2026-08-30
+    // AND MUST NOT COME BACK. `transfer.rs::evaluate_transition` had already
+    // moved cs[0..3] to `nba`; this side had not, and the two disagree on rows
+    // 448..1023 — so `C(z)` and `Q(z)·Z_T(z)` disagreed and EVERY honest C5
+    // proof failed DEEP-ALI, under one blanket `DeepAliFailed` that names
+    // neither the constraint nor the circuit.
+    //
+    // The privacy half is the reason the AIR moved: `not_boundary` is 1 across
+    // the 576 blinding rows, so it re-imposes the Poseidon rounds on all of
+    // them. Here the two halves point the same way — the same substitution that
+    // breaks acceptance is the one that would leak — which is luck, not design:
+    // C3 carries the identical hazard and there it rejects NOTHING.
+    // `c5_ood_evaluator_matches_the_air_on_random_frames` is what pins it.
 
     // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──
     let s0 = ood_current[0].add(rc0);
@@ -4953,13 +5185,13 @@ fn evaluate_transition_at_ood_circuit_5(
     let mut cs = [Felt::ZERO; 28];
 
     // [0-2] Poseidon state transition.
-    cs[0] = not_boundary.mul(
+    cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_flag.mul(ro0.sub(ood_current[0])))
     );
-    cs[1] = not_boundary.mul(
+    cs[1] = nba.mul(
         ood_next[1].sub(ood_current[1]).sub(round_flag.mul(ro1.sub(ood_current[1])))
     );
-    cs[2] = not_boundary.mul(
+    cs[2] = nba.mul(
         ood_next[2].sub(ood_current[2]).sub(round_flag.mul(ro2.sub(ood_current[2])))
     );
 
@@ -5175,8 +5407,12 @@ fn compute_c5_periodic_at_z(z: Felt) -> Result<[Felt; 30], VerifyError> {
 ///      `compute_c5_periodic_at_z`).
 ///   3. The 28 transition constraints on the opened OOD trace (width 7),
 ///      RLC-combined with α to produce `C(z)`.
-///   4. `Z_T(z) = (z^n - 1) / (z - g^(n-1))` with `n = 512`.
-///   5. The 26-assertion boundary fold (incl. the acc conservation boundary).
+///   4. `Z_T(z) = (z^n - 1) / (z - g^(n-1))` with `n = 1024` and `g` the
+///      generator OF THAT subgroup — 512 and GENERATOR_512 until the C5 mask
+///      forced the trace to double. Leaving either behind rejects every honest
+///      proof, which is how it was found.
+///   5. The 24-assertion boundary fold (incl. the acc conservation boundary).
+///      26 until the two padding cycles' capacity assertions left the list.
 ///   6. The identity `C(z) == Q(z) · Z_T(z)`.
 ///
 /// Circuit 5 proves a UTXO-style transfer: two input notes get nullified,
@@ -5235,7 +5471,15 @@ pub fn verify_deep_ali_circuit_5(
     // 1/16; both are scale-invariant in n.
     const TRACE_LENGTH_C5: usize = 1024;
     let z_d = vanishing_poly(z, TRACE_LENGTH_C5);
-    let g = Felt::new(GENERATOR_512);
+    // ⛔ THE GENERATOR MOVES WITH `n`, AND NOTHING TYPE-CHECKS THAT IT DID.
+    // `g^(n-1)` is the last row of the TRACE subgroup, so it must be the
+    // generator OF THAT SUBGROUP. Left at GENERATOR_512 with n = 1024 -- which
+    // is how this line stood on 2026-08-29 -- `g_512^1023 = g_512^511 * g_512^512
+    // = g_512^511` lands on a point of the WRONG group, Z_T is divided by the
+    // wrong factor, and EVERY honest proof fails DEEP-ALI. Nothing rejects a
+    // bad proof for a different reason first, so the only symptom is a blanket
+    // `DeepAliFailed` that reads exactly like a broken prover.
+    let g = Felt::new(GENERATOR_1024);
     let last_row_x = g.exp((TRACE_LENGTH_C5 - 1) as u64);
     let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
     let z_minus_last = z.add(neg_last);
@@ -5244,10 +5488,12 @@ pub fn verify_deep_ali_circuit_5(
     }
     let z_t = z_d.mul(z_minus_last.inv());
 
-    // [C2] Boundary public-input binding at z. Circuit 5 has 26 assertions
-    // after the value-conservation rebake: 16 capacity zeros (rows 0,32,…,480),
+    // [C2] Boundary public-input binding at z. Circuit 5 has 24 assertions
+    // after the value-conservation rebake and the C5-N1024 mask: 14 capacity
+    // zeros (rows 0,32,…,416 — 16 before the mask; rows 448 and 480 belonged to
+    // the two padding cycles and are now blinding rows),
     // col1@row0=0, token_mint at rows 32/256/352, the 4 output public inputs
-    // (nullifiers + commitments) at the cycle-output rows, and the 2 new
+    // (nullifiers + commitments) at the cycle-output rows, and the 2
     // accumulator boundaries (acc@row0=0, acc@row385=public_amount). This binds
     // nullifier_1/2, output_commitment_1/2, token_mint, AND the conserved value
     // (public_amount) to the trace at the OOD point.
@@ -5312,8 +5558,13 @@ pub fn verify_deep_ali_circuit_5(
 ///   10 hold_link_31 · 11 active · 12 not_boundary_active
 #[inline(never)]
 fn evaluate_transition_at_ood_circuit_7(
-    ood_current: &[Felt; 10],
-    ood_next: &[Felt; 10],
+    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11. Index 10 is the randomizer column and
+    // NOTHING below reads it -- that is the point. It is present here only
+    // because the OOD frame carries it, and it must be carried: the DEEP
+    // recombination sums a gamma power over every committed column, and dropping
+    // it there would make `C(z)` and `Q(z)*Z_T(z)` disagree on every proof.
+    ood_current: &[Felt; 11],
+    ood_next: &[Felt; 11],
     periodic_at_z: &[Felt; 13],
     alpha: Felt,
 ) -> Felt {
@@ -5450,7 +5701,12 @@ pub fn verify_deep_ali_circuit_7(
 
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    if ood_current_vec.len() != 10 || ood_next_vec.len() != 10 {
+    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11, AND THIS LINE IS THE ONE THAT BITES.
+    // It sits BEFORE the frame construction below, so left at 10 it rejects
+    // every honest proof with `DeepAliFailed` — and had it passed at 10, the
+    // `[10]` index below would have panicked instead. Two failure modes, one
+    // number, and the arity guard must move with `CONFIG_SPEND.trace_width`.
+    if ood_current_vec.len() != 11 || ood_next_vec.len() != 11 {
         return Err(VerifyError::DeepAliFailed);
     }
     let ood_current = [
@@ -5458,12 +5714,16 @@ pub fn verify_deep_ali_circuit_7(
         ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
         ood_current_vec[6], ood_current_vec[7], ood_current_vec[8],
         ood_current_vec[9],
+        // [ZK-RANDOMIZER] Slot 10. No constraint reads it; it is carried so the
+        // frame the evaluator sees is the frame the prover committed to.
+        ood_current_vec[10],
     ];
     let ood_next = [
         ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
         ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
         ood_next_vec[6], ood_next_vec[7], ood_next_vec[8],
         ood_next_vec[9],
+        ood_next_vec[10],
     ];
 
     // A FRESH tag. `derive_rlc_alpha` (untagged) is hardwired to `rlc-v1`,
@@ -6205,8 +6465,10 @@ fn verify_constraints_merkle_update(
             // re-enabled. Rows 384..511 are the blinding region: any per-query
             // check reaching them turns 128 free rows into 128 constrained ones
             // and undoes this entire change.
-            const CANONICAL_DEPTH: usize = 12;
-            let active_rows = CANONICAL_DEPTH * hash_cycle_len; // 480
+            const CANONICAL_DEPTH: usize = 11;
+            // [ZK-DEPTH-11 2026-08-30] 384 -> 352, and the stale `// 480` this
+            // comment carried was already two cuts out of date.
+            let active_rows = CANONICAL_DEPTH * hash_cycle_len; // 352
 
             if trace_row < active_rows && pos_in_cycle < config.num_rounds {
                 let rc = poseidon_consts::round_constants(pos_in_cycle);
@@ -6532,30 +6794,6 @@ mod merkle_update_e2e {
     /// the Fiat-Shamir α derivation, periodic polynomial evaluation, 19-
     /// constraint RLC, and Z_T division are bit-identical to the prover.
     #[test]
-    fn merkle_update_depth12_masked_verify_deep_ali_phase2() {
-        let old_leaf = 111u64;
-        let new_leaf = 222u64;
-        let path_elements: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-        let path_indices: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
-
-        let proof_data = p01_stark::compact::generate_merkle_update_compact_proof(
-            old_leaf, new_leaf, &path_elements, &path_indices, &p01_stark::compact::c6_deterministic_probe_mask(path_elements.len()));
-
-        let config = get_circuit_config(proof_data.circuit_id).expect("config");
-        let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
-            &proof_data.proof_bytes, config,
-        ).expect("deserialize");
-
-        verify_deep_ali_circuit_6(&parsed, &proof_data.public_inputs)
-            .expect("phase 2 DEEP-ALI must succeed on honest circuit-6 proof");
-    }
-
-    /// [P2.2b] Negative soundness check: if the opened OOD `current` trace row
-    /// is replaced with any different field element, the 19-constraint RLC at
-    /// z changes and DEEP-ALI must fail. Covers the soundness hole that
-    /// per-query trace-aligned checks alone leave open (blowup-16 ⇒ 24% of
-    /// queries miss trace-aligned rows, so the other 76% of rows are
-    /// unchecked without OOD DEEP-ALI).
     #[test]
     fn merkle_update_deep_ali_fails_on_tampered_ood_current() {
         use crate::compact_proof::get_circuit_config;
@@ -6870,7 +7108,17 @@ mod merkle_update_e2e {
             5u64, 6u64, 7u64, 8u64, &p01_stark::compact::c1_deterministic_probe_mask());
 
         let mut tampered = proof_data.proof_bytes.clone();
-        tampered[120] ^= 0x02;
+        // [ZK-RANDOMIZER 2026-08-30] 120 -> 136. `ood_quotient` starts at
+        // `64 + trace_width*16 + 8`, and C1's committed width went 3 -> 4. Left
+        // at 120 this flipped a bit of `ood_next` instead, which the identity
+        // tolerates -- so the test PASSED THE TAMPER and reported `got Ok(())`.
+        // A hardcoded byte offset in a tampering test fails in the dangerous
+        // direction: it stops testing anything, and says so only in a message
+        // nobody reads until the day it matters.
+        let ood_quotient_offset =
+            64 + crate::compact_proof::CONFIG_POOL_COMMITMENT.trace_width * 16 + 8;
+        assert_eq!(ood_quotient_offset, 136);
+        tampered[ood_quotient_offset] ^= 0x02;
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7056,8 +7304,12 @@ mod merkle_update_e2e {
     fn c3_sample_proof(
         leaf: u64,
     ) -> p01_stark::compact::GenericCompactProofData {
-        let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-        let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+        // [ZK-DEPTH-11 2026-08-30] Read the circuit's own depth instead of a
+        // literal 12. A fixture at the wrong depth fails DEEP-ALI and reads
+        // exactly like a broken circuit.
+        let d = p01_stark::air::merkle_path::CANONICAL_DEPTH;
+        let path_elements: Vec<u64> = (0..d as u64).map(|i| 1000 + i).collect();
+        let path_indices: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
         p01_stark::compact::generate_merkle_path_compact_proof(
             leaf, &path_elements, &path_indices, &p01_stark::compact::c3_deterministic_probe_mask(path_elements.len()))
     }
@@ -7132,7 +7384,15 @@ mod merkle_update_e2e {
         let proof_data = c3_sample_proof(5u64);
 
         let mut tampered = proof_data.proof_bytes.clone();
-        tampered[168] ^= 0x02;
+        // [ZK-RANDOMIZER 2026-08-30] 168 -> 184. `ood_quotient` starts at
+        // `64 + trace_width*16 + 8`, and C3's committed width went 6 -> 7. The
+        // C1 twin of this line was left behind and the test PASSED THE TAMPER,
+        // reporting `got Ok(())` — a tampering test with a stale offset stops
+        // testing anything and only says so in a message.
+        let ood_quotient_offset =
+            64 + crate::compact_proof::CONFIG_MERKLE_PATH.trace_width * 16 + 8;
+        assert_eq!(ood_quotient_offset, 184);
+        tampered[ood_quotient_offset] ^= 0x02;
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7189,19 +7449,26 @@ mod merkle_update_e2e {
             &proof_data.proof_bytes, config,
         ).expect("deserialize");
 
-        // Honest proof is depth-12 with 3 public inputs.
+        // Honest proof is at CANONICAL_DEPTH with 3 public inputs.
         assert_eq!(proof_data.public_inputs.len(), 3);
-        assert_eq!(proof_data.public_inputs[2], 12);
+        assert_eq!(
+            proof_data.public_inputs[2],
+            p01_stark::air::merkle_path::CANONICAL_DEPTH as u64,
+        );
 
-        // 🚨 15 FIRST. It was the canonical depth until 2026-08-29, so every C3
-        // proof built before the cut claims it, and every one of them must now
-        // be refused.
-        for wrong in [15u64, 14, 13, 11, 0, u64::MAX] {
+        // 🚨 15 AND 12 FIRST. 15 was canonical until 2026-08-29 and 12 until
+        // 2026-08-30, so every C3 proof built before either cut claims one of
+        // them, and every one of those proofs must now be refused. ⚠️ 11 LEFT
+        // THIS LIST because it is the canonical depth now — leaving it in made
+        // the test demand that the verifier reject its own honest proofs, and
+        // the failure message still said "only 12 is canonical".
+        for wrong in [15u64, 14, 13, 12, 10, 0, u64::MAX] {
             let mut pi = proof_data.public_inputs.clone();
             pi[2] = wrong;
             assert!(
                 matches!(verify_deep_ali_circuit_3(&parsed, &pi), Err(VerifyError::DeepAliFailed)),
-                "depth guard accepted depth {wrong}; only 12 is canonical",
+                "depth guard accepted depth {wrong}; only {} is canonical",
+                p01_stark::air::merkle_path::CANONICAL_DEPTH,
             );
         }
 
@@ -7383,10 +7650,15 @@ mod merkle_update_e2e {
     }
 
     /// [P2.2d-C5] Positive: `verify_deep_ali_circuit_5` accepts an honest
-    /// transfer proof. Exercises the same α derivation, 28-column periodic
+    /// transfer proof. Exercises the same α derivation, 30-column periodic
     /// evaluation, 28-constraint RLC (incl. the 5 value-conservation
-    /// constraints), 26-assertion boundary fold, and Z_T division that run
+    /// constraints), 24-assertion boundary fold, and Z_T division that run
     /// on-chain inside the phase-2 DEEP-ALI for circuit 5.
+    ///
+    /// ⚠️ IT IS A WEAKER TEST THAN IT LOOKS. It caught the wrong Z_T generator
+    /// and the wrong Poseidon gate — but only because both happened to break
+    /// acceptance. A gate substitution the PROVER shares rejects nothing here;
+    /// that is what `c5_ood_evaluator_matches_the_air_on_random_frames` is for.
     ///
     /// [#2 voie A] Params chosen so value conservation HOLDS with a non-zero
     /// public_amount: in1=77, in2=88, out1=150, out2=65 →
@@ -7861,7 +8133,7 @@ mod merkle_update_e2e {
     /// of a solvable commitment.
     #[test]
     fn c7_phase1_arm_is_retired_post_b7() {
-        use p01_stark::air::spend::{CANONICAL_DEPTH, FIRST_FREE_ROW, MASK_ROWS, TRACE_WIDTH};
+        use p01_stark::air::spend::{CANONICAL_DEPTH, FIRST_FREE_ROW, MASK_LEN, TRACE_WIDTH};
         const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
 
         phase1_arm_is_retired_post_b7(
@@ -7878,13 +8150,13 @@ mod merkle_update_e2e {
                     (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
                 // Deterministic, and deliberately so: a pin needs the same proof
                 // every run. ⛔ NOT the shape a real spend uses -- that one draws
-                // MASK_ROWS * TRACE_WIDTH fresh CSPRNG elements per proof.
+                // MASK_LEN fresh CSPRNG elements per proof.
                 let mut st = 0x9E37_79B9_7F4A_7C15u64 ^ s.wrapping_mul(0x1000_0000_0000_0001);
                 if st == 0 {
                     st = 0xD1B5_4A32_D192_ED03;
                 }
-                let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
-                for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+                let mut mask = Vec::with_capacity(MASK_LEN);
+                for _ in 0..(MASK_LEN) {
                     st ^= st >> 12;
                     st ^= st << 25;
                     st ^= st >> 27;

@@ -3945,8 +3945,8 @@ fn all_cases() -> Vec<ProofCase> {
 
     // --- C3 merkle_path -----------------------------------------------------
     // Args from `verify.rs::c3_sample_proof` (canonical depth 15).
-    let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-    let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+    let path_elements: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
+    let path_indices: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     let (p3, ms) = timed(|| {
         p01_stark::compact::generate_merkle_path_compact_proof(777, &path_elements, &path_indices, &p01_stark::compact::c3_deterministic_probe_mask(path_elements.len()))
     });
@@ -3972,8 +3972,8 @@ fn all_cases() -> Vec<ProofCase> {
 
     // --- C6 merkle_update ---------------------------------------------------
     // Args from `verify.rs::merkle_update_depth12_masked_verify_generic`.
-    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
+    let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     let (p6, ms) =
         timed(|| p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())));
     cases.push(generic_case(6, "C6 merkle_update", p6, ms));
@@ -4000,13 +4000,13 @@ fn all_cases() -> Vec<ProofCase> {
     // cannot move the compute cost. ⛔ Never copy this mask into a real proof —
     // `generate_spend_compact_proof` documents why it takes no default.
     let (pe7, pi7, rh7, mask7) = {
-        use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+        use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_LEN, TRACE_WIDTH};
         const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
         let pe: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
         let pi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
         let mut st = 0x9E37_79B9_7F4A_7C15u64;
-        let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
-        for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+        let mut mask = Vec::with_capacity(MASK_LEN);
+        for _ in 0..(MASK_LEN) {
             st ^= st >> 12;
             st ^= st << 25;
             st ^= st >> 27;
@@ -4330,13 +4330,15 @@ fn cu_budget_verify_uniform_path() {
     let program = Address::from_str(VERIFIER_ID).unwrap();
     let (so, so_len, so_hash) = load_verifier_or_fail(&mut rig, &program);
 
-    // [C3-D12] 12, not 15. C3 took the depth cut on 2026-08-29.
-    let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-    let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
-    // [C6-D12] `pe`/`pi` feed C6 ONLY; C3 in the same array uses
-    // `path_elements`/`path_indices` and stays at 15.
-    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let c3d = p01_stark::air::merkle_path::CANONICAL_DEPTH;
+    let path_elements: Vec<u64> = (0..c3d as u64).map(|i| 1000 + i).collect();
+    let path_indices: Vec<u8> = (0..c3d).map(|i| (i % 2) as u8).collect();
+    // `pe`/`pi` feed C6 ONLY; C3 in the same array uses
+    // `path_elements`/`path_indices`. Both depths are read off their own AIR --
+    // the pair that was typed here said 12 and 15 in the same breath.
+    let c6d = p01_stark::air::merkle_update::CANONICAL_DEPTH;
+    let pe: Vec<u64> = (0..c6d).map(|i| 100u64 + i as u64 * 13).collect();
+    let pi: Vec<u8> = (0..c6d).map(|i| (i % 2) as u8).collect();
 
     // Only the five circuits in PROBE_ORDER can go through this path.
     let cases: Vec<(&str, u8, p01_stark::compact::GenericCompactProofData)> = vec![
@@ -4809,12 +4811,15 @@ fn uniform_leak_probe(
 /// instruction at all (measured in `tests/wire_parity.rs`), so they are not in
 /// the anonymity set and including them would flatter the result.
 fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCompactProofData)> {
-    let path_elements: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-    let path_indices: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
-    // [C6-D12] `pe`/`pi` feed C6 ONLY; C3 in the same array uses
-    // `path_elements`/`path_indices` and stays at 15.
-    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-    let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+    let c3d = p01_stark::air::merkle_path::CANONICAL_DEPTH;
+    let path_elements: Vec<u64> = (0..c3d as u64).map(|i| 1000 + i).collect();
+    let path_indices: Vec<u8> = (0..c3d).map(|i| (i % 2) as u8).collect();
+    // `pe`/`pi` feed C6 ONLY; C3 in the same array uses
+    // `path_elements`/`path_indices`. Both depths are read off their own AIR --
+    // the pair that was typed here said 12 and 15 in the same breath.
+    let c6d = p01_stark::air::merkle_update::CANONICAL_DEPTH;
+    let pe: Vec<u64> = (0..c6d).map(|i| 100u64 + i as u64 * 13).collect();
+    let pi: Vec<u8> = (0..c6d).map(|i| (i % 2) as u8).collect();
     vec![
         (
             "C1 pool_commitment",
@@ -4852,14 +4857,14 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
             "C7 spend",
             7,
             {
-                use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+                use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_LEN, TRACE_WIDTH};
                 const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
                 let spe: Vec<u64> =
                     (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
                 let spi: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
                 let mut st = 0x9E37_79B9_7F4A_7C15u64;
-                let mut mask = Vec::with_capacity(MASK_ROWS * TRACE_WIDTH);
-                for _ in 0..(MASK_ROWS * TRACE_WIDTH) {
+                let mut mask = Vec::with_capacity(MASK_LEN);
+                for _ in 0..(MASK_LEN) {
                     st ^= st >> 12;
                     st ^= st << 25;
                     st ^= st >> 27;

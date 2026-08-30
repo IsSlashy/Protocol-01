@@ -52,11 +52,11 @@
 //! ```text
 //!  id | B1 conj | B2 conj | gain | B1 uncond | B2 uncond | gain
 //!  C0 |      48 |      52 |   +4 |        28 |        46 |  +18
-//!  C1 |      43 |      48 |   +5 |        27 |        46 |  +19
+//!  C1 |      43 |      47 |   +4 |        27 |        46 |  +19
 //!  C2 |      43 |      50 |   +7 |        27 |        46 |  +19
 //!  C3 |      38 |      47 |   +9 |        25 |        42 |  +17
 //!  C4 |      43 |      48 |   +5 |        27 |        46 |  +19
-//!  C5 |      38 |      47 |   +9 |        25 |        42 |  +17
+//!  C5 |      38 |      46 |   +8 |        25 |        42 |  +17
 //!  C6 |      38 |      47 |   +9 |        25 |        42 |  +17
 //! ```
 //!
@@ -174,8 +174,8 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
         2 => p01_stark::compact::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, f, t)
             .proof_bytes,
         3 => {
-            let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i).collect();
-            let pi: Vec<u8> = (0..12u8).map(|i| i % 2).collect();
+            let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
+            let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
             p01_stark::compact::generate_merkle_path_compact_proof_with_forgery(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()), f, t)
                 .proof_bytes
         }
@@ -187,8 +187,8 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
             13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask(), f, t)
         .proof_bytes,
         6 => {
-            let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13).collect();
-            let pi: Vec<u8> = (0..12).map(|i| (i % 2) as u8).collect();
+            let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
+            let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
             p01_stark::compact::generate_merkle_update_compact_proof_with_forgery(
                 111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()), f, t)
             .proof_bytes
@@ -210,8 +210,8 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
                 1 => p01_stark::compact::generate_pool_commitment_proof(s, s + 1, s + 2, s + 3, &p01_stark::compact::c1_deterministic_probe_mask()),
                 2 => p01_stark::compact::generate_balance_compact_proof(s, 1000 + s, 777, 999 + s),
                 3 => {
-                    let pe: Vec<u64> = (0..12u64).map(|i| 1000 + i + s).collect();
-                    let pi: Vec<u8> = (0..12u8).map(|i| ((i as u64 + s) % 2) as u8).collect();
+                    let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i + s).collect();
+                    let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| ((i as u64 + s) % 2) as u8).collect();
                     p01_stark::compact::generate_merkle_path_compact_proof(777 + s, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()))
                 }
                 4 => p01_stark::compact::generate_confidential_balance_compact_proof(
@@ -239,8 +239,8 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
                     333,
                     50, &p01_stark::compact::c5_deterministic_probe_mask()),
                 6 => {
-                    let pe: Vec<u64> = (0..12).map(|i| 100u64 + i * 13 + s).collect();
-                    let pi: Vec<u8> = (0..12).map(|i| ((i as u64 + s) % 2) as u8).collect();
+                    let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13 + s).collect();
+                    let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| ((i as u64 + s) % 2) as u8).collect();
                     p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
                 }
                 _ => unreachable!(),
@@ -421,7 +421,7 @@ fn terminal_query_indices_cover_the_whole_terminal_domain() {
 // `b1_deep_binding.rs::B2_CONJECTURED_FORGERY_BITS` holds. Both had to move,
 // and the test below is what makes that a check rather than a chore: if only
 // one of them had been edited, the disagreement would have said so by name.
-const B2_CONJECTURED: [u32; 7] = [52, 48, 50, 47, 48, 47, 47];
+const B2_CONJECTURED: [u32; 7] = [52, 47, 50, 47, 48, 46, 47];
 const B2_UNCONDITIONAL: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
 
 /// The B1-era columns, derived from constants transcribed out of git at

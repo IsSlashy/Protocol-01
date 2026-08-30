@@ -82,24 +82,40 @@ fn finv(a: u64) -> u64 {
 // MOVED 2026-08-29: n 128 -> 256, LDE 2048 -> 4096. Both generators already
 // existed in the verifier; `GENERATOR_256` was carried as dead code until C1
 // needed it.
-const GEN_256: u64 = 0xBF79_143C_E60C_A966; // trace generator  (verify.rs:139)
-const GEN_4096: u64 = 0xF2C3_5199_959D_FCB6; // LDE generator   (verify.rs:145)
+// [ZK-RANDOMIZER 2026-08-30] C1's trace doubled 256 -> 512, so BOTH generators
+// move. A stale generator does not fail loudly: it silently evaluates the
+// Lagrange basis on the wrong subgroup and the solve returns noise that looks
+// like a successful defence.
+const GEN_512: u64 = 0x1905_D02A_5C41_1F4E;
+const GEN_8192: u64 = 0x1544_EF23_35D1_7997;
 const COSET_SHIFT: u64 = 7; // [B7] compact.rs:5940
 
-const TRACE_LEN: usize = 256;
-const TRACE_WIDTH: usize = 3;
-const LDE_SIZE: u64 = 4096;
+// [ZK-RANDOMIZER + ZK-DEPTH-11 2026-08-30] ⛔ THESE ARE DERIVED NOW, NOT TYPED.
+// Every one of them was a literal, and every one of them was wrong within a day:
+// the depth cut moved DEPTH, the randomizer column moved TRACE_WIDTH, and the
+// mask arity moved with both. The harness then PANICKED before building a proof,
+// which took the repository's only executable evidence offline without anyone
+// noticing -- the tests simply stopped running.
+//
+// A harness that re-derives the circuit's geometry is a second source of truth
+// for a number that has exactly one. Read the circuit.
+const TRACE_LEN: usize = p01_stark::air::denominated_pool::TRACE_LENGTH;
+const TRACE_WIDTH: usize = p01_stark::air::denominated_pool::TRACE_WIDTH;
+const LDE_SIZE: u64 = 8192;
 const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 27;
 const QUOTIENT_SEGMENTS: usize = 8; // [B2] compact_proof.rs:128
 
 fn self_check_field() {
-    assert_eq!(fpow(GEN_256, 256), 1, "GEN_256 is not a 256th root of unity");
-    assert_ne!(fpow(GEN_256, 128), 1, "GEN_256 is not primitive");
-    assert_eq!(fpow(GEN_4096, 4096), 1, "GEN_4096 is not a 4096th root");
-    assert_ne!(fpow(GEN_4096, 2048), 1, "GEN_4096 is not primitive");
-    assert_eq!(fpow(GEN_4096, BLOWUP), GEN_256, "g_lde^blowup must be g_trace");
-    assert_ne!(fpow(COSET_SHIFT, 4096), 1, "the coset is not disjoint from the subgroup");
+    // [ZK-RANDOMIZER 2026-08-30] The orders move with the geometry. This block is
+    // the harness's OWN self-check and it is the thing that would have caught a
+    // stale generator -- so it has to move too, or it certifies the wrong group.
+    assert_eq!(fpow(GEN_512, TRACE_LEN as u64), 1, "GEN_512 is not a 512th root of unity");
+    assert_ne!(fpow(GEN_512, TRACE_LEN as u64 / 2), 1, "GEN_512 is not primitive");
+    assert_eq!(fpow(GEN_8192, LDE_SIZE), 1, "GEN_8192 is not an 8192nd root");
+    assert_ne!(fpow(GEN_8192, LDE_SIZE / 2), 1, "GEN_8192 is not primitive");
+    assert_eq!(fpow(GEN_8192, BLOWUP), GEN_512, "g_lde^blowup must be g_trace");
+    assert_ne!(fpow(COSET_SHIFT, LDE_SIZE), 1, "the coset is not disjoint from the subgroup");
 }
 
 /// Lagrange basis on the trace subgroup, closed form.
@@ -194,11 +210,11 @@ fn published_nodes(op: &Openings, col: usize) -> Vec<(u64, u64)> {
             nodes.push((x, y));
         }
     };
-    let at = |pos: u64| fmul(COSET_SHIFT, fpow(GEN_4096, pos));
+    let at = |pos: u64| fmul(COSET_SHIFT, fpow(GEN_8192, pos));
     let half = LDE_SIZE / 2;
 
     push(op.ood_z, op.ood_cur[col], &mut nodes);
-    push(fmul(op.ood_z, GEN_256), op.ood_next[col], &mut nodes);
+    push(fmul(op.ood_z, GEN_512), op.ood_next[col], &mut nodes);
 
     for (pos, cur, mir, next, next_mir) in &op.queries {
         let next_pos = (pos + BLOWUP) % LDE_SIZE;
@@ -256,7 +272,7 @@ fn opening_equations(nodes: &[(u64, u64)]) -> Vec<Vec<u64>> {
         .iter()
         .map(|&(x, y)| {
             let mut row: Vec<u64> = (0..TRACE_LEN)
-                .map(|i| lagrange_basis_at(i, x, TRACE_LEN, GEN_256))
+                .map(|i| lagrange_basis_at(i, x, TRACE_LEN, GEN_512))
                 .collect();
             row.push(y);
             row
@@ -320,7 +336,7 @@ fn air_structure_equations_pre_mask(tail_end: usize) -> Vec<Vec<u64>> {
 
 /// `MASK_ROWS * TRACE_WIDTH`, the arity the prover now demands.
 fn mask_len() -> usize {
-    (TRACE_LEN - 96) * TRACE_WIDTH
+    p01_stark::air::denominated_pool::MASK_LEN
 }
 
 /// A deterministic mask. Adequate for a RANK measurement and inadequate for a

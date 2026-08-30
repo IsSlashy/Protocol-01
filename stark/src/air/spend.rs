@@ -287,7 +287,48 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-pub const TRACE_WIDTH: usize = 10;
+/// Columns the AIR actually constrains. Every transition, every boundary
+/// assertion and every periodic gate lives inside this range.
+pub const CONSTRAINED_TRACE_WIDTH: usize = 10;
+
+/// [ZK-RANDOMIZER 2026-08-30] The committed trace is ONE column wider than the
+/// circuit: column `RANDOMIZER_COL` is uniform on ALL `TRACE_LENGTH` rows and
+/// enters NO constraint, NO periodic gate and NO boundary assertion.
+///
+/// # Why it exists
+///
+/// The row mask (rows `FIRST_FREE_ROW..TRACE_LENGTH`, all constrained columns)
+/// covers the TRACE openings and, through them, the quotient openings. It does
+/// not reach the FRI layers or the terminal polynomial, because those are
+/// functionals of the DEEP composition `D` — and `D` had, until this column, no
+/// randomness of its own at all. `stark/tests/full_wire_ledger.rs` measures the
+/// ledger: C7 published 154 FRI felts plus the terminal against ZERO randomness
+/// covering them.
+///
+/// `deep_composition_lde` sums its gamma-RLC over ALL committed columns, so this
+/// one enters `D` with no other change to the fold, the commitment or the
+/// transcript.
+///
+/// # Why it is free of the two constants that block the classic randomizer
+///
+/// The textbook move is additive `Z_H(x) * r(x)` masking of the composition
+/// polynomial. `stark/tests/masking_deep_degree_gate.rs` MEASURED what that
+/// costs here: `fri_final_poly_degree_bound` 2 -> 3 and `quotient_segments`
+/// 8 -> 10, i.e. the FRI rate itself moves. A column instead:
+///   * enters no constraint, so `deg(C)` is unchanged and `quotient_segments`
+///     stays 8;
+///   * has degree `TRACE_LENGTH - 1` exactly like every other column, so
+///     `deg(D) = n - 2` holds and `fri_final_poly_degree_bound` stays 2.
+///
+/// ⛔ IT IS UNCONSTRAINED ON PURPOSE, AND THAT IS NOT A SOUNDNESS HOLE. Nothing
+/// reads it, so a malicious prover writing anything there proves nothing extra.
+/// What WOULD be a hole is a per-query identity check that swept it up — see
+/// `verify.rs`, where the phase-1 arms iterate `0..config.trace_width`. Those
+/// arms are retired post-B7 (`c7_phase1_arm_is_retired_post_b7` pins it); if one
+/// is ever revived it must stop at `CONSTRAINED_TRACE_WIDTH`, not at the width.
+pub const RANDOMIZER_COL: usize = CONSTRAINED_TRACE_WIDTH;
+
+pub const TRACE_WIDTH: usize = CONSTRAINED_TRACE_WIDTH + 1;
 pub const TRACE_LENGTH: usize = 512;
 pub const HASH_CYCLE_LEN: usize = 32;
 pub const NUM_ROUNDS: usize = 30;
@@ -319,7 +360,19 @@ pub const NUM_HASH_CYCLES: usize = TRACE_LENGTH / HASH_CYCLE_LEN; // 16
 /// publishes. 13 would free 96, 14 would free 64, and neither clears 90 with
 /// margin. This is the only change that reaches zero-knowledge inside the C6
 /// envelope.
-pub const CANONICAL_DEPTH: usize = 12;
+/// [ZK-DEPTH-11 2026-08-30] 12 -> 11, and it is FREE ON THE WIRE for the same
+/// reason the 15 -> 12 cut was: `trace_length_for_depth(11) = next_pow2(353) =
+/// 512`, unchanged. What it buys is 32 more mask rows (128 -> 160), and that was
+/// not cosmetic — `stark/tests/full_wire_ledger.rs::the_split_that_decides_per_channel`
+/// MEASURED channel A short by 132 on C3 and standing on a margin of 20 on C6
+/// and C7. A margin of 20 does not survive one more opening.
+///
+/// ⛔ THE RANDOMIZER COLUMN CANNOT SUBSTITUTE FOR THIS. It enters no constraint,
+/// so it never reaches the quotient openings; only MASK ROWS cover channel A.
+///
+/// 🚩 The price is on chain, not on the wire: the instruction walks 15 - 11 = 4
+/// levels instead of 3, at ~34,469 CU per `hash2`.
+pub const CANONICAL_DEPTH: usize = 11;
 
 /// First cycle whose rows carry no witness and exist only to be blinded.
 pub const FIRST_FREE_CYCLE: usize = CANONICAL_DEPTH; // 12
@@ -329,6 +382,19 @@ pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 384
 
 /// Blinding positions this layout offers per column, against R = 4*22+2 = 90.
 pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 128
+
+/// Field elements `build_spend_trace` requires, in one flat slice:
+///
+/// ```text
+///   [ 0 .. MASK_ROWS*CONSTRAINED_TRACE_WIDTH )   the row mask, row-major
+///   [ that .. that + TRACE_LENGTH )              the randomizer column
+/// ```
+///
+/// 128*10 + 512 = 1792. ⛔ It is ONE argument rather than two because a caller
+/// that forgets the second half must fail to COMPILE, not silently prove with a
+/// zero-filled randomizer — which would look exactly like a working proof and
+/// would blind nothing.
+pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH;
 
 /// Number of transition constraints. Indices 0..=17.
 ///   [0]-[10]  Merkle pipeline   (verbatim from `merkle_path.rs:260-283`)
@@ -964,7 +1030,9 @@ pub fn compute_spend_root(
 /// else. The commitment stays inside the trace on purpose.
 ///
 /// `mask` is the blinding material for rows 384..511 of every column, laid out
-/// row-major as `MASK_ROWS * TRACE_WIDTH` elements. It is a REQUIRED argument
+/// row-major as `MASK_LEN` elements -- `MASK_ROWS * CONSTRAINED_TRACE_WIDTH` for
+/// the blinding rows, then `TRACE_LENGTH` for the randomizer column. It is a
+/// REQUIRED argument
 /// and not an `Option` on purpose: a default would be a witness-derived or
 /// zero-filled mask, which is the failure this design exists to prevent, and a
 /// caller who has not thought about randomness should not compile.
@@ -981,9 +1049,8 @@ pub fn build_spend_trace(
 ) -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement) {
     assert_eq!(
         mask.len(),
-        MASK_ROWS * TRACE_WIDTH,
-        "C7 needs {} blinding elements ({MASK_ROWS} rows x {TRACE_WIDTH} columns)",
-        MASK_ROWS * TRACE_WIDTH
+        MASK_LEN,
+        "C7 needs {MASK_LEN} blinding elements: {MASK_ROWS} rows x          {CONSTRAINED_TRACE_WIDTH} constrained columns, then {TRACE_LENGTH} for the          randomizer column"
     );
     assert_eq!(
         path_elements.len(),
@@ -1114,9 +1181,19 @@ pub fn build_spend_trace(
     // degree of freedom and the attack comes straight back — that is exactly
     // what the first version of this file did with a Poseidon chain.
     for (i, row) in (FIRST_FREE_ROW..TRACE_LENGTH).enumerate() {
-        for col in 0..TRACE_WIDTH {
-            trace[col][row] = mask[i * TRACE_WIDTH + col];
+        for col in 0..CONSTRAINED_TRACE_WIDTH {
+            trace[col][row] = mask[i * CONSTRAINED_TRACE_WIDTH + col];
         }
+    }
+
+    // [ZK-RANDOMIZER] The tail of `mask` fills column `RANDOMIZER_COL` on EVERY
+    // row, not only the free ones. It has to be every row: what it masks is the
+    // DEEP composition, and `D` is built from the whole LDE of every column, so
+    // a column that were witness-derived anywhere would leave that part of `D`
+    // unblinded.
+    let randomizer_base = MASK_ROWS * CONSTRAINED_TRACE_WIDTH;
+    for row in 0..TRACE_LENGTH {
+        trace[RANDOMIZER_COL][row] = mask[randomizer_base + row];
     }
 
     // ── Hold column, col 9 ─────────────────────────────────────────────
@@ -1196,7 +1273,10 @@ mod tests {
     /// unpredictable ones, and a test that cannot reproduce its own trace
     /// cannot pin anything.
     fn test_mask() -> Vec<BaseElement> {
-        (0..MASK_ROWS * TRACE_WIDTH)
+        // [ZK-RANDOMIZER] MASK_LEN, not MASK_ROWS * TRACE_WIDTH: the second
+        // form is now SHORT by TRACE_LENGTH and every test using it panicked in
+        // `build_spend_trace`, which is exactly what that assertion is for.
+        (0..MASK_LEN)
             .map(|i| BaseElement::new(1_000_003u64 * (i as u64 + 1) + 7))
             .collect()
     }
@@ -1339,15 +1419,31 @@ mod tests {
     #[test]
     fn spend_bucket_trajectory_and_the_frontier_hazard() {
         const POOL_DEPTH: u32 = 15;
-        let bucket_size: usize = 1 << (POOL_DEPTH - CANONICAL_DEPTH as u32); // 8 buckets
-        assert_eq!(bucket_size, 8, "depth 12 under a depth-15 tree names 1 of 8");
-        let leaves_per_bucket: usize = 1 << CANONICAL_DEPTH; // 4096
+        let bucket_size: usize = 1 << (POOL_DEPTH - CANONICAL_DEPTH as u32);
+        // [ZK-DEPTH-11 2026-08-30] 8 -> 16, AND THIS IS A REAL PRIVACY COST, not
+        // a pin that drifted. The depth cut bought 32 mask rows for channel A;
+        // it paid for them by HALVING the bucket, 4,096 leaves -> 2,048. The
+        // frontier hazard below therefore arrives at leaf 2,049 instead of
+        // 4,097. At the pool's current size that runway is still enormous, and
+        // it is a direction of travel worth watching rather than a number to
+        // update quietly.
+        assert_eq!(bucket_size, 16, "depth 11 under a depth-15 tree names 1 of 16");
+        let leaves_per_bucket: usize = 1 << CANONICAL_DEPTH; // 2048 since the cut
+        assert_eq!(leaves_per_bucket, 2048, "the cut halved the bucket, 4096 -> 2048");
 
-        // Today: one bucket occupied, so the index carries nothing.
-        for n in [34usize, 47, 74, 4096] {
+        // Today: one bucket occupied, so the index carries nothing. ⚠️ 4096 LEFT
+        // THIS LIST because it is no longer inside one bucket — that is the
+        // privacy the depth cut spent, stated as the arithmetic rather than as a
+        // reassurance. The pool is at ~74 leaves, so the runway is still deep.
+        for n in [34usize, 47, 74, 2048] {
             let occupied = n.div_ceil(leaves_per_bucket);
             assert_eq!(occupied, 1, "at {n} leaves every note is in bucket 0");
         }
+        assert_eq!(
+            4096usize.div_ceil(leaves_per_bucket),
+            2,
+            "and at 4,096 leaves there are now TWO buckets where depth 12 had one"
+        );
 
         // The hazard: the first leaf of a new bucket is alone in it.
         for boundary in 1..bucket_size {
@@ -1395,7 +1491,10 @@ mod tests {
     /// not a comment.
     #[test]
     fn the_on_chain_top_levels_are_an_obligation_not_an_option() {
-        assert_eq!(CANONICAL_DEPTH, 12, "the circuit proves twelve levels");
+        // [ZK-DEPTH-11 2026-08-30] 12 -> 11. The obligation this test names is
+        // unchanged and gets HEAVIER: the instruction now owns FOUR top levels,
+        // not three.
+        assert_eq!(CANONICAL_DEPTH, 11, "the circuit proves eleven levels");
         assert!(
             CANONICAL_DEPTH < 15,
             "public input 1 is a SUBTREE root; the instruction owns the rest"
@@ -1404,7 +1503,10 @@ mod tests {
         // and nothing in this crate can check what that root belongs to.
         let (col, row, src) = SPEND_BOUNDARY_SPEC[5];
         assert_eq!((col, row, src), (0, ROW_MERKLE_ROOT_OUT, Some(1)));
-        assert_eq!(15 - CANONICAL_DEPTH, 3, "three levels are owed on chain");
+        // [ZK-DEPTH-11] 3 -> 4. The obligation grew with the cut: every consumer
+        // instruction must walk one more level, and every client must slice 11/4
+        // instead of 12/3.
+        assert_eq!(15 - CANONICAL_DEPTH, 4, "four levels are owed on chain");
     }
 
     /// ✅ MEASUREMENT 1b — THE PUBLIC SYSTEM IS NOW UNDERDETERMINED.
@@ -1444,7 +1546,13 @@ mod tests {
             segments.push(vec![row]);
         }
         let unknowns = segments.len();
-        assert_eq!(unknowns, 1 + 9 + MASK_ROWS, "138 unknowns");
+        // DERIVED, not typed: one hold segment, one per constrained cycle above
+        // the hold, one per mask row. At depth 11 that is 1 + 8 + 160 = 169.
+        assert_eq!(
+            unknowns,
+            1 + (FIRST_FREE_CYCLE - 3) + MASK_ROWS,
+            "unknowns must follow the depth, not a literal"
+        );
 
         // Every evaluation the deployed wire publishes for this column.
         const R: usize = 4 * 22 + 2;
@@ -1582,7 +1690,11 @@ mod tests {
             }
             cycle_values.push(v);
         }
-        assert_eq!(cycle_values.len(), 9, "cycles 3..11 are one scalar each");
+        assert_eq!(
+            cycle_values.len(),
+            FIRST_FREE_CYCLE - 3,
+            "cycles 3..FIRST_FREE_CYCLE are one scalar each"
+        );
         let masked: Vec<_> = (FIRST_FREE_ROW..TRACE_LENGTH).map(|r| trace[9][r]).collect();
         for i in 0..masked.len() {
             for j in (i + 1)..masked.len() {
@@ -1715,7 +1827,19 @@ mod tests {
 
     #[test]
     fn constraint_and_periodic_counts_are_frozen() {
-        assert_eq!(TRACE_WIDTH, 10);
+        // [ZK-RANDOMIZER 2026-08-30] 10 -> 11, and the two constants are pinned
+        // SEPARATELY on purpose: the AIR constrains 10 columns and the wire
+        // carries 11. A future edit that widens the circuit must move
+        // CONSTRAINED_TRACE_WIDTH, and one that widens only the commitment must
+        // move TRACE_WIDTH. Pinning one number could not tell them apart.
+        assert_eq!(CONSTRAINED_TRACE_WIDTH, 10);
+        assert_eq!(TRACE_WIDTH, 11);
+        assert_eq!(RANDOMIZER_COL, 10);
+        assert_eq!(MASK_LEN, MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH);
+        // [ZK-DEPTH-11] 1792 -> 2112: 160 mask rows x 10 constrained columns,
+        // plus 512 for the randomizer column.
+        assert_eq!(MASK_LEN, 2112);
+        assert_eq!(MASK_ROWS, 160);
         assert_eq!(TRACE_LENGTH, 512);
         assert_eq!(SPEND_NUM_CONSTRAINTS, 18);
         assert_eq!(SPEND_NUM_PERIODIC, 13);
@@ -1725,10 +1849,14 @@ mod tests {
         assert_eq!(HOLD_CONSTANT_LAST, 95);
         assert!(HOLD_CONSTANT_LAST > ROW_COMMITMENT_OUT, "the gate must cover row 94");
         assert_eq!(ROW_COMMITMENT_OUT, 94);
-        assert_eq!(ROW_MERKLE_ROOT_OUT, 382);
-        assert_eq!(CANONICAL_DEPTH, 12, "depth 12 in-circuit; the top 3 levels are on chain");
-        assert_eq!(FIRST_FREE_ROW, 384);
-        assert_eq!(MASK_ROWS, 128);
+        // [ZK-DEPTH-11 2026-08-30] Four numbers that move together, pinned
+        // together: the cut sets FIRST_FREE_ROW, which sets MASK_ROWS, which
+        // sets ROW_MERKLE_ROOT_OUT and the boundary spec. A deployed verifier
+        // pins that shape byte for byte.
+        assert_eq!(ROW_MERKLE_ROOT_OUT, 350); // (11-1)*32 + 30
+        assert_eq!(CANONICAL_DEPTH, 11, "depth 11 in-circuit; the top 4 levels are on chain");
+        assert_eq!(FIRST_FREE_ROW, 352);
+        assert_eq!(MASK_ROWS, 160);
         assert!(MASK_ROWS > 4 * 22 + 2, "the blinding region must exceed R");
         assert_eq!(ROW_CHAIN, 63);
     }
@@ -1884,7 +2012,7 @@ mod tests {
                 (8, 0, None),
                 (8, 32, None),
                 (8, 64, None),
-                (0, 382, Some(1)),
+                (0, 350, Some(1)), // [ZK-DEPTH-11] ROW_MERKLE_ROOT_OUT: (11-1)*32 + 30
             ]
         );
     }

@@ -38,6 +38,7 @@ import {
   fetchPoolLeavesByIndex,
   buildMerkleProofFromLeavesV3,
   goldilocksToLeBytes32,
+  C3_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
@@ -247,12 +248,31 @@ export default function DenominatedUnshieldScreen() {
           receipt.merklePathIndices = c3Indices;
 
           // C3 — merkle path proof (NEW in V3).
+          //
+          // [C3-D12] The circuit proves the bottom 12 levels ONLY, since the
+          // depth cut that freed 128 trace rows for a blinding region. Handing
+          // it 15 elements panics inside the wasm, mid-proof, with no useful
+          // message. The top 3 travel to the instruction instead, and the
+          // handler walks them to reach a root the pool has published.
           const U64 = (1n << 64n) - 1n;
+          if (c3Path.length < C3_SUBTREE_DEPTH) {
+            throw new Error(
+              `Merkle path has ${c3Path.length} elements, need at least ` +
+              `${C3_SUBTREE_DEPTH} for the C3 circuit.`,
+            );
+          }
           const c3Result = await generateMerklePathProof(
             (receipt.commitment & U64).toString(),
-            c3Path.map(e => (e & U64).toString()),
-            c3Indices,
+            c3Path.slice(0, C3_SUBTREE_DEPTH).map(e => (e & U64).toString()),
+            c3Indices.slice(0, C3_SUBTREE_DEPTH),
           );
+          // ⛔ `merkleRoot` is the POOL root from the walk above, NOT the C3
+          // proof's public input 1 — that one is the subtree root now.
+          const c3Walk = {
+            merkleRoot: c3Root,
+            siblings: c3Path.slice(C3_SUBTREE_DEPTH).map(e => e & U64),
+            directions: c3Indices.slice(C3_SUBTREE_DEPTH),
+          };
 
           // Re-encrypt the receipt back into the StoredNote so future
           // operations see the refreshed merkleRoot. (We persist via the
@@ -270,6 +290,7 @@ export default function DenominatedUnshieldScreen() {
             finalRecipient,
             { proofBytes: c1Bytes, publicInputs: c1Inputs, proofSize: c1Result.proofSize },
             { proofBytes: c3Bytes, publicInputs: c3Inputs, proofSize: c3Result.proofSize },
+            c3Walk,
             emergency,
           );
         }
