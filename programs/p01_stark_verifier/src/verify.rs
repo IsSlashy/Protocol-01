@@ -735,11 +735,11 @@ mod domain_generator_tests {
         };
         use p01_stark::{BaseElement, FieldElement, StarkField};
 
-        assert_eq!(MERKLE_UPDATE_NUM_CONSTRAINTS, 19);
+        assert_eq!(MERKLE_UPDATE_NUM_CONSTRAINTS, 20);
         assert_eq!(MERKLE_UPDATE_NUM_PERIODIC, 9, "seven columns plus the two gates");
-        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
-        // fewer, and the extra column is the randomizer. Both numbers matter.
-        assert_eq!(TRACE_WIDTH, 11);
+        // [ZK-LIFT 2026-08-30] The COMMITTED width. The AIR constrains eleven of
+        // the twelve: col 10 is the ZK lift, col 11 the randomizer. Both matter.
+        assert_eq!(TRACE_WIDTH, 12);
 
         let w = TRACE_WIDTH;
         let np = MERKLE_UPDATE_NUM_PERIODIC;
@@ -3885,7 +3885,7 @@ fn evaluate_transition_at_ood_circuit_6(
     let oro1 = o0_7.add(three.mul(o1_7)).add(o2_7);
     let oro2 = o0_7.add(o1_7).add(three.mul(o2_7));
 
-    let mut cs = [Felt::ZERO; 19];
+    let mut cs = [Felt::ZERO; 20];
     cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_active.mul(oro0.sub(ood_current[0])))
     );
@@ -3943,6 +3943,21 @@ fn evaluate_transition_at_ood_circuit_6(
 
     // ── Direction binary ──
     cs[18] = hash_start_a.mul(dir).mul(one.sub(dir));
+
+    // ── [19] ZK degree lift, col `ZK_LIFT_COL` ──
+    //
+    // Prover twin: `air::merkle_update::evaluate_merkle_update_transition`,
+    // result[19]. Zero on the trace domain, so it constrains nothing; its job
+    // is to be degree 1 in the lift column so the blinding region reaches every
+    // quotient block instead of only the low ones.
+    //
+    // 🚨 THE BASE IS RAW `ood_current[0]`, never a local `s0`: that is the
+    // Poseidon round input `ood_current[0] + rc0`, and using it here would
+    // evaluate a different polynomial than the prover and reject every honest
+    // proof with `DeepAliFailed`.
+    let lift_base = ood_current[0];
+    let lb3 = lift_base.mul(lift_base).mul(lift_base);
+    cs[19] = active.mul(nba).mul(ood_current[10]).mul(lb3).mul(lb3);
 
     // RLC: Σ α^i · cs[i]. Accumulated as a Horner-style walk keeps α_pow to a
     // single running multiplication per constraint (no array allocation).
@@ -4066,7 +4081,7 @@ pub fn verify_deep_ali_circuit_6(
     // one that found the other three — walked straight past it. The arity guard
     // must move with `CONFIG_MERKLE_UPDATE.trace_width`, and there is nothing in
     // the type system that says so.
-    if ood_current.len() != 11 || ood_next.len() != 11 {
+    if ood_current.len() != 12 || ood_next.len() != 12 {
         return Err(VerifyError::DeepAliFailed);
     }
 

@@ -300,7 +300,11 @@ pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
     //
     // ⛔ HARD WIRE BREAK IN BOTH DIRECTIONS: `from_bytes` sizes every query block
     // from `trace_width`.
-    trace_width: 11,
+    // [ZK-LIFT 2026-08-30] 11 -> 12. Column 10 is the ZK lift (zero on the
+    // constrained rows, uniform on the blinding ones, read by constraint [19]
+    // alone); column 11 is the randomizer, read by nothing. HARD WIRE BREAK in
+    // both directions -- `from_bytes` sizes every query block from this number.
+    trace_width: 12,
     trace_length: 512,
     blowup: 16,
     lde_size: 8192,
