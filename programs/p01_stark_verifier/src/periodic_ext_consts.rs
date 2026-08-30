@@ -47,40 +47,20 @@ pub const C3_RC0_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C3_RC0_TAIL: [u64; 32] = [
-    12217780303015669259,
-    10038256574622962451,
-    15375375916563942076,
-    13812082996061331929,
-    11424809973712064047,
-    9950053892405660682,
-    17857513566170638532,
-    5866467194849799239,
-    16341862545800400186,
-    12499424870808209933,
-    8763970930986169984,
-    4929436365629031283,
-    1139924952456036422,
-    15729637593098751257,
-    11944629672349899756,
-    8168698696923250367,
-    4388264813027384210,
-    612327798878976101,
-    15278637989023999928,
-    11502725297271176843,
-    7726795012597885790,
-    3950864728507639857,
-    102876850534626564,
-    14773690640296530391,
-    10997760356262899370,
-    7221829933963783037,
-    3445898886550718544,
-    18112198182886458659,
-    14336267589810717174,
-    10474770489209036489,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C3_RC0_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C3_RC1_COEFFS`.
 /// `P_periodic(x) = Σ_k C3_RC1_PERIODIC16[k] · x^(16k)`.
@@ -98,40 +78,20 @@ pub const C3_RC1_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C3_RC1_TAIL: [u64; 32] = [
-    4446359640038818602,
-    3429464995877012701,
-    2214041564901481337,
-    6891104607561512746,
-    5033023334390698923,
-    15127298334156676226,
-    3336387867992590933,
-    789007945338025624,
-    8876850591957150731,
-    5105361801630034366,
-    1297753358021485873,
-    15964118759151043172,
-    12107053244178632503,
-    8317540689889676298,
-    4537071548837957853,
-    756636977745468848,
-    15427444174747662979,
-    11647010153746290518,
-    7871079869805969577,
-    4095167178056310140,
-    319236893227829839,
-    14917993089232820002,
-    11142062805029295093,
-    7366132520983097544,
-    3590202237048016283,
-    18261015832622975598,
-    14485078243970389825,
-    10713646953788290068,
-    6852140580349206759,
-    3062708770368896442,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C3_RC1_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C3_RC2_COEFFS`.
 /// `P_periodic(x) = Σ_k C3_RC2_PERIODIC16[k] · x^(16k)`.
@@ -149,40 +109,20 @@ pub const C3_RC2_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C3_RC2_TAIL: [u64; 32] = [
-    6980127789682015776,
-    12459892930917877541,
-    8851146038543191309,
-    14100208373702317496,
-    7754650006133083761,
-    4364353076616546771,
-    13326399613670935446,
-    10715999907454651465,
-    1487269551259319132,
-    16148896550903634031,
-    12341490250719372418,
-    8552021855666176341,
-    4694991522115186216,
-    905443717855218427,
-    15576256816138117070,
-    11795822932242250913,
-    8019886055532796276,
-    4239452034531423815,
-    463539342776491930,
-    15134353132282543213,
-    11358422847722514752,
-    7510434969745311251,
-    3734504685797651174,
-    18405318475477766073,
-    14629394788612467852,
-    10853457966812359007,
-    7077524564671739442,
-    3301585234945516293,
-    17886832830821154776,
-    14097391125240396971,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C3_RC2_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C3_ROUND_ACTIVE_COEFFS`.
 /// `P_periodic(x) = Σ_k C3_ROUND_ACTIVE_PERIODIC16[k] · x^(16k)`.
@@ -200,40 +140,20 @@ pub const C3_ROUND_ACTIVE_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C3_ROUND_ACTIVE_TAIL: [u64; 32] = [
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C3_ROUND_ACTIVE_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C3_HASH_START_COEFFS`.
 /// `P_periodic(x) = Σ_k C3_HASH_START_PERIODIC16[k] · x^(16k)`.
@@ -251,40 +171,20 @@ pub const C3_HASH_START_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C3_HASH_START_TAIL: [u64; 32] = [
-    1,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C3_HASH_START_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C3_IS_BOUNDARY_COEFFS`.
 /// `P_periodic(x) = Σ_k C3_IS_BOUNDARY_PERIODIC16[k] · x^(16k)`.
@@ -302,40 +202,20 @@ pub const C3_IS_BOUNDARY_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C3_IS_BOUNDARY_TAIL: [u64; 32] = [
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C3_IS_BOUNDARY_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C3_IS_INTERIOR_COEFFS`.
 /// `P_periodic(x) = Σ_k C3_IS_INTERIOR_PERIODIC16[k] · x^(16k)`.
@@ -353,40 +233,20 @@ pub const C3_IS_INTERIOR_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C3_IS_INTERIOR_TAIL: [u64; 32] = [
-    0,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C3_IS_INTERIOR_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C6_RC0_COEFFS`.
 /// `P_periodic(x) = Σ_k C6_RC0_PERIODIC16[k] · x^(16k)`.
@@ -404,40 +264,20 @@ pub const C6_RC0_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C6_RC0_TAIL: [u64; 32] = [
-    12217780303015669259,
-    10038256574622962451,
-    15375375916563942076,
-    13812082996061331929,
-    11424809973712064047,
-    9950053892405660682,
-    17857513566170638532,
-    5866467194849799239,
-    16341862545800400186,
-    12499424870808209933,
-    8763970930986169984,
-    4929436365629031283,
-    1139924952456036422,
-    15729637593098751257,
-    11944629672349899756,
-    8168698696923250367,
-    4388264813027384210,
-    612327798878976101,
-    15278637989023999928,
-    11502725297271176843,
-    7726795012597885790,
-    3950864728507639857,
-    102876850534626564,
-    14773690640296530391,
-    10997760356262899370,
-    7221829933963783037,
-    3445898886550718544,
-    18112198182886458659,
-    14336267589810717174,
-    10474770489209036489,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C6_RC0_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C6_RC1_COEFFS`.
 /// `P_periodic(x) = Σ_k C6_RC1_PERIODIC16[k] · x^(16k)`.
@@ -455,40 +295,20 @@ pub const C6_RC1_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C6_RC1_TAIL: [u64; 32] = [
-    4446359640038818602,
-    3429464995877012701,
-    2214041564901481337,
-    6891104607561512746,
-    5033023334390698923,
-    15127298334156676226,
-    3336387867992590933,
-    789007945338025624,
-    8876850591957150731,
-    5105361801630034366,
-    1297753358021485873,
-    15964118759151043172,
-    12107053244178632503,
-    8317540689889676298,
-    4537071548837957853,
-    756636977745468848,
-    15427444174747662979,
-    11647010153746290518,
-    7871079869805969577,
-    4095167178056310140,
-    319236893227829839,
-    14917993089232820002,
-    11142062805029295093,
-    7366132520983097544,
-    3590202237048016283,
-    18261015832622975598,
-    14485078243970389825,
-    10713646953788290068,
-    6852140580349206759,
-    3062708770368896442,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C6_RC1_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C6_RC2_COEFFS`.
 /// `P_periodic(x) = Σ_k C6_RC2_PERIODIC16[k] · x^(16k)`.
@@ -506,40 +326,20 @@ pub const C6_RC2_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C6_RC2_TAIL: [u64; 32] = [
-    6980127789682015776,
-    12459892930917877541,
-    8851146038543191309,
-    14100208373702317496,
-    7754650006133083761,
-    4364353076616546771,
-    13326399613670935446,
-    10715999907454651465,
-    1487269551259319132,
-    16148896550903634031,
-    12341490250719372418,
-    8552021855666176341,
-    4694991522115186216,
-    905443717855218427,
-    15576256816138117070,
-    11795822932242250913,
-    8019886055532796276,
-    4239452034531423815,
-    463539342776491930,
-    15134353132282543213,
-    11358422847722514752,
-    7510434969745311251,
-    3734504685797651174,
-    18405318475477766073,
-    14629394788612467852,
-    10853457966812359007,
-    7077524564671739442,
-    3301585234945516293,
-    17886832830821154776,
-    14097391125240396971,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C6_RC2_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C6_ROUND_ACTIVE_COEFFS`.
 /// `P_periodic(x) = Σ_k C6_ROUND_ACTIVE_PERIODIC16[k] · x^(16k)`.
@@ -557,40 +357,20 @@ pub const C6_ROUND_ACTIVE_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C6_ROUND_ACTIVE_TAIL: [u64; 32] = [
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C6_ROUND_ACTIVE_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C6_HASH_START_COEFFS`.
 /// `P_periodic(x) = Σ_k C6_HASH_START_PERIODIC16[k] · x^(16k)`.
@@ -608,40 +388,20 @@ pub const C6_HASH_START_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C6_HASH_START_TAIL: [u64; 32] = [
-    1,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C6_HASH_START_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C6_IS_BOUNDARY_COEFFS`.
 /// `P_periodic(x) = Σ_k C6_IS_BOUNDARY_PERIODIC16[k] · x^(16k)`.
@@ -659,40 +419,20 @@ pub const C6_IS_BOUNDARY_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C6_IS_BOUNDARY_TAIL: [u64; 32] = [
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C6_IS_BOUNDARY_TAIL: [u64; 32] = [0; 32];
 
 /// Stride-16 compressed coefficients of the 32-periodic extension of `C6_IS_INTERIOR_COEFFS`.
 /// `P_periodic(x) = Σ_k C6_IS_INTERIOR_PERIODIC16[k] · x^(16k)`.
@@ -710,38 +450,18 @@ pub const C6_IS_INTERIOR_PERIODIC16: [u64; 32] = [
 /// Values the 32-periodic extension takes on trace rows 480..=511, where the
 /// real column is zero-filled (`active_rows = depth*32 = 480`). Index `j` is row
 /// `480 + j`. These are subtracted back out via the Lagrange correction.
-pub const C6_IS_INTERIOR_TAIL: [u64; 32] = [
-    0,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    1,
-    0,
-];
+/// [ZK-MASK 2026-08-30] IDENTICALLY ZERO, and that is the measurement.
+///
+/// This table held the DEVIATION between the 32-periodic extension of the
+/// column and the column itself on rows 480..511, back when the walk
+/// truncated there. Under the depth-11 layout C3 and C6 build these seven
+/// columns 32-periodic on ALL 512 rows, so the extension IS the column and
+/// the deviation is zero everywhere. `verify.rs` stopped reading them on
+/// 2026-08-24 (see the "the seven C3_*_TAIL tables are dead" note); they
+/// stay, zeroed, because `periodic_stride` asserts the zero. A NON-ZERO
+/// value reappearing here means the AIR truncates its periodic columns
+/// again -- which re-imposes the Poseidon rounds across the blinding rows
+/// and turns the masked rows back into constrained ones. That is a PRIVACY
+/// regression, not a bookkeeping change, and the zero is what catches it.
+pub const C6_IS_INTERIOR_TAIL: [u64; 32] = [0; 32];
 

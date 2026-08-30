@@ -374,19 +374,34 @@ fn fails_closed_old_format_c4_proof_against_new_verifier() {
     );
 }
 
-/// **Direction 1, length-mismatch case.** Same skew on C1 (`trace_width == 3`),
-/// where the old layout is `27 * 16 = 432` bytes LONGER. Rejection may come from
-/// the parser or from a downstream check; the property is that it comes.
+/// **Direction 1, the length-blind case.** The same skew on C1.
+///
+/// [ZK-RANDOMIZER 2026-08-30] This used to be the length-MISMATCH case: at
+/// `trace_width == 3` the closed form `nq * (16*tw - 64)` gave `27 * -16 =
+/// -432`, so the old layout was 432 bytes longer and a length check alone
+/// caught it. The randomizer column took C1 to width 4, where `16*4 - 64 = 0`
+/// and the two layouts weigh EXACTLY the same. So this is now the HARDER case,
+/// not the easier one: nothing about the length distinguishes an old-format C1
+/// proof and the rejection has to come from the trace commitment itself. The
+/// delta is read off the config rather than typed, so the day a width moves
+/// again this test states the truth instead of a stale subtraction.
 #[test]
 fn fails_closed_old_format_c1_proof_against_new_verifier() {
     let old = c1_proof(TraceLeaf::LegacyRowLeaf);
     let new = c1_proof(TraceLeaf::Canonical);
 
+    let cfg = &CONFIG_POOL_COMMITMENT;
+    let delta = cfg.num_queries as i64 * (16 * cfg.trace_width as i64 - 64);
     assert_eq!(
-        old.proof_bytes.len(),
-        new.proof_bytes.len() + 432,
-        "C1: nq * (16*tw - 64) = 27 * -16 = -432, so the OLD layout is 432 \
-         bytes longer than Route C",
+        old.proof_bytes.len() as i64,
+        new.proof_bytes.len() as i64 - delta,
+        "C1: nq * (16*tw - 64) = {} * {} = {delta}, so the OLD layout is {} bytes {}",
+        cfg.num_queries,
+        16 * cfg.trace_width as i64 - 64,
+        delta.abs(),
+        if delta < 0 { "longer than Route C" }
+        else if delta > 0 { "shorter than Route C" }
+        else { "-- the SAME size as Route C, so length discriminates nothing" },
     );
 
     match GenericCompactProof::from_bytes(&old.proof_bytes, &CONFIG_POOL_COMMITMENT) {
@@ -1162,22 +1177,32 @@ fn mirror_slot_holds_the_row_at_the_mirror_position() {
 #[test]
 fn route_c_wire_sizes_match_the_closed_form() {
     // (label, pre-Route-C measured bytes, config, actual bytes)
-    let cases: Vec<(&str, usize, &CircuitConfig, usize)> = vec![
-        ("C0", 45_433, &CONFIG_SUBSCRIBER_OWNERSHIP,
+    // [ZK-MASK 2026-08-30] `None` on C1, C3, C5 and C6, and the reason is not
+    // convenience. A baseline is a MEASUREMENT of a code state; it cannot be
+    // re-measured once the geometry it described is gone, and all four of those
+    // circuits changed trace length and/or width when the blinding regions
+    // landed. Re-deriving one as `actual - closed_form` would make the
+    // closed-form arm assert itself, which is worse than not running it -- so
+    // it does not run, and this comment is the record of what was lost. What
+    // still covers those four is the absolute pin below and `from_config`,
+    // which rebuilds the whole wire layout from `CircuitConfig` independently
+    // of the generator.
+    let cases: Vec<(&str, Option<usize>, &CircuitConfig, usize)> = vec![
+        ("C0", Some(45_433), &CONFIG_SUBSCRIBER_OWNERSHIP,
             p01_stark::compact::generate_compact_proof(42).proof_bytes.len()),
-        ("C1", 66_233, &CONFIG_POOL_COMMITMENT,
+        ("C1", None, &CONFIG_POOL_COMMITMENT,
             p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()).proof_bytes.len()),
-        ("C2", 66_681, &CONFIG_BALANCE_PROOF,
+        ("C2", Some(66_681), &CONFIG_BALANCE_PROOF,
             p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)
                 .proof_bytes.len()),
-        ("C3", 74_933, &CONFIG_MERKLE_PATH, {
+        ("C3", None, &CONFIG_MERKLE_PATH, {
             let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
             let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
             p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::compact::c3_deterministic_probe_mask(pe.len()))
                 .proof_bytes
                 .len()
         }),
-        ("C4", 78_377, &CONFIG_CONFIDENTIAL_BALANCE, {
+        ("C4", Some(78_377), &CONFIG_CONFIDENTIAL_BALANCE, {
             let (a, b, c, d, e, f, g, h) = C4_ARGS;
             p01_stark::compact::generate_confidential_balance_compact_proof(
                 a, b, c, d, e, f, g, h,
@@ -1185,12 +1210,12 @@ fn route_c_wire_sizes_match_the_closed_form() {
             .proof_bytes
             .len()
         }),
-        ("C5", 75_301, &CONFIG_TRANSFER,
+        ("C5", None, &CONFIG_TRANSFER,
             p01_stark::compact::generate_transfer_compact_proof(
                 13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask())
             .proof_bytes
             .len()),
-        ("C6", 76_405, &CONFIG_MERKLE_UPDATE, {
+        ("C6", None, &CONFIG_MERKLE_UPDATE, {
             let pe: Vec<u64> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH as u64).map(|i| 100u64 + i * 13).collect();
             let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
             p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
@@ -1205,23 +1230,30 @@ fn route_c_wire_sizes_match_the_closed_form() {
     // as literals as well as via the closed form: the closed form alone would stay
     // green if BOTH the baseline and the actual size drifted by the same amount.
     // [B2] Post-segmentation absolute sizes, MEASURED with `cross_language_fixture_digests`.
-    let absolute: [usize; 7] = [47_641, 68_881, 69_761, 78_157, 81_457, 78_877, 81_037];
+    // [ZK-MASK 2026-08-30] All four masked circuits moved. The C1 entry was two
+    // generations stale (68,881) and never fired, because the delta arm above it
+    // failed first every time.
+    let absolute: [usize; 7] = [47_641, 94_017, 69_761, 78_877, 81_457, 89_821, 81_757];
 
     for (i, (label, baseline, cfg, actual)) in cases.into_iter().enumerate() {
         // Two independent terms against the SAME pre-Route-C baseline. Keeping
         // them apart is the point: a lumped delta would let a Route C regression
         // hide inside a B2 gain.
-        let route_c_delta = cfg.num_queries as i64 * (16 * cfg.trace_width as i64 - 64);
-        let b2_delta =
-            8 * (cfg.quotient_segments as i64 - 1) * (2 * cfg.num_queries as i64 + 1);
-        let expected_delta = route_c_delta + b2_delta;
-        let measured_delta = actual as i64 - baseline as i64;
-        assert_eq!(
-            measured_delta, expected_delta,
-            "{label}: byte delta {measured_delta} != closed form \
-             nq*(16*tw-64) + 8*(k-1)*(2*nq+1) = {route_c_delta} + {b2_delta} \
-             (baseline {baseline}, actual {actual})",
-        );
+        if let Some(baseline) = baseline {
+                let route_c_delta = cfg.num_queries as i64 * (16 * cfg.trace_width as i64 - 64);
+                let b2_delta =
+                    8 * (cfg.quotient_segments as i64 - 1) * (2 * cfg.num_queries as i64 + 1);
+                let expected_delta = route_c_delta + b2_delta;
+                let measured_delta = actual as i64 - baseline as i64;
+                assert_eq!(
+                    measured_delta, expected_delta,
+                    "{label}: byte delta {measured_delta} != closed form \
+                     nq*(16*tw-64) + 8*(k-1)*(2*nq+1) = {route_c_delta} + {b2_delta} \
+                     (baseline {baseline}, actual {actual})",
+                );
+        } else {
+            println!("[ROUTE C] {label}: no pre-Route-C baseline for this geometry; covered by the absolute pin and from_config only");
+        }
         assert_eq!(
             actual, absolute[i],
             "{label}: absolute post-B2 size drifted (expected {}, got {actual})",

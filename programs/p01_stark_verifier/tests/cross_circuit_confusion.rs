@@ -116,8 +116,12 @@ fn recorded_proof_sizes_hold() {
     // [C7 2026-08-24] Eighth entry: 77,965 B, MEASURED. C7 is SMALLER than C6
     // (81,037) despite identical width, length, blowup and query count, because
     // `fri_final_poly_size = 32` drops one committed FRI layer.
+    // [ZK-MASK 2026-08-30] All four masked circuits moved. C1 grew most
+    // (80,577 -> 94,017): its trace doubled to 512 rows AND the randomizer
+    // column widened it to 4. C5 grew on the trace alone (1024 rows). C3, C6
+    // and C7 each grew by one randomizer column, net of the depth cut.
     const RECORDED: [usize; 8] =
-        [47_641, 80_577, 69_761, 78_157, 81_457, 78_877, 81_037, 77_965];
+        [47_641, 94_017, 69_761, 78_877, 81_457, 89_821, 81_757, 78_685];
     let proofs = all_genuine();
     let mut measured = [0usize; 8];
     for (i, p) in proofs.iter().enumerate() {
@@ -263,9 +267,19 @@ fn no_two_configs_share_the_tuple_the_parser_can_observe() {
         }
     }
 
-    // …and the sharper statement: for four of the pairs, deleting `trace_width`
+    // …and the sharper statement: for the pair below, deleting `trace_width`
     // from the tuple makes them collide. Pinned so nobody concludes from the
     // green matrix that the configs are well separated.
+    //
+    // [ZK-MASK 2026-08-30] 4 -> 1, and the DIRECTION matters. This number
+    // falling means the configs are BETTER separated, not worse: the
+    // full-tuple assert_ne! above still passes on every pair, and three of
+    // the four collapsed pairs picked up a second distinguishing field when
+    // the masks moved their geometry -- C1/C2, C3/C5 and C5/C6 now differ in
+    // merkle_depth (C1: 512 rows -> lde 8192 -> md 13; C5: 1024 rows -> lde
+    // 16384 -> md 14). C3/C6 is the one that remains: same md 13, same k 8,
+    // same nq 22, same nfl 8, same fps 16. trace_width 7 against 11 is the
+    // ONLY thing between them.
     let collapsed: Vec<_> = tuples
         .iter()
         .map(|(cid, t)| (*cid, (t.1, t.2, t.3, t.4, t.5)))
@@ -283,8 +297,8 @@ fn no_two_configs_share_the_tuple_the_parser_can_observe() {
         }
     }
     assert_eq!(
-        collisions, 4,
-        "the number of config pairs separated by trace_width alone changed (was 4: C1/C2, \
+        collisions, 1,
+        "the number of config pairs separated by trace_width alone changed (was 1: C3/C6, and a number going UP is the dangerous direction; it was 4: C1/C2, \
          C3/C5, C3/C6, C5/C6). Re-read `cross_circuit_parse_matrix_uniform_padded` before \
          accepting the new number — a pair that becomes separated by nothing else is a pair \
          whose separation is a byte-offset coincidence.",

@@ -106,14 +106,21 @@ fn c4_duplicate_tables_are_identical() {
 // ============================================================================
 // [A4] Periodic-extension constants for circuits 3 and 6
 // ============================================================================
-//
 // `verify_deep_ali_circuit_3` / `_6` no longer Horner the dense
 // `C3_*_COEFFS` / `C6_*_COEFFS`. They evaluate the 32-periodic *extension* of
-// each column (stride-16 sparse, 32 coefficients) and subtract a Lagrange
-// correction over the 32 rows the AIRs truncate:
+// each column -- stride-16 sparse, 32 coefficients -- and that is the WHOLE
+// evaluation:
 //
-//     P_actual(z) = P_periodic(z) − Σ_{j=0}^{31} TAIL[j] · L_{480+j}(z)
-//     L_r(z)      = g^r · (z^N − 1) / (N · (z − g^r)),  N = 512
+//     P_actual(z) = P_periodic(z)
+//
+// [ZK-MASK 2026-08-30] There used to be a second term here, a Lagrange
+// correction `- SUM_j TAIL[j] * L_{480+j}(z)` over the 32 rows the AIRs
+// truncated at depth 15. Under the depth-11 layout the columns are 32-periodic
+// on ALL 512 rows, so the extension IS the column, every TAIL is zero, and the
+// correction -- 32 Lagrange terms with a field inversion each -- is gone from
+// the verifier. What is left in its place is an assertion that the fourteen
+// tables are still zero, because a value coming back means the AIR truncates
+// again, which means the blinding rows are constrained again.
 //
 // `periodic_ext_consts` is a derived artifact of `periodic_consts`. Nothing at
 // runtime re-derives it — a scan would cost what the rewrite saves — so the
@@ -214,21 +221,20 @@ fn a4_extension_constants_match_dense_tables() {
         // Values of the real column on the trace domain.
         let vals: Vec<u64> = (0..N).map(|i| dense_eval(dense, pows[i])).collect();
 
-        // The correction is only a 32-row correction because the AIR truncates
-        // at row 480 exactly. If that ever moves, everything below is wrong.
-        for (i, v) in vals.iter().enumerate().take(480) {
+        // [ZK-MASK 2026-08-30] 32-PERIODIC ON ALL 512 ROWS, not on 0..480.
+        //
+        // The predecessor of this block asserted rows 480..511 were ZERO,
+        // because the walk truncated there at depth 15 and the extension
+        // deviated from the column over that tail. Under the depth-11 layout
+        // C3 and C6 build these seven columns across every row -- which is
+        // exactly why verify.rs could delete its Lagrange correction arm and
+        // call the fourteen *_TAIL tables dead. So the check is the stronger
+        // one now: periodicity everywhere, and no tail at all.
+        for (i, v) in vals.iter().enumerate() {
             assert_eq!(
                 *v,
                 vals[i % 32],
-                "{name}: rows 0..480 are not 32-periodic at row {i}; the \
-                 periodic-extension rewrite in verify.rs is invalid"
-            );
-        }
-        for (i, v) in vals.iter().enumerate().skip(480) {
-            assert_eq!(
-                *v, 0,
-                "{name}: row {i} is not zero-filled; TAIL is no longer the \
-                 full deviation and the correction is incomplete"
+                "{name}: row {i} breaks 32-periodicity. The stride-16 evaluator in verify.rs assumes it holds on ALL 512 rows and carries no correction term any more, so an honest proof would be rejected at the OOD point."
             );
         }
 
@@ -263,10 +269,15 @@ fn a4_extension_constants_match_dense_tables() {
                 periodic16[k], pc[k * 16],
                 "{name}_PERIODIC16[{k}] is stale vs periodic_consts.rs"
             );
+            // A non-zero TAIL is not a stale constant, it is a PRIVACY
+            // regression. The deviation is zero exactly while the periodic
+            // columns run all 512 rows, and they run all 512 rows exactly
+            // while the blinding rows take no Poseidon round. A value here
+            // means the rounds came back and air_aware_recovery_c3 recovers
+            // the path and the leaf index again.
             assert_eq!(
-                tail[k],
-                w[480 + k],
-                "{name}_TAIL[{k}] is stale vs periodic_consts.rs"
+                tail[k], 0,
+                "{name}_TAIL[{k}] is non-zero. The periodic columns are truncated again, so the blinding rows are constrained again -- that is the privacy regression verify.rs warns about, not a bookkeeping drift."
             );
         }
     }
@@ -301,20 +312,12 @@ fn a4_periodic_extension_identity() {
                 p_per = madd(mmul(p_per, y16), periodic16[k]);
             }
 
-            // − Σ_j TAIL[j] · L_{480+j}(z)
-            let k_common = mmul(msub(z_n, 1), inv_n);
-            let mut corr = 0u64;
-            for j in 0..32 {
-                if tail[j] == 0 {
-                    continue;
-                }
-                let g_r = pows[480 + j];
-                let l = mmul(mmul(k_common, g_r), minv(msub(z, g_r)));
-                corr = madd(corr, mmul(tail[j], l));
-            }
-
+            // No correction term. It used to be a 32-term Lagrange sum with
+            // a division per term; it is gone from the verifier for the same
+            // reason it is gone from here -- every TAIL is zero, so the sum
+            // is zero. The assertion above is what keeps that true.
             assert_eq!(
-                msub(p_per, corr),
+                p_per,
                 dense_eval(dense, z),
                 "{name}: periodic-extension identity fails at z={z}"
             );
