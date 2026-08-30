@@ -1054,7 +1054,13 @@ fn compute_quotient_lde_circuit_6(
     };
 
     let trace_width = trace_lde.len();
-    assert_eq!(trace_width, 10, "circuit 6 trace width is 10");
+    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11: the COMMITTED width. The AIR still
+    // constrains ten; `merkle_update::CONSTRAINED_TRACE_WIDTH` is that number.
+    assert_eq!(
+        trace_width,
+        crate::air::merkle_update::TRACE_WIDTH,
+        "circuit 6 committed trace width"
+    );
     let lde_size = trace_length * blowup;
     assert_eq!(trace_lde[0].len(), lde_size);
 
@@ -2069,7 +2075,9 @@ fn boundary_assertions_for_circuit(
             // here is the same polynomial the verifier reconstructs at the OOD
             // point. Without these two terms the compact quotient would not bind
             // col 6 at all and the conservation relation would be unenforced
-            // on-chain (24 → 26 boundary assertions for circuit 5).
+            // on-chain (22 → 24 boundary assertions for circuit 5 since
+             // C5-N1024; the figure was 24 → 26 while cycles 14 and 15 still
+             // carried capacity assertions).
             a.push((6, 0, BaseElement::ZERO));
             a.push((6, 12 * HASH_CYCLE_LEN + 1, pi(4))); // row 385
             a
@@ -2784,10 +2792,19 @@ mod tests {
         let proof = generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask());
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(3, 12, 27, 4096, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
+            // [ZK-RANDOMIZER 2026-08-30] width 3 -> 4, merkle_depth 12 -> 13,
+            // lde 4096 -> 8192. This call is the GEOMETRY twin of the byte pin
+            // below; the two catch different regressions and a single one could
+            // not tell a serialisation change from a geometry change.
+            expected_wire_size(4, 13, 27, 8192, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "pool_commitment wire size drift",
         );
-        assert_eq!(proof.proof_bytes.len(), 80_577, "the measured C1 wire size");
+        // [ZK-RANDOMIZER 2026-08-30] 80,577 -> 94,017. MEASURED, and fully
+        // explained by geometry: trace_width 3 -> 4, merkle_depth 12 -> 13 and one
+        // more FRI layer. The wire formula reproduces BOTH numbers exactly from
+        // their two geometries, which is why the delta was accepted rather than
+        // absorbed.
+        assert_eq!(proof.proof_bytes.len(), 94_017, "the measured C1 wire size");
     }
 
     #[test]
@@ -2822,7 +2839,9 @@ mod tests {
         assert_eq!(
             proof.proof_bytes.len(),
             expected_wire_size(
-                10, 13, 22, 8192, SPEND_FRI_FINAL_POLY_SIZE, SPEND_QUOTIENT_SEGMENTS,
+                // [ZK-RANDOMIZER 2026-08-30] 10 -> 11: the width the WIRE
+                // carries, not the width the AIR constrains.
+                11, 13, 22, 8192, SPEND_FRI_FINAL_POLY_SIZE, SPEND_QUOTIENT_SEGMENTS,
             ),
             "spend wire size drift",
         );
@@ -3232,10 +3251,18 @@ mod tests {
         // silently re-arm the 128 masked rows.
         let active: Vec<u64> = inverse_ntt(&periodic[7], trace_g).iter().map(|f| f.as_int()).collect();
         let nba: Vec<u64> = inverse_ntt(&periodic[8], trace_g).iter().map(|f| f.as_int()).collect();
-        assert_eq!(active[0], 0x407FFFFFBF800001);
-        assert_eq!(active[511], 0xB7A2C2D6CA02E575);
-        assert_eq!(nba[0], 0x45FFFFFFBA000001);
-        assert_eq!(nba[511], 0x213F6FEE45E8DA41);
+        // [ZK-DEPTH-11 2026-08-30] Re-pinned at first_free_row 352.
+        //
+        // ⚠️ C3, C6 AND C7 EMIT THESE BYTE-IDENTICALLY, and that is not a
+        // coincidence to rely on quietly: the gates depend only on `n` and
+        // `first_free_row`, which the three now share. The verifier EXPLOITS the
+        // coincidence — `verify.rs` feeds C3's evaluator `C7_ACTIVE_COEFFS` and
+        // `C7_NOT_BOUNDARY_ACTIVE_COEFFS`. If one circuit's depth ever moves
+        // alone, that sharing becomes silently wrong and this pin is what fails.
+        assert_eq!(active[0], 0x507FFFFFAF800001);
+        assert_eq!(active[511], 0x58884D7B2B591EB4);
+        assert_eq!(nba[0], 0x557FFFFFAA800001);
+        assert_eq!(nba[511], 0x76D15C80FF75F1FB);
         assert!(
             active.iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0),
             " must be DENSE; a sparse one is not the gate the verifier bakes",
@@ -3273,24 +3300,41 @@ mod tests {
         assert_eq!(
             periodic.len(),
             POOL_COMMITMENT_NUM_PERIODIC,
-            "seven columns since the n=256 rebake",
+            "seven columns, and the count did not move with the doubling",
         );
-        assert_eq!(trace_length, 256, "C1's trace doubled on 2026-08-29");
+        // [ZK-RANDOMIZER 2026-08-30] 256 -> 512. C1 has no Merkle depth to cut,
+        // so growing its row mask past what the wire publishes meant growing the
+        // trace. The seven tables below were re-emitted at this length.
+        assert_eq!(trace_length, 512, "C1's trace doubled again on 2026-08-30");
 
-        assert_eq!(rc0[0], 0x889FBE88A1F6721A);
-        assert_eq!(rc0[255], 0x92FE44607CD55117);
-        assert_eq!(rc1[0], 0xD41392EED1138242);
-        assert_eq!(rc1[255], 0x65B192B4A28534D3);
-        assert_eq!(rc2[0], 0x00A313DDD80A8952);
-        assert_eq!(rc2[255], 0x3284DBA7B9BD86F6);
-        assert_eq!(round_flag[0], 0xA5FFFFFF5A000001);
-        assert_eq!(round_flag[255], 0xC35A5E84612BE522);
-        assert_eq!(chain_flag[0], 0xFEFFFFFF01000001);
-        assert_eq!(chain_flag[255], 0x07D1BFA49D1CF03E);
-        assert_eq!(is_boundary[0], 0xFCFFFFFF03000001);
-        assert_eq!(is_boundary[255], 0x801D0EEC7074DF61);
-        assert_eq!(nba[0], 0xA2FFFFFF5D000001);
-        assert_eq!(nba[255], 0xB35A6E84710BE522);
+        // RE-PINNED 2026-08-30 from the emitter run whose output was spliced
+        // VERBATIM into `periodic_consts.rs` in the same change.
+        //
+        // ⚠️ COPYING FROM THE EMITTER IS LEGITIMATE HERE AND IS NOT ALWAYS. The
+        // C5 rebake recorded the trap: retyping constants from the same run they
+        // are meant to CHECK is a green test asserting nothing. These pins do a
+        // different job -- they are a DRIFT detector between two files that are
+        // synchronised at this instant, and a copy is how such a pin is
+        // established. What they do NOT do is verify the emitter; the density
+        // and gate properties below carry that.
+        //
+        // 🚨 AND THEY ARE THE WHOLE SEAM. Nothing else ties C1's seven verifier
+        // tables to the prover's columns -- there is no verifier-side
+        // recomputation for C1.
+        assert_eq!(rc0[0], 0x444FDF4450FB390D);
+        assert_eq!(rc0[511], 0x7D1B115A806B924D);
+        assert_eq!(rc1[0], 0x6A09C9776889C121);
+        assert_eq!(rc1[511], 0x3C51224E16F319DE);
+        assert_eq!(rc2[0], 0x005189EEEC0544A9);
+        assert_eq!(rc2[511], 0x390FAFAE1E1CA98D);
+        assert_eq!(round_flag[0], 0xD2FFFFFF2D000001);
+        assert_eq!(round_flag[511], 0x384E549A53C92DA4);
+        assert_eq!(chain_flag[0], 0xFF7FFFFF00800001);
+        assert_eq!(chain_flag[511], 0x31CBF96A4AC61EF1);
+        assert_eq!(is_boundary[0], 0xFE7FFFFF01800001);
+        assert_eq!(is_boundary[511], 0x46411D2FD5CFA9CF);
+        assert_eq!(nba[0], 0xD17FFFFF2E800001);
+        assert_eq!(nba[511], 0x603ECD83B6614F6F);
 
         // 🚨 THE SHAPE ASSERTION, AND IT IS WHAT MAKES THE MASK REAL.
         //
@@ -3763,7 +3807,7 @@ mod tests {
             &path_indices,
             &crate::air::merkle_update::deterministic_test_mask(path_indices.len()),
         );
-        assert_eq!(trace.len(), 10);
+        assert_eq!(trace.len(), crate::air::merkle_update::TRACE_WIDTH);
         let trace_length = trace[0].len();
         let blowup = 16;
         let lde_size = trace_length * blowup;
@@ -3975,13 +4019,14 @@ mod tests {
 
         rows.push(("C0 subscriber_ownership", TRACE_WIDTH, LEGACY_QUOTIENT_SEGMENTS,
                    generate_compact_proof(42).proof_bytes));
-        rows.push(("C1 pool_commitment", 3, GENERIC_QUOTIENT_SEGMENTS,
+        rows.push(("C1 pool_commitment", crate::air::denominated_pool::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
                    generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask()).proof_bytes));
         rows.push(("C2 balance_proof", 4, GENERIC_QUOTIENT_SEGMENTS,
                    generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes));
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
-            rows.push(("C3 merkle_path", 6, GENERIC_QUOTIENT_SEGMENTS,
+            // [ZK-RANDOMIZER] The COMMITTED width, read from the circuit.
+            rows.push(("C3 merkle_path", crate::air::merkle_path::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
                        generate_merkle_path_compact_proof(42, &path_elements, &[0u8, 1, 0], &c3_deterministic_probe_mask(path_elements.len())).proof_bytes));
         }
         rows.push(("C4 confidential_balance", 4, GENERIC_QUOTIENT_SEGMENTS,
@@ -3992,7 +4037,7 @@ mod tests {
                        .proof_bytes));
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
-            rows.push(("C6 merkle_update", 10, GENERIC_QUOTIENT_SEGMENTS,
+            rows.push(("C6 merkle_update", crate::air::merkle_update::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
                        generate_merkle_update_compact_proof(42, 1337, &path_elements, &[0u8, 1, 0], &c6_deterministic_probe_mask(3))
                            .proof_bytes));
         }
@@ -4595,8 +4640,11 @@ mod tests {
         let _quotient_root = &bytes[off..off + 32];
         off += 32;
 
-        // Trace width for circuit 6 is 10.
-        let trace_width = 10usize;
+        // [ZK-RANDOMIZER 2026-08-30] READ THE CONSTANT. A literal here parses the
+        // header at the wrong offsets the moment the committed width moves, and
+        // the symptom is a DEEP-ALI mismatch on an honest proof — which reads
+        // like a broken circuit, not like a broken test.
+        let trace_width = crate::air::merkle_update::TRACE_WIDTH;
         let mut ood_current = Vec::with_capacity(trace_width);
         for _ in 0..trace_width {
             ood_current.push(u64::from_le_bytes(bytes[off..off + 8].try_into().unwrap()));
@@ -5337,9 +5385,20 @@ mod tests {
         // and 3.3x -- 258,958 is the PRE-B4 pair-leaf figure and overstates the
         // gain. A regression here is either a geometry change or a
         // serialisation change; both matter.
+        // [ZK-RANDOMIZER 2026-08-30] 77,965 -> 78,685. MEASURED, and exactly the
+        // predicted delta: one more committed column publishes R = 4Q + 2 = 90
+        // openings at 8 bytes = 720 B, and nothing else moves.
+        //
+        // ⚠️ WHAT DID NOT MOVE IS THE POINT. The randomizer column enters no
+        // constraint, so deg(C) is unchanged and `quotient_segments` stays 8; it
+        // has degree n-1 like every other column, so deg(D) = n-2 holds and
+        // `fri_final_poly_degree_bound` stays 2. The terminal-degree assertions
+        // above this line passed untouched — this pin was the only thing that
+        // moved. Compare `masking_deep_degree_gate.rs`, which MEASURED that the
+        // textbook Z_H*r masking moves BOTH of those constants.
         assert_eq!(
-            b.len(), 77_965,
-            "C7 wire size moved. Measured 77,965 B on 2026-08-24 at ffps 32 / 22 queries / \
+            b.len(), 78_685,
+            "C7 wire size moved. Measured 78,685 B on 2026-08-30 at width 11 / ffps 32 / 22 queries / \
              8 quotient segments. Re-measure before re-pinning, and re-check the ~150 tx \
              upload path: a proof that got bigger fails at the END of the upload, never early.",
         );
@@ -5734,12 +5793,12 @@ mod tests {
     /// the identity. If this test fails, someone constrained the slot.
     #[test]
     fn spend_legacy_small_blinding_still_proves() {
-        use crate::air::spend::{build_spend_trace, MASK_ROWS, TRACE_WIDTH as SP_W};
+        use crate::air::spend::{build_spend_trace, MASK_LEN};
 
         let (np, sk, _blind, mint, pe, pi, _rh, mask) = spend_test_witness();
         let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
         let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
-        assert_eq!(mask_felts.len(), MASK_ROWS * SP_W);
+        assert_eq!(mask_felts.len(), MASK_LEN);
 
         // 30 -- a plausible deposit epoch, not a field element.
         let (trace, _, _) = build_spend_trace(
@@ -5868,15 +5927,15 @@ mod tests {
     /// (there are none in the blinding region), but they would not look like
     /// the distribution the counting argument in `air/spend.rs` assumes.
     fn spend_test_witness() -> (u64, u64, u64, u64, Vec<u64>, Vec<u8>, [u64; 4], Vec<u64>) {
-        use crate::air::spend::{CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH as SPEND_W};
+        use crate::air::spend::{CANONICAL_DEPTH, MASK_LEN};
         const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
 
         let path_elements: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 1000 + i * 37).collect();
         let path_indices: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
 
         let mut s = 0x9E37_79B9_7F4A_7C15u64;
-        let mut mask = Vec::with_capacity(MASK_ROWS * SPEND_W);
-        for _ in 0..(MASK_ROWS * SPEND_W) {
+        let mut mask = Vec::with_capacity(MASK_LEN);
+        for _ in 0..MASK_LEN {
             s ^= s >> 12;
             s ^= s << 25;
             s ^= s >> 27;
@@ -9861,7 +9920,9 @@ fn generate_merkle_update_compact_proof_inner(
 ///
 /// # `mask` is required, and it must be fresh
 ///
-/// ⛔ `MASK_ROWS * TRACE_WIDTH` = 1280 elements of FRESH CSPRNG output, redrawn
+/// ⛔ `MASK_LEN` = 1792 elements of FRESH CSPRNG output (1280 for the row mask
+/// plus 512 for the randomizer column, and the figure was 1280 until that column
+/// existed), redrawn
 /// for every proof. It fills rows 384..511 of all ten columns -- the blinding
 /// region, where no constraint of any kind fires. Reusing a mask across two
 /// proofs of the same note, or deriving it from the witness, gives an observer
@@ -9923,7 +9984,7 @@ fn generate_spend_compact_proof_inner(
     mask: &[u64],
     probe: DeepProbe,
 ) -> GenericCompactProofData {
-    use crate::air::spend::{build_spend_trace, CANONICAL_DEPTH, MASK_ROWS, TRACE_WIDTH};
+    use crate::air::spend::{build_spend_trace, CANONICAL_DEPTH, MASK_LEN};
 
     assert_eq!(
         path_elements.len(),
@@ -9934,9 +9995,9 @@ fn generate_spend_compact_proof_inner(
     assert_eq!(path_indices.len(), CANONICAL_DEPTH, "path_indices must match path_elements");
     assert_eq!(
         mask.len(),
-        MASK_ROWS * TRACE_WIDTH,
+        MASK_LEN,
         "C7 needs {} fresh CSPRNG elements for the blinding region",
-        MASK_ROWS * TRACE_WIDTH,
+        MASK_LEN,
     );
 
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
@@ -9994,3 +10055,8 @@ fn generate_spend_compact_proof_inner(
         root: merkle_root,
     }
 }
+
+/// [ZK X1+X2] The two open simulator channels, measured. Test-only in its
+/// entirety: no feature flag, so it cannot reach a shipped blob.
+#[cfg(test)]
+mod zk_hiding;
