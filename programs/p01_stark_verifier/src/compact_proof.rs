@@ -338,15 +338,15 @@ pub const CONFIG_MERKLE_UPDATE: CircuitConfig = CircuitConfig {
 /// stops that, because the parser never reads this field and no wire check
 /// covers it.
 pub const CONFIG_SPEND: CircuitConfig = CircuitConfig {
-    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11. Column 10 is uniform on all 512 rows
-    // and enters NO constraint; it exists to put randomness into the DEEP
-    // composition, which the row mask never reached. See
-    // `air/spend.rs::RANDOMIZER_COL` and `stark/tests/full_wire_ledger.rs`.
+    // [ZK-LIFT 2026-08-30] 11 -> 12. Column 11 is the randomizer, uniform on
+    // all 512 rows and entering NO constraint; column 10 is the ZK lift, zero
+    // on the constrained rows and uniform on the blinding ones, read by
+    // constraint [18] alone. See `air/spend.rs::{RANDOMIZER_COL, ZK_LIFT_COL}`.
     //
     // ⛔ HARD WIRE BREAK IN BOTH DIRECTIONS. `from_bytes` sizes every query
-    // block from `trace_width`, so a proof built at 10 does not parse at 11 and
+    // block from `trace_width`, so a proof built at 11 does not parse at 12 and
     // vice versa. Same class as the C1 128->256 and C5 512->1024 breaks.
-    trace_width: 11,
+    trace_width: 12,
     trace_length: 512,
     blowup: 16,
     lde_size: 8192,

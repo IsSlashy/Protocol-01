@@ -289,7 +289,7 @@ use crate::poseidon;
 
 /// Columns the AIR actually constrains. Every transition, every boundary
 /// assertion and every periodic gate lives inside this range.
-pub const CONSTRAINED_TRACE_WIDTH: usize = 10;
+pub const CONSTRAINED_TRACE_WIDTH: usize = 11;
 
 /// [ZK-RANDOMIZER 2026-08-30] The committed trace is ONE column wider than the
 /// circuit: column `RANDOMIZER_COL` is uniform on ALL `TRACE_LENGTH` rows and
@@ -326,6 +326,60 @@ pub const CONSTRAINED_TRACE_WIDTH: usize = 10;
 /// `verify.rs`, where the phase-1 arms iterate `0..config.trace_width`. Those
 /// arms are retired post-B7 (`c7_phase1_arm_is_retired_post_b7` pins it); if one
 /// is ever revived it must stop at `CONSTRAINED_TRACE_WIDTH`, not at the width.
+/// [ZK-LIFT 2026-08-30] The column that carries the mask into the quotient
+/// claims the row mask cannot reach.
+///
+/// # The measurement this exists to answer
+///
+/// The verifier checks ONE equation on the `k = 8` claims `Q_0(z)..Q_7(z)`,
+/// so a simulator samples seven uniform and solves the eighth. The honest
+/// prover cannot: `segment_quotient_poly` slices `Q`(s coefficients and that
+/// decomposition is UNIQUE, so the honest seven are FORCED and the only
+/// question is whether the forced values already look uniform.
+///
+/// `compact::zk_hiding` measured the degree of each claim in one mask
+/// element, per column. Columns 3, 5 and 9 are AFFINE -- exactly uniform --
+/// but only in `Q_0, Q_1, Q_2`; the Poseidon columns reach all seven and are
+/// degree 7 in every one. So three of the seven closed and four did not.
+///
+/// # Why the affine columns stop at Q_2, and what buys the rest
+///
+/// A DEGREE BUDGET. A constraint that is linear in a column contributes a
+/// low-degree piece to `Q = C / Z_T`, which lands only in the low
+/// coefficient blocks. Reaching block 6 needs about `7n` of degree while
+/// staying degree 1 in the column. Constraint [18] buys exactly that:
+///
+/// ```text
+///     active(x) * v(x) * state0(x)^6
+/// ```
+///
+///   * it VANISHES ON THE TRACE DOMAIN iff `v = 0` wherever `active != 0`,
+///     which the trace builder guarantees by never writing this column
+///     outside the blinding region. So `v` carries no witness, nothing reads
+///     it, and a malicious prover writing anything here proves nothing extra
+///     -- adding a constraint can only restrict a prover, never free one.
+///   * its total degree is `7 + 1` periodic against the Poseidon rounds`
+///     `7 + 2`, so `deg(C)` does NOT rise: `quotient_segments` stays 8,
+///     `deg(D) = n - 2` stays, and the FRI rate does not move.
+///   * `state0^6` lifts the quotient contribution to degree `7n - 8`, which
+///     spans coefficient blocks 0 THROUGH 6 -- the four that were open.
+///   * it is degree ONE in `v`, so every `Q_j(z)`, every committed quotient
+///     value and (the DEEP composition being linear) every FRI layer value
+///     becomes an affine function of this column(s blinding entries. Affine
+///     with a non-zero slope in a uniform variable is EXACTLY uniform, which
+///     is a proof rather than an estimate.
+///
+/// ⛔ IT IS NOT THE RANDOMIZER COLUMN AND MUST NOT BE MERGED WITH IT. The
+/// randomizer is uniform on ALL `TRACE_LENGTH` rows precisely because it is
+/// unconstrained everywhere; that is what covers channel B (the FRI layers
+/// and the terminal, 247 published felts against 512 random ones). Giving it
+/// constraint [18] would force it to zero on the 352 constrained rows,
+/// dropping its randomness to 160 and putting channel B SHORT. Two columns,
+/// two jobs.
+///
+/// Measured by `compact::zk_hiding::the_affine_free_claims_are_jointly_uniform`.
+pub const ZK_LIFT_COL: usize = CONSTRAINED_TRACE_WIDTH - 1;
+
 pub const RANDOMIZER_COL: usize = CONSTRAINED_TRACE_WIDTH;
 
 pub const TRACE_WIDTH: usize = CONSTRAINED_TRACE_WIDTH + 1;
@@ -401,7 +455,7 @@ pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH;
 ///   [11]-[13] Commitment Poseidon (from `denominated_pool.rs:241-243`, +6 cols)
 ///   [14]      Commitment chain edge (`denominated_pool.rs:247`, +6 cols)
 ///   [15]-[17] Hold column
-pub const SPEND_NUM_CONSTRAINTS: usize = 18;
+pub const SPEND_NUM_CONSTRAINTS: usize = 19;
 
 /// Number of periodic columns. Order is FROZEN — Step 4's emitter and Step 6's
 /// `compute_c7_periodic_at_z` index it positionally.
@@ -648,6 +702,12 @@ pub fn spend_constraint_degrees() -> Vec<TransitionConstraintDegree> {
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH, TRACE_LENGTH]),     // 15
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 16
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 17
+        // ── ZK degree lift, col 10 ──
+        // [18] active * nba * v * state0^6. Base degree 7 (one `v`, six
+        // `state0`) and TWO period-512 gates -- the same shape as the Poseidon
+        // rounds, which carry base 7 with a 512-cycle and a 32-cycle. The
+        // segment count and the FRI rate are unchanged; `segment_quotient_poly`
+        // asserts that in both directions and fails in CI, not on chain.
     ]
 }
 
@@ -957,6 +1017,27 @@ pub fn evaluate_spend_transition<E: FieldElement>(
     result[15] = active * (not_boundary + hold_link_31 + chain_flag) * (next[9] - current[9]);
     result[16] = commit_out_flag * (current[9] - current[6]);
     result[17] = row0_flag * (current[5] - current[9]);
+
+    // ────────────────────────────────────────────────────────────────────
+    // [18] ZK degree lift, col `ZK_LIFT_COL`. See the constant`s doc.
+    //
+    // Zero on the trace domain because `v` is zero wherever `active` is not:
+    // the trace builder writes this column ONLY inside the blinding region,
+    // and `active` is off there. It constrains nothing and proves nothing --
+    // its entire job is to be degree 1 in `v` and degree 7 overall, so the
+    // blinding region reaches quotient blocks 0..6 instead of 0..2.
+    // ────────────────────────────────────────────────────────────────────
+    let s0 = current[0];
+    let s0_2 = s0 * s0;
+    // `nba` is the SECOND period-512 factor, and it is here for 8 degrees.
+    // With `active` alone the term reaches quotient blocks 0..6 -- measured:
+    // 448 of 512 committed quotient values affine, the missing 64 being all of
+    // segment 7. Block 7 starts at 7n and the single-gate form tops out at
+    // 7n - 8. Two period-512 gates put it at 8n - 9, which spans every block.
+    // TWO is also the maximum: the module docs measure that a third pushes
+    // `ce_blowup_factor` from 8 to 16.
+    let s0_3 = s0_2 * s0;
+    result[18] = active * nba * current[ZK_LIFT_COL] * s0_3 * s0_3;
 }
 
 // ============================================================================
@@ -1162,16 +1243,16 @@ pub fn build_spend_trace(
     }
     let root = carry;
 
-    // ── Blinding region, rows 384-511, ALL TEN COLUMNS ────────────────
+    // ── Blinding region, rows FIRST_FREE_ROW..512, ALL CONSTRAINED COLS ──
     //
     // 🚨 THIS IS THE ZERO-KNOWLEDGE ARGUMENT AND IT IS THE WHOLE POINT OF
     // DEPTH 12. Every transition constraint is gated off here by `active`, so
-    // these 128 rows per column are unconstrained and the prover writes
+    // so these `MASK_ROWS` rows per column are unconstrained and the prover writes
     // INDEPENDENT UNIFORM field elements into them, redrawn for every proof.
     //
     // The counting: the deployed wire publishes four trace rows per query plus
     // two out-of-domain openings, so R = 4*22 + 2 = 90 evaluations per column.
-    // 128 independent uniform values exceed 90, so the published evaluations no
+    // `MASK_ROWS` independent uniform values exceed 90, so the published evaluations no
     // longer determine the witness values. `measured_the_public_system_is_now_
     // underdetermined` runs the recovery attack that succeeds at depth 15 and
     // shows it failing here.

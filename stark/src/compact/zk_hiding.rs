@@ -61,7 +61,7 @@
 use super::*;
 use crate::air::spend::{
     build_spend_trace, CANONICAL_DEPTH, CONSTRAINED_TRACE_WIDTH, MASK_LEN, MASK_ROWS,
-    RANDOMIZER_COL, TRACE_LENGTH, TRACE_WIDTH,
+    RANDOMIZER_COL, TRACE_LENGTH, TRACE_WIDTH, ZK_LIFT_COL,
 };
 
 const LDE_SIZE: usize = TRACE_LENGTH * GENERIC_BLOWUP;
@@ -470,50 +470,58 @@ fn the_randomizer_column_is_uniform_at_every_committed_position() {
 /// the mask and the uniformity proof above does not transfer. What is measurable
 /// is the degree, and whether the value moves at all.
 #[test]
-fn quotient_leaves_move_with_the_mask_and_the_degree_is_measured() {
-    let slot = mask_index(0, 0);
-    let mut mask = base_mask(0x5EED_0003);
-    // Degree <= 7 needs 8 points; take 10 so an unexpectedly higher degree shows
-    // up as a higher degree instead of wrapping into a wrong low-degree fit.
+fn quotient_leaves_are_exactly_uniform_in_the_lift_column() {
+    // Two sweeps, and the CONTRAST is the measurement. A Poseidon column
+    // reaches every committed quotient value at degree 7 -- non-constant, so
+    // not guessable, but not proven uniform either. The lift column reaches
+    // the same values at degree 1, which IS a proof.
+    let sample: Vec<usize> = (0..64).map(|i| i * (LDE_SIZE / 64) + 3).collect();
     let xs: Vec<u64> = (1..=10u64).map(|i| i * 1_000_003 + 17).collect();
-    let mut runs = Vec::new();
-    for &x in xs.iter() {
-        mask[slot] = x;
-        runs.push(run(&mask));
+
+    let mut report: Vec<(usize, &str, std::collections::BTreeMap<i32, usize>)> = Vec::new();
+    for (col, label) in [(0usize, "Poseidon state"), (ZK_LIFT_COL, "lift column")] {
+        let slot = mask_index(0, col);
+        let mut mask = base_mask(0x5EED_0003);
+        let mut runs = Vec::new();
+        for &x in xs.iter() {
+            mask[slot] = x;
+            runs.push(run(&mask));
+        }
+        let mut hist = std::collections::BTreeMap::<i32, usize>::new();
+        for j in 0..K {
+            for &p in sample.iter() {
+                let ys: Vec<u64> = runs.iter().map(|r| r.q_lde[j][p]).collect();
+                *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+            }
+        }
+        report.push((col, label, hist));
     }
 
-    // Sample positions across the whole domain rather than all K*LDE_SIZE of
-    // them: 10 interpolations per position is the cost, and the answer is a
-    // degree that does not vary with p.
-    let sample: Vec<usize> = (0..64).map(|i| i * (LDE_SIZE / 64) + 3).collect();
-    let mut hist = std::collections::BTreeMap::<i32, usize>::new();
-    for j in 0..K {
-        for &p in sample.iter() {
-            let ys: Vec<u64> = runs.iter().map(|r| r.q_lde[j][p]).collect();
-            *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+    let total = K * sample.len();
+    println!();
+    println!("X2 / quotient tree - degree of a committed quotient value in ONE mask element:");
+    for (col, label, hist) in report.iter() {
+        println!("  mask column {col} ({label}):");
+        for (d, n) in hist.iter() {
+            let what = match d {
+                -1 | 0 => "CONSTANT -- no hiding".to_string(),
+                1 => "affine, EXACTLY uniform".to_string(),
+                _ => format!("degree {d}, non-constant but law unproven"),
+            };
+            println!("    {n:5} of {total} samples : {what}");
         }
     }
 
-    println!();
-    println!("X2 / quotient tree — degree of a committed quotient value in ONE mask element:");
-    for (d, n) in hist.iter() {
-        let label = match d {
-            -1 => "CONSTANT — no hiding".to_string(),
-            0 => "CONSTANT — no hiding".to_string(),
-            1 => "affine, exactly uniform".to_string(),
-            _ => format!("degree {d}, non-constant but law unproven"),
-        };
-        println!("  {n:5} of {} samples : {label}", K * sample.len());
-        let _ = d;
-    }
-
-    let flat = hist.get(&-1).copied().unwrap_or(0) + hist.get(&0).copied().unwrap_or(0);
+    let lift = &report[1].2;
     assert_eq!(
-        flat, 0,
-        "{flat} committed quotient values do not move with the mask at all. Those leaves are \
-         a function of the witness alone and an adversary confirms a guessed witness against \
-         the unsalted leaf hash."
+        lift.get(&1).copied().unwrap_or(0),
+        total,
+        "the lift column does not reach every committed quotient value at degree 1: {lift:?}. Constraint [18] is what puts it there; without it the quotient tree has no uniformity proof at all, only 99.9% of it unopened and a degree-7 dependence on the row mask."
     );
+    println!();
+    println!("  => every committed quotient value is affine in a uniform mask element,");
+    println!("     hence exactly uniform. The quotient tree closes on the same argument as");
+    println!("     the trace tree, and X2 has no residue left on C7.");
 }
 
 // ===========================================================================

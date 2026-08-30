@@ -463,17 +463,17 @@ mod domain_generator_tests {
         };
         use p01_stark::{BaseElement, FieldElement, StarkField};
 
-        assert_eq!(SPEND_NUM_CONSTRAINTS, 18);
+        assert_eq!(SPEND_NUM_CONSTRAINTS, 19);
         assert_eq!(SPEND_NUM_PERIODIC, 13);
-        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
-        // fewer, and the extra column is the randomizer. Both numbers matter.
-        assert_eq!(TRACE_WIDTH, 11);
+        // [ZK-LIFT 2026-08-30] The COMMITTED width. The AIR constrains eleven of
+        // the twelve; the twelfth is the randomizer. Both numbers matter.
+        assert_eq!(TRACE_WIDTH, 12);
 
-        // [ZK-RANDOMIZER 2026-08-30] The frame is 11 wide now. Slot 10 is fed
-        // NON-ZERO random values on purpose: the whole property under test is
-        // that neither side reads it, and a zero there would let a reader that
-        // DOES touch it pass by accident.
-        const W: usize = 11;
+        // [ZK-LIFT 2026-08-30] The frame is 12 wide. Slot 11 is fed NON-ZERO
+        // random values on purpose: the whole property under test is that
+        // neither side reads it, and a zero there would let a reader that DOES
+        // touch it pass by accident. Slot 10 IS read, by constraint [18].
+        const W: usize = TRACE_WIDTH;
         for seed in 0..64u64 {
             let raw = c7_stream(seed, W + W + 13 + 1);
             let cur_air: Vec<BaseElement> =
@@ -5558,13 +5558,14 @@ pub fn verify_deep_ali_circuit_5(
 ///   10 hold_link_31 · 11 active · 12 not_boundary_active
 #[inline(never)]
 fn evaluate_transition_at_ood_circuit_7(
-    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11. Index 10 is the randomizer column and
-    // NOTHING below reads it -- that is the point. It is present here only
-    // because the OOD frame carries it, and it must be carried: the DEEP
-    // recombination sums a gamma power over every committed column, and dropping
-    // it there would make `C(z)` and `Q(z)*Z_T(z)` disagree on every proof.
-    ood_current: &[Felt; 11],
-    ood_next: &[Felt; 11],
+    // [ZK-LIFT 2026-08-30] 11 -> 12. Index 10 is the ZK lift column and index
+    // 11 is the randomizer. Constraint [18] below is the ONLY thing that reads
+    // index 10; NOTHING reads index 11, which is the point. Both are carried
+    // because the OOD frame carries them, and it must: the DEEP recombination
+    // sums a gamma power over every committed column, and dropping either here
+    // would make `C(z)` and `Q(z)*Z_T(z)` disagree on every proof.
+    ood_current: &[Felt; 12],
+    ood_next: &[Felt; 12],
     periodic_at_z: &[Felt; 13],
     alpha: Felt,
 ) -> Felt {
@@ -5586,7 +5587,7 @@ fn evaluate_transition_at_ood_circuit_7(
     let three = Felt::new(3);
     let not_boundary = one.sub(is_boundary);
 
-    let mut cs = [Felt::ZERO; 18];
+    let mut cs = [Felt::ZERO; 19];
 
     // ── [0]-[2] Merkle Poseidon round (cols 0-2), gated by `nba` ──
     let s0 = ood_current[0].add(rc0);
@@ -5664,6 +5665,22 @@ fn evaluate_transition_at_ood_circuit_7(
     cs[16] = commit_out_flag.mul(ood_current[9].sub(ood_current[6]));
     cs[17] = row0_flag.mul(ood_current[5].sub(ood_current[9]));
 
+    // ── [18] ZK degree lift, col 10 ──
+    //
+    // The prover twin is `air::spend::evaluate_spend_transition`, result[18].
+    // It is zero on the trace domain because col 10 is zero wherever `active`
+    // is not, so it constrains nothing and proves nothing. Its whole job is to
+    // be degree ONE in col 10 and degree seven overall, which is what carries
+    // the blinding region into quotient blocks 0..7 instead of 0..2.
+    //
+    // 🚨 THE BASE IS RAW `ood_current[0]`, NOT `s0`. `s0` above is
+    // `ood_current[0] + rc0` and is the Poseidon round input; using it here
+    // would evaluate a different polynomial than the prover and reject every
+    // honest proof with `DeepAliFailed`.
+    let lift_base = ood_current[0];
+    let lb3 = lift_base.mul(lift_base).mul(lift_base);
+    cs[18] = active.mul(nba).mul(ood_current[10]).mul(lb3).mul(lb3);
+
     let mut acc = Felt::ZERO;
     let mut alpha_power = Felt::ONE;
     for c in cs.iter() {
@@ -5701,12 +5718,12 @@ pub fn verify_deep_ali_circuit_7(
 
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    // [ZK-RANDOMIZER 2026-08-30] 10 -> 11, AND THIS LINE IS THE ONE THAT BITES.
+    // [ZK-LIFT 2026-08-30] 11 -> 12, AND THIS LINE IS THE ONE THAT BITES.
     // It sits BEFORE the frame construction below, so left at 10 it rejects
     // every honest proof with `DeepAliFailed` — and had it passed at 10, the
     // `[10]` index below would have panicked instead. Two failure modes, one
     // number, and the arity guard must move with `CONFIG_SPEND.trace_width`.
-    if ood_current_vec.len() != 11 || ood_next_vec.len() != 11 {
+    if ood_current_vec.len() != 12 || ood_next_vec.len() != 12 {
         return Err(VerifyError::DeepAliFailed);
     }
     let ood_current = [
@@ -5714,16 +5731,17 @@ pub fn verify_deep_ali_circuit_7(
         ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
         ood_current_vec[6], ood_current_vec[7], ood_current_vec[8],
         ood_current_vec[9],
-        // [ZK-RANDOMIZER] Slot 10. No constraint reads it; it is carried so the
-        // frame the evaluator sees is the frame the prover committed to.
-        ood_current_vec[10],
+        // Slot 10 is the ZK lift column, read by constraint [18]; slot 11 is
+        // the randomizer, read by nothing. Both are carried so the frame the
+        // evaluator sees is the frame the prover committed to.
+        ood_current_vec[10], ood_current_vec[11],
     ];
     let ood_next = [
         ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
         ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
         ood_next_vec[6], ood_next_vec[7], ood_next_vec[8],
         ood_next_vec[9],
-        ood_next_vec[10],
+        ood_next_vec[10], ood_next_vec[11],
     ];
 
     // A FRESH tag. `derive_rlc_alpha` (untagged) is hardwired to `rlc-v1`,
