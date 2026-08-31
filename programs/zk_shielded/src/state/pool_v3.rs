@@ -177,8 +177,18 @@ impl DenominatedPoolV3 {
     pub const SEED_PREFIX: &'static [u8] = b"denominated_pool_v4";
 
     /// Default tree depth (2^15 = 32,768 notes per pool)
-    /// Must equal the C6 (merkle_update) circuit's CANONICAL_DEPTH in
-    /// p01_stark_verifier. If the circuit changes, this must change too.
+    /// 🚨 IT MUST NOT EQUAL C6's `CANONICAL_DEPTH`, AND THIS LINE SAID IT MUST.
+    ///
+    /// The circuit proves a SUBTREE. C6 folds `INSERT_SUBTREE_DEPTH` levels and
+    /// C7 proves `SPEND_SUBTREE_DEPTH` of them -- both 11 as of 2026-08-29 --
+    /// and the program walks the remaining `tree_depth - SUBTREE_DEPTH` on chain
+    /// (`spend_root.rs:111`, `insert_root.rs:158`, both DERIVED, neither typed).
+    /// With a 15-deep tree that is 4 walked levels.
+    ///
+    /// This comment predates the subtree split, when the circuit really did
+    /// prove the whole tree. Following it today means setting the tree depth to
+    /// 11, which leaves ZERO walked levels and a pool whose anonymity set is
+    /// 2048 notes instead of 32,768.
     pub const DEFAULT_TREE_DEPTH: u8 = 15;
 
     /// Maximum historical roots to store (default 100)

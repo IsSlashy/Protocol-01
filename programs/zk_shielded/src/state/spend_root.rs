@@ -21,7 +21,8 @@
 //!
 //! # What has to happen instead
 //!
-//! The spending instruction walks the remaining `tree_depth - 12` levels
+//! The spending instruction walks the remaining
+//! `tree_depth - SPEND_SUBTREE_DEPTH` levels
 //! itself, hashing the subtree root against siblings the CALLER supplies, and
 //! then requires the result to be a root the pool has vouched for.
 //!

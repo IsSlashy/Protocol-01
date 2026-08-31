@@ -36,11 +36,12 @@
 //!
 //! # ⛔ The half of C7 that lives here, not in the circuit
 //!
-//! The depth circuit 7 proves is 12 (`spend_root::SPEND_SUBTREE_DEPTH`). The
+//! The depth circuit 7 proves is `spend_root::SPEND_SUBTREE_DEPTH`, which is
+//! 11 as of the 2026-08-29 cut and was 12 before it. The
 //! pool tree is 15. A verified C7 proof therefore asserts:
 //!
 //! ```text
-//! "I know a leaf and a twelve-level path from it to the root I published."
+//! "I know a leaf and a SPEND_SUBTREE_DEPTH-level path from it to the root I published."
 //! ```
 //!
 //! and NOT "that leaf is in this pool". Anyone who builds their own twelve
