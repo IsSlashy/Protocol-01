@@ -163,10 +163,22 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(whitelist);
   }
 
-  // Public: just return approved wallet addresses
-  return NextResponse.json({
-    approved: whitelist.approved.map((e) => e.wallet),
-  });
+  // ⛔ NO PUBLIC LIST. This used to answer, to anyone, with
+  // `whitelist.approved.map(e => e.wallet)` -- every approved developer's Solana
+  // address, from one unauthenticated GET, needing no wallet, no chain access
+  // and no special network position. It had ZERO callers: the admin page reads
+  // `?admin=true` behind the password, and everything else asks about a single
+  // wallet.
+  //
+  // ⚠ The `?wallet=` form above remains a membership ORACLE -- anyone can
+  // test an address they already have -- and that is a real residue. What this
+  // removes is the free candidate list that made the oracle trivial to aim.
+  // Closing the oracle itself needs a signature over a challenge, the way
+  // `claim-for-payment` does it, and that is a client change.
+  return NextResponse.json(
+    { error: 'This endpoint answers about one wallet at a time.' },
+    { status: 400 },
+  );
 }
 
 // POST - Add to whitelist

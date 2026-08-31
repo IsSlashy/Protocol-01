@@ -15,8 +15,20 @@ import {
 } from "@solana/wallet-adapter-wallets";
 import { RpcConnectionManager, type SolanaCluster } from "@protocol-01/rpc-config";
 
-// Import wallet adapter styles
-import "@solana/wallet-adapter-react-ui/styles.css";
+/**
+ * \U0001f6a8 A LOCAL COPY, BECAUSE THE PACKAGE'S OWN STYLESHEET FETCHES A FONT.
+ *
+ * `@solana/wallet-adapter-react-ui/styles.css` begins with
+ * `@import url('https://fonts.googleapis.com/css2?family=DM+Sans...')`, and this
+ * provider is mounted ONLY on the private app. So a request to Google for DM
+ * Sans was not merely a third-party font load -- it was a beacon that said
+ * "someone opened the private app", from that visitor's IP, at that moment, on
+ * any cold cache. Nothing else on the site pulls it.
+ *
+ * \u26a0 The local copy is the upstream file with its first line removed and
+ * NOTHING else changed. When the package is upgraded, re-copy it the same way.
+ */
+import "./pay/wallet-adapter.css";
 
 interface WalletProviderProps {
   children: React.ReactNode;

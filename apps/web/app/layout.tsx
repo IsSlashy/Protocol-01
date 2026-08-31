@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Space_Grotesk, JetBrains_Mono, Inter, Noto_Sans_JP } from "next/font/google";
+import { Space_Grotesk, JetBrains_Mono, Inter, Noto_Sans_JP, Orbitron, Fira_Code } from "next/font/google";
 import AnalyticsExceptPrivateApp from "@/components/AnalyticsExceptPrivateApp";
 import "./globals.css";
 import DepthBackground from "@/components/DepthBackground";
@@ -22,6 +22,31 @@ const jetbrainsMono = JetBrains_Mono({
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
+  display: "swap",
+});
+
+/**
+ * \U0001f6a8 SELF-HOSTED, AND THEY WERE NOT.
+ *
+ * Orbitron and Fira Code arrived through two `@import url(fonts.googleapis.com)`
+ * lines at the top of `globals.css`, which is imported by the root layout -- so
+ * EVERY route, including the private app, told Google the visitor's IP and the
+ * timestamp on any cold cache. The four families below were already served from
+ * our own origin by `next/font/google`, which downloads them at BUILD time; the
+ * two that were not simply predated that block.
+ *
+ * \u26a0 A privacy claim about a page is worth nothing while the page asks a
+ * third party for its typeface.
+ */
+const orbitron = Orbitron({
+  subsets: ["latin"],
+  variable: "--font-orbitron",
+  display: "swap",
+});
+
+const firaCode = Fira_Code({
+  subsets: ["latin"],
+  variable: "--font-fira-code",
   display: "swap",
 });
 
@@ -110,7 +135,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body
-        className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} ${inter.variable} ${notoSansJP.variable} font-sans antialiased bg-p01-void text-white`}
+        className={`${spaceGrotesk.variable} ${jetbrainsMono.variable} ${inter.variable} ${notoSansJP.variable} ${orbitron.variable} ${firaCode.variable} font-sans antialiased bg-p01-void text-white`}
       >
         <SmoothScroll>
           <div className="relative min-h-screen overflow-hidden">

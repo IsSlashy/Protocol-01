@@ -1,5 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
+/* Orbitron and Fira Code are self-hosted through `next/font/google` in
+   app/layout.tsx and reach CSS as --font-orbitron / --font-fira-code. They used
+   to arrive here as two @import url(fonts.googleapis.com) lines, which told
+   Google the IP and timestamp of every visit to every route -- the private app
+   included. Never reintroduce a font @import in this file. */
 
 @import "tailwindcss";
 
@@ -38,9 +41,9 @@
 
   /* Font Families */
   --font-sans: var(--font-inter), system-ui, sans-serif;
-  --font-heading: 'Orbitron', var(--font-space-grotesk), system-ui, sans-serif;
-  --font-display: 'Orbitron', var(--font-space-grotesk), system-ui, sans-serif;
-  --font-mono: var(--font-jetbrains-mono), 'Fira Code', 'Courier New', monospace;
+  --font-heading: var(--font-orbitron), var(--font-space-grotesk), system-ui, sans-serif;
+  --font-display: var(--font-orbitron), var(--font-space-grotesk), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), var(--font-fira-code), 'Courier New', monospace;
 
   /* Custom Animations */
   --animate-pulse-slow: pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
@@ -114,8 +117,8 @@
   --p01-text-dim: #555560;
 
   /* Fonts */
-  --font-display: 'Orbitron', var(--font-space-grotesk), system-ui, sans-serif;
-  --font-heading: 'Orbitron', var(--font-space-grotesk), system-ui, sans-serif;
+  --font-display: var(--font-orbitron), var(--font-space-grotesk), system-ui, sans-serif;
+  --font-heading: var(--font-orbitron), var(--font-space-grotesk), system-ui, sans-serif;
   --font-mono: var(--font-jetbrains-mono), 'Courier New', monospace;
   --font-body: var(--font-inter), system-ui, sans-serif;
 }
@@ -686,16 +689,16 @@
   }
 
   .font-orbitron {
-    font-family: 'Orbitron', sans-serif;
+    font-family: var(--font-orbitron), sans-serif;
   }
 
   .font-fira {
-    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    font-family: var(--font-fira-code), 'Consolas', 'Monaco', monospace;
   }
 
   /* ASCII Art specific - ensures proper character alignment */
   .ascii-art {
-    font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+    font-family: var(--font-fira-code), 'Consolas', 'Monaco', monospace;
     line-height: 1;
     letter-spacing: 0;
     white-space: pre;

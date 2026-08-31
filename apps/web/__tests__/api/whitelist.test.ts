@@ -110,8 +110,16 @@ describe('Whitelist API -- Developer access management', () => {
     });
   });
 
-  describe('GET /api/whitelist -- Public approved wallet list', () => {
-    it('returns only wallet addresses (no emails or private data)', async () => {
+  describe('GET /api/whitelist -- there is no public list any more', () => {
+    it('⛔ refuses to enumerate approved wallets to an unauthenticated caller', async () => {
+      // 🚨 IT USED TO RETURN THEM ALL. One GET, no wallet, no chain
+      // access, no credential: `whitelist.approved.map(e => e.wallet)`, every
+      // approved developer's Solana address. The case that stood here asserted
+      // it, and asserted only that no EMAIL came with them -- so the leak was
+      // pinned as a feature while the test read like a privacy check.
+      //
+      // It had zero callers. The admin page reads `?admin=true` behind the
+      // password; everything else asks about one wallet.
       mockKvGet.mockResolvedValue({
         approved: [
           { wallet: 'Wallet1', email: 'secret@example.com', approvedAt: '2026-01-01', approvedBy: 'admin' },
@@ -123,8 +131,21 @@ describe('Whitelist API -- Developer access management', () => {
       const response = await GET(request);
       const data = await response.json();
 
-      expect(data.approved).toEqual(['Wallet1']);
+      expect(response.status).toBe(400);
+      expect(data.approved, 'the wallet list came back').toBeUndefined();
+      expect(JSON.stringify(data)).not.toContain('Wallet1');
       expect(JSON.stringify(data)).not.toContain('secret@example.com');
+    });
+
+    it('still answers about ONE wallet, which the app needs', async () => {
+      // Anti-vacuity: refusing everything would also pass the case above.
+      mockKvGet.mockResolvedValue({
+        approved: [{ wallet: 'Wallet1', email: 'x@y.z', approvedAt: '2026-01-01', approvedBy: 'a' }],
+        pending: [],
+      });
+      const response = await GET(createRequest('/api/whitelist?wallet=Wallet1'));
+      expect(response.status).toBe(200);
+      expect((await response.json()).approved).toBe(true);
     });
   });
 
