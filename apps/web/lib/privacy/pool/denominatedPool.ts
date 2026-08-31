@@ -1538,6 +1538,29 @@ export async function prepareShieldInsert(
    * nullifier — nothing on-chain reads this value, see noteBlinding.ts.
    */
   noteBlindingOverride?: bigint,
+  /**
+   * A commitment somebody ELSE derived, to be inserted as this leaf.
+   *
+   * \U0001f3af THE CONTRIBUTION FLOW. The depositor funds a leaf whose opening
+   * they do not know: the commitment comes from the TREASURY's seed, so the
+   * treasury owns the note the moment it lands and the depositor has nothing to
+   * spend. They are paid in a DIFFERENT, older note instead, and the maturity
+   * gate guarantees it is a different one. That ordering is what removes the
+   * double-spend a swap otherwise carries -- there is no second copy of the
+   * opening, because the depositor never had the first.
+   *
+   * The program takes the commitment as a raw instruction argument
+   * (`shield_denominated_v3.rs:255-257`) and proves nothing about its preimage,
+   * so this needs no program change. The C6 proof is about tree INSERTION and
+   * uses only the leaf VALUE, so it is unaffected.
+   *
+   * \u26d4 Do not call this directly for that flow -- use
+   * `prepareInsertForCommitment`, whose return type cannot carry note material.
+   * When this is set, `secret`, `nullifierPreimage` and `noteBlinding` come back
+   * as 0n and are MEANINGLESS: building a receipt from them would hand someone a
+   * note they cannot spend.
+   */
+  commitmentOverride?: bigint,
 ): Promise<{
   c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
   insertParams: {
@@ -1568,18 +1591,33 @@ export async function prepareShieldInsert(
   let onChainRoot = 0n;
   for (let b = 7; b >= 0; b--) onChainRoot = (onChainRoot << 8n) | BigInt(treeBuf[8 + 32 + b]);
 
-  // 2. Derive note material.
-  onProgress?.('Deriving note material...');
-  const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
-
-  // 3. Third commitment slot (historically deposit_epoch): a caller-supplied
-  // secret blinding when given, otherwise the real epoch (legacy notes).
-  const noteBlinding =
-    noteBlindingOverride ?? slotToEpoch(await connection.getSlot('confirmed'));
-
-  // 4. Compute Goldilocks commitment.
-  const tokenMintField = pubkeyToField(poolConfig.tokenMint);
-  const commitment = createCommitmentV3(nullifierPreimage, secret, noteBlinding, tokenMintField);
+  // 2-4. The commitment, either derived here or supplied by whoever owns the
+  // note. See `commitmentOverride`: in the contribution flow the depositor is
+  // NOT the owner, so there is no material to derive and none is returned.
+  let secret = 0n;
+  let nullifierPreimage = 0n;
+  let noteBlinding = 0n;
+  let commitment: bigint;
+  if (commitmentOverride !== undefined) {
+    if (commitmentOverride <= 0n) {
+      // A zero leaf is the EMPTY slot the C6 proof folds as `old_leaf`, so
+      // inserting it would prove a no-op and the deposit would pay for nothing.
+      throw new Error('A supplied commitment must be a non-zero field element.');
+    }
+    commitment = commitmentOverride;
+  } else {
+    onProgress?.('Deriving note material...');
+    ({ secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter));
+    // Third commitment slot (historically deposit_epoch): a caller-supplied
+    // secret blinding when given, otherwise the real epoch (legacy notes).
+    noteBlinding = noteBlindingOverride ?? slotToEpoch(await connection.getSlot('confirmed'));
+    commitment = createCommitmentV3(
+      nullifierPreimage,
+      secret,
+      noteBlinding,
+      pubkeyToField(poolConfig.tokenMint),
+    );
+  }
 
   // The commitment IS the leaf in V3. Stored as u64 LE (low 8 bytes of the
   // 32-byte field element).
@@ -1709,6 +1747,70 @@ export async function prepareShieldInsert(
     // `newRoot` remains in the pool's 100-entry historical root ring.
     merklePath: { pathElements, pathIndices, root: newRoot },
   };
+}
+
+/**
+ * Prepare an insert for a commitment THIS CALLER DOES NOT OWN.
+ *
+ * \U0001f3af THE MECHANISM THAT MAKES THE TREASURY A MIXER RATHER THAN A SHOP.
+ * The depositor pays, and what lands on the tree is a note derived from the
+ * TREASURY's seed. They never learn its opening, so they cannot spend it and
+ * there is nothing to double-spend. They are paid in a DIFFERENT note out of
+ * stock -- necessarily an older one, because the maturity gate refuses to issue
+ * a leaf deposited moments ago. The gate is not a workaround here: it IS the
+ * mixing, and it is why the note that leaves carries somebody else's history.
+ *
+ * The count is unchanged: one leaf in, one leaf out. The treasury never pays a
+ * denomination, only fees, which is what lets a fixed float serve indefinitely.
+ *
+ * \u26d4 THE RETURN TYPE OMITS `secret`, `nullifierPreimage` and `noteBlinding`
+ * AND THAT IS THE POINT. It is not a documentation choice: a contributor who
+ * could read those fields could build a receipt for a note that is not theirs,
+ * store it, and later discover it unspendable -- or worse, race the treasury for
+ * it. Making them unreachable is a type-level guarantee rather than a rule
+ * somebody has to remember.
+ *
+ * \u26a0 The caller must still verify, AFTER the deposit confirms, that this
+ * commitment landed at the leaf the treasury expects, before recording it as
+ * inventory. Nothing here proves the transaction was sent, let alone accepted.
+ */
+export async function prepareInsertForCommitment(
+  poolConfig: PoolConfig,
+  connection: Connection,
+  commitment: bigint,
+  onProgress?: (step: string) => void,
+): Promise<{
+  c6ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number; circuitId: number };
+  insertParams: {
+    commitment: bigint;
+    newRoot: bigint;
+    oldSubtreeRoot: bigint;
+    newSubtreeRoot: bigint;
+    newSubtrees: bigint[];
+    leafIndex: number;
+  };
+  newLeaf: bigint;
+  merklePath: { pathElements: bigint[]; pathIndices: number[]; root: bigint };
+}> {
+  const prepared = await prepareShieldInsert(
+    poolConfig,
+    connection,
+    // Unused on this path: no derivation happens when a commitment is supplied.
+    // Passed empty rather than as a fake seed so a future edit that started
+    // deriving from it would fail loudly instead of minting a wrong note.
+    new Uint8Array(0),
+    0,
+    onProgress,
+    undefined,
+    commitment,
+  );
+  const { secret, nullifierPreimage, noteBlinding, ...insertParams } = prepared.insertParams;
+  // Read once so a linter cannot drop the destructuring that strips them, and
+  // so the intent survives a refactor: these are 0n and must not escape.
+  void secret;
+  void nullifierPreimage;
+  void noteBlinding;
+  return { ...prepared, insertParams };
 }
 
 // ---------------------------------------------------------------------------
