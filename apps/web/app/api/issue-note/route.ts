@@ -138,12 +138,46 @@ function minAgeSlots(): number {
 }
 
 /** The treasury's pool seed, 32 bytes as 64 hex characters. */
-function treasurySeed(): Uint8Array | null {
-  const hex = process.env.P01_TREASURY_POOL_SEED;
-  if (!hex || !/^[0-9a-fA-F]{64}$/.test(hex)) return null;
-  const out = new Uint8Array(32);
-  for (let i = 0; i < 32; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+/**
+ * Every seed this treasury holds, in order.
+ *
+ * \U0001f6a8 IT IS A LIST BECAUSE ONE SEED WAS NOT ENOUGH, and the cost of
+ * pretending otherwise was ten notes. MEASURED 2026-08-31: the restock derived
+ * its seed from a wallet signature and an ORIGIN, this route read a fixed hex,
+ * and nobody had copied one into the other. Ten deposits landed at leaves 83-92
+ * — 10 SOL — owned by a seed this route did not have. Nothing failed while it
+ * happened; each deposit returned a signature and cost 1.003 SOL, because the
+ * mismatch is only visible from the issuing side.
+ *
+ * The single-seed shape made that unrecoverable EXCEPT by switching, which
+ * orphans whatever the current seed owns — trading one silent loss for another.
+ * A treasury that can hold several seeds simply owns both sets.
+ *
+ * `P01_TREASURY_POOL_SEED` takes one hex seed or several separated by commas.
+ * ⛔ ORDER MATTERS AND THE FIRST IS THE ACTIVE ONE: it is the seed a leaf is
+ * derived under when the treasury deposits something new. The rest are read-only
+ * in practice — they open what they already own.
+ *
+ * \u26a0 A malformed entry is DROPPED, not defaulted. A typo in one of several
+ * seeds must not silently become a treasury that owns nothing, and it must not
+ * take the others down with it.
+ */
+function treasurySeeds(): Uint8Array[] {
+  const raw = process.env.P01_TREASURY_POOL_SEED ?? '';
+  const out: Uint8Array[] = [];
+  for (const part of raw.split(',')) {
+    const hex = part.trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) continue;
+    const bytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    out.push(bytes);
+  }
   return out;
+}
+
+/** The seed new notes are created under. The first configured one. */
+function treasurySeed(): Uint8Array | null {
+  return treasurySeeds()[0] ?? null;
 }
 
 /**
@@ -415,7 +449,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const ticket = process.env.P01_FUNDER_TICKET;
-  const seed = treasurySeed();
+  const allSeeds = treasurySeeds();
+  const seed = allSeeds[0] ?? null;
   if (!seed) return bad(503, 'this deployment issues no notes');
   if (!ticket) return bad(503, 'no ticket configured; refusing to hand out notes anonymously');
   if (request.headers.get('x-p01-funder-ticket') !== ticket) {
@@ -588,7 +623,23 @@ export async function POST(request: NextRequest) {
     return release(bad(502, `the pool's history could not be read: ${(e as Error).message}`));
   }
 
-  const discovered = discoverOwnedLeaves(seed, pool, commitments);
+  /**
+   * \u26d4 EVERY SEED, AND WHICH ONE OPENS WHICH LEAF.
+   *
+   * A leaf is derived under exactly one seed, so the loop below has to know
+   * which — deriving under the wrong one produces a commitment that is on no
+   * tree and answers 500 to a paying buyer. The map is the answer, built once
+   * here rather than re-derived per candidate leaf.
+   */
+  const seedForLeaf = new Map<number, Uint8Array>();
+  const discovered: number[] = [];
+  for (const candidate of allSeeds) {
+    for (const leafIndex of discoverOwnedLeaves(candidate, pool, commitments)) {
+      if (seedForLeaf.has(leafIndex)) continue;
+      seedForLeaf.set(leafIndex, candidate);
+      discovered.push(leafIndex);
+    }
+  }
   const leaves = await inventoryLeaves(pool.poolPDA.toBase58(), discovered);
   if (leaves.length === 0) {
     return release(bad(503, 'this deployment has no note inventory', {
@@ -714,8 +765,14 @@ export async function POST(request: NextRequest) {
     // that check on the grounds that the derivation is "obviously" right.
     // Mirrors `poolNotes.ts:175` exactly, which is the derivation the rest of
     // the app finds notes with.
-    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, leafIndex);
-    const noteBlinding = deriveNoteBlinding(seed, pool.poolPDA, leafIndex);
+    // The seed that OPENS this leaf, which is not always the active one: a
+    // treasury may hold several, and a leaf belongs to exactly one of them.
+    // Falls back to the active seed for a leaf that came from configuration
+    // rather than from discovery — the on-chain check below is what catches a
+    // wrong guess, and it refuses rather than issuing an unspendable note.
+    const leafSeed = seedForLeaf.get(leafIndex) ?? seed;
+    const { secret, nullifierPreimage } = deriveNoteMaterial(leafSeed, pool.poolPDA, leafIndex);
+    const noteBlinding = deriveNoteBlinding(leafSeed, pool.poolPDA, leafIndex);
     const commitment = createCommitmentV3(
       nullifierPreimage,
       secret,

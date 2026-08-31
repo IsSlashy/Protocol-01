@@ -36,11 +36,17 @@ function env(): Record<string, string> {
 
 async function main() {
   const e = env();
-  const hex = e.P01_TREASURY_POOL_SEED;
-  if (!hex || !/^[0-9a-fA-F]{64}$/.test(hex)) {
+  // ⛔ A LIST, because a treasury can hold more than one seed. The route
+  // reads it the same way: ten notes were orphaned by the assumption that one
+  // was enough, and switching to recover them would have orphaned the others.
+  const seeds = (e.P01_TREASURY_POOL_SEED ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter((p) => /^[0-9a-fA-F]{64}$/.test(p))
+    .map((p) => Uint8Array.from(p.match(/../g)!.map((h) => parseInt(h, 16))));
+  if (seeds.length === 0) {
     throw new Error('P01_TREASURY_POOL_SEED is missing or malformed in .env.local');
   }
-  const seed = Uint8Array.from(hex.match(/../g)!.map((h) => parseInt(h, 16)));
   const denomination = Number(e.P01_TREASURY_NOTE_DENOMINATION ?? '0.1');
   const pool = getPoolsForTokenV3('SOL').find((p) => p.denomination === denomination);
   if (!pool) throw new Error(`no ${denomination} SOL pool is configured`);
@@ -65,15 +71,26 @@ async function main() {
   const dead: number[] = [];
 
   for (let leafIndex = 0; leafIndex < max; leafIndex += 1) {
-    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, leafIndex);
-    const commitment = createCommitmentV3(
-      nullifierPreimage,
-      secret,
-      deriveNoteBlinding(seed, pool.poolPDA, leafIndex),
-      pubkeyToField(pool.tokenMint),
-    );
-    const onChain = commitments.get(commitment.toString());
-    if (!onChain || onChain.leafIndex !== leafIndex) continue;
+    let secret: bigint | null = null;
+    let nullifierPreimage: bigint | null = null;
+    for (const seed of seeds) {
+      const m = deriveNoteMaterial(seed, pool.poolPDA, leafIndex);
+      const commitment = createCommitmentV3(
+        m.nullifierPreimage,
+        m.secret,
+        deriveNoteBlinding(seed, pool.poolPDA, leafIndex),
+        pubkeyToField(pool.tokenMint),
+      );
+      const hit = commitments.get(commitment.toString());
+      if (hit && hit.leafIndex === leafIndex) {
+        secret = m.secret;
+        nullifierPreimage = m.nullifierPreimage;
+        break;
+      }
+    }
+    if (secret === null || nullifierPreimage === null) continue;
+    const onChain = { leafIndex, depositSlot: null as number | null };
+    for (const c of commitments.values()) if (c.leafIndex === leafIndex) onChain.depositSlot = c.depositSlot;
     mine.push(leafIndex);
     if (isNullifierSpentInSet(spent, pool.poolPDA, nullifierPreimage, secret)) {
       dead.push(leafIndex);
