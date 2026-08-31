@@ -144,6 +144,23 @@ pub fn draw_blinding_mask(n: usize) -> Result<Vec<u64>, getrandom::Error> {
 #[cfg(feature = "wasm")]
 mod wasm_api {
     use wasm_bindgen::prelude::*;
+
+    // 🚨 THIS `use` IS LOAD-BEARING AND ITS ABSENCE DID NOT FAIL ANYWHERE THAT
+    // RUNS. `draw_blinding_mask` was defined INSIDE this module until 2026-08-30,
+    // when it was hoisted to the crate root so every non-wasm caller could reach
+    // the real CSPRNG instead of writing its own deterministic xorshift. The five
+    // callers below kept their unqualified names and stopped resolving.
+    //
+    // Nothing noticed for a day, because `mod wasm_api` is behind
+    // `#[cfg(feature = "wasm")]`: `cargo build` does not compile it, `cargo test`
+    // does not compile it, and no CI job passes `--features wasm`. The only thing
+    // that compiles this module is `wasm-pack`, and the only thing that runs
+    // `wasm-pack` is a human about to reship the blob.
+    //
+    // ⛔ So the shipped-prover path was uncompilable and the tree was green. If
+    // this line is ever removed again, add the build to CI in the same commit.
+    use crate::draw_blinding_mask;
+
     use crate::compact::{
         generate_compact_proof, generate_pool_commitment_proof,
         generate_balance_compact_proof, generate_merkle_path_compact_proof,

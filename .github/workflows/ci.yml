@@ -196,6 +196,29 @@ jobs:
       - name: cargo check (workspace, excl. p01-arcium)
         run: cargo check --workspace --all-targets --exclude p01-arcium --exclude encrypted-ixs
 
+      # 🚨 THE SHIPPED PROVER IS NOT COVERED BY THE STEP ABOVE, and it took a
+      # broken build to notice. `mod wasm_api` is behind `#[cfg(feature =
+      # "wasm")]`, so `cargo check --workspace --all-targets` compiles the crate
+      # WITHOUT it — as does `cargo test`. The only thing that compiles that
+      # module is `wasm-pack`, and the only thing that runs `wasm-pack` is a
+      # human about to reship the blob.
+      #
+      # MEASURED 2026-08-31: hoisting `draw_blinding_mask` to the crate root on
+      # 08-30 left its five callers inside `wasm_api` unresolved. The tree stayed
+      # green for a day and the failure surfaced only when a reship was
+      # attempted — which, per `air/mod.rs:28-31`, is the worst place to find it:
+      # a rebuilt blob is not rejected early, it fails at the END of a ~150
+      # transaction upload.
+      #
+      # `check`, not `build`: this exists to catch resolution and type errors in
+      # a module nothing else compiles, and it must stay cheap enough to run on
+      # every push.
+      - name: Add wasm32 target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: cargo check (the shipped prover, --features wasm)
+        run: cargo check -p p01-stark --features wasm --target wasm32-unknown-unknown
+
       # This is a real gate, not a formality. `eval_periodic_stride_at_z` and
       # `eval_periodic_ext_at_z` in the verifier perform NO runtime validation
       # by design — a sparsity scan would cost exactly what the rewrite saves —
