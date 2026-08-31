@@ -121,7 +121,11 @@ pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     // circuit whose randomizer column did not pay for itself at its old length:
     // 256 random coefficients against 301 published functionals. The trace had
     // to grow with it. ⛔ HARD WIRE BREAK in both directions.
-    trace_width: 4,
+    // [ZK-LIFT 2026-08-30] 4 -> 5. Column 3 is the ZK lift (zero on the
+    // constrained rows, uniform on the blinding ones, read by constraint [4]
+    // alone); column 4 is the randomizer, read by nothing. HARD WIRE BREAK in
+    // both directions -- `from_bytes` sizes every query block from this number.
+    trace_width: 5,
     // [C1-N256 2026-08-29] 128 -> 256, and this is a HARD WIRE BREAK in both
     // directions: `num_fri_layers` goes 6 -> 7 and the parser checks it, so the
     // deployed verifier cannot read a new proof and this one cannot read an old

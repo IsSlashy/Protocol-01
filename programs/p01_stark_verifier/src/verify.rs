@@ -874,11 +874,11 @@ mod domain_generator_tests {
         };
         use p01_stark::{BaseElement, FieldElement, StarkField};
 
-        assert_eq!(POOL_COMMITMENT_NUM_CONSTRAINTS, 4);
+        assert_eq!(POOL_COMMITMENT_NUM_CONSTRAINTS, 5);
         assert_eq!(POOL_COMMITMENT_NUM_PERIODIC, 7, "six columns plus the one gate");
-        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
-        // fewer, and the extra column is the randomizer. Both numbers matter.
-        assert_eq!(TRACE_WIDTH, 4);
+        // [ZK-LIFT 2026-08-30] The COMMITTED width. The AIR constrains four of
+        // the five: col 3 is the ZK lift, col 4 the randomizer. Both matter.
+        assert_eq!(TRACE_WIDTH, 5);
 
         let w = TRACE_WIDTH;
         let np = POOL_COMMITMENT_NUM_PERIODIC;
@@ -904,8 +904,8 @@ mod domain_generator_tests {
             }
 
             // [ZK-RANDOMIZER] 3 -> 4, same reason as the C3 twin above.
-            let mut cur_v = [Felt::ZERO; 4];
-            let mut nxt_v = [Felt::ZERO; 4];
+            let mut cur_v = [Felt::ZERO; TRACE_WIDTH];
+            let mut nxt_v = [Felt::ZERO; TRACE_WIDTH];
             let mut per_v = [Felt::ZERO; 7];
             for i in 0..w {
                 cur_v[i] = Felt::new(raw[i]);
@@ -4176,8 +4176,8 @@ fn evaluate_transition_at_ood_circuit_1(
     // [ZK-RANDOMIZER 2026-08-30] 3 -> 4. Index 3 is the randomizer column and
     // nothing below reads it; it is carried because the DEEP recombination sums
     // a gamma power over every committed column.
-    ood_current: &[Felt; 4],
-    ood_next: &[Felt; 4],
+    ood_current: &[Felt; 5],
+    ood_next: &[Felt; 5],
     periodic_at_z: &[Felt; 7],
     alpha: Felt,
 ) -> Felt {
@@ -4213,7 +4213,7 @@ fn evaluate_transition_at_ood_circuit_1(
     //
     // ⚠️ TWO PERIODIC FACTORS PER LINE, `nba` and `round_flag`, over a degree-7
     // body. A third takes ce_blowup_factor from 8 to 16.
-    let mut cs = [Felt::ZERO; 4];
+    let mut cs = [Felt::ZERO; 5];
     cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_flag.mul(ro0.sub(ood_current[0])))
     );
@@ -4226,6 +4226,25 @@ fn evaluate_transition_at_ood_circuit_1(
 
     // Chain: at row 63, next[1]@row64 must equal current[0]@row63 (epoch_hash).
     cs[3] = chain_flag.mul(ood_next[1].sub(ood_current[0]));
+
+    // ── [4] ZK degree lift, col `ZK_LIFT_COL` ──
+    //
+    // Prover twin: `air::denominated_pool::evaluate_pool_commitment_transition`,
+    // result[4]. Zero on the trace domain, so it constrains nothing; its job is
+    // to be degree 1 in the lift column so the blinding region reaches every
+    // quotient block instead of only the low ones.
+    //
+    // ⚠️ TWICE `nba`. C1 has no `active` column, so the second period-512 gate
+    // has to come from the one it does have. `nba` is 0/1 on the trace domain,
+    // so squaring it changes no zero set and buys `n - 1` of degree.
+    //
+    // 🚨 THE BASE IS RAW `ood_current[0]`, never a local `s0`: that is the
+    // Poseidon round input `ood_current[0] + rc0`, and using it here would
+    // evaluate a different polynomial than the prover and reject every honest
+    // proof with `DeepAliFailed`.
+    let lift_base = ood_current[0];
+    let lb3 = lift_base.mul(lift_base).mul(lift_base);
+    cs[4] = nba.mul(nba).mul(ood_current[3]).mul(lb3).mul(lb3);
 
     // Horner-style RLC: Σ α^i · cs[i].
     let mut combined = Felt::ZERO;
@@ -4289,13 +4308,15 @@ pub fn verify_deep_ali_circuit_1(
     // [ZK-RANDOMIZER 2026-08-30] 3 -> 4. This guard sits BEFORE the frame is
     // built, so left behind it rejects every honest proof with `DeepAliFailed`
     // -- the same trap C7's guard sprang in this change.
-    if ood_current_vec.len() != 4 || ood_next_vec.len() != 4 {
+    if ood_current_vec.len() != 5 || ood_next_vec.len() != 5 {
         return Err(VerifyError::DeepAliFailed);
     }
     // [ZK-RANDOMIZER] Slot 3 carried, read by nothing.
     let ood_current =
-        [ood_current_vec[0], ood_current_vec[1], ood_current_vec[2], ood_current_vec[3]];
-    let ood_next = [ood_next_vec[0], ood_next_vec[1], ood_next_vec[2], ood_next_vec[3]];
+        [ood_current_vec[0], ood_current_vec[1], ood_current_vec[2], ood_current_vec[3],
+         ood_current_vec[4]];
+    let ood_next = [ood_next_vec[0], ood_next_vec[1], ood_next_vec[2], ood_next_vec[3],
+                    ood_next_vec[4]];
 
     // Derive α exactly like the prover (C1-specific domain tag).
     let pub_bytes = public_inputs_to_bytes(public_inputs);
@@ -7158,15 +7179,15 @@ mod merkle_update_e2e {
 
         let mut tampered = proof_data.proof_bytes.clone();
         // [ZK-RANDOMIZER 2026-08-30] 120 -> 136. `ood_quotient` starts at
-        // `64 + trace_width*16 + 8`, and C1's committed width went 3 -> 4. Left
-        // at 120 this flipped a bit of `ood_next` instead, which the identity
-        // tolerates -- so the test PASSED THE TAMPER and reported `got Ok(())`.
-        // A hardcoded byte offset in a tampering test fails in the dangerous
-        // direction: it stops testing anything, and says so only in a message
-        // nobody reads until the day it matters.
+        // `64 + trace_width*16 + 8`, and C1's committed width went 3 -> 4 -> 5.
+        // Left at 120 this flipped a bit of `ood_next` instead, which the
+        // identity tolerates -- so the test PASSED THE TAMPER and reported
+        // `got Ok(())`. A hardcoded byte offset in a tampering test fails in
+        // the dangerous direction: it stops testing anything, and says so only
+        // in a message nobody reads until the day it matters.
         let ood_quotient_offset =
             64 + crate::compact_proof::CONFIG_POOL_COMMITMENT.trace_width * 16 + 8;
-        assert_eq!(ood_quotient_offset, 136);
+        assert_eq!(ood_quotient_offset, 152);
         tampered[ood_quotient_offset] ^= 0x02;
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");

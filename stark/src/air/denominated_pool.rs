@@ -35,7 +35,7 @@ use crate::poseidon;
 // ============================================================================
 
 /// Columns the AIR constrains.
-pub const CONSTRAINED_TRACE_WIDTH: usize = 3;
+pub const CONSTRAINED_TRACE_WIDTH: usize = 4;
 
 /// [ZK-RANDOMIZER 2026-08-30] One extra committed column, uniform on ALL rows,
 /// entering NO constraint. It exists to put randomness into the DEEP
@@ -45,6 +45,51 @@ pub const CONSTRAINED_TRACE_WIDTH: usize = 3;
 /// ⚠️ C1 IS THE ONE CIRCUIT WHERE THE COLUMN ALONE WAS NOT ENOUGH. At n = 256 it
 /// contributes 256 random coefficients against 301 published functionals: it did
 /// not even cover itself. That is why `TRACE_LENGTH` doubles in the same change.
+/// [ZK-LIFT 2026-08-30] The column that carries the blinding region into the
+/// quotient claims the row mask cannot reach. C7 twin: `air::spend::ZK_LIFT_COL`.
+///
+/// The verifier checks ONE equation on the eight claims `Q_0(z)..Q_7(z)`, so a
+/// simulator samples seven uniform and solves the eighth. The honest prover
+/// cannot -- the coefficient split is unique -- so the only question is whether
+/// the forced seven already look uniform. Measured on C7, they did not: the
+/// columns that reach `Q` affinely reach only blocks 0..2, because a constraint
+/// linear in a column contributes a low-degree piece to `Q = C / Z_T`.
+///
+/// The lift constraint fixes the degree budget and touches nothing else:
+///
+/// ```text
+///     nba(x) * nba(x) * v(x) * state0(x)^6
+/// ```
+///
+/// ⚠️ TWICE `nba`, AND THE REPETITION IS DELIBERATE. C1 is the one circuit with
+/// no `active` column -- it has seven periodic columns and the file explains why
+/// an eighth was not added -- so the second period-512 gate has to come from
+/// somewhere. `nba` takes values in {0, 1} on the trace domain, so `nba^2 = nba`
+/// there and the zero set is identical; off the domain it is a genuine degree
+/// `2(n-1)` factor, which is the whole point.
+///
+///   * ZERO ON THE TRACE DOMAIN, because the trace builder writes this column
+///     only inside the blinding region and `nba` is off there. It constrains
+///     nothing and carries no witness, and adding a constraint can only
+///     restrict a prover, never free one.
+///   * base degree 7 with TWO period-512 gates -- the shape C1`s Poseidon
+///     rounds already carry -- so `deg(C)` does not rise, `quotient_segments`
+///     stays 8, `deg(D) = n - 2` stays and the FRI rate does not move.
+///   * degree ONE in `v`, so every `Q_j(z)`, every committed quotient value and
+///     every FRI layer value becomes affine in this column`s blinding entries.
+///     Affine with a non-zero slope in a uniform variable is EXACTLY uniform.
+///
+/// ⛔ THE LIFT FACTOR MUST BE DENSE IN `x`. `(x^n - c)^6` was drafted first and
+/// measures rank 1 OF 7: a polynomial in `x^n` cannot smear across segment
+/// boundaries, so all seven claims come out as one scalar times a binomial
+/// coefficient. `state0^6` is dense, and density is what creates rank.
+///
+/// ⛔ IT IS NOT THE RANDOMIZER. That column is uniform on ALL rows precisely
+/// because it is unconstrained everywhere, which is what covers the FRI
+/// channel. Giving it this constraint would force it to zero on the
+/// constrained rows and put that channel SHORT. Two columns, two jobs.
+pub const ZK_LIFT_COL: usize = CONSTRAINED_TRACE_WIDTH - 1;
+
 pub const RANDOMIZER_COL: usize = CONSTRAINED_TRACE_WIDTH;
 
 pub const TRACE_WIDTH: usize = CONSTRAINED_TRACE_WIDTH + 1;
@@ -125,7 +170,7 @@ pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH;
 /// Layout: 3 Poseidon-round constraints (cols 0-2, gated by not_boundary *
 /// round_flag) + 1 chain constraint (next[1] at row 64 = current[0] at row 63,
 /// i.e. epoch_hash routed into cycle 2's right input).
-pub const POOL_COMMITMENT_NUM_CONSTRAINTS: usize = 4;
+pub const POOL_COMMITMENT_NUM_CONSTRAINTS: usize = 5;
 
 /// Number of periodic columns.
 ///
@@ -186,6 +231,11 @@ impl Air for DenominatedPoolAir {
             TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, TRACE_LENGTH]),
             TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, TRACE_LENGTH]),
             TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
+            // [4] ZK degree lift, col `ZK_LIFT_COL`. Base 7 with two
+            // period-512 gates -- the same shape as the Poseidon rounds above --
+            // so the composition degree, the segment count and the FRI rate are
+            // all unchanged.
+            TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, TRACE_LENGTH]),
         ];
 
         // Assertions:
@@ -392,6 +442,15 @@ pub fn evaluate_pool_commitment_transition<E: FieldElement>(
     // ── Chain: epoch_hash → cycle 2 right input ──
     // At row 63 (end of cycle 1): next[1] at row 64 should = current[0] at row 63 (epoch_hash).
     result[3] = chain_flag * (next[1] - current[0]);
+
+    // [4] ZK degree lift, col `ZK_LIFT_COL`. See the constant`s doc, including
+    // why `nba` appears twice.
+    //
+    // Zero on the trace domain because `v` is zero wherever `nba` is not. Its
+    // whole job is to be degree 1 in `v` and degree 7 overall, so the blinding
+    // region reaches quotient blocks 0..7 instead of 0..2.
+    let lift = current[0] * current[0] * current[0];
+    result[4] = nba * nba * current[ZK_LIFT_COL] * lift * lift;
 }
 
 // ============================================================================
