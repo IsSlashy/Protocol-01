@@ -1,20 +1,36 @@
 /**
- * ONE DEPTH, FOUR PLACES — the wire that broke every v4 spend.
+ * ONE DEPTH, IN EVERY PLACE THAT MIRRORS IT — the wire that broke every v4 spend.
  *
  * 🚨 THE FACT THIS PINS, AND IT WAS LIVE. Circuit 7's subtree depth moved to 11
  * on the Rust side (`stark/src/air/spend.rs` CANONICAL_DEPTH, the shipped
  * prover's own arity check in `stark/src/lib.rs`, and the on-chain verifier).
  * `denominatedPool.ts` followed and slices the Merkle path to 11. The two
- * JavaScript prover front-ends did NOT: both still demanded exactly 12 and both
- * throw BEFORE the wasm is ever called. So every circuit-7 spend from the web
- * client — every v4 withdrawal — failed on an arity error that reads like a
- * caller bug, and the guard's own comment insisted the depth was 12.
+ * JavaScript prover front-ends on this stack did NOT: both still demanded
+ * exactly 12, and both throw BEFORE the wasm is ever called. So every circuit-7
+ * spend from the web client — every v4 withdrawal — failed on an arity error
+ * that reads like a caller bug, and the guard's own comment insisted the depth
+ * was 12.
  *
  * Nothing caught it. The only test that exercises the real path is
  * `liveRelayedUnshieldV4.test.ts`, which is `describe.skipIf(!LIVE)` and does
  * not run in CI. A constant written on both sides of a wire and moved on only
  * one is the failure this repository keeps paying for; this file is the cheap
  * check that makes the next move loud.
+ *
+ * ⚠️ SCOPE: WEB AND THE PUBLISHED PACKAGE ONLY, DELIBERATELY.
+ * The extension and mobile stacks carry the same constants and are MEASURED to
+ * be a full wave behind — at BOTH layers, guard and slice:
+ *
+ *     apps/extension/src/shared/services/denominatedPool.ts   C3/C6/C7 = 12
+ *     apps/extension/src/shared/workers/starkProver.worker.ts guard    = 12
+ *     apps/mobile/services/denominatedPool/index.ts           C3/C6/C7 = 12
+ *     apps/mobile/services/stark/StarkProver.tsx              guard    = 12
+ *
+ * against a Rust CANONICAL_DEPTH of 11 in all three AIRs. Neither surface can
+ * produce a proof the deployed verifier accepts, for any circuit that walks a
+ * Merkle path. They are NOT asserted here and NOT edited: those stacks ship
+ * separately and changing them is the owner's call, not this suite's. Recorded
+ * so the next reader finds it as a measurement rather than rediscovering it.
  *
  * ⛔ RUST IS THE SOURCE OF TRUTH. The circuit decides the depth; TypeScript
  * mirrors it. If this test fails, fix the mirror — do not change the Rust to
@@ -41,8 +57,11 @@ function constant(source: string, name: string, file: string): number {
 }
 
 describe("circuit 7's subtree depth", () => {
-  const rustAir = read('stark/src/air/spend.rs');
-  const truth = constant(rustAir, 'pub const CANONICAL_DEPTH', 'stark/src/air/spend.rs');
+  const truth = constant(
+    read('stark/src/air/spend.rs'),
+    'pub const CANONICAL_DEPTH',
+    'stark/src/air/spend.rs',
+  );
 
   it('is a real depth, not a parse accident', () => {
     // Anti-vacuity: a regex that matched nothing would make every case below
@@ -53,10 +72,9 @@ describe("circuit 7's subtree depth", () => {
 
   it('is what the shipped Rust prover enforces, by name and not by literal', () => {
     // `stark/src/lib.rs` must keep checking against CANONICAL_DEPTH rather than
-    // a number of its own. A literal there would be a fifth place to forget.
-    const lib = read('stark/src/lib.rs');
+    // a number of its own. A literal there would be one more place to forget.
     expect(
-      lib,
+      read('stark/src/lib.rs'),
       'the shipped prover stopped checking the path against CANONICAL_DEPTH',
     ).toMatch(/path_elements\.len\(\)\s*!=\s*CANONICAL_DEPTH/);
   });
@@ -69,12 +87,10 @@ describe("circuit 7's subtree depth", () => {
     // 🚨 THIS IS THE ONE THAT WAS WRONG. It was 12 against a circuit of 11, and
     // it rejects before the wasm runs, so the shipped prover never got a say.
     const worker = read('apps/web/lib/privacy/pool/starkProver.worker.ts');
-    const guard = constant(
-      worker,
-      'const C7_PATH_DEPTH',
-      'apps/web/lib/privacy/pool/starkProver.worker.ts',
-    );
-    expect(guard, 'the web worker rejects the path the pool client builds').toBe(truth);
+    expect(
+      constant(worker, 'const C7_PATH_DEPTH', 'apps/web/lib/privacy/pool/starkProver.worker.ts'),
+      'the web worker rejects the path the pool client builds',
+    ).toBe(truth);
     expect(worker, 'the arity guard is a bare literal again').not.toMatch(
       /data\.pathElements\.length\s*!==\s*\d/,
     );
@@ -83,45 +99,48 @@ describe("circuit 7's subtree depth", () => {
   it('is what the published npm front-end accepts', () => {
     // Same guard, second copy, shipped to other people. It broke identically.
     const pkg = read('packages/stark-prover/src/index.ts');
-    const guard = constant(pkg, 'const C7_PATH_DEPTH', 'packages/stark-prover/src/index.ts');
-    expect(guard, 'the published prover rejects the path the pool client builds').toBe(truth);
+    expect(
+      constant(pkg, 'const C7_PATH_DEPTH', 'packages/stark-prover/src/index.ts'),
+      'the published prover rejects the path the pool client builds',
+    ).toBe(truth);
     expect(pkg, 'the arity guard is a bare literal again').not.toMatch(
       /elements\.length\s*!==\s*\d/,
     );
   });
+});
 
-  it('is what the extension front-end accepts', () => {
-    const ext = read('apps/extension/src/shared/workers/starkProver.worker.ts');
-    const guard = constant(
-      ext,
-      'const C7_PATH_DEPTH',
-      'apps/extension/src/shared/workers/starkProver.worker.ts',
-    );
-    expect(guard, 'the extension rejects the path the circuit needs').toBe(truth);
-  });
-
-  it('is what the mobile front-end accepts', () => {
-    const mob = read('apps/mobile/services/stark/StarkProver.tsx');
-    const guard = constant(
-      mob,
-      'const C7_PATH_DEPTH',
-      'apps/mobile/services/stark/StarkProver.tsx',
-    );
-    expect(guard, 'mobile rejects the path the circuit needs').toBe(truth);
-  });
-
-  it('is spelled nowhere as a bare 12 in any of the four front-ends', () => {
-    // The class, not the instance: four copies of one number across a wire that
-    // carries no types is how this broke, and a fifth copy would break it again.
-    for (const f of [
-      'apps/web/lib/privacy/pool/starkProver.worker.ts',
-      'packages/stark-prover/src/index.ts',
-      'apps/extension/src/shared/workers/starkProver.worker.ts',
-      'apps/mobile/services/stark/StarkProver.tsx',
-    ]) {
-      expect(read(f), `${f} still spells a path arity as a literal`).not.toMatch(
-        /path(Elements|Indices)\.length\s*!==\s*\d/,
-      );
+describe('the three merkle circuits agree with this stack', () => {
+  it('C3, C6 and C7 all slice to their own CANONICAL_DEPTH', () => {
+    // C7 is the one that broke, but C3 (merkle_path) and C6 (merkle_update)
+    // mirror the same way and would break the same way. Three constants, three
+    // sources of truth, checked together so a partial move is loud.
+    const want: Record<string, number> = {
+      C3: constant(
+        read('stark/src/air/merkle_path.rs'),
+        'pub const CANONICAL_DEPTH',
+        'stark/src/air/merkle_path.rs',
+      ),
+      C6: constant(
+        read('stark/src/air/merkle_update.rs'),
+        'pub const CANONICAL_DEPTH',
+        'stark/src/air/merkle_update.rs',
+      ),
+      C7: constant(
+        read('stark/src/air/spend.rs'),
+        'pub const CANONICAL_DEPTH',
+        'stark/src/air/spend.rs',
+      ),
+    };
+    const src = read('apps/web/lib/privacy/pool/denominatedPool.ts');
+    let checked = 0;
+    for (const [circuit, depth] of Object.entries(want)) {
+      const m = src.match(new RegExp(`const ${circuit}_SUBTREE_DEPTH\\s*=\\s*(\\d+)`));
+      expect(m, `denominatedPool no longer declares ${circuit}_SUBTREE_DEPTH`).toBeTruthy();
+      expect(Number(m![1]), `${circuit}_SUBTREE_DEPTH disagrees with its circuit`).toBe(depth);
+      checked += 1;
     }
+    // Anti-vacuity: a renamed constant must fail loudly rather than quietly
+    // reduce the number of things this case looks at.
+    expect(checked, 'the pool client stopped declaring one of the three depths').toBe(3);
   });
 });

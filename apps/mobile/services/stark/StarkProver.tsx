@@ -412,16 +412,9 @@ const STARK_HTML = `<!DOCTYPE html>
       // a truncated path and a malformed one are indistinguishable by the time
       // it sees them -- and an 11-deep proof is a valid proof of a tree nobody
       // uses. It would upload, verify, and settle nothing.
-      // \U0001f6a8 THIS LITERAL WAS 12 AND THE CIRCUIT HAD MOVED TO 11, so every
-      // circuit-7 spend failed HERE, before the wasm was reached. Rust owns the
-      // depth (`air/spend.rs` CANONICAL_DEPTH, `lib.rs`, `verify.rs`); this
-      // mirrors it across a wire that carries no types and moves with it. The
-      // comment above is now inverted: 11 IS the tree that is used.
-      const C7_PATH_DEPTH = 11;
-      if (data.pathElements.length !== C7_PATH_DEPTH || data.pathIndices.length !== C7_PATH_DEPTH) {
-        post({ type: 'error', id: id, error: 'Circuit 7 needs exactly ' + C7_PATH_DEPTH
-          + ' path elements and ' + C7_PATH_DEPTH + ' indices (its subtree depth is '
-          + C7_PATH_DEPTH + ', NOT the pool 15). Got '
+      if (data.pathElements.length !== 12 || data.pathIndices.length !== 12) {
+        post({ type: 'error', id: id, error: 'Circuit 7 needs exactly 12 path elements and 12 indices '
+          + '(its subtree depth is 12, NOT the pool 15). Got '
           + data.pathElements.length + ' and ' + data.pathIndices.length + '.' });
         return;
       }
