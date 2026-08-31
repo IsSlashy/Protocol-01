@@ -87,7 +87,24 @@ interface Pin {
   /** `CircuitConfig::num_queries` */
   numQueries: number;
   /** MEASURED pre-Route-C proof bytes (binary sha256 b5c7e01d…, 637,968 B). */
-  preRouteC: number;
+  /**
+   * MEASURED pre-Route-C bytes, or `undefined` where that measurement can no
+   * longer be taken.
+   *
+   * 🚨 `undefined` FOR C1, C3, C5 AND C6 SINCE 2026-08-31, and it is not
+   * laziness. A baseline is a MEASUREMENT OF A CODE STATE. All four of those
+   * circuits changed trace length and/or width when the blinding regions and
+   * the ZK lift column landed, so the state their baseline described is gone
+   * and cannot be re-measured. Re-deriving one as `actual - closedForm` would
+   * make the closed-form arm assert itself, which is worse than not running
+   * it — so it does not run, and this comment is the record of what was lost.
+   *
+   * The two arms that still cover those four are `absolute`, which pins the
+   * byte count against the Rust prover, and the freshness assertion, which
+   * pins the property a digest cannot express. The same treatment was applied
+   * Rust-side in `programs/p01_stark_verifier/tests/route_c_trace_pair.rs`.
+   */
+  preRouteC?: number;
   /**
    * [B2] MEASURED quotient segments, `ceil((deg(Q)+1)/trace_length)`. The Rust
    * twin is `CircuitConfig.quotient_segments`. It appears here because the
@@ -145,14 +162,17 @@ const PINS: Pin[] = [
   {
     label: 'C1 pool_commitment',
     circuitId: STARK_CIRCUITS.POOL_COMMITMENT,
-    traceWidth: 3,
+    // [ZK-LIFT 2026-08-31] The COMMITTED width, and it moved twice: the
+    // randomizer column, then the ZK lift column. Both are trace columns the
+    // wire carries, so the closed form below depends on this number.
+    traceWidth: 5,
     numQueries: 27,
     // Pre-Route-C baseline, rescaled with the geometry: md 11 -> 12 adds one
     // node to each of the three paths per query, and one FRI layer.
-    preRouteC: 77_929,
+    // preRouteC: RETIRED 2026-08-31 — this geometry no longer exists.
     quotientSegments: 8,
     // [C1-N256 2026-08-29] 68,881 -> 80,577. n 128 -> 256, LDE 2048 -> 4096.
-    absolute: 80_577,
+    absolute: 94_897,
     // sha256: RETIRED — C1 draws a fresh mask per proof. See `Pin.sha256`.
     inputs: { nullifierPreimage: '42', secret: '17', depositEpoch: '7', tokenMint: '11' },
   },
@@ -174,11 +194,14 @@ const PINS: Pin[] = [
   {
     label: 'C3 merkle_path',
     circuitId: STARK_CIRCUITS.MERKLE_PATH,
-    traceWidth: 6,
+    // [ZK-LIFT 2026-08-31] The COMMITTED width, and it moved twice: the
+    // randomizer column, then the ZK lift column. Both are trace columns the
+    // wire carries, so the closed form below depends on this number.
+    traceWidth: 8,
     numQueries: 22,
-    preRouteC: 74_933,
+    // preRouteC: RETIRED 2026-08-31 — this geometry no longer exists.
     quotientSegments: 8,
-    absolute: 78_157,
+    absolute: 79_597,
     // sha256: RETIRED — C3 draws a fresh mask per proof. See `Pin.sha256`.
     inputs: {
       leaf: '777',
@@ -213,10 +236,16 @@ const PINS: Pin[] = [
     circuitId: STARK_CIRCUITS.TRANSFER,
     traceWidth: 7,
     numQueries: 22,
-    preRouteC: 75_301,
+    // preRouteC: RETIRED 2026-08-31 — this geometry no longer exists.
     quotientSegments: 8,
-    absolute: 78_877,
-    sha256: 'a9e3805e504ac0468632739d615ac7d90e34843f27442685f8b30efb7723b5ed',
+    absolute: 89_821,
+    // sha256: RETIRED 2026-08-31 — C5 draws a fresh mask per proof.
+    // `stark/src/lib.rs:425` calls `draw_blinding_mask(transfer::MASK_LEN)`, so
+    // two proofs over the same witness differ. ⛔ DO NOT re-pin this to the Rust
+    // fixture's digest: `fixture_c5` feeds a FIXED mask and is reproducible, the
+    // SHIPPED prover is not, and a copied digest would fail at random rather than
+    // fail honestly. The length above still pins, and it is the half that
+    // catches a format change. See `Pin.sha256`.
     inputs: {
       spendingKey: '13',
       tokenMint: '500',
@@ -236,11 +265,14 @@ const PINS: Pin[] = [
   {
     label: 'C6 merkle_update',
     circuitId: STARK_CIRCUITS.MERKLE_UPDATE,
-    traceWidth: 10,
+    // [ZK-LIFT 2026-08-31] The COMMITTED width, and it moved twice: the
+    // randomizer column, then the ZK lift column. Both are trace columns the
+    // wire carries, so the closed form below depends on this number.
+    traceWidth: 12,
     numQueries: 22,
-    preRouteC: 76_405,
+    // preRouteC: RETIRED 2026-08-31 — this geometry no longer exists.
     quotientSegments: 8,
-    absolute: 81_037,
+    absolute: 82_477,
     // sha256: RETIRED — C6 draws a fresh mask per proof. See `Pin.sha256`.
     inputs: {
       oldLeaf: '111',
@@ -297,7 +329,9 @@ describe('checked-in WASM prover — Route C wire format', () => {
       //     entry each widened from 8 to 8k bytes.
       const routeCDelta = pin.numQueries * (16 * pin.traceWidth - 64);
       const b2Delta = 8 * (pin.quotientSegments - 1) * (2 * pin.numQueries + 1);
-      expect(proofBytes.length - pin.preRouteC).toBe(routeCDelta + b2Delta);
+      if (pin.preRouteC !== undefined) {
+        expect(proofBytes.length - pin.preRouteC).toBe(routeCDelta + b2Delta);
+      }
 
       // (3) CONTENT pin — the only one of the three that catches B1-class
       //     semantic skew. See `Pin.sha256`. Both length checks stay green
@@ -379,10 +413,10 @@ describe('checked-in WASM prover — Route C wire format', () => {
       depositEpoch: '7',
       tokenMint: '11',
     });
-    expect(proofBytes.length).toBe(68_881);
+    expect(proofBytes.length).toBe(94_897);
     // [C1-N256] The digest assertion is gone; C1 draws a fresh mask. What is
     // left here is the length, which is the invariant that survived.
-    expect(proofBytes.length).toBe(80_577);
+    expect(proofBytes.length).toBe(94_897);
   }, 60_000);
 
   // -------------------------------------------------------------------------
@@ -413,8 +447,14 @@ describe('checked-in WASM prover — Route C wire format', () => {
       // pool tree is 15 and the top three levels are walked ON CHAIN by
       // `resolve_pool_root`. Feeding it a 15-element path is the single easiest
       // way to prove membership of the wrong tree.
-      pathElements: Array.from({ length: 12 }, (_, i) => String(1000 + i * 7)).join(','),
-      pathIndices: Array.from({ length: 12 }, (_, i) => String(i % 2)).join(','),
+      // [ZK-DEPTH 2026-08-31] ELEVEN, not twelve. C7's depth is fixed by the
+      // trace layout (`air::spend::CANONICAL_DEPTH`), not carried as a public
+      // input, so a wrong count is refused by the prover rather than proving
+      // the wrong tree — which is what the test below asserts deliberately.
+      // At twelve, every C7 case here failed with 'the prover refused the
+      // witness' and measured nothing about the wire.
+      pathElements: Array.from({ length: 11 }, (_, i) => String(1000 + i * 7)).join(','),
+      pathIndices: Array.from({ length: 11 }, (_, i) => String(i % 2)).join(','),
       recipientHash: ['111111111', '222222222', '333333333', '444444444'].join(','),
     };
 
@@ -434,8 +474,12 @@ describe('checked-in WASM prover — Route C wire format', () => {
       const json = prove();
       expect(json.error ?? null, 'the prover refused the witness').toBeNull();
       expect(json.circuit_id).toBe(7);
-      expect(json.proof_size).toBe(77_965);
-      expect((json.proof_hex as string).length).toBe(77_965 * 2);
+      // [ZK-LIFT 2026-08-31] 77,965 -> 79,405. Width 10 -> 11 (randomizer)
+      // -> 12 (ZK lift), each adding 16 bytes of OOD frame plus 22 queries x
+      // 32 bytes of Route C rows. MEASURED against the reshipped blob, and it
+      // equals the Rust prover's figure exactly.
+      expect(json.proof_size).toBe(79_405);
+      expect((json.proof_hex as string).length).toBe(79_405 * 2);
     }, 120_000);
 
     it('draws a fresh mask — the same witness twice gives DIFFERENT bytes', () => {
