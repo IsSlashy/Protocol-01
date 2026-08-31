@@ -104,13 +104,19 @@ async function main() {
   );
   const unlisted = mine.filter((l) => !configured.has(l));
   if (unlisted.length > 0) {
-    console.log(
-      `\n🚨 ${unlisted.length} leaf/leaves the treasury owns are NOT in ` +
-        `P01_TREASURY_NOTE_LEAVES, so issue-note cannot hand them out:`,
-    );
+    // ⚠ NOT AN ACTION ANY MORE, AND SAYING SO MATTERS. `issue-note` now
+    // DISCOVERS what this seed can open by asking the tree, so an unlisted leaf
+    // is still issuable. Telling an operator to edit two secrets would send them
+    // to do work the route stopped needing — and the hand-maintained list
+    // drifting is the bug that hid ten notes in the first place.
+    console.log('');
+    console.log(`${unlisted.length} leaf/leaves are not named in P01_TREASURY_NOTE_LEAVES:`);
     console.log(`   ${unlisted.join(',')}`);
-    console.log(`\n   Set P01_TREASURY_NOTE_LEAVES=${mine.join(',')}`);
-    console.log('   in Vercel AND in the GitHub secret — the value lives in two places.');
+    console.log('');
+    console.log('   That is fine. issue-note discovers what this seed can open off the');
+    console.log('   tree, so these are issuable without being written anywhere. The');
+    console.log('   variable is a supplement now, not the source of truth: set it only');
+    console.log('   to name leaves this scan cannot see, never to restrict what it can.');
   } else if (mine.length > 0) {
     console.log('\n✅ Every leaf the treasury owns is configured.');
   }
