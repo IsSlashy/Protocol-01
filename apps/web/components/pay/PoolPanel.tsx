@@ -31,6 +31,7 @@ import {
   contributeToPool,
   requestIssuedNote,
   fetchIssuableNote,
+  resumeContribution,
   recoverStuckFunds,
   storeEncryptedNote,
   sweepPayout,
@@ -710,6 +711,32 @@ export default function PoolPanel({
        * here would have the treasury contributing to itself and drawing its own
        * stock down.
        */
+      /**
+       * ⛔ FINISH WHAT WAS ALREADY PAID FOR, BEFORE TAKING ANOTHER PAYMENT.
+       *
+       * MEASURED 2026-08-31, on real money: a worker timeout after the till was
+       * paid left a claim owed and nothing recording it, so the next click paid
+       * 1.013 SOL a second time. `resumeContribution` never pays — it confirms
+       * and collects — and returns null when nothing is outstanding, so this
+       * falls through to a fresh contribution on the ordinary path.
+       */
+      const resumed = await resumeContribution({ meta, owner, onProgress: setStep });
+      if (resumed) {
+        setContributed(null);
+        setResult({
+          txSig: '',
+          commitment: resumed.note.commitment,
+          leafIndex: resumed.leafIndex,
+          denomination,
+          encryptedNote: '',
+          fundedLamports: 0,
+          fundedBy: 'funder',
+          walletPaidLamports: null,
+        } as ShieldOutcome);
+        void rescan();
+        return;
+      }
+
       const stock = treasuryMode ? null : await fetchIssuableNote();
       if (stock) {
         const gave = await contributeToPool({

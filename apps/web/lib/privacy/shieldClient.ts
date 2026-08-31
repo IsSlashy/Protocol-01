@@ -30,6 +30,7 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
+import { rememberContribution, attachClaim, pendingFor, clearContribution } from './pendingContribution';
 import {
   fetchFunderLookup,
   funderTicket,
@@ -392,6 +393,62 @@ async function contributeApi(
   return json;
 }
 
+/**
+ * Finish a contribution this buyer already PAID FOR.
+ *
+ * ⛔ IT NEVER PAYS. That is the entire reason it exists: MEASURED
+ * 2026-08-31, a worker timeout after the till was paid left a claim owed and
+ * nothing recording it, so the next shield click paid 1.013 SOL a second time.
+ * This path only confirms and collects.
+ *
+ * Returns `null` when there is nothing outstanding, so a caller can fall through
+ * to a fresh contribution without branching twice.
+ */
+export async function resumeContribution(params: {
+  meta: string;
+  owner: PublicKey;
+  onProgress?: (step: string) => void;
+}): Promise<IssuedNoteOutcome | null> {
+  const { meta, owner, onProgress } = params;
+  const pending = pendingFor(owner.toBase58());
+  if (!pending) return null;
+
+  onProgress?.('Finishing a deposit you already paid for...');
+  let claimCode = pending.claimCode ?? '';
+  if (!claimCode) {
+    // The deposit may have landed after the page stopped watching. `confirm` is
+    // idempotent and refuses unless the treasury's own commitment is really at
+    // that index, so asking costs nothing and proves the leaf.
+    const confirmed = await contributeApi({
+      action: 'confirm',
+      token: pending.token,
+      leafIndex: pending.leafIndex,
+    });
+    claimCode = String(confirmed.claimCode ?? '');
+    if (!claimCode) {
+      throw new Error(
+        `A deposit you paid for (leaf ${pending.leafIndex}) could not be confirmed yet. ` +
+          'Do NOT shield again — that would pay a second time. Retry in a minute; if it ' +
+          'persists the leaf is on chain and one note is owed for it.',
+      );
+    }
+    attachClaim(owner.toBase58(), pending.leafIndex, claimCode);
+  }
+
+  const issued = await requestIssuedNote({
+    meta,
+    walletPubkey: owner.toBase58(),
+    token: pending.token,
+    denomination: pending.denomination,
+    claimCode,
+    onProgress,
+  });
+  // ⛔ Cleared only once the note is in hand. Clearing on the claim alone
+  // would lose the one record proving this buyer is owed something.
+  clearContribution(owner.toBase58(), pending.leafIndex);
+  return issued;
+}
+
 export async function contributeToPool(params: ContributeParams): Promise<ContributeOutcome> {
   const { meta, token, denomination, owner, connection, signOne, onProgress } = params;
 
@@ -402,6 +459,21 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
   if (!Number.isInteger(leafIndex) || leafIndex < 0 || !commitment) {
     throw new Error('The treasury reserved no usable leaf, so nothing was funded.');
   }
+
+  /**
+   * ⛔ RECORDED BEFORE ANY MONEY MOVES, and that ordering is the point.
+   * MEASURED 2026-08-31: the worker went quiet after the till was paid, nothing
+   * recorded that a claim was owed, and the next click paid 1.013 SOL again. An
+   * entry with no `claimCode` means "this buyer may already have paid for this
+   * leaf" — exactly what a resume needs to know.
+   */
+  rememberContribution({
+    leafIndex,
+    owner: owner.toBase58(),
+    token,
+    denomination,
+    at: Date.now(),
+  });
 
   const prep = await poolRequest(
     { kind: 'poolContributePrepare', meta, token, denomination, commitment, leafIndex },
@@ -442,6 +514,7 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
   onProgress?.('Collecting what the contribution is owed...');
   const confirmed = await contributeApi({ action: 'confirm', token, leafIndex: done.leafIndex });
   const claimCode = String(confirmed.claimCode ?? '');
+  if (claimCode) attachClaim(owner.toBase58(), done.leafIndex, claimCode);
   if (!claimCode) {
     // The deposit landed and the claim did not: say so precisely, because the
     // money moved and a vague error would send the buyer to do it again.

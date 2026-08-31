@@ -63,7 +63,7 @@ export const SHIELD_PHASES: FlowPhase[] = [
   // proved. It belongs here rather than in `buffer` — whose label also says
   // "Reserving" — because that one is about proof-buffer space on chain and
   // its regex (`initializ|resiz`) would never have caught it anyway.
-  { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing|looking for funds left|reserving a leaf/i },
+  { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing|looking for funds left|reserving a leaf|finishing a deposit/i },
   { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield|reading on-chain tree|computing merkle path/i },
   // ⚠️ `generating …stark proof`, NOT a bare `stark proof`.
   //

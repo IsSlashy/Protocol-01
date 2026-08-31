@@ -1408,22 +1408,19 @@ const ISSUANCE_UI = true;
             note exchanges it for a mature one, so gating the field on holding
             none made the feature unreachable by construction.
             ⚠️ The gate that belongs here is inventory, not possession. */}
-        {ISSUANCE_UI && !result && !!issuableNote && (
-          <div className="space-y-1">
-            <input
-              value={claimCode}
-              onChange={(e) => setClaimCode(e.target.value)}
-              placeholder="Claim code"
-              spellCheck={false}
-              className="w-full rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim"
-            />
-            <p className="text-xs text-p01-text-dim">
-              A note is real money, so one is issued per claim and a claim is created when a
-              payment settles. It is consumed the first time it is redeemed — if something fails
-              after that, recover the note rather than redeeming again.
-            </p>
-          </div>
-        )}
+        {/* ⛔ THE CLAIM-CODE FIELD IS GONE, AND NOTHING REPLACES IT.
+            It asked a buyer to paste a bearer value they had no way to obtain,
+            to buy something the shield now hands them automatically. Since the
+            contribution flow landed, a shield funds a leaf the treasury owns and
+            collects a DIFFERENT note in the same click — and if the worker goes
+            quiet partway, `resumeContribution` finishes it on the next click
+            WITHOUT charging again. By the time anyone reaches this screen they
+            already hold the note they will spend.
+
+            The plumbing behind it is untouched: `/api/issue-note`,
+            `requestIssuedNote` and the `claimCode` state all still work, and a
+            deployment that wants to sell a note to someone holding nothing can
+            re-show one input. What is removed is the ASK. */}
         {issuedDisclosure && !result && (
           <p className="rounded-lg border border-p01-border p-3 font-mono text-[11px] text-p01-text-dim">
             {issuedDisclosure}
