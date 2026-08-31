@@ -3426,8 +3426,29 @@ async function handlePoolRecover(
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
   const pool = requirePool(req.token, req.denomination);
 
+  /**
+   * 🚨 A PREPARE THAT NEVER EXECUTED MUST NOT LOCK RECOVERY. MEASURED
+   * 2026-08-31: a contribution prepared, the funding step then refused because
+   * the ephemeral already held float from an earlier attempt, and the job stayed
+   * in `prepared`. Shield said "run Recover first"; Recover said "a job is still
+   * in progress". The two guards pointed at each other and the buyer could do
+   * NEITHER — with their money sitting on the ephemeral both were talking about.
+   *
+   * The comment above `handlePoolShieldExecute` already names this exact trap:
+   * "a retained job makes handlePoolRecover refuse and locks the user out". It
+   * was written about the execute path and the deadlock arrived through prepare.
+   *
+   * ⛔ SO THE JOBS ARE DROPPED, NOT REFUSED OVER. A prepare holds no lamports
+   * — it is a proof and a price. Recovery sweeps the ephemeral by DERIVATION,
+   * not by job, so discarding the record loses nothing and the buyer can prepare
+   * again afterwards. Refusing, by contrast, loses the only way to reach the
+   * float.
+   */
   if (prepared.size > 0 || preparedUnshields.size > 0 || preparedSubscribes.size > 0) {
-    throw new Error('A shield, withdrawal or subscription is still in progress — finish it before recovering.');
+    onProgress?.('Discarding unfinished attempts so their float can be swept...');
+    prepared.clear();
+    preparedUnshields.clear();
+    preparedSubscribes.clear();
   }
 
   onProgress?.('Looking for funds left on earlier attempts...');
