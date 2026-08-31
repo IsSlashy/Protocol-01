@@ -232,12 +232,38 @@ export async function POST(request: NextRequest) {
      * let both take the same one, and the second deposit would fail on chain
      * after the buyer had already paid the till.
      */
+    /**
+     * 🚨 A RESERVATION THAT NEVER LANDED MUST NOT BLOCK THE POOL FOREVER.
+     * MEASURED 2026-08-31: three failed attempts reserved leaves 99, 100 and 101
+     * while the tree stood at 100, and every later deposit was refused by the
+     * client's own guard — "the pool advanced past this reservation (reserved
+     * leaf 101, tree is at 100)". Nothing was wrong with the pool. The markers
+     * had drifted ahead of it because nothing ever released them, and the buyer
+     * could not shield AT ALL.
+     *
+     * The tree is the authority. A marker on an index the tree has not reached
+     * describes an attempt that died, so it is cleared and the index reused. The
+     * marker still does its real job -- two buyers arriving together cannot take
+     * the same index, because only one `incr` returns 1 -- and it now expires
+     * instead of accumulating.
+     */
     let reserved: number | null = null;
     const start = maxLeafOnTree + 1;
     for (let leafIndex = start; leafIndex < start + MAX_RESERVATION_LOOKAHEAD; leafIndex += 1) {
       let taken: number;
       try {
         taken = await kv.incr(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`);
+        if (taken !== 1 && leafIndex === start) {
+          // The tree has not reached this index, so whatever reserved it never
+          // deposited. Reclaim it rather than walking past and drifting further.
+          await kv.del(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`);
+          taken = await kv.incr(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`);
+        }
+        // Self-healing: an abandoned marker stops mattering after an hour even
+        // if the branch above never runs.
+        if (taken === 1) {
+          await kv.expire?.(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`, 3600);
+        }
       } catch (e) {
         return bad(503, `the reservation could not be written: ${(e as Error).message}`);
       }
