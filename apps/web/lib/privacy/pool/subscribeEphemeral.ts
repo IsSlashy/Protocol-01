@@ -25,6 +25,22 @@
  * has, until someone remembered to extend it. A note is spent once, so the two
  * uses of the key are mutually exclusive anyway.
  *
+ * ⚠️ THE ONE CONDITION UNDER WHICH "MUTUALLY EXCLUSIVE" IS FALSE, 2026-08-31.
+ * A note is SPENT once; it can be ATTEMPTED twice. A subscribe that is abandoned
+ * after its pre-fund lands, followed later by a withdrawal of the same note,
+ * puts both attempts on one key — and the two legs are not always funded the
+ * same way. `fundEphemeralForJob` falls back to the WALLET when the funder is
+ * unavailable (`ephemeralFunder.ts:1249-1257`). So an abandoned wallet-funded
+ * subscribe plus a later float-funded withdrawal leaves one ephemeral whose
+ * history names both the wallet and the withdrawal, joining them through a key
+ * that exists to keep them apart.
+ *
+ * That is narrow and it is real. It is NOT fixed by adding a separator today:
+ * `recoverFloat.ts:83-87` sweeps exactly 'shield' and 'unshield', so a third
+ * derivation would strand its own rent — the failure this reuse was chosen to
+ * avoid. ⛔ ORDER MATTERS: extend the recovery sweep FIRST, then separate. Doing
+ * it the other way round trades a narrow linkage for lost SOL.
+ *
  * WHAT THIS DOES NOT HIDE — read before writing any copy about it
  * ───────────────────────────────────────────────────────────────
  * Everything the unshield header says still applies here. `stark_commitment` is
