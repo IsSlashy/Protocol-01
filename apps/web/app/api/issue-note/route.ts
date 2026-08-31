@@ -193,7 +193,15 @@ function inventoryDenomination(): number {
  */
 const MAX_INVENTORY_LEAVES = 512;
 
-function inventoryLeaves(): number[] {
+/**
+ * The leaves an operator CONFIGURED, from `P01_TREASURY_NOTE_LEAVES`.
+ *
+ * This is the seed of the inventory and it can only be changed by a human
+ * editing an environment variable and redeploying. That is fine for a starting
+ * stock and it is fatal for a stock that is supposed to refill, which is why
+ * `inventoryLeaves` below unions it with a set this process can WRITE.
+ */
+function seededInventoryLeaves(): number[] {
   const out: number[] = [];
   for (const piece of (process.env.P01_TREASURY_NOTE_LEAVES ?? '').split(',')) {
     const s = piece.trim();
@@ -220,12 +228,87 @@ function inventoryLeaves(): number[] {
   return [...new Set(out)];
 }
 
+/**
+ * The KV set of leaves this deployment ACQUIRED at runtime, per pool.
+ *
+ * 🚨 WHY THIS HAD TO EXIST BEFORE A NOTE COULD EVER COME BACK IN. The inventory
+ * was a synchronous read of one environment variable, so there was nowhere for
+ * an incoming leaf to be recorded: a route cannot write its own env, and the
+ * documented procedure was a human copying leaf indices into TWO places (a
+ * Vercel variable and a GitHub secret) and redeploying. Until a deposited leaf
+ * could enter that list without a person, "the stock refills itself" was false
+ * by construction, and so was any exchange that hands one note in and takes
+ * another out.
+ *
+ * ⚠️ ADDITIVE, NEVER AUTHORITATIVE. The seeded list still decides the starting
+ * stock and an empty KV changes nothing, so a deployment that has never taken a
+ * note in behaves exactly as before. That is deliberate: this is the money path,
+ * and a new store should not be able to make notes appear.
+ */
+const KV_INVENTORY_PREFIX = 'p01:note:inventory:';
+
+async function acquiredInventoryLeaves(poolKey: string): Promise<number[]> {
+  const kv = getStore();
+  if (!kv) return [];
+  try {
+    const members = await kv.smembers(KV_INVENTORY_PREFIX + poolKey);
+    const out: number[] = [];
+    for (const m of members) {
+      const n = Number(m);
+      if (Number.isInteger(n) && n >= 0) out.push(n);
+    }
+    return out;
+  } catch {
+    // A KV that cannot be read yields NO extra stock rather than an error. The
+    // seeded list still serves, which is the same behaviour this route had
+    // before the set existed.
+    return [];
+  }
+}
+
+/**
+ * Record a leaf this deployment now owns, so it can be issued later.
+ *
+ * ⛔ THE CALLER MUST HAVE VERIFIED THE NOTE FIRST — that the commitment is a
+ * leaf of this pool, that its nullifier is unspent, and that its denomination
+ * matches. This function is bookkeeping; it establishes nothing. Writing an
+ * unverified leaf here would hand the next buyer a note that cannot be spent.
+ */
+export async function recordInventoryLeaf(poolKey: string, leafIndex: number): Promise<boolean> {
+  const kv = getStore();
+  if (!kv) return false;
+  if (!Number.isInteger(leafIndex) || leafIndex < 0) return false;
+  try {
+    await kv.sadd(KV_INVENTORY_PREFIX + poolKey, String(leafIndex));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Everything this deployment may hand out for `poolKey`: what was configured,
+ * plus what it has taken in.
+ *
+ * Called with no pool for the readiness check, where only the configured half
+ * is meaningful — a GET has no pool to scope the acquired set to.
+ */
+async function inventoryLeaves(poolKey?: string): Promise<number[]> {
+  const seeded = seededInventoryLeaves();
+  if (!poolKey) return seeded;
+  const acquired = await acquiredInventoryLeaves(poolKey);
+  return [...new Set([...seeded, ...acquired])].slice(0, MAX_INVENTORY_LEAVES);
+}
+
 
 export async function GET() {
   // Readiness, in the shape /api/fund-ephemeral uses: every way this is switched
   // off is silent at the point of use, so it has to be answerable in advance.
   const seed = treasurySeed();
-  const leaves = inventoryLeaves();
+  // No pool here to scope the acquired set to, and the readiness question is
+  // about CONFIGURATION anyway: a deployment with an empty seeded list has
+  // nothing to start from, whatever it may take in later.
+  const leaves = await inventoryLeaves();
   const kv = getStore();
   const reasons: string[] = [];
   if (!seed) reasons.push('P01_TREASURY_POOL_SEED is unset or not 64 hex characters.');
@@ -404,7 +487,7 @@ export async function POST(request: NextRequest) {
     return res;
   };
 
-  const leaves = inventoryLeaves();
+  const leaves = await inventoryLeaves(pool.poolPDA.toBase58());
   if (leaves.length === 0) return release(bad(503, 'this deployment has no note inventory configured'));
 
   // The pool's leaves, once, for both the on-chain check below and the Merkle
