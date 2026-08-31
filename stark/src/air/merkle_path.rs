@@ -33,7 +33,7 @@ use crate::poseidon;
 // ============================================================================
 
 /// Columns the AIR constrains.
-pub const CONSTRAINED_TRACE_WIDTH: usize = 6;
+pub const CONSTRAINED_TRACE_WIDTH: usize = 7;
 
 /// [ZK-RANDOMIZER 2026-08-30] The committed trace is ONE column wider than the
 /// circuit: column `RANDOMIZER_COL` is uniform on ALL rows and enters NO
@@ -56,6 +56,44 @@ pub const CONSTRAINED_TRACE_WIDTH: usize = 6;
 /// per-query identity check that swept it up -- `verify.rs`'s phase-1 arms
 /// iterate `0..config.trace_width` and are retired post-B7; if one is revived it
 /// must stop at `CONSTRAINED_TRACE_WIDTH`.
+/// [ZK-LIFT 2026-08-30] The column that carries the blinding region into the
+/// quotient claims the row mask cannot reach. C7 twin: `air::spend::ZK_LIFT_COL`.
+///
+/// The verifier checks ONE equation on the eight claims `Q_0(z)..Q_7(z)`, so a
+/// simulator samples seven uniform and solves the eighth. The honest prover
+/// cannot -- the coefficient split is unique -- so the only question is whether
+/// the forced seven already look uniform. Measured on C7, they did not: the
+/// columns that reach `Q` affinely reach only blocks 0..2, because a constraint
+/// linear in a column contributes a low-degree piece to `Q = C / Z_T`.
+///
+/// The lift constraint fixes the degree budget and touches nothing else:
+///
+/// ```text
+///     active(x) * nba(x) * v(x) * state0(x)^6
+/// ```
+///
+///   * ZERO ON THE TRACE DOMAIN, because the trace builder writes this column
+///     only inside the blinding region and `active` is off there. It
+///     constrains nothing and carries no witness, and adding a constraint can
+///     only restrict a prover, never free one.
+///   * base degree 7 with TWO period-512 gates -- the shape the Poseidon
+///     rounds already carry -- so `deg(C)` does not rise, `quotient_segments`
+///     stays 8, `deg(D) = n - 2` stays and the FRI rate does not move.
+///   * degree ONE in `v`, so every `Q_j(z)`, every committed quotient value and
+///     every FRI layer value becomes affine in this column`s blinding entries.
+///     Affine with a non-zero slope in a uniform variable is EXACTLY uniform.
+///
+/// ⛔ THE LIFT FACTOR MUST BE DENSE IN `x`. `(x^n - c)^6` was drafted first and
+/// measures rank 1 OF 7: a polynomial in `x^n` cannot smear across segment
+/// boundaries, so all seven claims come out as one scalar times a binomial
+/// coefficient. `state0^6` is dense, and density is what creates rank.
+///
+/// ⛔ IT IS NOT THE RANDOMIZER. That column is uniform on ALL rows precisely
+/// because it is unconstrained everywhere, which is what covers the FRI
+/// channel. Giving it this constraint would force it to zero on the
+/// constrained rows and put that channel SHORT. Two columns, two jobs.
+pub const ZK_LIFT_COL: usize = CONSTRAINED_TRACE_WIDTH - 1;
+
 pub const RANDOMIZER_COL: usize = CONSTRAINED_TRACE_WIDTH;
 
 pub const TRACE_WIDTH: usize = CONSTRAINED_TRACE_WIDTH + 1;
@@ -130,7 +168,7 @@ pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 384
 pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 128
 
 /// Number of transition constraints in C3 (merkle_path).
-pub const MERKLE_PATH_NUM_CONSTRAINTS: usize = 11;
+pub const MERKLE_PATH_NUM_CONSTRAINTS: usize = 12;
 
 /// 7 -> 9 on 2026-08-29. Appended: [7] `active`, [8] `not_boundary_active`.
 /// ORDER IS FROZEN - the RLC uses `alpha^i` and the coefficient emitter indexes
@@ -210,6 +248,11 @@ impl Air for MerklePathAir {
             TransitionConstraintDegree::with_cycles(1, vec![trace_length]),  // 8: sib cont.
             TransitionConstraintDegree::with_cycles(1, vec![trace_length]),  // 9: dir cont.
             TransitionConstraintDegree::with_cycles(2, vec![trace_length]),  // 10: dir binary
+            // [11] ZK degree lift, col `ZK_LIFT_COL`. Base 7 with two
+            // period-512 gates -- the same shape as the Poseidon rounds -- so
+            // the composition degree, the segment count and the FRI rate are
+            // all unchanged.
+            TransitionConstraintDegree::with_cycles(7, vec![trace_length, trace_length]), // 11
         ];
 
         // Assertions: leaf carry at row 0, root output at last hash output row
@@ -466,6 +509,14 @@ pub fn evaluate_merkle_path_transition<E: FieldElement>(
 
     // ── Direction binary ──
     result[10] = hash_start_a * dir * (E::ONE - dir);
+
+    // [11] ZK degree lift, col `ZK_LIFT_COL`. See the constant`s doc.
+    //
+    // Zero on the trace domain because `v` is zero wherever `active` is not.
+    // Its whole job is to be degree 1 in `v` and degree 7 overall, so the
+    // blinding region reaches quotient blocks 0..7 instead of 0..2.
+    let lift = current[0] * current[0] * current[0];
+    result[11] = active * nba * current[ZK_LIFT_COL] * lift * lift;
 }
 
 // ============================================================================

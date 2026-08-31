@@ -658,11 +658,11 @@ mod domain_generator_tests {
         };
         use p01_stark::{BaseElement, FieldElement, StarkField};
 
-        assert_eq!(MERKLE_PATH_NUM_CONSTRAINTS, 11);
+        assert_eq!(MERKLE_PATH_NUM_CONSTRAINTS, 12);
         assert_eq!(MERKLE_PATH_NUM_PERIODIC, 9, "seven columns plus the two gates");
-        // [ZK-RANDOMIZER 2026-08-30] The COMMITTED width: the AIR constrains one
-        // fewer, and the extra column is the randomizer. Both numbers matter.
-        assert_eq!(TRACE_WIDTH, 7);
+        // [ZK-LIFT 2026-08-30] The COMMITTED width. The AIR constrains seven of
+        // the eight: col 6 is the ZK lift, col 7 the randomizer. Both matter.
+        assert_eq!(TRACE_WIDTH, 8);
 
         let w = TRACE_WIDTH;
         let np = MERKLE_PATH_NUM_PERIODIC;
@@ -687,11 +687,11 @@ mod domain_generator_tests {
                 pw *= alpha_air;
             }
 
-            // [ZK-RANDOMIZER] 6 -> 7. The frame carries the randomizer column and
-            // it is fed NON-ZERO random values on purpose: the property under
-            // test is that neither side reads it.
-            let mut cur_v = [Felt::ZERO; 7];
-            let mut nxt_v = [Felt::ZERO; 7];
+            // [ZK-LIFT] 7 -> 8, and READ OFF THE AIR so it cannot drift again.
+            // Slot 7 is the randomizer, fed NON-ZERO on purpose: the property
+            // under test is that neither side reads it. Slot 6 IS read, by [11].
+            let mut cur_v = [Felt::ZERO; TRACE_WIDTH];
+            let mut nxt_v = [Felt::ZERO; TRACE_WIDTH];
             let mut per_v = [Felt::ZERO; 9];
             for i in 0..w {
                 cur_v[i] = Felt::new(raw[i]);
@@ -4577,8 +4577,8 @@ fn evaluate_transition_at_ood_circuit_3(
     // [ZK-RANDOMIZER 2026-08-30] 6 -> 7. Index 6 is the randomizer column and
     // nothing below reads it. It is carried because the DEEP recombination sums
     // a gamma power over every committed column.
-    ood_current: &[Felt; 7],
-    ood_next: &[Felt; 7],
+    ood_current: &[Felt; 8],
+    ood_next: &[Felt; 8],
     periodic_at_z: &[Felt; 9],
     alpha: Felt,
 ) -> Felt {
@@ -4627,7 +4627,7 @@ fn evaluate_transition_at_ood_circuit_3(
     // [c0-c2] Poseidon state: not_boundary · (next[i] − current[i] − round_active · (ro_i − current[i])).
     // When round_active=1 → next=ro_i (active round); when round_active=0 → next=current (padding);
     // when is_boundary=1 → unconstrained (hash_start mux + carry update take over).
-    let mut cs = [Felt::ZERO; 11];
+    let mut cs = [Felt::ZERO; 12];
     cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_active.mul(ro0.sub(ood_current[0])))
     );
@@ -4674,6 +4674,21 @@ fn evaluate_transition_at_ood_circuit_3(
 
     // [c10] Direction binary at every hash start: dir · (1 − dir) = 0.
     cs[10] = hash_start_a.mul(dir.mul(one.sub(dir)));
+
+    // ── [11] ZK degree lift, col `ZK_LIFT_COL` ──
+    //
+    // Prover twin: `air::merkle_path::evaluate_merkle_transition`, result[11].
+    // Zero on the trace domain, so it constrains nothing; its job is to be
+    // degree 1 in the lift column so the blinding region reaches every quotient
+    // block instead of only the low ones.
+    //
+    // 🚨 THE BASE IS RAW `ood_current[0]`, never a local `s0`: that is the
+    // Poseidon round input `ood_current[0] + rc0`, and using it here would
+    // evaluate a different polynomial than the prover and reject every honest
+    // proof with `DeepAliFailed`.
+    let lift_base = ood_current[0];
+    let lb3 = lift_base.mul(lift_base).mul(lift_base);
+    cs[11] = active.mul(nba).mul(ood_current[6]).mul(lb3).mul(lb3);
 
     // Horner-style RLC: Σ α^i · cs[i].
     let mut combined = Felt::ZERO;
@@ -4790,24 +4805,25 @@ pub fn verify_deep_ali_circuit_3(
         eval_periodic_at_z(&C7_NOT_BOUNDARY_ACTIVE_COEFFS, z),
     ];
 
-    // Collect OOD trace values. Circuit 3 is width-6.
+    // Collect OOD trace values. Circuit 3 is width-8.
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    // [ZK-RANDOMIZER 2026-08-30] 6 -> 7. This arity check is what refuses a
-    // pre-randomizer proof, and it must move with the config or the frame is
-    // built from a short vector.
-    if ood_current_vec.len() != 7 || ood_next_vec.len() != 7 {
+    // [ZK-LIFT 2026-08-30] 7 -> 8. This arity check is what refuses a proof
+    // built before the lift column, and it must move with the config or the
+    // frame is built from a short vector. Slot 6 is the ZK lift, read by
+    // constraint [11]; slot 7 is the randomizer, read by nothing.
+    if ood_current_vec.len() != 8 || ood_next_vec.len() != 8 {
         return Err(VerifyError::DeepAliFailed);
     }
     let ood_current = [
         ood_current_vec[0], ood_current_vec[1], ood_current_vec[2],
         ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
-        ood_current_vec[6],
+        ood_current_vec[6], ood_current_vec[7],
     ];
     let ood_next = [
         ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
         ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
-        ood_next_vec[6],
+        ood_next_vec[6], ood_next_vec[7],
     ];
 
     // Derive α exactly like the prover (C3-specific domain tag).
@@ -7408,8 +7424,8 @@ mod merkle_update_e2e {
         );
     }
 
-    /// [P2.2d-C3] Negative: tamper `ood_quotient` at byte 168
-    /// (32 trace_root + 32 quotient_root + 48 ood_current + 48 ood_next + 8 ood_z).
+    /// [P2.2d-C3] Negative: tamper `ood_quotient` at its first byte
+    /// (32 trace_root + 32 quotient_root + w*8 ood_current + w*8 ood_next + 8 ood_z).
     #[test]
     fn merkle_path_deep_ali_fails_on_tampered_ood_quotient() {
         use crate::compact_proof::get_circuit_config;
@@ -7417,14 +7433,16 @@ mod merkle_update_e2e {
         let proof_data = c3_sample_proof(5u64);
 
         let mut tampered = proof_data.proof_bytes.clone();
-        // [ZK-RANDOMIZER 2026-08-30] 168 -> 184. `ood_quotient` starts at
-        // `64 + trace_width*16 + 8`, and C3's committed width went 6 -> 7. The
-        // C1 twin of this line was left behind and the test PASSED THE TAMPER,
-        // reporting `got Ok(())` — a tampering test with a stale offset stops
-        // testing anything and only says so in a message.
+        // [ZK-LIFT 2026-08-30] 168 -> 184 -> 200. `ood_quotient` starts at
+        // `64 + trace_width*16 + 8`, and C3 went 6 -> 7 -> 8 committed columns.
+        // The C1 twin of this line was left behind once and the test PASSED THE
+        // TAMPER, reporting `got Ok(())` — a tampering test with a stale offset
+        // stops testing anything and only says so in a message. The offset below
+        // is DERIVED; the assert is the second opinion that catches a config
+        // moving without this file noticing.
         let ood_quotient_offset =
             64 + crate::compact_proof::CONFIG_MERKLE_PATH.trace_width * 16 + 8;
-        assert_eq!(ood_quotient_offset, 184);
+        assert_eq!(ood_quotient_offset, 200);
         tampered[ood_quotient_offset] ^= 0x02;
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");

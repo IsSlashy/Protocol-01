@@ -184,7 +184,12 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     //
     // ⛔ HARD WIRE BREAK IN BOTH DIRECTIONS: `from_bytes` sizes every query block
     // from `trace_width`.
-    trace_width: 7,
+    // [ZK-LIFT 2026-08-30] 7 -> 8. Column 6 is the ZK lift (zero on the
+    // constrained rows, uniform on the blinding ones, read by constraint [11]
+    // alone); column 7 is the randomizer, read by nothing. HARD WIRE BREAK in
+    // both directions -- `from_bytes` sizes every query block from this number,
+    // and C3 has FIVE on-chain consumers that move with it.
+    trace_width: 8,
     // [C3-D12 2026-08-29] The depth cut 15 -> 12 does NOT move `n`:
     // 12 * 32 = 384 and next_pow2(384) = 512, the same 512 depth 15 needed.
     // That is the whole reason the cut was free — see the C6 twin below.
