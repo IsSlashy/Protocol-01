@@ -80,6 +80,9 @@ import {
 import {
   executeShield,
   prepareShield,
+  prepareContribution,
+  type PreparedContribution,
+  executeContribution,
   readTreeLeafCount,
   recordShieldBreadcrumb,
   type PreparedShield,
@@ -135,6 +138,51 @@ export interface PoolShieldExecuteRequest {
    *
    * Omitted means `ownerPubkey`, which is right for a wallet-funded deposit.
    */
+  sweepTo?: string;
+}
+
+/**
+ * Deposit a leaf the TREASURY owns, and be owed a different one.
+ *
+ * \U0001f3af THE SAME FLOW THE BUYER ALREADY DOES, WITH ONE THING CHANGED. A
+ * shield pays the till, the float arms an ephemeral, and the ephemeral deposits
+ * a commitment derived from the BUYER's seed -- so the buyer spends the note
+ * their own money created, and deposit and spend are the same object. MEASURED
+ * 2026-08-31: a subscription spent leaf 93, deposited by the same person thirty
+ * minutes earlier, while the treasury's leaf 21 sat untouched.
+ *
+ * A contribution changes only WHOSE commitment lands: the treasury's. The buyer
+ * never learns its opening, so there is nothing for them to double-spend, and
+ * they are paid in a note out of stock instead -- necessarily an OLDER one,
+ * because `issue-note`'s maturity gate refuses a leaf deposited moments ago.
+ * The gate is not a workaround here, it IS the mixing.
+ *
+ * Same payment, same clicks, one leaf in and one leaf out.
+ */
+export interface PoolContributePrepareRequest {
+  kind: 'poolContributePrepare';
+  /** Session key — the encoded meta returned by `deriveMeta`. */
+  meta: string;
+  token: PoolToken;
+  denomination: number;
+  /**
+   * The commitment `/api/contribute-note` reserved, as a decimal string.
+   *
+   * \u26d4 THE CALLER DOES NOT GET TO CHOOSE IT. It is derived from the treasury
+   * seed at the reserved index and only the commitment crosses the wire, never
+   * the opening; a commitment is public the instant it is deposited.
+   */
+  commitment: string;
+  /** The index the treasury reserved for that commitment. */
+  leafIndex: number;
+}
+
+export interface PoolContributeExecuteRequest {
+  kind: 'poolContributeExecute';
+  jobId: string;
+  /** Wallet that pre-funded the ephemeral. */
+  ownerPubkey: string;
+  /** Where the residual goes — the float on a relayed deposit. See the shield. */
   sweepTo?: string;
 }
 
@@ -910,6 +958,8 @@ export type PoolRequest =
   | PoolResolveSpentRequest
   | PoolStoreLabelRequest
   | PoolShieldPrepareRequest
+  | PoolContributePrepareRequest
+  | PoolContributeExecuteRequest
   | PoolShieldExecuteRequest
   | PoolScanRequest
   | PoolSetPassphraseRequest
@@ -939,6 +989,32 @@ export interface PoolShieldPrepareResponse {
   valueLamports: number;
   denomination: number;
   counter: number;
+}
+
+export interface PoolContributePrepareResponse {
+  kind: 'poolContributePrepare';
+  jobId: string;
+  /** Base58 — the main thread funds THIS address, then calls execute. */
+  ephemeralPubkey: string;
+  requiredLamports: number;
+  /** The denomination plus the shield fee: the part that does not come back. */
+  valueLamports: number;
+  denomination: number;
+  /** The reserved index, echoed so the caller can confirm against it. */
+  leafIndex: number;
+}
+
+export interface PoolContributeExecuteResponse {
+  kind: 'poolContributeExecute';
+  txSig: string;
+  leafIndex: number;
+  commitment: string;
+  /**
+   * \u26d4 NO `encryptedNote`, AND THAT IS THE POINT. The shield's twin returns a
+   * note blob because the buyer owns what it deposited. Here they do not: the
+   * opening belongs to the treasury, and handing back anything shaped like a
+   * receipt would be handing over a note that cannot be spent.
+   */
 }
 
 export interface PoolShieldExecuteResponse {
@@ -1201,6 +1277,8 @@ export type PoolResponse =
   | PoolResolveSpentResponse
   | PoolStoreLabelResponse
   | PoolShieldPrepareResponse
+  | PoolContributePrepareResponse
+  | PoolContributeExecuteResponse
   | PoolShieldExecuteResponse
   | PoolScanResponse
   | PoolSetPassphraseResponse
@@ -1724,6 +1802,98 @@ async function handlePoolShieldExecute(
       leafIndex: receipt.leafIndex,
       denomination: receipt.denominationHuman,
       encryptedNote,
+    };
+  } finally {
+    prepared.delete(req.jobId);
+  }
+}
+
+/**
+ * Prove the insert for a commitment the TREASURY owns, and price the pre-fund.
+ *
+ * Deliberately the same shape as `handlePoolShieldPrepare`, in the same order,
+ * for the same reasons: the deposit block is checked FIRST, before the tree is
+ * read or the ~2-minute proof starts, because a refusal that arrives after the
+ * proof is one the user paid for in time and in buffer rent.
+ *
+ * \u26d4 IT DOES NOT TOUCH THE SEED FOR THE NOTE. `prepareContribution` takes the
+ * commitment ready-made and the seed only to derive the throwaway ephemeral, so
+ * there is no path here that could accidentally mint a note for the buyer.
+ */
+async function handlePoolContributePrepare(
+  req: PoolContributePrepareRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolContributePrepareResponse> {
+  const conn = requireConnection();
+  const pool = requirePool(req.token, req.denomination);
+
+  const blocked = depositBlockFor(pool);
+  if (blocked) throw new PoolClosedToDepositsError(blocked);
+
+  const seed = requireActiveSeed(req.meta);
+
+  let commitment: bigint;
+  try {
+    commitment = BigInt(req.commitment);
+  } catch {
+    throw new Error('The reserved commitment is not a field element.');
+  }
+
+  const ctx = await prepareContribution(pool, conn, seed, commitment, req.leafIndex, onProgress);
+
+  // Same breadcrumb discipline as the shield: written before the caller funds
+  // anything, so a crash between the pre-fund and execute still leaves a record
+  // pointing at a re-derivable key.
+  await recordShieldBreadcrumb(ctx as unknown as Parameters<typeof recordShieldBreadcrumb>[0]);
+
+  prepared.set(ctx.jobId, {
+    ctx: ctx as unknown as PreparedShield,
+    meta: req.meta,
+    counter: ctx.leafIndex,
+  });
+
+  return {
+    kind: 'poolContributePrepare',
+    jobId: ctx.jobId,
+    ephemeralPubkey: ctx.ephemeral.publicKey.toBase58(),
+    requiredLamports: ctx.requiredLamports,
+    valueLamports: ctx.valueLamports,
+    denomination: pool.denomination,
+    leafIndex: ctx.leafIndex,
+  };
+}
+
+/**
+ * Run the contribution. The caller must already have funded the ephemeral.
+ *
+ * \u26d4 RETURNS NO NOTE BLOB. The shield's twin encrypts a receipt to the
+ * buyer's own address because the buyer owns what it deposited. Here they do
+ * not, and a blob shaped like a receipt would be a note that cannot be spent.
+ * What the buyer is owed arrives as a CLAIM, minted by `/api/contribute-note`
+ * once this leaf is confirmed on chain, and redeemed for a different and older
+ * note out of stock.
+ */
+async function handlePoolContributeExecute(
+  req: PoolContributeExecuteRequest,
+  onProgress?: (step: string) => void,
+): Promise<PoolContributeExecuteResponse> {
+  const conn = requireConnection();
+  const job = prepared.get(req.jobId);
+  if (!job) {
+    throw new Error('Unknown contribution job — prepare it again (the worker was restarted).');
+  }
+  try {
+    const done = await executeContribution(
+      job.ctx as unknown as PreparedContribution,
+      conn,
+      new PublicKey(req.sweepTo ?? req.ownerPubkey),
+      onProgress,
+    );
+    return {
+      kind: 'poolContributeExecute',
+      txSig: done.txSig,
+      leafIndex: done.leafIndex,
+      commitment: done.commitment,
     };
   } finally {
     prepared.delete(req.jobId);
@@ -3674,6 +3844,12 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolShieldExecute':
       res = await handlePoolShieldExecute(req, onProgress);
+      break;
+    case 'poolContributePrepare':
+      res = await handlePoolContributePrepare(req, onProgress);
+      break;
+    case 'poolContributeExecute':
+      res = await handlePoolContributeExecute(req, onProgress);
       break;
     case 'poolExportNote':
       res = await handlePoolExportNote(req, onProgress);

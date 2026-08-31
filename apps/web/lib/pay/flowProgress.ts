@@ -58,7 +58,12 @@ export function parseResize(step: string | null): { done: number; total: number 
 // ---------------------------------------------------------------------------
 
 export const SHIELD_PHASES: FlowPhase[] = [
-  { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing|looking for funds left/i },
+  // `reserving a leaf` is the CONTRIBUTION's first step: the treasury names
+  // the commitment this deposit will carry, before anything is priced or
+  // proved. It belongs here rather than in `buffer` — whose label also says
+  // "Reserving" — because that one is about proof-buffer space on chain and
+  // its regex (`initializ|resiz`) would never have caught it anyway.
+  { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing|looking for funds left|reserving a leaf/i },
   { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield|reading on-chain tree|computing merkle path/i },
   // ⚠️ `generating …stark proof`, NOT a bare `stark proof`.
   //
@@ -77,7 +82,10 @@ export const SHIELD_PHASES: FlowPhase[] = [
   // to the upload because it is the longest phase by far — ~150 chunk
   // transactions against everything else's seconds.
   { id: 'upload', label: 'Uploading the proof', weight: 0.5, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed/i },
+  // `collecting what the contribution is owed` closes the contribution: the
+  // leaf is on chain and the claim is being minted against it. Last phase,
+  // because until it returns the buyer has funded a leaf and holds nothing.
+  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed|collecting what the contribution/i },
 ];
 
 // ⚠️ THE FIFTH MISS, AND THE ONE THAT WOULD HAVE GONE ON STAGE.

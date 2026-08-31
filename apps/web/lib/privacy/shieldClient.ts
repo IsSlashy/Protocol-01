@@ -330,6 +330,137 @@ export interface UnshieldOutcome {
   funderFallbackReason?: string;
 }
 
+/**
+ * Contribute a leaf the TREASURY owns, and come away owed a different one.
+ *
+ * \u{1F3AF} THE SAME FLOW THE BUYER ALREADY DOES, WITH ONE THING CHANGED. A shield
+ * pays the till, the float arms an ephemeral, and the ephemeral deposits a
+ * commitment derived from the BUYER's seed. So the buyer spends the note their
+ * own money created, and their deposit and their spend are the same object.
+ * MEASURED 2026-08-31: a subscription spent leaf 93, deposited by the same
+ * person thirty minutes earlier, while the treasury's leaf 21 sat untouched.
+ *
+ * Here only the commitment changes hands. The buyer never learns its opening,
+ * so there is nothing for them to double-spend, and they are paid in a note out
+ * of stock instead \u2014 necessarily an OLDER one, because `issue-note`'s maturity
+ * gate refuses a leaf deposited moments ago. The gate is not a workaround, it IS
+ * the mixing.
+ *
+ * Same payment, same clicks, one leaf in and one leaf out.
+ *
+ * \u26d4 THE CLAIM IS MINTED FROM THE CHAIN, NOT FROM THIS CALL. `confirm` refuses
+ * unless the treasury's own commitment is actually sitting at the reserved
+ * index, so a caller who never landed the deposit is owed nothing.
+ */
+export interface ContributeParams {
+  meta: string;
+  token: PoolToken;
+  denomination: number;
+  owner: PublicKey;
+  connection: Connection;
+  signOne: (tx: Transaction) => Promise<Transaction>;
+  onProgress?: (step: string) => void;
+}
+
+export interface ContributeOutcome {
+  txSig: string;
+  /** The leaf this buyer funded — the treasury's, not theirs. */
+  leafIndex: number;
+  commitment: string;
+  /** Redeemable at `/api/issue-note` for a DIFFERENT, older note. */
+  claimCode: string;
+  fundedBy: 'wallet' | 'funder';
+}
+
+async function contributeApi(
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const ticket = process.env.NEXT_PUBLIC_P01_FUNDER_TICKET ?? '';
+  const res = await fetch('/api/contribute-note', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-p01-funder-ticket': ticket },
+    body: JSON.stringify(body),
+  });
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    throw new Error(
+      typeof json.error === 'string'
+        ? json.error
+        : `/api/contribute-note answered ${res.status}`,
+    );
+  }
+  return json;
+}
+
+export async function contributeToPool(params: ContributeParams): Promise<ContributeOutcome> {
+  const { meta, token, denomination, owner, connection, signOne, onProgress } = params;
+
+  onProgress?.('Reserving a leaf from the treasury...');
+  const reserved = await contributeApi({ action: 'reserve', token });
+  const leafIndex = Number(reserved.leafIndex);
+  const commitment = String(reserved.commitment ?? '');
+  if (!Number.isInteger(leafIndex) || leafIndex < 0 || !commitment) {
+    throw new Error('The treasury reserved no usable leaf, so nothing was funded.');
+  }
+
+  const prep = await poolRequest(
+    { kind: 'poolContributePrepare', meta, token, denomination, commitment, leafIndex },
+    onProgress,
+  );
+
+  // Identical to the shield's funding leg, deliberately: the wallet pays the
+  // till and the float arms the ephemeral, two transfers with no address in
+  // both. A contribution that funded the ephemeral from the wallet would put
+  // the buyer one hop from a leaf SOMEBODY ELSE will later be handed.
+  const feePool = findPoolV3(token, denomination);
+  const funding = await fundEphemeralForJob({
+    ephemeralPubkey: prep.ephemeralPubkey,
+    requiredLamports: prep.requiredLamports,
+    valueLamports: prep.valueLamports,
+    owner,
+    connection,
+    signOne,
+    onProgress,
+    relayThroughDeployment: true,
+    feeBasis: feePool && {
+      token: feePool.token,
+      denominationAtomic: feePool.denominationAtomic,
+      decimals: feePool.decimals,
+    },
+  });
+
+  const done = await poolRequest(
+    {
+      kind: 'poolContributeExecute',
+      jobId: prep.jobId,
+      ownerPubkey: owner.toBase58(),
+      sweepTo: funding.sweepTo,
+    },
+    onProgress,
+  );
+
+  onProgress?.('Collecting what the contribution is owed...');
+  const confirmed = await contributeApi({ action: 'confirm', token, leafIndex: done.leafIndex });
+  const claimCode = String(confirmed.claimCode ?? '');
+  if (!claimCode) {
+    // The deposit landed and the claim did not: say so precisely, because the
+    // money moved and a vague error would send the buyer to do it again.
+    throw new Error(
+      `The contribution landed at leaf ${done.leafIndex} (${done.txSig}) but no claim came back. ` +
+        'Do NOT contribute again — confirm that leaf instead; the deposit is on chain and one ' +
+        'claim is owed for it.',
+    );
+  }
+
+  return {
+    txSig: done.txSig,
+    leafIndex: done.leafIndex,
+    commitment: done.commitment,
+    claimCode,
+    fundedBy: funding.fundedBy,
+  };
+}
+
 export async function unshieldFromPool(params: UnshieldParams): Promise<UnshieldOutcome> {
   const { meta, token, denomination, leafIndex, recipient, owner, connection, signOne, onProgress } =
     params;
