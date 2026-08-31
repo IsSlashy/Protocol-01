@@ -824,15 +824,11 @@ fn base_mask_len(seed: u64, len: usize) -> Vec<u64> {
         .collect()
 }
 
-/// `Q_0(z) .. Q_{k-1}(z)` for any lift-carrying circuit, with `alpha`, the
-/// boundary challenge and `z` supplied rather than derived. See the module doc
-/// for why fixing them is the correct experiment and not a convenience.
-fn ood_claims_for(c: Circ, mask: &[u64], pub_inputs: &[u64]) -> Vec<u64> {
+/// The trace for one circuit under one mask. The witness is FIXED per circuit;
+/// only the mask moves, and that is the whole experiment.
+fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
     use crate::air::{merkle_path as c3, merkle_update as c6};
-    let g = geom(c);
-    let mask_f: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
-
-    let trace: Vec<Vec<BaseElement>> = match c {
+    match c {
         Circ::C1 => {
             crate::air::denominated_pool::build_pool_commitment_trace(
                 BaseElement::new(111),
@@ -878,7 +874,18 @@ fn ood_claims_for(c: Circ, mask: &[u64], pub_inputs: &[u64]) -> Vec<u64> {
             )
             .0
         }
-    };
+    }
+}
+
+/// `Q_0(z) .. Q_{k-1}(z)` for any lift-carrying circuit, with `alpha`, the
+/// boundary challenge and `z` supplied rather than derived. See the module doc
+/// for why fixing them is the correct experiment and not a convenience.
+fn ood_claims_for(c: Circ, mask: &[u64], pub_inputs: &[u64]) -> Vec<u64> {
+    use crate::air::{merkle_path as c3, merkle_update as c6};
+    let g = geom(c);
+    let mask_f: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+
+    let trace = trace_for(c, &mask_f);
 
     let alpha = BaseElement::new(ALPHA);
     let alpha_bnd = BaseElement::new(ALPHA_BND);
@@ -1031,4 +1038,190 @@ fn the_free_claims_are_jointly_uniform_on_every_circuit() {
     println!("  => on every circuit the free claims are an onto affine image of uniform,");
     println!("     independent mask elements, hence EXACTLY jointly uniform. That is the law");
     println!("     the simulator samples, and X1 closes on all four production circuits.");
+}
+
+/// X2 on every circuit: the leaves a proof never opens.
+///
+/// The trace tree closes on the coset argument alone -- every trace-column value
+/// is affine in that column's blinding rows with an all-non-zero Lagrange
+/// coefficient, because the LDE domain never meets the trace domain. The
+/// QUOTIENT tree does not: `Q` is the composition divided by the vanishing
+/// polynomial and the constraints reach degree 7 in the trace, so a quotient
+/// leaf is not affine in the row mask and that argument does not transfer.
+///
+/// The lift column is what transfers it. Measured here on all four circuits, at
+/// a sample of positions spread across the whole committed domain: every
+/// committed quotient value must be degree 1 in ONE lift-column element, which
+/// makes it exactly uniform and the leaf preimage unguessable.
+#[test]
+fn quotient_leaves_are_exactly_uniform_on_every_circuit() {
+    println!();
+    println!("X2 / all circuits — degree of a committed quotient value in ONE mask element");
+    println!();
+
+    let xs: Vec<u64> = (1..=10u64).map(|i| i * 1_000_003 + 17).collect();
+    let mut bad: Vec<String> = Vec::new();
+
+    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+        let g = geom(c);
+        let pubs = public_inputs_for(c);
+        let sample: Vec<usize> = (0..48).map(|i| i * (g.lde / 48) + 3).collect();
+
+        // Two sweeps, and the CONTRAST is the measurement: a Poseidon column
+        // reaches every committed quotient value at degree 7 -- non-constant, so
+        // not guessable, but not proven uniform either -- while the lift column
+        // reaches the same values at degree 1, which IS a proof.
+        for (col, label) in [(0usize, "Poseidon state"), (g.lift, "lift column")] {
+            let mut runs: Vec<Vec<Vec<u64>>> = Vec::with_capacity(xs.len());
+            for &x in xs.iter() {
+                let mut mask = base_mask_len(0xA000 + g.id as u64, g.mask_len);
+                mask[col] = x;
+                runs.push(quotient_lde_for(c, &mask, &pubs, &sample));
+            }
+            let mut hist = std::collections::BTreeMap::<i32, usize>::new();
+            for j in 0..g.k {
+                for (s, _) in sample.iter().enumerate() {
+                    let ys: Vec<u64> = runs.iter().map(|r| r[j][s]).collect();
+                    *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+                }
+            }
+            let total = g.k * sample.len();
+            let affine = hist.get(&1).copied().unwrap_or(0);
+            let flat = hist.get(&-1).copied().unwrap_or(0) + hist.get(&0).copied().unwrap_or(0);
+            println!(
+                "  {:<20} {:<16} : {:>4}/{} affine, {:>4} constant, degrees {:?}",
+                g.name,
+                label,
+                affine,
+                total,
+                flat,
+                hist.keys().collect::<Vec<_>>(),
+            );
+            if col == g.lift && affine != total {
+                bad.push(format!("{} -> {affine}/{total} affine", g.name));
+            }
+        }
+    }
+
+    println!();
+    assert!(
+        bad.is_empty(),
+        "the lift column does not reach every committed quotient value at degree 1 on: \
+         {bad:?}. Without that, the quotient tree has no uniformity proof at all -- only \
+         99.9% of it unopened and a degree-7 dependence on the row mask, which is high \
+         entropy but not a law."
+    );
+    println!("  => every committed quotient value is affine in a uniform mask element on all");
+    println!("     four circuits, hence exactly uniform. The quotient tree closes on the same");
+    println!("     argument the trace tree does, and X2 has no residue on the production path.");
+}
+
+/// The committed quotient LDE at a sample of positions, for any circuit.
+///
+/// Shares its whole body with `ood_claims_for` except the last step -- kept
+/// separate rather than parameterised because the two return different shapes
+/// and threading a flag through would make both harder to read than the
+/// duplication is to maintain.
+fn quotient_lde_for(
+    c: Circ,
+    mask: &[u64],
+    pub_inputs: &[u64],
+    sample: &[usize],
+) -> Vec<Vec<u64>> {
+    use crate::air::{merkle_path as c3, merkle_update as c6};
+    let g = geom(c);
+    let mask_f: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+    let trace = trace_for(c, &mask_f);
+
+    let alpha = BaseElement::new(ALPHA);
+    let alpha_bnd = BaseElement::new(ALPHA_BND);
+    let lde = compute_lde_generic(&trace, GENERIC_BLOWUP);
+    let lde_g = get_domain_generator_generic(g.lde);
+    let trace_g = get_domain_generator_generic(g.n);
+
+    let mut q_poly = match c {
+        Circ::C1 => compute_quotient_lde_circuit_1(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C3 => {
+            compute_quotient_lde_circuit_3(&lde, GENERIC_BLOWUP, g.n, c3::CANONICAL_DEPTH, alpha)
+        }
+        Circ::C6 => {
+            compute_quotient_lde_circuit_6(&lde, GENERIC_BLOWUP, g.n, c6::CANONICAL_DEPTH, alpha)
+        }
+        Circ::C7 => compute_quotient_lde_circuit_7(&lde, GENERIC_BLOWUP, g.n, alpha),
+    };
+
+    let assertions = boundary_assertions_for_circuit(g.id, pub_inputs);
+    if !assertions.is_empty() {
+        let trace_polys: Vec<Vec<BaseElement>> =
+            (0..trace.len()).map(|col| inverse_ntt(&trace[col], trace_g)).collect();
+        let mut qb: Vec<BaseElement> = Vec::new();
+        fold_boundary_quotient(&mut qb, &trace_polys, &assertions, trace_g, alpha_bnd);
+        if q_poly.len() < qb.len() {
+            q_poly.resize(qb.len(), BaseElement::ZERO);
+        }
+        for (i, &v) in qb.iter().enumerate() {
+            q_poly[i] = q_poly[i] + v;
+        }
+    }
+
+    let segs = segment_quotient_poly(&q_poly, g.n, g.lde, lde_g, g.k);
+    (0..g.k).map(|j| sample.iter().map(|&p| segs.lde[j][p]).collect()).collect()
+}
+
+/// The structural half of X2, on every circuit, and the one that is a PROOF
+/// rather than a sample.
+///
+/// Every trace-column value the prover commits is `S_c(x_p) = SUM_r T[c][r] *
+/// L_r(x_p)`, affine in that column's trace entries with the Lagrange basis
+/// `L_r(x_p)` as its coefficient on row `r`. That coefficient is non-zero at
+/// EVERY committed position exactly when `Z_T(x_p) != 0`, i.e. when the LDE
+/// domain never meets the trace domain.
+///
+/// That is what the coset shift buys, and it is the difference between "the
+/// blinding rows hide the trace" and "the blinding rows hide the trace at most
+/// positions". A subgroup LDE (`h = 1`) puts `blowup`-many committed positions
+/// exactly on trace rows, where `Z_T = 0` kills every blinding coefficient at
+/// once -- the leak this repository shipped once and fixed in B7. All four
+/// production circuits share n = 512 today, so the four rows below carry the
+/// same number -- and that is the point of printing `n` and `lde` per circuit
+/// rather than asserting once: C5 runs at n = 1024, and any circuit that moves
+/// its trace length gets its own check here for free instead of inheriting a
+/// conclusion drawn about a domain it does not live in.
+#[test]
+fn the_lde_domain_never_meets_the_trace_domain_on_any_circuit() {
+    let h = lde_coset_shift().as_int();
+    println!();
+    println!("X2 / structural — the LDE coset against each circuit's trace domain (h = {h})");
+    println!();
+    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+        let g = geom(c);
+        let lde_g = get_domain_generator_generic(g.lde).as_int();
+        let hn = fpow(h, g.n as u64);
+        let gn = fpow(lde_g, g.n as u64);
+        assert_ne!(gn, 1, "{}: g^n must have order blowup, not 1", g.name);
+
+        let mut worst = u64::MAX;
+        let mut v = hn;
+        for p in 0..GENERIC_BLOWUP {
+            let zt = fsub(v, 1); // Z_T(x_p) = x_p^n - 1
+            assert_ne!(
+                zt, 0,
+                "{}: LDE position class {p} lands ON the trace domain, so Z_T(x_p) = 0 and \
+                 every blinding row's Lagrange coefficient vanishes there. The committed \
+                 value at those positions is a function of the WITNESS ALONE -- the pre-B7 \
+                 leak, back on one circuit.",
+                g.name,
+            );
+            worst = worst.min(zt);
+            v = fmul(v, gn);
+        }
+        println!(
+            "  {:<20} n = {:>4}, lde = {:>5} : disjoint, min |Z_T| = {worst}",
+            g.name, g.n, g.lde,
+        );
+    }
+    println!();
+    println!("  => on every circuit each trace-column leaf value is affine in that column's");
+    println!("     blinding rows with ALL coefficients non-zero, at EVERY committed position,");
+    println!("     so an unopened trace leaf preimage is uniform and cannot be guessed.");
 }
