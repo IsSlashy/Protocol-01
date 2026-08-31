@@ -32,7 +32,9 @@
 //!      the generator commits to, evaluated by the AIR's own exported evaluator;
 //!   4. the relations that are not implied by construction hold: C5 value
 //!      conservation, C4's on-chain conservation law, C3/C6 real Merkle folds
-//!      at the canonical depth 15.
+//!      at each circuit's own `CANONICAL_DEPTH`. That number is deliberately
+//!      NOT written here: it has been 15, then 12, then 11, and the literal
+//!      that stood in this sentence was wrong for the last two.
 //!
 //! This test does NOT prove or verify. It is seconds, not minutes, and it is
 //! meant to be read as the precondition of the `honest_liveness` numbers.

@@ -39,9 +39,11 @@
 //!     so a non-conserving C4 witness would still verify. It would still not be
 //!     an honest spend, and a liveness suite built on one would be measuring a
 //!     state the program refuses to create.
-//!   * C3 / C6 the Merkle root is the real fold of the leaf up the path, and
-//!     `depth == 15`, the only depth the shipped verifier accepts
-//!     (`CANONICAL_DEPTH` in verify.rs, enforced in phase 2).
+//!   * C3 / C6 the Merkle root is the real fold of the leaf up the path, at the
+//!     one depth the shipped verifier accepts -- read off
+//!     `air::merkle_path::CANONICAL_DEPTH` / `air::merkle_update::CANONICAL_DEPTH`
+//!     rather than written here, because the literal that used to stand in this
+//!     sentence said 15 through two cuts (15 -> 12 -> 11) and was wrong for both.
 //!
 //! `sweep_transitions` then evaluates the AIR's own transition polynomial at
 //! EVERY frame of the built trace and requires every constraint to vanish. That
@@ -80,17 +82,21 @@ pub const WITNESSES: usize = 160;
 /// until C3 took the same cut. A constant that names a circuit and carries a
 /// literal will keep going stale; one that reads the AIR cannot.
 ///
-/// Both are 12 today, and they are still two constants on purpose: nothing
-/// requires the two circuits to move together, and a single shared constant is
-/// what would make the next divergence invisible.
+/// [ZK-DEPTH-11 2026-08-30] And then BOTH moved again, 12 -> 11. That is the
+/// third depth this comment has outlived, which is why no number is written in
+/// it any more: both are two constants on purpose, because nothing requires the
+/// two circuits to move together and a single shared constant is what would make
+/// the next divergence invisible.
 pub const CANONICAL_DEPTH: usize = p01_stark::air::merkle_path::CANONICAL_DEPTH;
 
 /// C6's Merkle depth.
 ///
 /// Sourced from the AIR rather than typed, so it cannot drift from the geometry
-/// the prover actually builds. At 12 the walk occupies rows 0..383 and rows
-/// 384..511 are the blinding region -- 128 free rows against `R = 4*22 + 2 = 90`
-/// published openings per column, which is the whole reason the cut happened.
+/// the prover actually builds. [ZK-DEPTH-11 2026-08-30] At 11 the walk occupies
+/// rows 0..351 and rows 352..511 are the blinding region -- 160 free rows against
+/// `R = 4*22 + 2 = 90` published openings per column, which is the whole reason
+/// the cut happened. (At 12 it was 128 free rows: still over 90, but the second
+/// cut bought the margin the randomizer column now spends.)
 ///
 /// Equal to `CANONICAL_DEPTH` above today. Kept separate so that when one
 /// circuit's geometry moves and the other's does not, the tests say which.
@@ -170,8 +176,10 @@ pub struct W6 {
     pub path_indices: Vec<u8>,
 }
 
-/// [C7] Spend witness. Twelve path elements, not fifteen -- C7's depth is fixed
-/// at `CANONICAL_DEPTH = 12` by the trace layout and is not a public input.
+/// [C7] Spend witness. The path length is `air::spend::CANONICAL_DEPTH` and is
+/// read off the AIR below, never typed: C7's depth is fixed by the trace layout
+/// and is not a public input, so nothing on the wire would catch a stale literal
+/// here. It has been 15, then 12, then 11.
 ///
 /// ⛔ `mask` is a DETERMINISTIC test stream, never CSPRNG output. A test needs
 /// reproducibility; a proof that moves money needs fresh randomness for every
@@ -206,9 +214,10 @@ pub fn w3(i: usize) -> W3 {
     let s = i as u64;
     W3 {
         leaf: 777 + s,
-        // [C3-D12] 12, not 15. Sourced from the AIR through `CANONICAL_DEPTH`
-        // rather than a literal, because this pair went stale once already:
-        // the depth moved and the two `(0..15)` here did not.
+        // [C3-D12] Sourced from the AIR through `CANONICAL_DEPTH` rather than a
+        // literal, because this pair went stale once already: the depth moved
+        // and the two `(0..15)` here did not. It has since moved twice more
+        // (15 -> 12 -> 11) and this line needed no edit for either.
         path_elements: (0..CANONICAL_DEPTH as u64).map(|j| 1000 + j + s * 31).collect(),
         path_indices: (0..CANONICAL_DEPTH).map(|j| ((j + i) % 2) as u8).collect(),
     }
@@ -289,8 +298,8 @@ pub fn w6(i: usize) -> W6 {
     W6 {
         old_leaf: 111 + s,
         new_leaf: 222 + s * 3,
-        // [C6-D12] 12, not 15. `w3` above is also 12 now — C3 took the same cut
-        // later the same day.
+        // [C6-D12] `w3` above took the same cut, later the same day, and then
+        // both took a second one to 11.
         // [ZK-DEPTH-11 2026-08-30] Was a literal 12 while its two siblings above
         // already read CANONICAL_DEPTH. A witness built at the wrong depth fails
         // its own AIR, which reads as a broken circuit.
@@ -500,7 +509,7 @@ pub fn check_semantics_2(w: &W2, data: &p01_stark::compact::GenericCompactProofD
 pub fn check_semantics_3(w: &W3, data: &p01_stark::compact::GenericCompactProofData) {
     assert_eq!(
         w.path_elements.len(), CANONICAL_DEPTH,
-        "C3: depth must be the canonical 12 — 15 since 2026-08-29 is a pre-cut witness",
+        "C3: depth must be the canonical {CANONICAL_DEPTH} — anything else is a pre-cut witness",
     );
     assert_eq!(w.path_indices.len(), CANONICAL_DEPTH, "C3: index count must match the path");
 
@@ -513,7 +522,7 @@ pub fn check_semantics_3(w: &W3, data: &p01_stark::compact::GenericCompactProofD
     assert_eq!(f(data.public_inputs[1]), root, "C3: root is not the real fold of the leaf up the path");
     assert_eq!(
         data.public_inputs[2], CANONICAL_DEPTH as u64,
-        "C3: depth public input must be 12 — verify.rs rejects anything else in phase 2",
+        "C3: depth public input must be {CANONICAL_DEPTH} — verify.rs rejects anything else in phase 2",
     );
 
     // Deterministic on purpose: this function re-derives the trace and compares
@@ -704,7 +713,7 @@ pub fn check_semantics_5(w: &W5, data: &p01_stark::compact::GenericCompactProofD
 pub fn check_semantics_6(w: &W6, data: &p01_stark::compact::GenericCompactProofData) {
     assert_eq!(
         w.path_elements.len(), C6_CANONICAL_DEPTH,
-        "C6: depth must be the canonical 12 — C3 is still 15, they are different constants now",
+        "C6: depth must be the canonical {C6_CANONICAL_DEPTH} — C3 carries its own constant, they are not required to move together",
     );
     assert_eq!(w.path_indices.len(), C6_CANONICAL_DEPTH, "C6: index count must match the path");
 
@@ -726,7 +735,7 @@ pub fn check_semantics_6(w: &W6, data: &p01_stark::compact::GenericCompactProofD
     assert_eq!(f(data.public_inputs[3]), new_root, "C6: new_root is not the real fold of new_leaf");
     assert_eq!(
         data.public_inputs[4], C6_CANONICAL_DEPTH as u64,
-        "C6: depth public input must be 12 — verify.rs rejects anything else in phase 2",
+        "C6: depth public input must be {C6_CANONICAL_DEPTH} — verify.rs rejects anything else in phase 2",
     );
 
     // The mask is DETERMINISTIC here on purpose, and it has to be: this function
@@ -749,17 +758,22 @@ pub fn check_semantics_6(w: &W6, data: &p01_stark::compact::GenericCompactProofD
     assert_eq!(trace[8][0], old_leaf, "C6: old carry at row 0 must be old_leaf");
     assert_eq!(trace[9][0], new_leaf, "C6: new carry at row 0 must be new_leaf");
 
-    // 🚨 382, NOT 478. `(depth - 1) * 32 + 30` moved with the depth cut, and 478
+    // 🚨 350, NOT 478. `(depth - 1) * 32 + 30` moved with the depth cut, and 478
     // is now INSIDE the blinding region -- a masked row carrying a fresh random
     // value. Left at 478 this pair of assertions would have compared the root
     // against noise and failed loudly, which is the good case; the bad case is
     // the reader who "fixes" it by deleting them.
     const ROW_ROOT: usize = (p01_stark::air::merkle_update::CANONICAL_DEPTH - 1) * 32 + 30;
-    assert_eq!(ROW_ROOT, 382);
+    // [ZK-DEPTH-11 2026-08-30] 382 -> 350. C6 took the SECOND depth cut, 12 -> 11,
+    // and this literal did not move with it while C3's sibling one line-for-line
+    // above did. The row is DERIVED from CANONICAL_DEPTH on the line above; this
+    // pin is the tripwire that says the derivation and the number were both
+    // looked at, so it has to be re-typed on purpose every time the depth moves.
+    assert_eq!(ROW_ROOT, 350);
     assert!(ROW_ROOT < p01_stark::air::merkle_update::FIRST_FREE_ROW,
         "the root row must stay OUT of the blinding region");
-    assert_eq!(trace[0][ROW_ROOT], old_root, "C6: boundary row 382 col 0 (old_root)");
-    assert_eq!(trace[3][ROW_ROOT], new_root, "C6: boundary row 382 col 3 (new_root)");
+    assert_eq!(trace[0][ROW_ROOT], old_root, "C6: boundary row {ROW_ROOT} col 0 (old_root)");
+    assert_eq!(trace[3][ROW_ROOT], new_root, "C6: boundary row {ROW_ROOT} col 3 (new_root)");
 
     // ✅ AND THIS IS THE REAL MEASUREMENT IN THIS FUNCTION. The sweep evaluates
     // every one of the 19 constraints at every frame of the trace, including the

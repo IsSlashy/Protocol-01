@@ -1131,12 +1131,26 @@ struct CuCeiling {
 }
 
 /// MEASURED by `cu_budget_real_circuits` on this tree, 2026-08-01, RE-ANCHORED
-/// for [B2] and RE-MEASURED at the [B2-INT] integration head.
+/// for [B2], RE-MEASURED at the [B2-INT] integration head, and RE-MEASURED again
+/// for [ZK-BLIND 2026-08-31].
 ///
-/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 687,736 B, sha256
-/// `8729ac97979e9b7cc464e010f06141062c575c035d97872d709c015c5a9b091b`, built by
-/// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52`, build fp
-/// `d0a21acd521d6e83`, from a `CARGO_TARGET_DIR` that did not exist.
+/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 782,000 B, sha256
+/// `6ad52031a7dd8d2a5fad0f6deb8fa57506a15c9ade4e643963e8445df4d8311b`, built by
+/// `solana-cargo-build-sbf 3.1.15 platform-tools v1.52`, build fp
+/// `d1b8990e7a9b6d7c`, at the commit that landed the last of the four lift
+/// columns.
+///
+/// [ZK-BLIND 2026-08-31] THIS RECORD WAS STALE IN TWO WAYS AT ONCE AND BOTH ARE
+/// WORTH NAMING, because the block below spends four paragraphs on the rule it
+/// broke. It named 687,736 B / `8729ac97...` -- a binary from before the coset,
+/// the C7 circuit and the blinding wave -- and it named compiler 3.1.9 while
+/// `CU_MEASURED_WITH` twenty lines down said 3.1.15. A provenance record that
+/// disagrees with the constant beside it is worse than none: it lets a reader
+/// attribute a measurement to a compiler that never produced it, which is
+/// exactly the failure `build_fingerprint` was given the compiler identity to
+/// prevent. The superseded byte size 687,736 is kept in this sentence so the
+/// correction stays writeable; the compiler string is not kept, because there
+/// was never a run behind it.
 ///
 /// # [LIVENESS 2026-08-01] The artifact moved because the PROGRAM moved
 ///
@@ -1241,10 +1255,34 @@ struct CuCeiling {
 /// been the other option and it is the wrong one: it would have left every
 /// future regression up to 10% invisible.
 ///
-/// Worst absolute is C4 at 924,827 of 1,400,000 (66%); worst phase1+phase2 is
-/// C1 at 1,136,761, still inside one instruction, leaving ~263,000 CU of margin.
-/// Worst phase 2 alone is C1 at 222,020. The smallest phase-1 pin is C0 at
-/// 633,531. CU was never the binding constraint and it still is not.
+/// Worst absolute is C1 at 1,038,624 of 1,400,000 (74%); worst phase1+phase2 is
+/// C1 at 1,431,197. Worst phase 2 alone is C5 at 439,663. The smallest phase-1
+/// pin is C0 at 633,531. CU is still not the binding constraint on any single
+/// INSTRUCTION: the worst of the fifteen leaves 361,376 CU of headroom, and no
+/// phase is within 5% of the cap.
+///
+/// ⛔ BUT THAT SECOND SENTENCE LOST A CLAUSE, AND THE LOSS IS A REAL
+/// PROPERTY, NOT A RE-WORDING. It used to end "still inside one instruction,
+/// leaving ~263,000 CU of margin". C1's two phases now sum to 1,431,197 and C5's
+/// to 1,407,688, both ABOVE the 1,400,000 per-instruction cap. THE OPTION OF
+/// EVER MERGING PHASE 1 AND PHASE 2 INTO A SINGLE INSTRUCTION IS GONE FOR C1 AND
+/// C5. Nothing on chain breaks -- both have always been sent as two
+/// instructions, `verify_stark_proof_v2` then `verify_deep_ali_phase2` -- but
+/// any design note that treats the merge as still available must stop.
+///
+/// 🚨 AND NOTHING LATER REVERSES IT. The cause is the TRACE-LENGTH DOUBLING
+/// -- C1 256 -> 512, C5 512 -> 1024 -- and NOT the lift column. Phase 1 is FRI
+/// and Merkle-path work and scales with the LDE; phase 2 is dense Horner
+/// evaluation and scales with n directly; both circuits doubled n because
+/// neither had a Merkle depth left to cut for its blinding region. The lift
+/// column costs between 5,339 and 7,582 CU of phase 1, MEASURED separately
+/// below, which is an order of magnitude too small to be the reason. Getting the
+/// merge back would mean shrinking n again, and shrinking n is what removed the
+/// blinding region in the first place.
+///
+/// Superseded figures, kept so the sentences that record the move stay
+/// writeable: worst absolute was C4 at 924,827 (66%), worst total C1 at
+/// 1,136,761 with ~263,000 of margin, worst phase 2 alone C1 at 222,020.
 ///
 /// [C1-N256 2026-08-29] C1 took TWO of those three titles from C4 and not the
 /// third, which is worth stating because I got it wrong first: C1's phase 1 is
@@ -1255,6 +1293,68 @@ struct CuCeiling {
 /// C1 is the one circuit the depth cut could not save: n went 128 -> 256, so
 /// its FRI scales with a doubled LDE and its six dense Horners doubled in
 /// length. C4's numbers did not move.
+///
+/// # [ZK-BLIND 2026-08-31] All fifteen pins RE-MEASURED for the blinding wave
+///
+/// Four circuits gained a blinding region, an unconstrained randomizer column,
+/// and then a second added column -- the ZK lift column that reaches the
+/// quotient claims the row mask could not. Committed widths: C1 3 -> 5, C3
+/// 6 -> 8, C6 10 -> 12, C7 10 -> 12. C3, C6 and C7 also took a second Merkle
+/// depth cut, 12 -> 11. The two circuits with no depth left to cut doubled their
+/// trace instead, C1 256 -> 512 and C5 512 -> 1024, doubling their LDE with it.
+///
+/// All fifteen pins were re-measured on the artifact named at the top of this
+/// block, at ONE commit, with `stark/src` and the verifier `src` both
+/// committed-clean. Nothing below is scaled, extrapolated or carried over. An
+/// earlier attempt at this re-anchor was thrown away precisely because it was
+/// measured mid-wave, one column short on three circuits.
+///
+/// TWO CIRCUITS CARRY ALMOST ALL OF THE COST, AND THEY ARE EXACTLY THE TWO WHOSE
+/// TRACE LENGTH DOUBLED:
+///
+///   * C1 phase 1 +123,883 (+13.5%) and phase 2 +170,553 (+76.8%);
+///   * C5 phase 1 +93,569 (+10.7%) and phase 2 +238,339 (+118.4%).
+///
+/// That is the shape the [C1-N256] entry above measured once. Seeing it a second
+/// time on a second circuit is what turns it from an observation into a rule:
+/// phase 1 is FRI and Merkle-path verification and scales with the LDE -- one
+/// more fold layer, one more node on every path, per query -- while phase 2 is
+/// dense Horner evaluation of the periodic columns and scales with the trace
+/// length directly. Doubling n charges BOTH, and charges phase 2 harder. That
+/// attribution is inference from the source; the numbers are the measurement.
+///
+/// ✅ THE LIFT COLUMN ITSELF IS CHEAP, AND IT WAS ISOLATED RATHER THAN
+/// ASSUMED. C7 took its column first and C6, C3 and C1 took theirs afterwards,
+/// so a run taken between the two lands is a control: against it the column
+/// costs +5,339 (C3) to +7,582 (C6) of phase 1, and under 1,000 CU of phase 2 on
+/// all three. Set beside C1's +123,883 that is noise, and the contrast is the
+/// useful part of this entry -- the expensive thing this wave did was the trace
+/// doubling, not the blinding.
+///
+/// The remaining circuits move by well under half a percent. C7's phase 1 is the
+/// largest of them at +9,897 (+1.1%), which is its twelfth column and its
+/// nineteenth constraint. C2 and C4 have UNCHANGED geometry and still moved,
+/// downward, by a comparable amount -- the same class of effect as the "adding
+/// circuit 7 costs every other circuit" finding recorded below, here in the
+/// cheap direction. Its cause is NOT measured, and the honest form of that is to
+/// say so rather than to attribute it.
+///
+/// 🚨 THIS RETRACTS THE [C1-N256] HEADLINE DIRECTLY ABOVE. That entry says
+/// C1's phase 1 sits "still BELOW C4's", so C4 keeps worst-absolute. It no
+/// longer does: C1 has taken worst-absolute as well and now holds all three
+/// titles. The entry is left standing because it is dated and was true when
+/// measured; this is the correction, not a rewrite of it.
+///
+/// ⛔ WHAT C1 AND C5 LOST -- the two phases no longer fitting in one
+/// instruction on either -- is stated in the summary paragraph above and is
+/// deliberately not restated here. Two copies of a derived claim is how the
+/// stale columns this file already deleted got written.
+///
+/// Every band is still `measured * 1.02` rounded up to the next 1,000:
+/// `CU_BAND_NUMERATOR` is untouched at 102. The four ceilings that were breached
+/// -- C1 and C5, both phases -- are raised in the SAME commit as the change that
+/// raised the cost, with the cause named, which is what the ratchet is for. No
+/// band was widened to clear a red run.
 ///
 /// [B7 2026-08-04] All thirteen pins moved with the LDE coset. The price is
 /// +34,874 to +79,303 CU per circuit, +6% to +9%, and it buys the end of the
@@ -1310,6 +1410,12 @@ struct CuCeiling {
 /// C1 + C3, so the figure to compare against is their SUM: 1,681,540 CU of
 /// phase 1 over two proofs and two ProofBuffer rents, against one proof at
 /// 878,756.
+///
+/// [ZK-BLIND 2026-08-31] Those four figures are the 2026-08-25 measurement and
+/// are kept as written. At today's pins the same comparison is 1,915,144 CU of
+/// C1 + C3 phase 1 against one C7 proof at 888,653 -- the argument did not
+/// weaken, it got stronger, because the two circuits C7 replaces are two of the
+/// three the blinding wave charged most.
 ///
 /// # There is no historical column here, on purpose
 ///
@@ -1379,7 +1485,7 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // ⛔ AND THE WIRE GREW, which no other masked circuit did: 68,881 ->
     // 80,577 bytes. C3, C6 and C7 all measured identical proof bytes before
     // and after.
-    CuCeiling { circuit_id: 1, phase1_measured: 914741, phase1_max: 934000, phase2_measured: Some(222020), phase2_max: Some(227000) },
+    CuCeiling { circuit_id: 1, phase1_measured: 1038624, phase1_max: 1060000, phase2_measured: Some(392573), phase2_max: Some(401000) },
     // [BIND-C2C4 2026-08-03] C2 and C4 phase-2 re-pinned UPWARD. The cause is the
     // public-input boundary fold: `verify_deep_ali_circuit_2` and `_4` now
     // reconstruct the boundary term of `Q` at `z` and fold it into the DEEP
@@ -1399,7 +1505,7 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // a step taken to make CI green. If a future change moves these again, the
     // question to answer first is what moved and why — never what number would
     // pass.
-    CuCeiling { circuit_id: 2, phase1_measured: 818518, phase1_max: 835000, phase2_measured: Some(112042), phase2_max: Some(115000) },
+    CuCeiling { circuit_id: 2, phase1_measured: 815771, phase1_max: 833000, phase2_measured: Some(112043), phase2_max: Some(115000) },
     // [C3-D12 2026-08-29] RE-RECORDED for the depth-12 masked geometry, and the
     // two phases moved the same way C6's did an hour earlier -- but by very
     // different amounts, and that difference is the interesting part.
@@ -1424,14 +1530,14 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // recorded, and the cause is not known without measuring. Leaving the wrong
     // explanation in place would be worse than leaving none: the next person to
     // change a periodic column would expect a phase-1 saving that is not there.
-    CuCeiling { circuit_id: 3, phase1_measured: 868256, phase1_max: 886000, phase2_measured: Some(168132), phase2_max: Some(172000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 876520, phase1_max: 895000, phase2_measured: Some(169000), phase2_max: Some(173000) },
     // [BIND-C2C4 2026-08-03] see the note on C2 above — same cause, same band,
     // same recorded acceptance. C4 is the circuit that pays the most.
-    CuCeiling { circuit_id: 4, phase1_measured: 924827, phase1_max: 944000, phase2_measured: Some(207605), phase2_max: Some(212000) },
+    CuCeiling { circuit_id: 4, phase1_measured: 921430, phase1_max: 940000, phase2_measured: Some(207606), phase2_max: Some(212000) },
     // [LIVENESS 2026-08-01] phase1_measured re-recorded: C5 793_372 -> 793_355
     // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
     // active_rows bound). The CEILINGS are unchanged and neither was approached.
-    CuCeiling { circuit_id: 5, phase1_measured: 874456, phase1_max: 892000, phase2_measured: Some(201324), phase2_max: Some(206000) },
+    CuCeiling { circuit_id: 5, phase1_measured: 968025, phase1_max: 988000, phase2_measured: Some(439663), phase2_max: Some(449000) },
     // [C6-D12 2026-08-29] RE-RECORDED for the depth-12 masked geometry, and the
     // two phases moved in OPPOSITE directions. That is the whole story of this
     // change in two numbers, so neither is worth flattening into "C6 got more
@@ -1464,13 +1570,13 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     //
     // Against the 1,400,000 cap the deposit still fits in one instruction:
     // 888,250 + 175,269 = 1,063,519.
-    CuCeiling { circuit_id: 6, phase1_measured: 888250, phase1_max: 907000, phase2_measured: Some(175269), phase2_max: Some(179000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 899341, phase1_max: 918000, phase2_measured: Some(175732), phase2_max: Some(180000) },
     // [C7 2026-08-25] C7 pinned for the first time. Until today the only C7
     // figure anywhere in this repo came from `tests/c7_probe/` -- a throwaway
     // program reproducing the arithmetic SHAPE of a phase-2 check that did not
     // exist yet, on a geometry C7 no longer has. This row is the verifier
     // itself, measured the same way as the seven above it.
-    CuCeiling { circuit_id: 7, phase1_measured: 878756, phase1_max: 897000, phase2_measured: Some(192715), phase2_max: Some(197000) },
+    CuCeiling { circuit_id: 7, phase1_measured: 888653, phase1_max: 907000, phase2_measured: Some(193093), phase2_max: Some(197000) },
 ];
 
 /// The band every `*_max` is computed with, as a percentage numerator over 100.
@@ -1814,7 +1920,41 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 54] = [
+const PROSE_FIGURES: [(u64, &str); 78] = [
+    // [ZK-BLIND 2026-08-31] The fifteen pins were re-measured for the blinding
+    // wave, so every figure the PREVIOUS pins produced is now history. Each one
+    // below is still quoted in prose AS the superseded value -- deleting them
+    // would make the sentences that record the move unwriteable, which is the
+    // exact failure this allowlist exists to prevent.
+    (914_741, "the PRE-lift C1 phase-1 pin, quoted beside the 1,038,624 that replaced it"),
+    (222_020, "the PRE-lift C1 phase-2 pin, quoted beside the 392,573 that replaced it"),
+    (1_136_761, "the PRE-lift C1 phase1+phase2 total, back when it still fit one instruction"),
+    (868_256, "the PRE-lift C3 phase-1 pin, quoted beside the 876,520 that replaced it"),
+    (168_132, "the PRE-lift C3 phase-2 pin, quoted beside the 169,000 that replaced it"),
+    (924_827, "the PRE-lift C4 phase-1 pin, the old worst absolute"),
+    (207_605, "the PRE-lift C4 phase-2 pin, quoted beside the 207,606 that replaced it"),
+    (1_132_432, "the PRE-lift C4 phase1+phase2 total, quoted as C1's comparison point"),
+    (206_000, "the PRE-lift C5 phase-2 ceiling, quoted where the re-anchor moved it"),
+    (888_250, "the PRE-lift C6 phase-1 pin, quoted beside the 899,341 that replaced it"),
+    (175_269, "the PRE-lift C6 phase-2 pin, quoted beside the 175,732 that replaced it"),
+    (1_063_519, "the PRE-lift C6 phase1+phase2 total"),
+    (878_756, "the PRE-lift C7 phase-1 pin, quoted beside the 888,653 that replaced it"),
+    (192_715, "the PRE-lift C7 phase-2 pin, quoted beside the 193,093 that replaced it"),
+    // The deltas the wave cost. Differences of two pins, so no single constant
+    // produces them, and they ARE the finding: the cost lands on the two
+    // circuits whose trace length doubled, not on the four that gained columns.
+    (123_883, "CU the wave COST C1 phase 1 -- its LDE doubled with its trace"),
+    (170_553, "CU it COST C1 phase 2 -- the dense Horners doubled in length"),
+    (93_569, "CU it COST C5 phase 1 -- same cause as C1, second circuit to show it"),
+    (238_339, "CU it COST C5 phase 2 -- the largest single move of the wave"),
+    (9_897, "CU it COST C7 phase 1 -- one more column and one more constraint"),
+    // The lift column priced on its own, from the run taken between the C7 land
+    // and the C1/C3/C6 lands. This pair is what makes "the columns are not the
+    // expensive part" a measurement rather than an opinion.
+    (5_339, "phase-1 CU the lift column cost the CHEAPEST circuit that took it (C3)"),
+    (7_582, "phase-1 CU the lift column cost the DEAREST circuit that took it (C6)"),
+    (361_376, "cap minus the worst single-phase pin (C1 phase 1) -- derived, not a pin"),
+    (1_915_144, "C1+C3 phase 1 summed at TODAY's pins -- what one C7 proof replaces"),
     // [C1-N256 2026-08-29] C1's wire size on both sides of the geometry change.
     // Not CU pins, so no constant here produces them; they live in
     // `stark/src/compact.rs::test_wire_size_pool_commitment_circuit_1`.
@@ -1848,7 +1988,8 @@ const PROSE_FIGURES: [(u64, &str); 54] = [
     (47_789, "probe cost of one dense 512-coeff column — why C7 emits compressed tables"),
     (3_930, "largest phase-1 CU the C7 code cost another circuit (C4)"),
     (1_681_540, "C1+C3 phase 1 summed — what one C7 proof replaces, not a pin"),
-    (687_736, "byte size of the .so CU_CEILINGS is measured from TODAY — provenance, not a pin"),
+    (687_736, "the SUPERSEDED .so byte size, quoted beside the 782,000 that replaced it"),
+    (782_000, "byte size of the .so CU_CEILINGS is measured from TODAY — provenance, not a pin"),
     (687_440, "byte size of the PRE-liveness-fix .so, quoted to show the +296 B the fix cost"),
     // [LIVENESS 2026-08-01] The two phase-1 pins the fix moved. Both are quoted
     // in the provenance block as the BEFORE value; the AFTER value is the
@@ -3944,7 +4085,9 @@ fn all_cases() -> Vec<ProofCase> {
     cases.push(generic_case(2, "C2 balance_proof", p2, ms));
 
     // --- C3 merkle_path -----------------------------------------------------
-    // Args from `verify.rs::c3_sample_proof` (canonical depth 15).
+    // Args from `verify.rs::c3_sample_proof`. The depth is read off
+    // `air::merkle_path::CANONICAL_DEPTH` below; the literal that used to sit
+    // in this comment said 15 and survived two cuts (15 -> 12 -> 11) unnoticed.
     let path_elements: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
     let path_indices: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     let (p3, ms) = timed(|| {
@@ -4914,7 +5057,13 @@ fn l13_uniform_path_program_logs_are_identical_across_circuits() {
         let leak = uniform_leak_probe(&mut rig, &program, nonce, &proof);
         assert!(
             leak.cu.is_ok(),
-            "{label}: verify_uniform did not succeed, so its logs are not the honest-path logs"
+            // The tail of the transaction log is not decoration: without it this
+            // assertion says a circuit failed and refuses to say why, which is a
+            // re-instrumentation cycle to learn one line. MEASURED 2026-08-30:
+            // with it, one run named `DeserializationError` and therefore named
+            // the cause -- a `CONFIG_*.trace_width` out of sync with the prover.
+            "{label}: verify_uniform did not succeed, so its logs are not the honest-path logs\n  last logs: {:?}",
+            tail(&leak.logs, 6),
         );
         let lines = program_log_lines(&leak.logs);
         let p2 = program_log_lines(&leak.phase2_logs);
@@ -4992,10 +5141,14 @@ fn l13_is_not_closed_by_deleting_logs_two_public_channels_survive() {
     let mut rows: Vec<(String, u64, u8, usize)> = Vec::new();
     for (label, nonce, proof) in uniform_leak_cases() {
         let leak = uniform_leak_probe(&mut rig, &program, nonce, &proof);
-        let cu = leak
-            .cu
-            .cu_if_ok()
-            .unwrap_or_else(|| panic!("{label}: verify_uniform must succeed"));
+        let cu = leak.cu.cu_if_ok().unwrap_or_else(|| {
+            // Same reason as the sibling test: a failure that cannot name the
+            // instruction error is not a measurement, it is a dead end.
+            panic!(
+                "{label}: verify_uniform must succeed\n  last logs: {:?}",
+                tail(&leak.logs, 6)
+            )
+        });
         rows.push((label.to_string(), cu, leak.circuit_id_in_account, leak.chunks));
     }
 

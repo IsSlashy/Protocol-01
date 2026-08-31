@@ -185,23 +185,35 @@ fn c6_tampered_openings_are_all_rejected() {
 /// depth other than 12, so there is no proof in existence whose padding
 /// boundary differs from the one phase 1 hardcodes.
 ///
-/// ⚠️ 15 -> 12 on 2026-08-29. Rows 384..511 are no longer "padding" in any
-/// sense: they are the blinding region, and relabelling them is now a privacy
-/// attack rather than only a liveness one.
+/// ⚠️ 15 -> 12 -> 11. Rows `CANONICAL_DEPTH * 32 .. 512` are no longer
+/// "padding" in any sense: they are the blinding region, and relabelling them
+/// is a privacy attack now, not only a liveness one. Every depth in this file
+/// is read off the AIR -- a typed one here demanded the verifier REJECT its
+/// own canonical depth for a full day.
 #[test]
 fn c6_padding_boundary_is_not_prover_controlled() {
     let d = honest_c6(5);
     let config = get_circuit_config(6).unwrap();
     let p = GenericCompactProof::from_bytes(&d.proof_bytes, config).unwrap();
     assert_eq!(d.public_inputs.len(), 5, "C6 publishes [old,new,oldroot,newroot,depth]");
-    assert_eq!(d.public_inputs[4], 12, "canonical C6 depth — 12 since 2026-08-29, not 15");
+    let canon = p01_stark::air::merkle_update::CANONICAL_DEPTH as u64;
+    assert_eq!(
+        d.public_inputs[4], canon,
+        "C6 must publish its own canonical depth"
+    );
 
     // 🚨 15 IS IN THIS LIST NOW, AND IT IS THE MOST IMPORTANT ENTRY. It was the
     // canonical depth until 2026-08-29, so every C6 proof built before the cut
     // claims it. Phase 2 must refuse them: a depth-15 proof has no blinding
     // region, and accepting one would let a prover opt out of the mask by simply
     // using an older prover.
-    for claimed_depth in [0u64, 1, 7, 8, 11, 13, 14, 15, 16, 31, u64::MAX] {
+    // Built by EXCLUSION, not typed. The list used to carry 11 while 11 was
+    // canonical, so this loop demanded the verifier reject the only depth it
+    // is supposed to accept.
+    for claimed_depth in [0u64, 1, 7, 8, 11, 12, 13, 14, 15, 16, 31, u64::MAX]
+        .into_iter()
+        .filter(|d| *d != canon)
+    {
         let mut pi = d.public_inputs.clone();
         pi[4] = claimed_depth;
         let r = verify_deep_ali_circuit_6(&p, &pi);
