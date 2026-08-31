@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection } from '@solana/web3.js';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+import { activeTreasurySeed } from '@/lib/privacy/treasurySeeds';
 import {
   createCommitmentV3,
   deriveNoteMaterial,
@@ -95,13 +96,14 @@ function clientIp(req: NextRequest): string {
 }
 
 /** The treasury's pool seed, 32 bytes as 64 hex characters. */
-function treasurySeed(): Uint8Array | null {
-  const hex = process.env.P01_TREASURY_POOL_SEED;
-  if (!hex || !/^[0-9a-fA-F]{64}$/.test(hex)) return null;
-  const out = new Uint8Array(32);
-  for (let i = 0; i < 32; i += 1) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  return out;
-}
+/**
+ * \u26d4 ONE PARSER, IMPORTED. This file used to carry its own copy that tested
+ * `/^[0-9a-fA-F]{64}$/` against the whole variable, so the day
+ * `P01_TREASURY_POOL_SEED` became a comma-separated LIST it decided this
+ * deployment held no treasury at all — a 503 on the buyer's own shield, from a
+ * treasury holding sixty leaves. See `lib/privacy/treasurySeeds.ts`.
+ */
+const treasurySeed = activeTreasurySeed;
 
 /** The denomination this deployment deals in. Mirrors `issue-note`'s reader. */
 function inventoryDenomination(): number {

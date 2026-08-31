@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection, PublicKey } from '@solana/web3.js';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+import { activeTreasurySeed, treasurySeeds } from '@/lib/privacy/treasurySeeds';
 import {
   buildMerkleProofFromLeavesV3,
   createCommitmentV3,
@@ -162,23 +163,13 @@ function minAgeSlots(): number {
  * seeds must not silently become a treasury that owns nothing, and it must not
  * take the others down with it.
  */
-function treasurySeeds(): Uint8Array[] {
-  const raw = process.env.P01_TREASURY_POOL_SEED ?? '';
-  const out: Uint8Array[] = [];
-  for (const part of raw.split(',')) {
-    const hex = part.trim();
-    if (!/^[0-9a-fA-F]{64}$/.test(hex)) continue;
-    const bytes = new Uint8Array(32);
-    for (let i = 0; i < 32; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    out.push(bytes);
-  }
-  return out;
-}
+// ⛔ The parser lives in lib/privacy/treasurySeeds.ts and is imported by every
+// route that reads it. It used to be copied into four files and moved in one,
+// which is how contribute-note and swap-note came to report an empty treasury
+// the moment this variable became a list.
 
 /** The seed new notes are created under. The first configured one. */
-function treasurySeed(): Uint8Array | null {
-  return treasurySeeds()[0] ?? null;
-}
+const treasurySeed = activeTreasurySeed;
 
 /**
  * The leaf indices this deployment deposited and is willing to give away.
@@ -427,7 +418,7 @@ export async function GET() {
   const leaves = await inventoryLeaves();
   const kv = getStore();
   const reasons: string[] = [];
-  if (!seed) reasons.push('P01_TREASURY_POOL_SEED is unset or not 64 hex characters.');
+  if (!seed) reasons.push('P01_TREASURY_POOL_SEED holds no well-formed 64-hex seed (one, or several comma-separated).');
   if (leaves.length === 0) reasons.push('P01_TREASURY_NOTE_LEAVES lists no leaf indices.');
   if (!process.env.P01_FUNDER_TICKET) reasons.push('P01_FUNDER_TICKET is unset.');
   if (!kv) reasons.push('No durable KV store, so issued notes cannot be tracked and this refuses.');
