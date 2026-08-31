@@ -54,14 +54,24 @@ const instruction = (name: string): IdlInstruction => {
   return ix;
 };
 
-/** Borsh byte length of an IDL type, with every `Option` absent (tag only). */
-function borshLenWithOptionsNone(type: unknown): number {
+/**
+ * Borsh byte length of an IDL type, with every `Option` absent (tag only).
+ *
+ * \u26a0 RETURNS null FOR A VARIABLE-LENGTH TYPE, and that is the whole reason
+ * this function changed. `subscribe_private_stark` gained the subtree walk --
+ * `siblings: vec<u64>` and `directions: bytes` -- so the instruction no longer
+ * HAS one length. A size table that threw on them was right to refuse rather
+ * than invent a number; what it could not do is say which part is fixed.
+ */
+function borshLenWithOptionsNone(type: unknown): number | null {
   if (type === 'u64' || type === 'i64') return 8;
   if (type === 'u8' || type === 'bool') return 1;
   if (type === 'pubkey') return 32;
+  if (type === 'bytes' || type === 'string') return null;
   if (typeof type === 'object' && type !== null) {
     const t = type as Record<string, unknown>;
     if ('option' in t) return 1;
+    if ('vec' in t) return null;
     if (Array.isArray(t.array)) return Number(t.array[1]);
   }
   throw new Error(`unhandled IDL type in the size table: ${JSON.stringify(type)}`);
@@ -106,16 +116,61 @@ describe('subscribe_private_stark — hand-rolled Borsh vs the program IDL', () 
     expect(builder).not.toContain('clientStealthMeta');
   });
 
-  it('allocates exactly the bytes the program will deserialise', () => {
+  it('allocates exactly the FIXED bytes the program will deserialise', () => {
+    // The variable tail is checked separately below: `allocatedBytesWithOptionsNone`
+    // sums the numeric literals of the `Buffer.alloc(...)` and counts one per
+    // named term, and the walk arrives as exactly one named term (`walkBytes`).
     const ix = instruction('subscribe_private_stark');
-    const expected =
-      8 + ix.args.reduce((sum, a) => sum + borshLenWithOptionsNone(a.type), 0);
-    expect(allocatedBytesWithOptionsNone('buildSubscribePrivateStarkIx')).toBe(expected);
+    const names = ix.args.map((a) => a.name);
+    // ⚠ THE WALK BEGINS AT `subtree_root`, NOT AT THE FIRST VARIABLE ARG.
+    // The builder folds the root's eight bytes into its `walkBytes` term
+    // together with the two length-prefixed arrays, so the boundary that
+    // matters here is the encoder's, not Borsh's. Getting it wrong is an
+    // eight-byte discrepancy that reads like a missing field.
+    const walkAt = names.indexOf('subtree_root');
+    expect(walkAt, 'the subtree walk is no longer in this instruction').toBeGreaterThan(-1);
+    const lens = ix.args.map((a) => borshLenWithOptionsNone(a.type));
+    expect(
+      lens.slice(walkAt).some((l) => l === null),
+      'nothing after subtree_root is variable-length any more',
+    ).toBe(true);
+    const fixed = lens.slice(0, walkAt).reduce<number>((sum, l) => sum + (l ?? 0), 0);
+    // discriminator + the individually written args + the one `walkBytes` term
+    expect(allocatedBytesWithOptionsNone('buildSubscribePrivateStarkIx')).toBe(8 + fixed + 1);
   });
 
-  it('keeps license_commitment LAST, which is what makes a stray tag byte silent', () => {
-    const args = instruction('subscribe_private_stark').args;
-    expect(args[args.length - 1]!.name).toBe('license_commitment');
+  it('sizes the subtree walk from the arrays themselves, not from a constant', () => {
+    // \U0001f6a8 A CONSTANT HERE WOULD TRUNCATE A DEEPER TREE and the failure
+    // would arrive on chain, after the proof was uploaded and paid for.
+    const buildAt = source.indexOf('function buildSubscribePrivateStarkIx(');
+    const builder = source.slice(buildAt, source.indexOf('\n}', buildAt));
+    expect(builder).toMatch(/siblings\.length \* 8/);
+    expect(builder).toMatch(/directions\.length/);
+  });
+
+  it('puts license_commitment BEFORE the walk, so a stray tag byte is no longer silent', () => {
+    // \u26a0 THE PROPERTY INVERTED, AND IT INVERTED IN OUR FAVOUR. This case
+    // asserted `license_commitment` was LAST, because a mis-encoded Option tag
+    // at the very end is absorbed silently. The instruction then gained
+    // `subtree_root`, `siblings` and `directions`, so a stray tag now shifts the
+    // whole walk and the program rejects it instead of accepting a subscription
+    // bound to nothing. What must hold is the ORDER, since the encoder is
+    // hand-rolled and Borsh is positional.
+    const names = instruction('subscribe_private_stark').args.map((a) => a.name);
+    expect(names).toEqual([
+      'nullifier',
+      'merkle_root',
+      'min_epoch',
+      'subscriber_commitment',
+      'rate',
+      'interval_slots',
+      'vk_hash_subscriber',
+      'stark_commitment',
+      'license_commitment',
+      'subtree_root',
+      'siblings',
+      'directions',
+    ]);
   });
 });
 

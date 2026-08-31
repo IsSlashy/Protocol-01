@@ -302,12 +302,22 @@ function generateSpendProof(
   // Checked here rather than left to the Rust: it parses with
   // `filter_map(.. .ok())`, which SILENTLY DROPS unparseable entries, so a
   // truncated path and a malformed one are indistinguishable by the time it
-  // sees them -- and an 11-deep proof is a valid proof of a tree nobody uses.
-  if (data.pathElements.length !== 12 || data.pathIndices.length !== 12) {
+  // sees them.
+  //
+  // \U0001f6a8 THIS LITERAL WAS 12 AND THE CIRCUIT HAD MOVED TO 11, so every
+  // circuit-7 spend failed HERE, before the wasm was reached. Rust owns the
+  // depth in three agreeing places -- `stark/src/air/spend.rs` CANONICAL_DEPTH,
+  // `stark/src/lib.rs` (the shipped prover's own arity check) and `verify.rs` on
+  // chain -- and this mirrors them across a wire that carries no types, so it
+  // moves in the same commit as theirs. The comment above used to end "an
+  // 11-deep proof is a valid proof of a tree nobody uses"; 11 IS the tree now.
+  const C7_PATH_DEPTH = 11;
+  if (data.pathElements.length !== C7_PATH_DEPTH || data.pathIndices.length !== C7_PATH_DEPTH) {
     post({
       type: 'error', id,
-      error: `Circuit 7 needs exactly 12 path elements and 12 indices (its subtree depth `
-        + `is 12, NOT the pool's 15). Got ${data.pathElements.length} and ${data.pathIndices.length}.`,
+      error: `Circuit 7 needs exactly ${C7_PATH_DEPTH} path elements and ${C7_PATH_DEPTH} indices `
+        + `(its subtree depth is ${C7_PATH_DEPTH}, NOT the pool's 15). `
+        + `Got ${data.pathElements.length} and ${data.pathIndices.length}.`,
     });
     return;
   }

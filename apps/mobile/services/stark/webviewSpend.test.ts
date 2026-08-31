@@ -41,9 +41,20 @@ import { STARK_WASM_BASE64 } from './wasmData';
 import { STARK_GLUE_IIFE } from './starkGlueIife';
 import { C7_BENCH_WITNESS, C7_EXPECTED_PROOF_SIZE } from './spendWitness';
 
-/** What `c7-live-proof.ts --dry-run` reports for this witness. */
+/**
+ * What `c7-live-proof.ts --dry-run` reports for this witness.
+ *
+ * ⚠ THE ROOT MOVED WITH THE DEPTH AND THE NULLIFIER DID NOT, which is the
+ * shape to expect. The nullifier is `poseidon(nullifierPreimage, secret)` and
+ * knows nothing about the tree; the root folds the PATH, so cutting circuit 7's
+ * subtree from 12 levels to 11 changes it and must. It was
+ * 5529976937288699293 while the witness carried twelve elements.
+ *
+ * Measured by driving the shipped blob in this very test, not copied from a
+ * comment: the WebView computed it from the same wasm the app loads.
+ */
 const REFERENCE_NULLIFIER = '8223017349269710682';
-const REFERENCE_ROOT = '5529976937288699293';
+const REFERENCE_ROOT = '17585268705969894025';
 
 const CRLF = new RegExp(String.fromCharCode(13) + String.fromCharCode(10), 'g');
 const LF = String.fromCharCode(10);
@@ -175,12 +186,12 @@ describe("the WebView's own script, executed", () => {
     const out = wv.send({
       type: 'generateSpendProof', id: 'c7_short',
       ...C7_BENCH_WITNESS,
-      pathElements: C7_BENCH_WITNESS.pathElements.slice(0, 11),
-      pathIndices: C7_BENCH_WITNESS.pathIndices.slice(0, 11),
+      pathElements: C7_BENCH_WITNESS.pathElements.slice(0, 10),
+      pathIndices: C7_BENCH_WITNESS.pathIndices.slice(0, 10),
     });
     expect(out).toHaveLength(1);
     expect(out[0].type).toBe('error');
-    expect(out[0].error).toMatch(/exactly 12 path elements/);
+    expect(out[0].error).toMatch(/exactly 11 path elements/);
   });
 
   it('refuses a recipient hash that is not four limbs', () => {

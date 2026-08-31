@@ -99,8 +99,32 @@ export const MERKLE_DEPTH = 15;
  * nothing requires the circuits to move together, and one shared constant is
  * what would make the next divergence invisible.
  */
-export const C6_SUBTREE_DEPTH = 12;
-export const C3_SUBTREE_DEPTH = 12;
+/**
+ * \U0001f6a8 11, NOT 12 -- and it was 12 here while the circuit had moved.
+ *
+ * Rust owns this depth (`stark/src/air/merkle_update.rs` CANONICAL_DEPTH), the shipped
+ * prover checks the path against it, and the deployed verifier agrees. A
+ * client that slices to 12 builds a proof of a tree the chain does not use,
+ * so it cannot be accepted however well the rest of the flow works. The web
+ * client moved with the circuit; this stack did not.
+ *
+ * \u26d4 Mirrors Rust across a wire that carries no types: move it in the same
+ * commit as CANONICAL_DEPTH, never on its own.
+ */
+export const C6_SUBTREE_DEPTH = 11;
+/**
+ * \U0001f6a8 11, NOT 12 -- and it was 12 here while the circuit had moved.
+ *
+ * Rust owns this depth (`stark/src/air/merkle_path.rs` CANONICAL_DEPTH), the shipped
+ * prover checks the path against it, and the deployed verifier agrees. A
+ * client that slices to 12 builds a proof of a tree the chain does not use,
+ * so it cannot be accepted however well the rest of the flow works. The web
+ * client moved with the circuit; this stack did not.
+ *
+ * \u26d4 Mirrors Rust across a wire that carries no types: move it in the same
+ * commit as CANONICAL_DEPTH, never on its own.
+ */
+export const C3_SUBTREE_DEPTH = 11;
 
 const SLOTS_PER_EPOCH = 7200;
 
@@ -3104,7 +3128,19 @@ function buildShieldDenominatedV3Ix(
 // ---------------------------------------------------------------------------
 
 /** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */
-export const C7_SUBTREE_DEPTH = 12;
+/**
+ * \U0001f6a8 11, NOT 12 -- and it was 12 here while the circuit had moved.
+ *
+ * Rust owns this depth (`stark/src/air/spend.rs` CANONICAL_DEPTH), the shipped
+ * prover checks the path against it, and the deployed verifier agrees. A
+ * client that slices to 12 builds a proof of a tree the chain does not use,
+ * so it cannot be accepted however well the rest of the flow works. The web
+ * client moved with the circuit; this stack did not.
+ *
+ * \u26d4 Mirrors Rust across a wire that carries no types: move it in the same
+ * commit as CANONICAL_DEPTH, never on its own.
+ */
+export const C7_SUBTREE_DEPTH = 11;
 
 /**
  * sha256(recipient) as the four little-endian u64 limbs circuit 7 takes.

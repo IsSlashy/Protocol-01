@@ -25,8 +25,17 @@
 /** `zk_shielded`'s circuit id for the spend proof. */
 export const CIRCUIT_SPEND = 7;
 
-/** `stark/src/air/spend.rs` CANONICAL_DEPTH. Not the pool's 15. */
-export const SPEND_SUBTREE_DEPTH = 12;
+/**
+ * `stark/src/air/spend.rs` CANONICAL_DEPTH. Not the pool's 15.
+ *
+ * ⛔ IT WAS 12 AGAINST A CIRCUIT OF 11. The depth moved on the Rust side --
+ * the AIR, the shipped prover's own arity check and the on-chain verifier all
+ * agree on 11 -- and this mirror did not follow, so mobile could not produce a
+ * proof the chain would accept. Declared twice on purpose (see the tie in
+ * spendWitness.test.ts); duplication without a tie is exactly how the two
+ * diverged.
+ */
+export const SPEND_SUBTREE_DEPTH = 11;
 
 /** sha256(recipient) split into four u64 limbs. */
 export const SPEND_RECIPIENT_HASH_LIMBS = 4;
@@ -37,7 +46,7 @@ export const SPEND_RECIPIENT_HASH_LIMBS = 4;
  * The upload splits it at MAX_CHUNK_SIZE = 1000 into 78 chunks, against the
  * v3 pair's 148 across two buffers.
  */
-export const C7_EXPECTED_PROOF_SIZE = 77_965;
+export const C7_EXPECTED_PROOF_SIZE = 79_405;
 
 export interface SpendWitness {
   nullifierPreimage: string;

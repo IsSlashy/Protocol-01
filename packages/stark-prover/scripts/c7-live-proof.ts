@@ -58,8 +58,8 @@ import { uploadAndVerify, getProofBufferPda } from '../src/upload-protocol';
 import { DEFAULT_STARK_VERIFIER_PROGRAM_ID } from '../src/types';
 
 const CIRCUIT_SPEND = 7;
-/** `stark/src/air/spend.rs` CANONICAL_DEPTH — C7's subtree is 12, not the pool's 15. */
-const CANONICAL_DEPTH = 12;
+/** `stark/src/air/spend.rs` CANONICAL_DEPTH — C7's subtree is 11, not the pool's 15. */
+const CANONICAL_DEPTH = 11;
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {

@@ -31,10 +31,10 @@ describe('circuit-7 witness constants', () => {
     expect(CIRCUIT_SPEND).toBe(7);
   });
 
-  it('uses C7 subtree depth 12, NOT the pool 15', () => {
+  it('uses C7 subtree depth 11, NOT the pool 15', () => {
     // The two are different trees. Swapping them costs a full 78-chunk upload
     // and the buffer rent to find out.
-    expect(SPEND_SUBTREE_DEPTH).toBe(12);
+    expect(SPEND_SUBTREE_DEPTH).toBe(11);
   });
 
   it('splits the recipient hash into four u64 limbs', () => {
@@ -52,10 +52,13 @@ describe('circuit-7 witness constants', () => {
   });
 
   it('pins the measured proof size, which is one upload buffer', () => {
-    expect(C7_EXPECTED_PROOF_SIZE).toBe(77_965);
+    // 77,965 until the 2026-08-31 lift-column reship; C7 grew to 79,405.
+    // Measured on both sides: the Rust RECORDED table and the wire pin that
+    // GENERATES bytes from the shipped blob agree exactly.
+    expect(C7_EXPECTED_PROOF_SIZE).toBe(79_405);
     // MAX_CHUNK_SIZE is 1000 in services/stark/index.ts. 78 chunks against the
     // v3 pair's 148 across two buffers — the win C7 actually delivers.
-    expect(Math.ceil(C7_EXPECTED_PROOF_SIZE / 1000)).toBe(78);
+    expect(Math.ceil(C7_EXPECTED_PROOF_SIZE / 1000)).toBe(80);
   });
 });
 
@@ -72,9 +75,9 @@ describe('C7_BENCH_WITNESS is comparable to the desktop measurement', () => {
     expect(C7_BENCH_WITNESS.blinding).toBe('33');
     expect(C7_BENCH_WITNESS.tokenMint).toBe('44');
     expect(C7_BENCH_WITNESS.pathElements).toEqual(
-      ['1000', '1007', '1014', '1021', '1028', '1035', '1042', '1049', '1056', '1063', '1070', '1077'],
+      ['1000', '1007', '1014', '1021', '1028', '1035', '1042', '1049', '1056', '1063', '1070'],
     );
-    expect(C7_BENCH_WITNESS.pathIndices).toEqual([0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
+    expect(C7_BENCH_WITNESS.pathIndices).toEqual([0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]);
     expect(C7_BENCH_WITNESS.recipientHash).toEqual(
       ['111111111', '222222222', '333333333', '444444444'],
     );
@@ -89,13 +92,13 @@ describe('assertSpendWitness', () => {
   it('refuses a path one element short — the failure the Rust cannot report', () => {
     const w = clone();
     w.pathElements.pop();
-    expect(() => assertSpendWitness(w)).toThrow(/exactly 12 path elements/);
+    expect(() => assertSpendWitness(w)).toThrow(/exactly 11 path elements/);
   });
 
   it('refuses a path one element long', () => {
     const w = clone();
     w.pathElements.push('9999');
-    expect(() => assertSpendWitness(w)).toThrow(/Got 13 and 12/);
+    expect(() => assertSpendWitness(w)).toThrow(/Got 12 and 11/);
   });
 
   it('refuses the 15-deep pool path, which is the easy mistake', () => {
@@ -109,7 +112,7 @@ describe('assertSpendWitness', () => {
   it('refuses mismatched elements and indices', () => {
     const w = clone();
     w.pathIndices.pop();
-    expect(() => assertSpendWitness(w)).toThrow(/Got 12 and 11/);
+    expect(() => assertSpendWitness(w)).toThrow(/Got 11 and 10/);
   });
 
   it('refuses a recipient hash that is not four limbs', () => {

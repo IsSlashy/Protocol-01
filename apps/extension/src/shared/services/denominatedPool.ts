@@ -120,7 +120,19 @@ export const MERKLE_DEPTH = 15;
  * failure lands mid-proof on the deposit path with no useful message. Slice
  * first — the same shape C7 already uses for its own depth-12 cut.
  */
-export const C6_SUBTREE_DEPTH = 12;
+/**
+ * \U0001f6a8 11, NOT 12 -- and it was 12 here while the circuit had moved.
+ *
+ * Rust owns this depth (`stark/src/air/merkle_update.rs` CANONICAL_DEPTH), the shipped
+ * prover checks the path against it, and the deployed verifier agrees. A
+ * client that slices to 12 builds a proof of a tree the chain does not use,
+ * so it cannot be accepted however well the rest of the flow works. The web
+ * client moved with the circuit; this stack did not.
+ *
+ * \u26d4 Mirrors Rust across a wire that carries no types: move it in the same
+ * commit as CANONICAL_DEPTH, never on its own.
+ */
+export const C6_SUBTREE_DEPTH = 11;
 
 /**
  * The depth circuit 3 proves, since 2026-08-29. Same cut, same reason.
@@ -131,7 +143,19 @@ export const C6_SUBTREE_DEPTH = 12;
  * divergence invisible. The on-chain side keeps them separate for the same
  * reason (`spend_root::SPEND_SUBTREE_DEPTH` vs `insert_root::INSERT_SUBTREE_DEPTH`).
  */
-export const C3_SUBTREE_DEPTH = 12;
+/**
+ * \U0001f6a8 11, NOT 12 -- and it was 12 here while the circuit had moved.
+ *
+ * Rust owns this depth (`stark/src/air/merkle_path.rs` CANONICAL_DEPTH), the shipped
+ * prover checks the path against it, and the deployed verifier agrees. A
+ * client that slices to 12 builds a proof of a tree the chain does not use,
+ * so it cannot be accepted however well the rest of the flow works. The web
+ * client moved with the circuit; this stack did not.
+ *
+ * \u26d4 Mirrors Rust across a wire that carries no types: move it in the same
+ * commit as CANONICAL_DEPTH, never on its own.
+ */
+export const C3_SUBTREE_DEPTH = 11;
 
 /** Slots per epoch — matches mobile line 78. */
 const SLOTS_PER_EPOCH = 7200;
@@ -1974,7 +1998,19 @@ export async function unshieldDenominatedStarkV3(
 // ---------------------------------------------------------------------------
 
 /** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */
-export const C7_SUBTREE_DEPTH = 12;
+/**
+ * \U0001f6a8 11, NOT 12 -- and it was 12 here while the circuit had moved.
+ *
+ * Rust owns this depth (`stark/src/air/spend.rs` CANONICAL_DEPTH), the shipped
+ * prover checks the path against it, and the deployed verifier agrees. A
+ * client that slices to 12 builds a proof of a tree the chain does not use,
+ * so it cannot be accepted however well the rest of the flow works. The web
+ * client moved with the circuit; this stack did not.
+ *
+ * \u26d4 Mirrors Rust across a wire that carries no types: move it in the same
+ * commit as CANONICAL_DEPTH, never on its own.
+ */
+export const C7_SUBTREE_DEPTH = 11;
 
 /**
  * "Circuit 7 cannot prove THIS NOTE" — as a type, not as a string to match on.
