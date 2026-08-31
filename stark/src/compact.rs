@@ -2792,19 +2792,34 @@ mod tests {
         let proof = generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask());
         assert_eq!(
             proof.proof_bytes.len(),
-            // [ZK-RANDOMIZER 2026-08-30] width 3 -> 4, merkle_depth 12 -> 13,
-            // lde 4096 -> 8192. This call is the GEOMETRY twin of the byte pin
-            // below; the two catch different regressions and a single one could
-            // not tell a serialisation change from a geometry change.
-            expected_wire_size(4, 13, 27, 8192, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
+            // [ZK-LIFT 2026-08-31] The WIDTH is now read off the AIR; the other
+            // four arguments stay typed. This call is the GEOMETRY twin of the
+            // byte pin below, and the two catch different regressions -- but the
+            // width is the argument that has moved three times (3 -> 4 -> 5) and
+            // is the one a human keeps forgetting, while merkle_depth, the query
+            // count and the LDE size have not moved since. Typing what drifts and
+            // deriving what does not is backwards.
+            expected_wire_size(
+                crate::air::denominated_pool::TRACE_WIDTH,
+                13,
+                27,
+                8192,
+                FRI_FINAL_POLY_SIZE,
+                GENERIC_QUOTIENT_SEGMENTS,
+            ),
             "pool_commitment wire size drift",
         );
-        // [ZK-RANDOMIZER 2026-08-30] 80,577 -> 94,017. MEASURED, and fully
-        // explained by geometry: trace_width 3 -> 4, merkle_depth 12 -> 13 and one
-        // more FRI layer. The wire formula reproduces BOTH numbers exactly from
-        // their two geometries, which is why the delta was accepted rather than
-        // absorbed.
-        assert_eq!(proof.proof_bytes.len(), 94_017, "the measured C1 wire size");
+        // [ZK-LIFT 2026-08-31] 80,577 -> 94,017 -> 94,897. MEASURED, and fully
+        // explained by geometry each time: trace_width 3 -> 4 -> 5, merkle_depth
+        // 12 -> 13, one more FRI layer. The wire formula reproduces all three
+        // numbers exactly from their geometries, which is why each delta was
+        // accepted rather than absorbed. The last +880 is the ZK lift column: 16
+        // bytes of OOD frame plus 27 queries x 32 bytes of Route C rows.
+        //
+        // Chunk uploads go 81 -> 95 transactions at MAX_CHUNK_SIZE = 1000, still
+        // far under the hard 1000-tx ceiling, and the proof still fits inside
+        // UNIFORM_PROOF_SIZE = 145,000 with 50,103 to spare.
+        assert_eq!(proof.proof_bytes.len(), 94_897, "the measured C1 wire size");
     }
 
     #[test]
@@ -2839,9 +2854,16 @@ mod tests {
         assert_eq!(
             proof.proof_bytes.len(),
             expected_wire_size(
-                // [ZK-RANDOMIZER 2026-08-30] 10 -> 11: the width the WIRE
-                // carries, not the width the AIR constrains.
-                11, 13, 22, 8192, SPEND_FRI_FINAL_POLY_SIZE, SPEND_QUOTIENT_SEGMENTS,
+                // [ZK-LIFT 2026-08-31] The width the WIRE carries, not the width
+                // the AIR constrains, and read off the AIR rather than typed --
+                // it has moved 10 -> 11 -> 12 while the other four have not moved
+                // at all.
+                crate::air::spend::TRACE_WIDTH,
+                13,
+                22,
+                8192,
+                SPEND_FRI_FINAL_POLY_SIZE,
+                SPEND_QUOTIENT_SEGMENTS,
             ),
             "spend wire size drift",
         );
@@ -5397,10 +5419,13 @@ mod tests {
         // moved. Compare `masking_deep_degree_gate.rs`, which MEASURED that the
         // textbook Z_H*r masking moves BOTH of those constants.
         assert_eq!(
-            b.len(), 78_685,
-            "C7 wire size moved. Measured 78,685 B on 2026-08-30 at width 11 / ffps 32 / 22 queries / \
-             8 quotient segments. Re-measure before re-pinning, and re-check the ~150 tx \
-             upload path: a proof that got bigger fails at the END of the upload, never early.",
+            b.len(), 79_405,
+            "C7 wire size moved. Measured 79,405 B on 2026-08-31 at width 12 / \
+             ffps 32 / 22 queries / 8 quotient segments. It was 78,685 at width 11, \
+             and the +720 is the ZK lift column: 16 B of OOD frame plus 22 queries \
+             x 32 B of Route C rows. Re-measure before re-pinning, and re-check the \
+             ~150 tx upload path: a proof that got bigger fails at the END of the \
+             upload, never early.",
         );
     }
 
