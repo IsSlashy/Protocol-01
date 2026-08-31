@@ -1497,13 +1497,22 @@ async function verifySpend(rpc, signature, opts = {}) {
   //   coset       LDE_COSET_SHIFT = 7, so the LDE domain is DISJOINT from the
   //               trace domain — no query position is a trace row, and no
   //               opening returns a raw witness value
-  //   mask rows   C7 carries MASK_ROWS = 128
+  //   mask rows   C7 carries MASK_ROWS = 160
   //   randomness  the mask is drawn per proof from a real CSPRNG, and the Rust
-  //               REFUSES to build without one (draw_spend_mask)
+  //               REFUSES to build without one (draw_blinding_mask)
+  //
+  // [2026-08-31] THREE FACTS ABOVE MOVED AND THE PROSE HAD NOT. MASK_ROWS was
+  // 128 at depth 12 and is 160 at depth 11. `draw_spend_mask` no longer exists:
+  // it was renamed `draw_blinding_mask` on 2026-08-29 when C6 started sharing
+  // it, and moved out of `mod wasm_api` on 2026-08-30 so it is gated
+  // `feature = "csprng"` -- a DEFAULT feature -- rather than `feature = "wasm"`.
+  // The old gating was the real defect: while it lived behind `wasm`, every
+  // non-wasm caller wrote its own deterministic xorshift, and a mask that is
+  // deterministic hides nothing. Five callers now take the real one.
   //
   // ⛔ THAT IS NOT SECRECY AND THE PROBE MUST NOT SOFTEN. What C7 buys is
-  // UNDERDETERMINATION: 90 published evaluations against ~138 unknowns in
-  // column 9, which is why depth 12 was chosen.
+  // UNDERDETERMINATION: 90 published evaluations per column against 160 blinding
+  // rows per column, which is why the depth cut was taken.
   //
   // 🚨 THIS PARAGRAPH USED TO CITE, AS A "MEASURED counterexample in this
   // repository", an AIR-aware recovery of four C1 witnesses. It was not in this

@@ -320,7 +320,11 @@ fn solve(mut rows: Vec<Vec<u64>>, n: usize) -> Option<Vec<u64>> {
 const LEAF: u64 = 0x0DEC_0DED_0000_0777;
 /// Deliberately not alternating: a pattern would be guessable without any
 /// recovery at all, and this file would prove nothing about the proof bytes.
-const DIRECTIONS: [u8; DEPTH] = [1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1];
+// [ZK-DEPTH 2026-08-31] Eleven, not twelve. `DEPTH` follows
+// `merkle_path::CANONICAL_DEPTH` and this literal did not, so the attack
+// harness stopped compiling rather than stopped attacking -- the loud
+// failure mode, for once.
+const DIRECTIONS: [u8; DEPTH] = [1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1];
 
 fn path_elements() -> Vec<u64> {
     (0..DEPTH as u64).map(|i| 0xBEEF_0000 + i * 7919).collect()

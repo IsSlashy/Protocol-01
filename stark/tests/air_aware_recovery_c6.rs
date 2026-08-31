@@ -278,7 +278,11 @@ const OLD_LEAF: u64 = 0x0A1D_1EAF_0000_0011;
 const NEW_LEAF: u64 = 0x0E70_1EAF_0000_0022;
 /// Deliberately irregular — an alternating pattern would be guessable without
 /// reading a byte, and this file would prove nothing.
-const DIRECTIONS: [u8; DEPTH] = [0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0];
+// [ZK-DEPTH 2026-08-31] Eleven, not twelve -- `DEPTH` follows
+// `merkle_update::CANONICAL_DEPTH` and this literal did not. C3 carried the
+// identical defect; both harnesses stopped compiling rather than stopped
+// attacking, which is the one failure mode worth having.
+const DIRECTIONS: [u8; DEPTH] = [0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1];
 
 fn path_elements() -> Vec<u64> {
     (0..DEPTH as u64).map(|i| 0xC0DE_0000 + i * 6151).collect()
