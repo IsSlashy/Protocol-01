@@ -3,11 +3,29 @@
  *
  * Submits privacy transactions through the p01_relayer on-chain program.
  * An ephemeral keypair posts the job; the assigned relayer executes it.
- * No on-chain link between the user's wallet and the privacy transaction.
+ *
+ * 🚨 THIS HEADER USED TO SAY "No on-chain link between the user's wallet and the
+ * privacy transaction." THAT WAS FALSE, and its refutation was four lines below
+ * it, in step 2 of this same list. Corrected 2026-08-31.
+ *
+ * The wallet signs `wallet -> ephemeral` and is its fee payer (:484-495, and
+ * again at :723-733 for the chunked path). So the walk is
+ * `submit_job -> its payer -> that payer's funding transfer -> the wallet`:
+ * two RPC calls, no cryptography. The fee payer moved one hop; it did not
+ * disappear. `services/relayer/README.md:16-22` diagnoses exactly this shape as
+ * the reason the two hosted nodes were deactivated on 2026-08-28, and
+ * `docs/LEAK-LEDGER.md:69` (G3) names "prose read as proof" as its own channel.
+ *
+ * ⛔ NOTHING HERE IS FIXED BY THIS COMMENT. The edge is still built. What the
+ * comment stops is the next reader trusting the sentence and not looking. The
+ * web client removed this edge by paying the relayer out of the note
+ * (`unshield_denominated_stark_v4_relayed`, no ephemeral, no pre-fund, no
+ * sweep); this path has not been repointed at it.
  *
  * Flow:
  *   1. Build the privacy tx with an ephemeral keypair as payer
- *   2. Fund the ephemeral keypair (small fee tx from user wallet)
+ *   2. Fund the ephemeral keypair — A FEE TX FROM THE USER WALLET, which is the
+ *      edge described above
  *   3. Encrypt the signed tx for the selected relayer
  *   4. Submit the relay job on-chain from the ephemeral keypair
  *   5. Monitor for completion (relayer decrypts + executes)

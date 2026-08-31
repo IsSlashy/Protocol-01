@@ -52,7 +52,7 @@ Statuts : **O** ouvert · **?** inconnu · **F** fermé (et sous quelles conditi
 | D9 | Adresse de note **statique par identité**, sans diversification | O | rien |
 | D10 | Le **relayeur voit tout** hors chaîne (payee, nullifieur, preuve, IP) ; `/health` publie `busy`, les compteurs et la clé opérateur, sans auth | O | rien |
 | D11 | Graine de portefeuille : ni secret avant, ni secret après — une fuite unique déanonymise tout l'historique | O | rien |
-| D12 | L'**extension** est une pile parallèle non auditée, et son agent IA POSTe le solde et le texte de l'utilisateur vers Groq et Google | O | rien |
+| D12 | L'**extension** est une pile parallèle non auditée, et son agent IA POSTe le solde et le texte de l'utilisateur vers Groq et Google. 🚨 **Mesuré 2026-08-31** : elle porte un SECOND empilement de relais, vivant (`shared/store/shielded.ts:757-762` → `relayerWrapper.ts:162-203` → `relay.ts`), où **le portefeuille signe `wallet → éphémère` et s'en nomme payeur** (`relay.ts:484-495`, `:723-733`) — exactement l'arête que la pile web a supprimée en payant le relayeur depuis la note. L'en-tête du fichier affirmait le contraire quatre lignes au-dessus de sa propre réfutation ; corrigé, mais **l'arête est toujours construite** | O | rien — l'en-tête dit maintenant la vérité, c'est tout |
 | D13 | **SNI/DNS** : contacter l'hôte du relayeur révèle l'opération avant toute preuve. Aucun proxy dans l'arbre | O | rien |
 | E1 | Graphe monétaire : l'acheteur paie la caisse en clair ; **P11 ne remonte que 2 sauts** alors que la topologie en fait 4 | O | P11 (aveugle au-delà du flotteur) |
 | E2 | Le règlement caisse→flotteur est une arête publique ; le plancher de lot est réglable à 1 par variable d'environnement | O | tests d'unité purs |
