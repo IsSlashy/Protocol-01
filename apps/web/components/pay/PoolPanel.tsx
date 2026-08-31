@@ -764,7 +764,20 @@ export default function PoolPanel({
       // chain walk that would otherwise settle it takes minutes.
       await recordSpentNote(meta, ownerKey, noteKey(note));
       setSpentLocally((prev) => new Set(prev).add(noteKey(note)));
-      void refreshPayouts(root);
+      // \U0001f6a8 NO AUTOMATIC PAYOUT REFRESH, AND THAT USED TO BE HERE.
+      //
+      // `refreshPayouts` issues ONE `getMultipleAccountsInfo` over every payout
+      // address this user holds. Firing it here meant that seconds after the
+      // relayer paid address R -- in a transaction that deliberately names no
+      // wallet -- this browser asked the RPC provider about R. That ties the IP
+      // to the payee of the withdrawal, and because the read is a BATCH it also
+      // tells the provider that these unrelated-looking addresses belong to one
+      // person.
+      //
+      // Nothing is lost: `setWithdrawn` above already carries the address and
+      // the amount, so the row renders from the outcome. The explicit
+      // `handleShowPayouts` gesture still exists for recovering across a
+      // reload, where the user has asked for it.
       void rescan();
     } catch (e) {
       setError((e as Error).message || "Withdrawal failed.");

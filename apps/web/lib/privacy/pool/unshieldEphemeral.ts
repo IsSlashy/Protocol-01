@@ -67,7 +67,8 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { prepareUnshieldFromPath, type StoredMerklePath } from './unshieldFromPath';
 import { jitterPrefund } from './prefundAmount';
 import {
-  isNullifierSpent,
+  fetchSpentNullifierSet,
+  isNullifierSpentInSet,
   prepareUnshield,
   prepareUnshieldV4,
   unshieldDenominatedStarkV3,
@@ -159,14 +160,32 @@ export async function prepareUnshieldJob(
 ): Promise<PreparedUnshield> {
   // Fail fast and free if this note is already spent — otherwise the on-chain
   // NullifierRecord init would reject after the whole upload.
+  /**
+   * \U0001f6a8 ASK ABOUT THE POOL, NOT ABOUT THIS NOTE.
+   *
+   * This was `isNullifierSpent`, a bare `getAccountInfo` on the nullifier PDA
+   * derived from THIS note. On the relayed path that single request undoes the
+   * whole detour: the browser asks the RPC provider about an account that DOES
+   * NOT EXIST YET, and minutes later the relayer's transaction creates exactly
+   * it, from a different IP. Joining its own two log lines gives the provider
+   * "this IP caused this spend, of this note, out of this pool" -- the edge the
+   * relayed withdrawal exists to delete, handed over for free, and paid even
+   * when the job then aborts.
+   *
+   * \u26a0 The comment that used to sanction it said the nullifier "is about to
+   * be published on chain anyway". That is true on the DIRECT path, where the
+   * browser submits the transaction itself and is already named as fee payer.
+   * It is false on the relayed one, where the relayer publishes it -- and the
+   * pointed query was written before that path existed.
+   *
+   * `fetchSpentNullifierSet` answers the identical question with a
+   * `getProgramAccounts` over the POOL: it names no note, is byte-identical
+   * whoever asks it, and is a request every client already makes in order to
+   * scan. The decision is then local, with no further network.
+   */
   onProgress?.('Checking the note is unspent...');
-  const spent = await isNullifierSpent(
-    connection,
-    poolConfig.poolPDA,
-    receipt.nullifierPreimage,
-    receipt.secret,
-  );
-  if (spent) {
+  const spentSet = await fetchSpentNullifierSet(connection, poolConfig.poolPDA);
+  if (isNullifierSpentInSet(spentSet, poolConfig.poolPDA, receipt.nullifierPreimage, receipt.secret)) {
     throw new Error('This note has already been withdrawn.');
   }
 
@@ -474,14 +493,32 @@ export async function prepareUnshieldJobV4(
     );
   }
 
+  /**
+   * \U0001f6a8 ASK ABOUT THE POOL, NOT ABOUT THIS NOTE.
+   *
+   * This was `isNullifierSpent`, a bare `getAccountInfo` on the nullifier PDA
+   * derived from THIS note. On the relayed path that single request undoes the
+   * whole detour: the browser asks the RPC provider about an account that DOES
+   * NOT EXIST YET, and minutes later the relayer's transaction creates exactly
+   * it, from a different IP. Joining its own two log lines gives the provider
+   * "this IP caused this spend, of this note, out of this pool" -- the edge the
+   * relayed withdrawal exists to delete, handed over for free, and paid even
+   * when the job then aborts.
+   *
+   * \u26a0 The comment that used to sanction it said the nullifier "is about to
+   * be published on chain anyway". That is true on the DIRECT path, where the
+   * browser submits the transaction itself and is already named as fee payer.
+   * It is false on the relayed one, where the relayer publishes it -- and the
+   * pointed query was written before that path existed.
+   *
+   * `fetchSpentNullifierSet` answers the identical question with a
+   * `getProgramAccounts` over the POOL: it names no note, is byte-identical
+   * whoever asks it, and is a request every client already makes in order to
+   * scan. The decision is then local, with no further network.
+   */
   onProgress?.('Checking the note is unspent...');
-  const spent = await isNullifierSpent(
-    connection,
-    poolConfig.poolPDA,
-    receipt.nullifierPreimage,
-    receipt.secret,
-  );
-  if (spent) {
+  const spentSet = await fetchSpentNullifierSet(connection, poolConfig.poolPDA);
+  if (isNullifierSpentInSet(spentSet, poolConfig.poolPDA, receipt.nullifierPreimage, receipt.secret)) {
     throw new Error('This note has already been withdrawn.');
   }
 
