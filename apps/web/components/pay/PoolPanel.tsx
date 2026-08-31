@@ -720,7 +720,20 @@ export default function PoolPanel({
        * and collects — and returns null when nothing is outstanding, so this
        * falls through to a fresh contribution on the ordinary path.
        */
-      const resumed = await resumeContribution({ meta, owner, onProgress: setStep });
+      /**
+       * ⛔ FAILS SOFT, AND THAT IS DELIBERATE. A resume that throws would
+       * BLOCK an ordinary shield on a stale local record — measured 2026-08-31,
+       * a record pointing at a leaf the treasury could not confirm stopped the
+       * buyer from shielding at all. What is owed stays owed: the record is only
+       * cleared once a note is in hand, so a failed resume loses nothing and the
+       * next attempt tries again.
+       */
+      const resumed = await resumeContribution({ meta, owner, onProgress: setStep }).catch(
+        (e) => {
+          console.warn('[pool] resume failed, continuing with a fresh contribution', e);
+          return null;
+        },
+      );
       if (resumed) {
         setContributed(null);
         setResult({
@@ -1484,9 +1497,11 @@ export default function PoolPanel({
                     believed. Say the narrow thing narrowly. */}
                 Paid to {truncate(withdrawn.payout, 6, 6)}, an address derived for this note
                 alone. Only your key can spend it — anyone can see it. Sweep it from the payout
-                list, whenever and wherever you want. This withdrawal is still publicly matchable
-                to the deposit it spends (the commitment appears in both), so treat it as a
-                transparent transfer.
+                list, whenever and wherever you want. The withdrawal itself carries no
+                commitment, so it does not point back at the deposit it spends &mdash; but the
+                payout address above is written into it in the clear, so whoever reads this
+                transaction reaches whoever you sweep it to. Sweeping it to the wallet that
+                deposited would rejoin the two halves by hand.
               </p>
               {/* Who paid. Two very different sentences, and the user is owed
                   whichever one is true — `fundedBy` is a RESULT, not a request:
