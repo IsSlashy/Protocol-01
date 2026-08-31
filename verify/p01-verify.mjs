@@ -3480,6 +3480,36 @@ async function main() {
     throw new Error('--record needs --spend: a fixture freezes exactly one spend');
   }
 
+  // 🚨 A LIVE MEASUREMENT WITHOUT `--wallet` IS A FALSE GREEN, AND THE HEADLINE
+  // SAYS SO IN THE WRONG DIRECTION.
+  //
+  // P11 is the ONLY probe classed `open` — the one line an auditor reads — and it
+  // is constructed only `if (namedWallet)`. Without the flag it never enters
+  // `report.results` at all, so `classify` counts zero open probes and the
+  // summary prints `0 OPEN linkage(s)` because the open probe was never built.
+  // That is not a probe passing. That is the tool declining to ask, printed as
+  // if it had asked and found nothing.
+  //
+  // ⛔ LIVE RUNS ONLY. Under `--replay` the wallet comes from the manifest, and
+  // the fixtures that legitimately have none (`v4-synthetic`, hand-built, no
+  // buyer exists) pin P11 as absent on purpose. Refusing there would break the
+  // controls rather than the false green.
+  if (!replayDir && arg('--spend', null) && !arg('--wallet', null)) {
+    throw new Error(
+      [
+        '--spend needs --wallet on a live run.',
+        '',
+        '  P11 is the only OPEN-class probe and it is built only when a wallet',
+        '  is named. Without it the summary prints "0 OPEN linkage(s)" because',
+        '  the probe was never constructed -- a result that reads as clean and',
+        '  measured nothing. Pass the address you want to prove is absent:',
+        '',
+        '      node verify/p01-verify.mjs --spend <sig> --wallet <pubkey>',
+        '',
+      ].join('\n'),
+    );
+  }
+
   const poolsFile = arg('--pools', null);
   if (poolsFile) registerPools(JSON.parse(readFileSync(poolsFile, 'utf8')), poolsFile);
 
