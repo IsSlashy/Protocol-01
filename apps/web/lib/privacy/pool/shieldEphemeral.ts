@@ -52,6 +52,7 @@ import { sendWithFreshBlockhash } from './sendTx';
 import {
   parseFilledSubtrees,
   prepareShieldInsert,
+  prepareInsertForCommitment,
   shieldV3,
   type PoolConfig,
   type ShieldReceipt,
@@ -293,6 +294,147 @@ export async function prepareShield(
   const valueLamports = Number(poolConfig.denominationAtomic) + protocolFee;
 
   return { jobId, poolConfig, ephemeral, requiredLamports, valueLamports, prepared };
+}
+
+// ---------------------------------------------------------------------------
+// Contribution — deposit a leaf you do NOT own
+// ---------------------------------------------------------------------------
+
+export interface PreparedContribution extends Omit<PreparedShield, 'prepared'> {
+  /** The index the treasury reserved and derived its commitment for. */
+  leafIndex: number;
+  commitment: bigint;
+  /**
+   * \u26d4 NO NOTE MATERIAL, BY TYPE. `prepareInsertForCommitment` cannot
+   * return `secret`, `nullifierPreimage` or `noteBlinding` because it never had
+   * them, so nothing downstream can accidentally build a receipt out of a note
+   * that belongs to the treasury.
+   */
+  prepared: Awaited<ReturnType<typeof prepareInsertForCommitment>>;
+}
+
+/**
+ * Prove the insert for a commitment the TREASURY owns, and price the pre-fund.
+ *
+ * \U0001f3af THE HALF THAT MAKES THE TREASURY A MIXER. The contributor pays for
+ * this deposit and never learns what it opens to, so they cannot spend it and
+ * there is nothing to double-spend. They are paid in a DIFFERENT note out of
+ * stock -- necessarily an older one, because `issue-note`'s maturity gate
+ * refuses a leaf deposited moments ago. The gate is the mixing.
+ *
+ * Everything below the commitment is identical to `prepareShield`: the same
+ * tree read, the same C6 proof, the same pricing and the same jitter. Written
+ * here rather than in a module of its own so it cannot drift from those numbers
+ * -- a constant copied across a wire and moved on one side is the failure this
+ * repository keeps paying for.
+ *
+ * \u26a0 `contributorSeed` derives the EPHEMERAL only. It has nothing to do with
+ * the note, which is the treasury's; it exists so a failed contribution can be
+ * swept and recovered by the person who funded it.
+ */
+export async function prepareContribution(
+  poolConfig: PoolConfig,
+  connection: Connection,
+  contributorSeed: Uint8Array,
+  commitment: bigint,
+  expectedLeafIndex: number,
+  onProgress?: (step: string) => void,
+): Promise<PreparedContribution> {
+  if (poolConfig.token !== 'SOL') {
+    throw new Error('Only SOL denominations can be contributed today.');
+  }
+  if (commitment <= 0n) {
+    throw new Error('A contributed commitment must be a non-zero field element.');
+  }
+
+  onProgress?.('Reading the pool tree...');
+  const counter = await readTreeLeafCount(connection, poolConfig);
+  // \u26d4 REFUSE A RESERVATION THE TREE HAS OUTGROWN. The treasury derived this
+  // commitment FOR a specific index; landing it anywhere else produces a leaf
+  // whose opening the treasury computes at the wrong counter, so `issue-note`
+  // would answer 500 to a paying buyer and the contributor would have funded a
+  // note nobody can ever sell. Cheaper to re-reserve than to discover that.
+  if (counter !== expectedLeafIndex) {
+    throw new Error(
+      `The pool advanced past this reservation (reserved leaf ${expectedLeafIndex}, tree is at ` +
+        `${counter}). Nothing was spent \u2014 reserve again.`,
+    );
+  }
+
+  const prepared = await prepareInsertForCommitment(poolConfig, connection, commitment, onProgress);
+  if (prepared.insertParams.leafIndex !== expectedLeafIndex) {
+    throw new Error(
+      `The pool advanced while proving (leaf ${expectedLeafIndex} \u2192 ` +
+        `${prepared.insertParams.leafIndex}). Nothing was spent \u2014 reserve again.`,
+    );
+  }
+
+  onProgress?.('Pricing the contribution...');
+  const bufferRent = await connection.getMinimumBalanceForRentExemption(
+    83 + prepared.c6ProofResult.proofSize,
+  );
+  const protocolFee = Number(
+    (poolConfig.denominationAtomic * SHIELD_FEE_BPS) / BPS_DENOMINATOR,
+  );
+  const requiredLamports = jitterPrefund(
+    Number(poolConfig.denominationAtomic) +
+      protocolFee +
+      bufferRent +
+      E_TX_FEE_BUDGET +
+      SHIELD_RENT_MARGIN,
+  );
+  const ephemeral = deriveShieldEphemeral(contributorSeed, poolConfig.poolPDA, counter);
+  const jobId = `contribute:${poolConfig.poolPDA.toBase58()}:${counter}`;
+  const valueLamports = Number(poolConfig.denominationAtomic) + protocolFee;
+
+  return {
+    jobId,
+    poolConfig,
+    ephemeral,
+    requiredLamports,
+    valueLamports,
+    leafIndex: expectedLeafIndex,
+    commitment,
+    prepared,
+  };
+}
+
+/**
+ * Run the contribution. The caller must already have funded E.
+ *
+ * \u26d4 IT RETURNS NO RECEIPT, AND THAT IS THE POINT. `shieldV3` builds one out
+ * of the insert parameters, and on this path those carry zeros where the note
+ * material would be. Handing that back would look exactly like a spendable note
+ * and be worthless -- so it is dropped here rather than surfaced with a warning
+ * somebody has to read.
+ */
+export async function executeContribution(
+  ctx: PreparedContribution,
+  connection: Connection,
+  sweepTo: PublicKey,
+  onProgress?: (step: string) => void,
+): Promise<{ txSig: string; leafIndex: number; commitment: string }> {
+  const { txSig } = await executeShield(
+    // The shield path needs the three note fields to exist on the object; they
+    // are zeros here and nothing downstream reads them, because the receipt
+    // they would build is discarded on the next line.
+    {
+      ...ctx,
+      prepared: {
+        ...ctx.prepared,
+        insertParams: {
+          ...ctx.prepared.insertParams,
+          secret: 0n,
+          nullifierPreimage: 0n,
+          noteBlinding: 0n,
+        },
+      },
+    } as PreparedShield,
+    connection,
+    sweepTo,
+    onProgress,
+  );
+  return { txSig, leafIndex: ctx.leafIndex, commitment: ctx.commitment.toString() };
 }
 
 // ---------------------------------------------------------------------------
