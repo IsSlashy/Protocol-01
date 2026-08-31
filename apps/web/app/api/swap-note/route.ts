@@ -213,6 +213,31 @@ export async function POST(request: NextRequest) {
       denomination: inventoryDenomination(),
     });
   }
+  /**
+   * ⛔ THE RETURN LEG IS A DEPOSIT, so a pool closed to deposits cannot
+   * complete a swap.
+   *
+   * 🚨 MEASURED: exactly one pool has `deposits: 'open'` — the 1 SOL one
+   * — while `inventoryDenomination()` defaults to 0.1 in BOTH this route and
+   * `issue-note`. On the default configuration this endpoint would therefore
+   * accept a note it can never convert: the treasury spends the note, cannot
+   * re-shield the value into a closed pool, and the ticket is owed against
+   * stock that will never exist. The caller's note is taken and nothing can be
+   * paid back.
+   *
+   * Checked against the pool's own flag rather than against the env var,
+   * because the env var is what would be wrong. A closed pool stays perfectly
+   * spendable and sweepable — closing an entrance is not closing an exit — so
+   * this refuses the SWAP, not the note.
+   */
+  if (pool.deposits !== 'open') {
+    return bad(400, `the ${denomination} ${token} pool is closed to deposits, so a swap cannot complete`, {
+      denomination,
+      hint:
+        'A swap gives a note back by depositing one, and this pool accepts no deposits. The note ' +
+        'itself is unaffected: it stays spendable and sweepable where it is.',
+    });
+  }
   const poolKey = pool.poolPDA.toBase58();
   // The note names its own pool. A mismatch means the leaf index would be read
   // in the wrong tree — the same class of error the denomination check above

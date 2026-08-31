@@ -10,8 +10,12 @@
  * denominations for one. Every other case here is ordinary input validation;
  * that one is the treasury's balance.
  *
- * The second-most important is idempotency: `incr` on a per-leaf key is the
- * only thing standing between one note and two tickets.
+ * ⛔ AND THE SUITE RUNS AGAINST THE POOL THAT ACCEPTS DEPOSITS, deliberately.
+ * It was first written against the 0.1 SOL pool — the default denomination in
+ * both this route and `issue-note` — and every case went green while that pool
+ * is `deposits: 'closed'`. The return leg of a swap IS a deposit, so the flow
+ * was untestable by construction against it. Picking the open pool by its FLAG
+ * rather than by its number is what stops that recurring.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -54,6 +58,7 @@ import {
   deriveNoteMaterial,
   getPoolsForTokenV3,
   pubkeyToField,
+  type PoolConfig,
   type ShareableNote,
 } from '@/lib/privacy/pool/denominatedPool';
 import { deriveNoteBlinding } from '@/lib/privacy/pool/noteBlinding';
@@ -62,56 +67,63 @@ import { POST } from '@/app/api/swap-note/route';
 
 const TICKET = 'test-ticket';
 const SEED_HEX = 'ab'.repeat(32);
-const SEED_BYTES = Uint8Array.from(
-  SEED_HEX.match(/../g)!.map((h) => parseInt(h, 16)),
-);
+const SEED_BYTES = Uint8Array.from(SEED_HEX.match(/../g)!.map((h) => parseInt(h, 16)));
 const RECIPIENT = createNoteEncryptionAddress(new Uint8Array(32).fill(77));
 
 /**
- * The pool the route will resolve to. Read from real configuration rather than
- * invented: if the 0.1 SOL pool ever stops being configured, this suite must
- * say so loudly instead of testing a pool nothing uses.
+ * The pool a swap can actually complete in: the one open to deposits.
+ *
+ * Chosen by the FLAG, never by the number. A swap gives a note back by
+ * depositing one, so a closed pool cannot serve a ticket however well the rest
+ * of the request verifies.
  */
-const POOL = getPoolsForTokenV3('SOL').find((p) => p.denomination === 0.1)!;
+const POOL = getPoolsForTokenV3('SOL').find((p) => p.deposits === 'open')!;
 const POOL_KEY = POOL?.poolPDA.toBase58();
+/** Any pool that refuses deposits — the case that used to be the whole suite. */
+const CLOSED = getPoolsForTokenV3('SOL').find((p) => p.deposits !== 'open')!;
 
 /** An opening that is nobody's derivation — a note handed in by a stranger. */
 const THEIRS = { secret: 111n, nullifierPreimage: 222n, blinding: 333n };
 const LEAF = 41;
 
-function commitmentOf(o: { secret: bigint; nullifierPreimage: bigint; blinding: bigint }) {
+type Opening = { secret: bigint; nullifierPreimage: bigint; blinding: bigint };
+
+function commitmentIn(pool: PoolConfig, o: Opening) {
   return createCommitmentV3(
     o.nullifierPreimage,
     o.secret,
     o.blinding,
-    pubkeyToField(POOL.tokenMint),
+    pubkeyToField(pool.tokenMint),
   );
 }
 
-function noteFor(
-  o: { secret: bigint; nullifierPreimage: bigint; blinding: bigint },
-  over: Partial<ShareableNote> = {},
-): ShareableNote {
+function commitmentOf(o: Opening) {
+  return commitmentIn(POOL, o);
+}
+
+function noteIn(pool: PoolConfig, o: Opening, over: Partial<ShareableNote> = {}): ShareableNote {
   return {
     version: 1,
-    pool: POOL_KEY,
+    pool: pool.poolPDA.toBase58(),
     secret: o.secret.toString(),
     nullifier_preimage: o.nullifierPreimage.toString(),
     deposit_epoch: o.blinding.toString(),
-    token_mint: pubkeyToField(POOL.tokenMint).toString(),
-    commitment: commitmentOf(o).toString(),
+    token_mint: pubkeyToField(pool.tokenMint).toString(),
+    commitment: commitmentIn(pool, o).toString(),
     leafIndex: LEAF,
     token: 'SOL',
-    denominationHuman: 0.1,
+    denominationHuman: pool.denomination,
     ...over,
   };
 }
 
+function noteFor(o: Opening, over: Partial<ShareableNote> = {}): ShareableNote {
+  return noteIn(POOL, o, over);
+}
+
 /** A tree that holds exactly this commitment, at this leaf. */
 function treeHolding(commitment: bigint, leafIndex = LEAF) {
-  return new Map([
-    [commitment.toString(), { leafIndex, commitment, depositSlot: 1 }],
-  ]);
+  return new Map([[commitment.toString(), { leafIndex, commitment, depositSlot: 1 }]]);
 }
 
 let counters: Map<string, number>;
@@ -167,17 +179,21 @@ beforeEach(async () => {
   values = new Map();
   vi.stubEnv('P01_TREASURY_POOL_SEED', SEED_HEX);
   vi.stubEnv('P01_FUNDER_TICKET', TICKET);
+  vi.stubEnv('P01_TREASURY_NOTE_DENOMINATION', String(POOL.denomination));
   mockGetStore.mockReturnValue(fakeKv());
   mockRateLimitExceeded.mockResolvedValue(false);
   const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
-  vi.mocked(fetchPoolCommitments).mockResolvedValue(
-    treeHolding(commitmentOf(THEIRS)) as never,
-  );
+  vi.mocked(fetchPoolCommitments).mockResolvedValue(treeHolding(commitmentOf(THEIRS)) as never);
 });
 
-describe('the 0.1 SOL pool this suite is written against', () => {
-  it('is configured, or every case below is testing nothing', () => {
-    expect(POOL, 'no 0.1 SOL pool is configured').toBeTruthy();
+describe('the pools this suite rests on', () => {
+  it('include one open to deposits, or a swap can never complete anywhere', () => {
+    expect(POOL, 'no SOL pool accepts deposits').toBeTruthy();
+    expect(POOL.deposits).toBe('open');
+  });
+
+  it('include one closed, or the closed-pool case below is vacuous', () => {
+    expect(CLOSED, 'every SOL pool is open; the closed-pool case tests nothing').toBeTruthy();
   });
 });
 
@@ -188,13 +204,12 @@ describe('🚨 a swap hands NO note back', () => {
     expect(res.status, JSON.stringify(body)).toBe(200);
     expect(body.status).toBe('queued');
     expect(typeof body.ticket).toBe('string');
-    expect(body.ticket).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
     // ⛔ THE PROPERTY. A note handed back here would be a note handed to
     // someone who still holds the one they gave us — two denominations for one.
     expect(body.sealedNote, 'the swap handed a note back in the same request').toBeUndefined();
   });
 
-  it('mints a ticket inside issue-note\'s claim alphabet, so the claim can be filled', async () => {
+  it("mints a ticket inside issue-note's claim alphabet, so the claim can be filled", async () => {
     // The ticket becomes a claim code. A code outside `/^[A-Za-z0-9_-]{8,64}$/`
     // would be refused by the very endpoint meant to honour it — the caller's
     // note taken, the replacement unreachable.
@@ -209,13 +224,12 @@ describe('🚨 a swap hands NO note back', () => {
     const kv = fakeKv();
     mockGetStore.mockReturnValue(kv);
     await POST(req(goodBody()));
-    const openingCall = kv.set.mock.invocationCallOrder[0];
-    const saddCall = kv.sadd.mock.invocationCallOrder[0];
     expect(kv.set).toHaveBeenCalled();
     expect(kv.sadd).toHaveBeenCalled();
-    expect(openingCall, 'the leaf was queued before its opening was stored').toBeLessThan(
-      saddCall,
-    );
+    expect(
+      kv.set.mock.invocationCallOrder[0],
+      'the leaf was queued before its opening was stored',
+    ).toBeLessThan(kv.sadd.mock.invocationCallOrder[0]);
     expect(kv.sadd).toHaveBeenCalledWith(`p01:note:pending:${POOL_KEY}`, String(LEAF));
   });
 });
@@ -247,9 +261,9 @@ describe('the opening is verified, not trusted', () => {
     const body = await res.json();
     expect(res.status, JSON.stringify(body)).toBe(400);
     expect(body.error).toMatch(/not on the pool tree/);
-    expect([...counters.keys()].filter((k) => k.startsWith('p01:note:pending-leaf:'))).toHaveLength(
-      0,
-    );
+    expect(
+      [...counters.keys()].filter((k) => k.startsWith('p01:note:pending-leaf:')),
+    ).toHaveLength(0);
   });
 
   it('refuses an already-spent note', async () => {
@@ -263,7 +277,7 @@ describe('the opening is verified, not trusted', () => {
 
   it('⛔ refuses a note the treasury itself derives, so it cannot buy back its own stock', async () => {
     const mine = deriveNoteMaterial(SEED_BYTES, POOL.poolPDA, LEAF);
-    const opening = {
+    const opening: Opening = {
       secret: mine.secret,
       nullifierPreimage: mine.nullifierPreimage,
       blinding: deriveNoteBlinding(SEED_BYTES, POOL.poolPDA, LEAF),
@@ -278,16 +292,16 @@ describe('the opening is verified, not trusted', () => {
     expect(body.error).toMatch(/issued by this deployment/);
   });
 
-  it('\u26d4 refuses one of our own notes submitted under a FALSE leafIndex', async () => {
-    // \U0001f6a8 THE ATTACK THE FIRST VERSION LET THROUGH. The ownership guard
-    // derived the treasury's note at `note.leafIndex` -- a caller-controlled
-    // field validated only as a non-negative integer -- so a note this
-    // deployment had just sold, resubmitted with leafIndex 999999, was compared
-    // against the treasury note at leaf 999999, found different, and queued.
-    // The chain lookup then resolved the real leaf anyway. The treasury would
-    // have bought back its own stock and paid both pool fees to do it.
+  it('⛔ refuses one of our own notes submitted under a FALSE leafIndex', async () => {
+    // 🚨 THE ATTACK THE FIRST VERSION LET THROUGH. The ownership guard derived
+    // the treasury's note at `note.leafIndex` — a caller-controlled field
+    // validated only as a non-negative integer — so a note this deployment had
+    // just sold, resubmitted with leafIndex 999999, was compared against the
+    // treasury note at leaf 999999, found different, and queued. The chain
+    // lookup then resolved the real leaf anyway, and the treasury bought back
+    // its own stock and paid both pool fees to do it.
     const mine = deriveNoteMaterial(SEED_BYTES, POOL.poolPDA, LEAF);
-    const opening = {
+    const opening: Opening = {
       secret: mine.secret,
       nullifierPreimage: mine.nullifierPreimage,
       blinding: deriveNoteBlinding(SEED_BYTES, POOL.poolPDA, LEAF),
@@ -302,12 +316,12 @@ describe('the opening is verified, not trusted', () => {
     const body = await res.json();
     expect(res.status, JSON.stringify(body)).toBe(409);
     expect(body.error).toMatch(/issued by this deployment/);
-    expect(body.leafIndex, 'the guard answered on the caller\'s index').toBe(LEAF);
+    expect(body.leafIndex, "the guard answered on the caller's index").toBe(LEAF);
   });
 
   it('refuses a note that declares no commitment at all', async () => {
     // Omission used to skip the comparison entirely (`if (note.commitment &&
-    // ...)`), which left the caller's index as the only claim to check -- and
+    // ...)`), which left the caller's index as the only claim to check — and
     // the guard that checked it was keyed on that same index.
     const note = noteFor(THEIRS);
     delete (note as { commitment?: string }).commitment;
@@ -334,11 +348,29 @@ describe('the gates in front of it', () => {
   it('refuses a denomination this deployment cannot serve back', async () => {
     // The ticket would be unfillable: the note taken, and nothing in stock that
     // can pay it. Better to refuse before anything is queued.
-    vi.stubEnv('P01_TREASURY_NOTE_DENOMINATION', '1');
+    const other = POOL.denomination === 0.5 ? 0.25 : 0.5;
+    vi.stubEnv('P01_TREASURY_NOTE_DENOMINATION', String(other));
     const res = await POST(req(goodBody()));
     const body = await res.json();
     expect(res.status, JSON.stringify(body)).toBe(400);
-    expect(body.error).toMatch(/deals in 1 SOL notes/);
+    expect(body.error).toMatch(new RegExp(`deals in ${other} SOL notes`));
+  });
+
+  it('⛔ refuses a denomination whose pool is CLOSED to deposits', async () => {
+    // 🚨 The return leg is a deposit. This suite was originally written against
+    // the 0.1 SOL pool — the default denomination — and went entirely green
+    // while that pool accepts no deposits at all: the treasury would spend the
+    // note, fail to re-shield into a closed pool, and owe a ticket against
+    // stock that can never exist.
+    vi.stubEnv('P01_TREASURY_NOTE_DENOMINATION', String(CLOSED.denomination));
+    const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
+    vi.mocked(fetchPoolCommitments).mockResolvedValueOnce(
+      treeHolding(commitmentIn(CLOSED, THEIRS)) as never,
+    );
+    const res = await POST(req(goodBody({ note: noteIn(CLOSED, THEIRS) })));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(400);
+    expect(body.error).toMatch(/closed to deposits/);
   });
 
   it('refuses when no durable store is configured', async () => {
