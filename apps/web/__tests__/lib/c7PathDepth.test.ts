@@ -89,4 +89,39 @@ describe("circuit 7's subtree depth", () => {
       /elements\.length\s*!==\s*\d/,
     );
   });
+
+  it('is what the extension front-end accepts', () => {
+    const ext = read('apps/extension/src/shared/workers/starkProver.worker.ts');
+    const guard = constant(
+      ext,
+      'const C7_PATH_DEPTH',
+      'apps/extension/src/shared/workers/starkProver.worker.ts',
+    );
+    expect(guard, 'the extension rejects the path the circuit needs').toBe(truth);
+  });
+
+  it('is what the mobile front-end accepts', () => {
+    const mob = read('apps/mobile/services/stark/StarkProver.tsx');
+    const guard = constant(
+      mob,
+      'const C7_PATH_DEPTH',
+      'apps/mobile/services/stark/StarkProver.tsx',
+    );
+    expect(guard, 'mobile rejects the path the circuit needs').toBe(truth);
+  });
+
+  it('is spelled nowhere as a bare 12 in any of the four front-ends', () => {
+    // The class, not the instance: four copies of one number across a wire that
+    // carries no types is how this broke, and a fifth copy would break it again.
+    for (const f of [
+      'apps/web/lib/privacy/pool/starkProver.worker.ts',
+      'packages/stark-prover/src/index.ts',
+      'apps/extension/src/shared/workers/starkProver.worker.ts',
+      'apps/mobile/services/stark/StarkProver.tsx',
+    ]) {
+      expect(read(f), `${f} still spells a path arity as a literal`).not.toMatch(
+        /path(Elements|Indices)\.length\s*!==\s*\d/,
+      );
+    }
+  });
 });
