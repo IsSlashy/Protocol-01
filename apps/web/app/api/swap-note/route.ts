@@ -259,29 +259,18 @@ export async function POST(request: NextRequest) {
     blinding,
     pubkeyToField(pool.tokenMint),
   );
-  if (note.commitment && note.commitment !== commitment.toString()) {
-    return bad(400, 'the note does not open to the commitment it declares');
+  //
+  // ⛔ AND `commitment` IS MANDATORY, not checked-if-present. It used to read
+  // `if (note.commitment && ...)`, so omitting the field skipped the comparison
+  // entirely -- a caller who cannot state the commitment they claim to hold is
+  // not proving anything by leaving it out, and the omission also walked past
+  // the ownership guard below by making its index the only thing left to lie
+  // about.
+  if (!note.commitment) {
+    return bad(400, 'note must declare its commitment');
   }
-
-  /**
-   * ⛔ REFUSE OUR OWN NOTES.
-   *
-   * A leaf the treasury derives is already ours. Queueing it would mint a
-   * ticket for a note we would be buying back from ourselves: stock leaves
-   * through issuance and nothing arrives. It is also the shape an accidental
-   * refund loop would take.
-   */
-  const mine = deriveNoteMaterial(seed, pool.poolPDA, claimedLeaf);
-  const mineCommitment = createCommitmentV3(
-    mine.nullifierPreimage,
-    mine.secret,
-    deriveNoteBlinding(seed, pool.poolPDA, claimedLeaf),
-    pubkeyToField(pool.tokenMint),
-  );
-  if (mineCommitment === commitment) {
-    return bad(409, 'this note was issued by this deployment and is already held here', {
-      hint: 'Spend it or keep it. Handing it back buys nothing and would cost the treasury a note.',
-    });
+  if (note.commitment !== commitment.toString()) {
+    return bad(400, 'the note does not open to the commitment it declares');
   }
 
   const connection = new Connection(
@@ -318,6 +307,41 @@ export async function POST(request: NextRequest) {
   // The chain's index wins over the caller's copy: it is what the worker will
   // spend against, and a stale `leafIndex` in a shared blob is ordinary.
   const trueLeaf = onChain.leafIndex;
+
+  /**
+   * ⛔ REFUSE OUR OWN NOTES.
+   *
+   * A leaf the treasury derives is already ours. Queueing it would mint a ticket
+   * for a note we would be buying back from ourselves: stock leaves through
+   * issuance, nothing arrives, and the treasury pays both pool fees for the
+   * privilege. It is also the shape an accidental refund loop would take.
+   *
+   * 🚨 THIS RAN ABOVE, AGAINST `note.leafIndex`, AND THAT WAS THE BUG.
+   * The index came from the caller and was validated only as a non-negative
+   * integer, so submitting a note this deployment had just sold with
+   * `leafIndex: 999999` derived the treasury's note at leaf 999999, compared it
+   * against a commitment it has nothing to do with, found them different, and
+   * let the submission through. The chain lookup then resolved the real leaf and
+   * queued it. The guard has to key on the index the CHAIN reports, which is why
+   * it now sits here rather than thirty lines earlier.
+   *
+   * Deriving at `trueLeaf` is also complete rather than merely better: a note
+   * this treasury issued sits at exactly one index, its own, so the check at the
+   * authoritative index catches every one of them.
+   */
+  const mine = deriveNoteMaterial(seed, pool.poolPDA, trueLeaf);
+  const mineCommitment = createCommitmentV3(
+    mine.nullifierPreimage,
+    mine.secret,
+    deriveNoteBlinding(seed, pool.poolPDA, trueLeaf),
+    pubkeyToField(pool.tokenMint),
+  );
+  if (mineCommitment === commitment) {
+    return bad(409, 'this note was issued by this deployment and is already held here', {
+      leafIndex: trueLeaf,
+      hint: 'Spend it or keep it. Handing it back buys nothing and would cost the treasury a note.',
+    });
+  }
 
   /**
    * ⛔ UNSPENT, READ FROM THE CHAIN — AND STILL NOT A GUARANTEE.

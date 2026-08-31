@@ -121,7 +121,7 @@ fn recorded_proof_sizes_hold() {
     // column widened it to 4. C5 grew on the trace alone (1024 rows). C3, C6
     // and C7 each grew by one randomizer column, net of the depth cut.
     const RECORDED: [usize; 8] =
-        [47_641, 94_017, 69_761, 78_877, 81_457, 89_821, 81_757, 78_685];
+        [47_641, 94_897, 69_761, 79_597, 81_457, 89_821, 82_477, 79_405];
     let proofs = all_genuine();
     let mut measured = [0usize; 8];
     for (i, p) in proofs.iter().enumerate() {

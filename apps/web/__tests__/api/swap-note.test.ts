@@ -277,6 +277,45 @@ describe('the opening is verified, not trusted', () => {
     expect(res.status, JSON.stringify(body)).toBe(409);
     expect(body.error).toMatch(/issued by this deployment/);
   });
+
+  it('\u26d4 refuses one of our own notes submitted under a FALSE leafIndex', async () => {
+    // \U0001f6a8 THE ATTACK THE FIRST VERSION LET THROUGH. The ownership guard
+    // derived the treasury's note at `note.leafIndex` -- a caller-controlled
+    // field validated only as a non-negative integer -- so a note this
+    // deployment had just sold, resubmitted with leafIndex 999999, was compared
+    // against the treasury note at leaf 999999, found different, and queued.
+    // The chain lookup then resolved the real leaf anyway. The treasury would
+    // have bought back its own stock and paid both pool fees to do it.
+    const mine = deriveNoteMaterial(SEED_BYTES, POOL.poolPDA, LEAF);
+    const opening = {
+      secret: mine.secret,
+      nullifierPreimage: mine.nullifierPreimage,
+      blinding: deriveNoteBlinding(SEED_BYTES, POOL.poolPDA, LEAF),
+    };
+    const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
+    // The chain says LEAF. The submission says 999999.
+    vi.mocked(fetchPoolCommitments).mockResolvedValueOnce(
+      treeHolding(commitmentOf(opening)) as never,
+    );
+    const note = noteFor(opening, { leafIndex: 999_999 });
+    const res = await POST(req(goodBody({ note })));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(409);
+    expect(body.error).toMatch(/issued by this deployment/);
+    expect(body.leafIndex, 'the guard answered on the caller\'s index').toBe(LEAF);
+  });
+
+  it('refuses a note that declares no commitment at all', async () => {
+    // Omission used to skip the comparison entirely (`if (note.commitment &&
+    // ...)`), which left the caller's index as the only claim to check -- and
+    // the guard that checked it was keyed on that same index.
+    const note = noteFor(THEIRS);
+    delete (note as { commitment?: string }).commitment;
+    const res = await POST(req(goodBody({ note })));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(400);
+    expect(body.error).toMatch(/must declare its commitment/);
+  });
 });
 
 describe('the gates in front of it', () => {
