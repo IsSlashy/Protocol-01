@@ -125,6 +125,14 @@ import StyxShell from "../_styx/StyxShell";
  * @vercel/analytics or @vercel/speed-insights, all three of which load on this
  * page. Writing any of that here would ship English into the French page, so all
  * three go up as dictionary edits instead of being patched into this file.
+ *
+ * [ANALYTICS-SCOPE 2026-08-31] "on this page" is now the precise wording and it
+ * matters. The two beacons used to load on EVERY page, including `/app`, because
+ * they were mounted in the root layout and `app/(pay)` has no layout of its own.
+ * They are now mounted by `components/AnalyticsExceptPrivateApp.tsx`, which
+ * returns null on `/app` and below. So the disclosure debt above is real for the
+ * marketing routes and no longer applies to the privacy surface. Do not simplify
+ * this back to "the site uses analytics".
  */
 
 /**
