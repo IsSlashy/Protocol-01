@@ -24,8 +24,38 @@ describe('what the page says when the worker goes quiet', () => {
   });
 
   it('names every job that can already have spent', () => {
+
     for (const kind of ['poolShieldExecute', 'poolUnshieldExecute', 'poolSubscribeExecute']) {
       expect(SRC).toContain(`'${kind}'`);
+    }
+  });
+
+  it('⛔ lists EVERY execute-shaped kind, so a new one cannot be forgotten', () => {
+    // 🚨 MEASURED 2026-08-31, AND IT COST A REAL 1.013 SOL. The contribution
+    // kinds were added and this set was not updated, so a timeout on one told the
+    // buyer a retry was safe while their wallet had already paid the till. They
+    // retried. The till took 1.013 SOL twice and the tree gained one leaf.
+    //
+    // The case below pinned three names by hand and could never have caught it.
+    // This one derives the list from the handlers themselves: any request kind
+    // whose name ends in `Execute` moves money by construction, because funding
+    // happens before it.
+    const handlers = readFileSync(
+      join(process.cwd(), 'lib/privacy/worker/poolHandlers.ts'),
+      'utf8',
+    );
+    const kinds = [
+      ...new Set(
+        [...handlers.matchAll(/kind:\s*'(pool\w*Execute)'/g)].map((m) => m[1]),
+      ),
+    ];
+    expect(kinds.length, 'no execute-shaped kinds found — the regex went stale').toBeGreaterThan(2);
+    for (const kind of kinds) {
+      expect(
+        SRC,
+        `${kind} moves money and is NOT in KINDS_THAT_CAN_HAVE_SPENT, so a timeout on it ` +
+          'would tell the user a retry is free',
+      ).toContain(`'${kind}',`);
     }
   });
 

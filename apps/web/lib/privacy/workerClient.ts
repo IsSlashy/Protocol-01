@@ -69,6 +69,23 @@ const KINDS_THAT_CAN_HAVE_SPENT: ReadonlySet<string> = new Set([
   'poolShieldExecute',
   'poolUnshieldExecute',
   'poolSubscribeExecute',
+  // 🚨 MEASURED 2026-08-31, AND IT COST A REAL 1.013 SOL. The contribution
+  // kinds were added the same day and never registered here, so a timeout on one
+  // told the buyer that nothing had been submitted and a retry was free -- while
+  // their wallet had ALREADY paid the till in a signature given minutes earlier.
+  // They retried. The till took 1.013 SOL twice and the tree gained one leaf.
+  //
+  // ⛔ THE RULE THIS SET ENCODES: a kind belongs here if the WALLET can have
+  // paid before the watchdog fires, not if the job can have failed. Every
+  // execute-shaped kind qualifies by construction, because funding happens
+  // before it -- and a test now derives that list from the handlers so the next
+  // one cannot be forgotten.
+  'poolContributeExecute',
+  // The prepare half proves and prices; it moves nothing. But it is the step
+  // that takes the ~2 minutes, so it is the one that goes quiet -- and by then
+  // `contributeToPool` has already RESERVED a leaf the treasury holds open for
+  // this buyer. Retrying reserves a second and strands the first.
+  'poolContributePrepare',
 ]);
 
 let worker: Worker | null = null;
