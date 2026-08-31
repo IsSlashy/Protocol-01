@@ -70,7 +70,7 @@ uniform, so the honest side has to be uniform too.
 | what the wire carries | honest law | why, and where it is measured |
 |---|---|---|
 | OOD trace frame `T_c(z)`, `T_c(zg)` | **exactly uniform** | `T_c(z) = SUM_r T[c][r]·L_r(z)` is affine in that column's blinding rows with every coefficient `L_r(z) != 0`, because `z` is outside the trace domain |
-| opened trace rows | **exactly uniform** | the same argument at every committed position — which needs the LDE domain to be disjoint from the trace domain, and that is what the coset shift buys. Measured: `the_lde_domain_never_meets_the_trace_domain_on_any_circuit`, and 8192 of 8192 positions at degree 1 |
+| opened trace rows | **exactly uniform** | the same argument at every committed position — which needs the LDE domain to be disjoint from the trace domain, and that is what the coset shift buys. Measured on all four by `the_lde_domain_never_meets_the_trace_domain_on_any_circuit`; the per-position sweep that confirms it empirically, 8192 of 8192 at degree 1, has been run on C7 only — the coset proof is what carries the other three, and it is a proof, not a sample |
 | unopened trace leaves | **exactly uniform** | same. 99.46% of the trace tree is hashed and never revealed, and each unopened leaf preimage carries `2 · width · 63` bits of min-entropy — unguessable, so the unsalted SHA-256 hides it in the ROM and **no salt is needed** |
 | `Q_0(z) .. Q_{k-2}(z)` — the seven free claims | **exactly, jointly uniform** | rank **7 of 7** on all four circuits: `the_free_claims_are_jointly_uniform_on_every_circuit` |
 | `Q_{k-1}(z)` | determined, not sampled | it is the claim the verifier's recombination solves; `S` computes it the same way the verifier does |
