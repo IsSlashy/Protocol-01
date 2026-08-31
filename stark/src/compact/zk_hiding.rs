@@ -688,3 +688,347 @@ fn the_affine_free_claims_are_jointly_uniform() {
         println!("     X1 remains OPEN on {} of the {FREE} free coordinates.", open.len());
     }
 }
+
+// ===========================================================================
+// The same measurement, on every circuit that carries a lift column
+// ===========================================================================
+//
+// Everything above is C7. C1, C3 and C6 took the identical constraint, and
+// "identical by construction" is exactly the claim this repository has been
+// wrong about before -- a geometry constant written on both sides of a wire and
+// moved on only one fails silently, and so would a lift column whose gate is off
+// by a row or whose degree lands one block short. So the other three are
+// measured too, on the one property that matters: is the lift column AFFINE in
+// every free claim, and are those claims JOINTLY uniform.
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Circ {
+    C1,
+    C3,
+    C6,
+    C7,
+}
+
+struct Geom {
+    name: &'static str,
+    id: u8,
+    n: usize,
+    lde: usize,
+    k: usize,
+    /// Columns the AIR constrains -- the lift column is the LAST of these.
+    cw: usize,
+    mask_rows: usize,
+    mask_len: usize,
+    lift: usize,
+}
+
+fn geom(c: Circ) -> Geom {
+    use crate::air::{denominated_pool as c1, merkle_path as c3, merkle_update as c6, spend as c7};
+    match c {
+        Circ::C1 => Geom {
+            name: "C1 pool_commitment",
+            id: 1,
+            n: c1::TRACE_LENGTH,
+            lde: c1::TRACE_LENGTH * GENERIC_BLOWUP,
+            k: GENERIC_QUOTIENT_SEGMENTS,
+            cw: c1::CONSTRAINED_TRACE_WIDTH,
+            mask_rows: c1::MASK_ROWS,
+            mask_len: c1::MASK_LEN,
+            lift: c1::ZK_LIFT_COL,
+        },
+        Circ::C3 => {
+            let d = c3::CANONICAL_DEPTH;
+            let n = c3::trace_length_for_depth(d);
+            Geom {
+                name: "C3 merkle_path",
+                id: 3,
+                n,
+                lde: n * GENERIC_BLOWUP,
+                k: GENERIC_QUOTIENT_SEGMENTS,
+                cw: c3::CONSTRAINED_TRACE_WIDTH,
+                mask_rows: n - d * c3::HASH_CYCLE_LEN,
+                mask_len: c3::mask_len_for_depth(d),
+                lift: c3::ZK_LIFT_COL,
+            }
+        }
+        Circ::C6 => {
+            let d = c6::CANONICAL_DEPTH;
+            let n = c6::trace_length_for_depth(d);
+            Geom {
+                name: "C6 merkle_update",
+                id: 6,
+                n,
+                lde: n * GENERIC_BLOWUP,
+                k: GENERIC_QUOTIENT_SEGMENTS,
+                cw: c6::CONSTRAINED_TRACE_WIDTH,
+                mask_rows: n - d * c6::HASH_CYCLE_LEN,
+                mask_len: c6::mask_len_for_depth(d),
+                lift: c6::ZK_LIFT_COL,
+            }
+        }
+        Circ::C7 => Geom {
+            name: "C7 spend",
+            id: 7,
+            n: c7::TRACE_LENGTH,
+            lde: LDE_SIZE,
+            k: SPEND_QUOTIENT_SEGMENTS,
+            cw: c7::CONSTRAINED_TRACE_WIDTH,
+            mask_rows: c7::MASK_ROWS,
+            mask_len: c7::MASK_LEN,
+            lift: c7::ZK_LIFT_COL,
+        },
+    }
+}
+
+/// The witness is FIXED per circuit; only the mask moves. The public inputs are
+/// harvested once from the shipping generator rather than re-derived here -- a
+/// second derivation is a second thing that can disagree with the prover, and
+/// the boundary fold reads them.
+fn public_inputs_for(c: Circ) -> Vec<u64> {
+    use crate::compact as cc;
+    let g = geom(c);
+    let m = base_mask_len(0x9001, g.mask_len);
+    match c {
+        Circ::C1 => cc::generate_pool_commitment_proof(111, 222, 333, 444, &m).public_inputs,
+        Circ::C3 => {
+            let d = crate::air::merkle_path::CANONICAL_DEPTH;
+            let pe: Vec<u64> = (0..d as u64).map(|i| 1000 + i).collect();
+            let pi: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
+            cc::generate_merkle_path_compact_proof(777, &pe, &pi, &m).public_inputs
+        }
+        Circ::C6 => {
+            let d = crate::air::merkle_update::CANONICAL_DEPTH;
+            let pe: Vec<u64> = (0..d as u64).map(|i| 100 + i * 13).collect();
+            let pi: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
+            cc::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &m).public_inputs
+        }
+        Circ::C7 => {
+            let d = crate::air::spend::CANONICAL_DEPTH;
+            let pe: Vec<u64> = (0..d as u64).map(|i| 1000 + i * 37).collect();
+            let pi: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
+            cc::generate_spend_compact_proof(42, 999, 7, 555, &pe, &pi, &[11, 22, 33, 44], &m)
+                .public_inputs
+        }
+    }
+}
+
+fn base_mask_len(seed: u64, len: usize) -> Vec<u64> {
+    let mut z = seed | 1;
+    (0..len)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % GOLDILOCKS_PRIME
+        })
+        .collect()
+}
+
+/// `Q_0(z) .. Q_{k-1}(z)` for any lift-carrying circuit, with `alpha`, the
+/// boundary challenge and `z` supplied rather than derived. See the module doc
+/// for why fixing them is the correct experiment and not a convenience.
+fn ood_claims_for(c: Circ, mask: &[u64], pub_inputs: &[u64]) -> Vec<u64> {
+    use crate::air::{merkle_path as c3, merkle_update as c6};
+    let g = geom(c);
+    let mask_f: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+
+    let trace: Vec<Vec<BaseElement>> = match c {
+        Circ::C1 => {
+            crate::air::denominated_pool::build_pool_commitment_trace(
+                BaseElement::new(111),
+                BaseElement::new(222),
+                BaseElement::new(333),
+                BaseElement::new(444),
+                &mask_f,
+            )
+            .0
+        }
+        Circ::C3 => {
+            let d = c3::CANONICAL_DEPTH;
+            let pe: Vec<BaseElement> = (0..d as u64).map(|i| BaseElement::new(1000 + i)).collect();
+            let pi: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
+            c3::build_merkle_trace(BaseElement::new(777), &pe, &pi, &mask_f)
+        }
+        Circ::C6 => {
+            let d = c6::CANONICAL_DEPTH;
+            let pe: Vec<BaseElement> =
+                (0..d as u64).map(|i| BaseElement::new(100 + i * 13)).collect();
+            let pi: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
+            c6::build_merkle_update_trace(
+                BaseElement::new(111),
+                BaseElement::new(222),
+                &pe,
+                &pi,
+                &mask_f,
+            )
+        }
+        Circ::C7 => {
+            let d = crate::air::spend::CANONICAL_DEPTH;
+            let pe: Vec<BaseElement> =
+                (0..d as u64).map(|i| BaseElement::new(1000 + i * 37)).collect();
+            let pi: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
+            crate::air::spend::build_spend_trace(
+                BaseElement::new(42),
+                BaseElement::new(999),
+                BaseElement::new(7),
+                BaseElement::new(555),
+                &pe,
+                &pi,
+                &mask_f,
+            )
+            .0
+        }
+    };
+
+    let alpha = BaseElement::new(ALPHA);
+    let alpha_bnd = BaseElement::new(ALPHA_BND);
+    let z = BaseElement::new(OOD_Z);
+
+    let lde = compute_lde_generic(&trace, GENERIC_BLOWUP);
+    let lde_g = get_domain_generator_generic(g.lde);
+    let trace_g = get_domain_generator_generic(g.n);
+
+    let mut q_poly = match c {
+        Circ::C1 => compute_quotient_lde_circuit_1(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C3 => compute_quotient_lde_circuit_3(
+            &lde,
+            GENERIC_BLOWUP,
+            g.n,
+            c3::CANONICAL_DEPTH,
+            alpha,
+        ),
+        Circ::C6 => compute_quotient_lde_circuit_6(
+            &lde,
+            GENERIC_BLOWUP,
+            g.n,
+            c6::CANONICAL_DEPTH,
+            alpha,
+        ),
+        Circ::C7 => compute_quotient_lde_circuit_7(&lde, GENERIC_BLOWUP, g.n, alpha),
+    };
+
+    let assertions = boundary_assertions_for_circuit(g.id, pub_inputs);
+    if !assertions.is_empty() {
+        let w = trace.len();
+        let trace_polys: Vec<Vec<BaseElement>> =
+            (0..w).map(|col| inverse_ntt(&trace[col], trace_g)).collect();
+        let mut qb: Vec<BaseElement> = Vec::new();
+        fold_boundary_quotient(&mut qb, &trace_polys, &assertions, trace_g, alpha_bnd);
+        if q_poly.len() < qb.len() {
+            q_poly.resize(qb.len(), BaseElement::ZERO);
+        }
+        for (i, &v) in qb.iter().enumerate() {
+            q_poly[i] = q_poly[i] + v;
+        }
+    }
+
+    let segs = segment_quotient_poly(&q_poly, g.n, g.lde, lde_g, g.k);
+    segment_ood_values(&segs, z)
+}
+
+/// Degree of every claim in ONE element of the lift column, per circuit.
+///
+/// Degree 1 with a non-zero slope proves that claim is EXACTLY uniform. The last
+/// claim is DELIBERATELY excluded from the assertion: `Q_{k-1}(z)` is the one the
+/// verifier's recombination solves, so a simulator computes it rather than
+/// sampling it, and it does not need to be uniform on its own.
+#[test]
+fn the_lift_column_reaches_every_free_claim_on_every_circuit() {
+    println!();
+    println!("X1 / all circuits — degree of Q_j(z) in ONE element of the LIFT column");
+    println!("(degree 1 => that claim is exactly uniform in that element)");
+    println!();
+
+    let mut bad: Vec<String> = Vec::new();
+    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+        let g = geom(c);
+        let pubs = public_inputs_for(c);
+        let slot = g.lift; // blinding row 0, lift column: row-major over `cw`
+        let xs: Vec<u64> = (1..=10u64).map(|i| i * 0x9E37_79B9 + 5).collect();
+        let mut ys: Vec<Vec<u64>> = vec![Vec::with_capacity(xs.len()); g.k];
+        let mut mask = base_mask_len(0x7000 + g.id as u64, g.mask_len);
+        for &x in xs.iter() {
+            mask[slot] = x;
+            let claims = ood_claims_for(c, &mask, &pubs);
+            for j in 0..g.k {
+                ys[j].push(claims[j]);
+            }
+        }
+        let degs: Vec<i32> =
+            (0..g.k).map(|j| degree(&interpolate(&xs, &ys[j]))).collect();
+
+        print!("  {:<20} width {:>2}, mask rows {:>3} :", g.name, g.cw, g.mask_rows);
+        for d in degs.iter() {
+            print!("{d:>4}");
+        }
+        let free_ok = degs[..g.k - 1].iter().all(|&d| d == 1);
+        println!("   {}", if free_ok { "AFFINE in all free claims" } else { "NOT AFFINE" });
+        if !free_ok {
+            bad.push(format!("{} -> {:?}", g.name, &degs[..g.k - 1]));
+        }
+    }
+
+    println!();
+    println!("  (the last column is Q_{{k-1}}, which the recombination solves -- not asserted)");
+    assert!(
+        bad.is_empty(),
+        "the lift column does not reach every free claim at degree 1 on: {bad:?}. \
+         Constraint [18]/[19]/[11]/[4] is what puts it there, and a degree other than 1 \
+         means the gate or the degree budget is wrong on that circuit -- NOT that the \
+         column is missing, which would show as degree 0."
+    );
+}
+
+/// Individual uniformity is not enough: a simulator samples the free claims
+/// INDEPENDENTLY, so the honest ones must be jointly uniform. Take one blinding
+/// row per free claim, all in the lift column, and measure the slope matrix. Full
+/// rank means the map from those uniform mask elements onto the claims is onto,
+/// so the joint law is exactly uniform.
+#[test]
+fn the_free_claims_are_jointly_uniform_on_every_circuit() {
+    println!();
+    println!("X1 / all circuits — rank of the lift column's slope matrix");
+    println!();
+
+    let mut bad: Vec<String> = Vec::new();
+    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+        let g = geom(c);
+        let free = g.k - 1;
+        assert!(
+            g.mask_rows >= free,
+            "{}: only {} blinding rows for {free} free claims",
+            g.name,
+            g.mask_rows,
+        );
+        let pubs = public_inputs_for(c);
+        let rows: Vec<usize> = (0..free).map(|t| t * (g.mask_rows / free)).collect();
+
+        let mut m: Vec<Vec<u64>> = Vec::with_capacity(free);
+        for &r in rows.iter() {
+            let slot = r * g.cw + g.lift;
+            let mut mask = base_mask_len(0x8000 + g.id as u64, g.mask_len);
+            mask[slot] = 101;
+            let a = ood_claims_for(c, &mask, &pubs);
+            mask[slot] = 102;
+            let b = ood_claims_for(c, &mask, &pubs);
+            // Affine, so f(102) - f(101) IS the slope.
+            m.push((0..free).map(|j| fsub(b[j], a[j])).collect());
+        }
+        let r = rank(m);
+        println!("  {:<20} rows {:?} -> rank {r} of {free}", g.name, rows);
+        if r != free {
+            bad.push(format!("{} -> rank {r} of {free}", g.name));
+        }
+    }
+
+    println!();
+    assert!(
+        bad.is_empty(),
+        "the slope matrix is rank-deficient on: {bad:?}. Those claims are each uniform but \
+         not jointly so -- some linear combination of them is constant in every lift-column \
+         element, and that combination separates an honest transcript from a simulated one."
+    );
+    println!("  => on every circuit the free claims are an onto affine image of uniform,");
+    println!("     independent mask elements, hence EXACTLY jointly uniform. That is the law");
+    println!("     the simulator samples, and X1 closes on all four production circuits.");
+}
