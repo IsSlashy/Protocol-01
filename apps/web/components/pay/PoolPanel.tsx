@@ -28,6 +28,9 @@ import {
   recordSpentNote,
   scanPool,
   shieldToPool,
+  contributeToPool,
+  requestIssuedNote,
+  fetchIssuableNote,
   recoverStuckFunds,
   storeEncryptedNote,
   sweepPayout,
@@ -195,6 +198,21 @@ export default function PoolPanel({
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ShieldOutcome | null>(null);
+  /**
+   * Set when the deposit was a CONTRIBUTION rather than a deposit of the buyer's
+   * own note.
+   *
+   * \u26d4 THE SUCCESS SCREEN SAYS "Your N SOL note is in the pool" AND PRINTS A
+   * LEAF. On this path those are two different leaves: the one the buyer funded
+   * belongs to the treasury, and the note the buyer holds was deposited earlier
+   * for somebody else. Showing the funded leaf as theirs would be a lie, and
+   * showing the held leaf beside the funding transaction without a word would
+   * read as a mismatch to anyone who checked. So it is said.
+   */
+  const [contributed, setContributed] = useState<{
+    fundedLeafIndex: number;
+    disclosure: string;
+  } | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
   const [withdrawn, setWithdrawn] = useState<
     {
@@ -665,6 +683,66 @@ export default function PoolPanel({
             `run "solana airdrop 2 ${owner.toBase58()} --url devnet", or use ` +
             `https://faucet.solana.com — then try again.`,
         );
+        return;
+      }
+
+      /**
+       * \u{1F3AF} THE SAME BUTTON, AND THE NOTE THAT COMES BACK IS NOT THE ONE THIS
+       * MONEY CREATED.
+       *
+       * MEASURED 2026-08-31: a subscription spent leaf 93, deposited by the same
+       * person thirty minutes earlier, while the treasury's leaf 21 sat
+       * untouched. Every probe that looks at the NOTE passed; none of them looks
+       * at whose it is. So the deposit and the spend were the same object, and
+       * anything that ever rejoins them rejoins the buyer to their own payment.
+       *
+       * When this deployment has stock, the deposit now funds a leaf the
+       * TREASURY owns and the buyer is handed a different, older one. The
+       * maturity gate guarantees it is different: it refuses to issue a leaf
+       * deposited moments ago, which on this path is the mixing itself.
+       *
+       * \u26d4 STOCK IS CHECKED BEFORE THE MONEY MOVES. A contribution against an
+       * empty inventory leaves the buyer having funded a leaf and holding
+       * nothing, which is strictly worse than the old behaviour.
+       *
+       * \u26d4 AND NOT IN TREASURY MODE. That path deposits FOR the treasury and
+       * must keep depositing notes the treasury owns and can derive; routing it
+       * here would have the treasury contributing to itself and drawing its own
+       * stock down.
+       */
+      const stock = treasuryMode ? null : await fetchIssuableNote();
+      if (stock) {
+        const gave = await contributeToPool({
+          meta,
+          token: "SOL",
+          denomination,
+          owner,
+          connection,
+          signOne,
+          onProgress: setStep,
+        });
+        const got = await requestIssuedNote({
+          meta,
+          walletPubkey: owner.toBase58(),
+          token: "SOL",
+          denomination,
+          claimCode: gave.claimCode,
+          onProgress: setStep,
+        });
+        setContributed({ fundedLeafIndex: gave.leafIndex, disclosure: got.disclosure });
+        setResult({
+          txSig: gave.txSig,
+          // The leaf and commitment the buyer HOLDS, which is the issued note —
+          // never the one they funded. See the note on `contributed`.
+          commitment: got.note.commitment,
+          leafIndex: got.leafIndex,
+          denomination,
+          encryptedNote: '',
+          fundedLamports: 0,
+          fundedBy: gave.fundedBy,
+          walletPaidLamports: null,
+        } as ShieldOutcome);
+        void rescan();
         return;
       }
 
@@ -1286,6 +1364,14 @@ export default function PoolPanel({
               <p className="mt-1 truncate font-mono text-xs text-p01-text-dim">
                 leaf #{result.leafIndex} · commitment {truncate(result.commitment, 8, 6)}
               </p>
+              {contributed && (
+                <p className="mt-2 text-xs text-p01-text-muted">
+                  This is not the leaf your deposit created. Your money funded leaf #
+                  {contributed.fundedLeafIndex}, which the treasury owns and you cannot spend; the
+                  note above was deposited before you arrived, for somebody else. That is what
+                  makes the transaction below yours and the note above not traceable to it.
+                </p>
+              )}
               {/* Unconditional, and it mirrors SubscribePanel's funding
                   paragraph on purpose.
 
