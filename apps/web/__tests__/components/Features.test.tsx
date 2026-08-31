@@ -33,7 +33,7 @@ const MODULES: ReadonlyArray<readonly [name: string, description: string]> = [
   // a blinding mask and a lift column, and their committed values were measured
   // exactly uniform. C0 and C5 did not, and C0's witness recovery still works,
   // which is why the sentence keeps a second half.
-  ['ZK Proofs', 'A STARK proof checked on-chain shows a spend is valid. The four circuits production uses carry a blinding mask and a lift column, and every committed value was measured exactly uniform. Two older circuits carry neither, and a private witness has been recovered from one of them.'],
+  ['ZK Proofs', 'A STARK proof checked on-chain shows a spend is valid. On the four circuits production uses, every value the proof commits to was measured uniform, so the bytes carry nothing about the note. Two older circuits were never masked, and a private witness has been recovered from one of them.'],
   ['Confidential Balances', 'Token balances sit behind Poseidon commitments instead of clear numbers. The zkspl program is not deployed on devnet today.'],
   ['Stealth Meta-Addresses', 'One shareable address spawns a fresh one-time address for every payment you receive. The receiving address is new each time; the sender is not hidden.'],
   ['Subscription Vaults', 'An on-chain account that pays a merchant a fixed amount over time. The vault is addressed by a commitment to a note secret, not by your wallet, so nobody can rederive its address to ask whether you subscribe. A merchant\'s vaults themselves are enumerable on-chain.'],

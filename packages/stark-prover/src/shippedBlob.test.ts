@@ -79,8 +79,30 @@ const BLOB = join(here, '..', 'wasm', 'p01_stark_bg.wasm');
  * proofs under this one — same lengths, same digests in `wireFormat.test.ts`.
  * The reship ADDED circuit 7 and moved nothing else.
  */
-const SHIPPED_SHA256 = '72a8c700c466';
-const SHIPPED_BYTES = 267_610;
+/**
+ * \U0001f504 RESHIPPED 2026-08-31 — the ZK lift columns.
+ *
+ * The previous entry was `72a8c700c466` / 267,610 bytes, and its note said the
+ * blob was ACCEPTED on devnet by transaction `4yKg4gGm...`. This one is NOT, and
+ * the difference is stated rather than quietly carried over: circuits C1, C3, C6
+ * and C7 each took a blinding mask and a degree-lift column, so their proofs grew
+ * and nothing of that generation has been submitted to the chain yet.
+ *
+ * \u26d4 SO WHY UPDATE A PIN THAT SAYS NOT TO. The warning below is about an
+ * ACCIDENT — a `wasm-pack` run overwriting the shipped artifact with a stale
+ * local build, which is why it names the pre-coset hash by number. This move is
+ * the opposite: a deliberate reship, and the blob was verified by driving it, not
+ * by trusting the file. `wireFormat.test.ts` generates real proofs from THIS blob
+ * and reproduces the Rust prover's byte counts on all eight circuits
+ * ([47641, 94897, 69761, 79597, 81457, 89821, 82477, 79405]).
+ *
+ * \u26a0 WHAT IS STILL OWED: acceptance. `deployed-verifier.json` still records
+ * the OLD blob under `accepts_client_blob_sha256`, and only a real spend against
+ * the redeployed verifier can move it. Until then this pin says "this is the
+ * artifact we ship", not "this is the artifact the chain has taken".
+ */
+const SHIPPED_SHA256 = 'df02e19c7036';
+const SHIPPED_BYTES = 273_437;
 
 /**
  * The pre-C7 coset build. NOT "rejected": it was the shipped artifact until
@@ -128,12 +150,15 @@ describe('the shipped STARK prover blob', () => {
     expect(
       actual,
       `The prover blob shipped by @protocol-01/stark-prover changed.\n\n` +
-        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, coset, ACCEPTED on devnet)\n` +
+        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, the 2026-08-31 lift-column reship)\n` +
         `  found    ${actual} (${statSync(BLOB).size} bytes)\n\n` +
-        `If this is the 4ace8913 / 192,732-byte build, a wasm-pack run overwrote the shipped\n` +
-        `prover with the pre-coset one. Every proof it makes is refused — and the refusal\n` +
-        `arrives only after ~150 buffer-upload transactions and about a SOL of rent.\n\n` +
-        `Do NOT update this constant to go green. Restore the blob.`,
+        `If this is the 4ace8913 / 192,732-byte build, or the 72a8c700 / 267,610-byte one, a\n` +
+        `wasm-pack run overwrote the shipped prover with an older local build. Every proof it\n` +
+        `makes against the current verifier is refused — and the refusal arrives only after\n` +
+        `~150 buffer-upload transactions and about a SOL of rent.\n\n` +
+        `Do NOT update this constant to go green. Restore the blob. Move it only for a\n` +
+        `DELIBERATE reship, and only after driving the new blob: wireFormat.test.ts must\n` +
+        `reproduce the Rust prover's byte counts on all eight circuits first.`,
     ).toBe(SHIPPED_SHA256);
   });
 

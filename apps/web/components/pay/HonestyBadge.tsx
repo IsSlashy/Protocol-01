@@ -99,10 +99,10 @@ export default function HonestyBadge({ chain }: { chain: ChainId }) {
         </span>{" "}
         Your wallet signs the transfer, pays the fee and funds the one-time address, and this
         page submits it straight from your browser, there is no relayer, so nothing here hides
-        the sender. Handing over a note instead (other tab) broadcasts nothing at all, and a v4
-        withdrawal carries no commitment &mdash; though a note that falls back to v3 still
-        republishes yours, and whoever pays for a withdrawal names themselves unless it is
-        relayed.
+        the sender. Handing over a note instead (other tab) broadcasts nothing at all, and the
+        recipient&apos;s withdrawal no longer carries the identifier your deposit emitted
+        &mdash; but whoever pays for that withdrawal still names themselves, and the clock
+        joins a deposit to a withdrawal that follows it closely.
       </p>
     </div>
   );

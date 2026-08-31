@@ -76,8 +76,12 @@ describe("HonestyBadge — Solana stealth send", () => {
     const text = badgeText();
     expect(text).toContain("broadcasts nothing at all");
     // The half that stops it being an upsell.
-    // Either half of the surviving caveat will do; both are in the copy.
-    expect(text).toMatch(/falls back to v3 still\s+republishes yours|names themselves unless it is\s+relayed/);
+    // Either half of the surviving caveat will do; both are in the copy. What
+    // is asserted is that a caveat SURVIVES beside "broadcasts nothing" — the
+    // mechanism it names changed when the withdrawal stopped carrying the
+    // deposit's identifier, and the two that remain are the fee payer and the
+    // clock.
+    expect(text).toMatch(/still names themselves|the clock\s+joins a deposit/);
   });
 
   it("never claims the send is unlinkable, private or anonymous", () => {

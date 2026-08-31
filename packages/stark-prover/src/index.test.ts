@@ -286,7 +286,11 @@ describe('@protocol-01/stark-prover', () => {
     );
     // The length `wireFormat.test.ts` pins for C6, restated here so a failure
     // says "circuit 6" rather than "some pin moved".
-    expect(proofBytes.length).toBe(81_037);
+    // 81,037 until the 2026-08-31 reship; C6 took a blinding mask and a
+    // degree-lift column and grew to 82,477. Measured on both sides: the Rust
+    // `RECORDED` table and `wireFormat.test.ts`, which generates real bytes from
+    // the shipped blob, agree exactly.
+    expect(proofBytes.length).toBe(82_477);
     // [old_leaf, new_leaf, old_root, new_root, depth] — five, and depth is 15,
     // the only value the deployed verifier accepts.
     expect(publicInputs).toHaveLength(5);

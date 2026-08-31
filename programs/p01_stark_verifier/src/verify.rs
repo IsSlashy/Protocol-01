@@ -4189,7 +4189,6 @@ fn evaluate_transition_at_ood_circuit_1(
     let _is_boundary = periodic_at_z[5];
     let nba = periodic_at_z[6];
 
-    let one = Felt::ONE;
     let three = Felt::new(3);
 
     // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──

@@ -53,7 +53,7 @@ const en = {
       badge: 'POOL SIZES',
       title: 'The crowd you will disappear into',
       subtitle:
-        'Each pool is a set of identical notes. The v4 withdrawal carries no commitment \u2014 the spend circuit this was waiting for is shipped \u2014 so it no longer republishes the value its deposit emitted. Deposit-to-withdrawal unlinkability is still not proven end to end. These are the crowds you are in.',
+        'Each pool is a set of identical notes. A withdrawal no longer carries the identifier its deposit emitted, so the set is what stands between you and a reader \u2014 and the clock is what it does not cover. These are the crowds you are in.',
       of: 'of',
       empty: 'No deposits yet on devnet. Be the first note in the set.',
       loading: 'Reading the network…',
@@ -174,7 +174,7 @@ const en = {
       privateSubscriptions: 'Pay recurring bills from a vault addressed by a commitment to a note secret, so the vault does not name your wallet. The price and the interval sit in public in the merchant\'s registry entry.',
       tokenSwap: 'Trade one token for another in-app through the Jupiter aggregator. The swap itself is a public Solana transaction.',
       aiAgent: 'An on-device assistant that runs your privacy actions (shield, pay, rebalance) on command.',
-      zkProofs: 'A STARK proof checked on-chain shows a spend is valid. The four circuits production uses carry a blinding mask and a lift column, and every committed value was measured exactly uniform. Two older circuits carry neither, and a private witness has been recovered from one of them.',
+      zkProofs: 'A STARK proof checked on-chain shows a spend is valid. On the four circuits production uses, every value the proof commits to was measured uniform, so the bytes carry nothing about the note. Two older circuits were never masked, and a private witness has been recovered from one of them.',
       confidentialBalances: 'Token balances sit behind Poseidon commitments instead of clear numbers. The zkspl program is not deployed on devnet today.',
       stealthMetaAddresses: 'One shareable address spawns a fresh one-time address for every payment you receive. The receiving address is new each time; the sender is not hidden.',
       subscriptionVaults: 'An on-chain account that pays a merchant a fixed amount over time. The vault is addressed by a commitment to a note secret, not by your wallet, so nobody can rederive its address to ask whether you subscribe. A merchant\'s vaults themselves are enumerable on-chain.',
@@ -1182,7 +1182,7 @@ const en = {
       },
       denominatedPools: {
         title: 'Denominated Privacy Pools',
-        desc: 'Tornado Cash-style fixed-denomination pools for SOL and USDC. All deposits in a pool are the same value, so the amount you move is not distinctive. The v4 withdrawal instruction carries no commitment \u2014 the field the deposit emitted is absent from its bytes. Deposit-to-withdrawal unlinkability is still not shipped: the v3 fallback republishes that commitment, and the wallet that pays for a withdrawal names itself unless the spend is relayed.',
+        desc: 'Fixed-denomination pools for SOL and USDC. Every note in a pool is the same size, so the amount you move says nothing about you. A withdrawal proves it is owed a note without naming which one \u2014 the deposit\u2019s identifier is simply not in it. What that does not cover is the clock: withdraw moments after you deposit and the timing still joins the two. Your crowd is the notes sitting unspent beside yours.',
         detail1: 'Fixed denominations: 0.1/1/10/100/500/1000 SOL or 1/10/100/1K/10K/20K/50K USDC',
         detail2: 'Commitment = Poseidon(Poseidon(nullifier_preimage, secret), Poseidon(blinding, token_mint))',
         detail3: 'PDA-per-nullifier for atomic double-spend prevention (not Bloom filter)',
