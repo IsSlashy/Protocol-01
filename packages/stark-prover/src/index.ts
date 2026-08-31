@@ -395,10 +395,21 @@ export function generateProofBytes(
       // 12-element path with one bad entry are indistinguishable by the time it
       // sees them. Say which one is wrong here, where the caller's array still
       // exists.
-      if (elements.length !== 12 || indices.length !== 12) {
+      // 🚨 THIS LITERAL WAS 12 AND THE CIRCUIT HAD MOVED TO 11. The shipped
+      // Rust prover checks `path_elements.len() != CANONICAL_DEPTH` with
+      // CANONICAL_DEPTH = 11 (`stark/src/lib.rs:531`, `air/spend.rs:429`), and
+      // the on-chain verifier agrees (`verify.rs:6538`). A guard one deeper than
+      // the circuit rejects every honest spend before the wasm is reached, and
+      // it reads like a caller bug rather than a stale constant.
+      //
+      // ⛔ Mirrors Rust across a wire that carries no types: move it in the
+      // same commit as `CANONICAL_DEPTH`, never on its own.
+      const C7_PATH_DEPTH = 11;
+      if (elements.length !== C7_PATH_DEPTH || indices.length !== C7_PATH_DEPTH) {
         throw new Error(
-          `Circuit 7 (SPEND) needs exactly 12 path elements and 12 indices — its subtree `
-          + `depth is 12, NOT the pool's 15. Got ${elements.length} and ${indices.length}.`,
+          `Circuit 7 (SPEND) needs exactly ${C7_PATH_DEPTH} path elements and ${C7_PATH_DEPTH} `
+          + `indices — its subtree depth is ${C7_PATH_DEPTH}, NOT the pool's 15. `
+          + `Got ${elements.length} and ${indices.length}.`,
         );
       }
       if (recipientHash.length !== 4) {

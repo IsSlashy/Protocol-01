@@ -303,12 +303,28 @@ function generateSpendProof(
   // Checked here rather than left to the Rust: it parses with
   // `filter_map(.. .ok())`, which SILENTLY DROPS unparseable entries, so a
   // truncated path and a malformed one are indistinguishable by the time it
-  // sees them -- and an 11-deep proof is a valid proof of a tree nobody uses.
-  if (data.pathElements.length !== 12 || data.pathIndices.length !== 12) {
+  // sees them.
+  //
+  // 🚨 THIS LITERAL WAS 12 AND THE CIRCUIT HAD MOVED TO 11, so every v4
+  // spend from the web client failed HERE, before the wasm was ever called --
+  // `denominatedPool.ts` slices the path to `C7_SUBTREE_DEPTH` (11) and this
+  // guard demanded 12. The comment above used to end "an 11-deep proof is a
+  // valid proof of a tree nobody uses", which is now exactly inverted: 11 IS
+  // the tree. The one test that would have caught it is `describe.skipIf(!LIVE)`
+  // and does not run in CI.
+  //
+  // ⛔ THE SOURCE OF TRUTH IS RUST, in three places that already agree:
+  // `stark/src/air/spend.rs:429` CANONICAL_DEPTH, `stark/src/lib.rs:531` (the
+  // shipped prover's own arity check) and `verify.rs:6538` on chain. This
+  // constant mirrors them across a wire that carries no types, so it must be
+  // moved in the same commit as theirs -- which is the mistake being fixed.
+  const C7_PATH_DEPTH = 11;
+  if (data.pathElements.length !== C7_PATH_DEPTH || data.pathIndices.length !== C7_PATH_DEPTH) {
     post({
       type: 'error', id,
-      error: `Circuit 7 needs exactly 12 path elements and 12 indices (its subtree depth `
-        + `is 12, NOT the pool's 15). Got ${data.pathElements.length} and ${data.pathIndices.length}.`,
+      error: `Circuit 7 needs exactly ${C7_PATH_DEPTH} path elements and ${C7_PATH_DEPTH} indices `
+        + `(its subtree depth is ${C7_PATH_DEPTH}, NOT the pool's 15). `
+        + `Got ${data.pathElements.length} and ${data.pathIndices.length}.`,
     });
     return;
   }
