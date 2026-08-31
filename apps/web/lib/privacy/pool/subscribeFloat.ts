@@ -123,9 +123,23 @@ export const MEASURED_PROOF_BYTES = {
   // still builds proofs with the old blob. All three move in the reship commit,
   // together with `deployed-verifier.json` and the devnet float — and the float
   // has to be OBSERVED again, not computed and declared.
-  c1: 80_577,
-  c3: 78_157,
-  c7: 77_965,
+  // MEASURED 2026-08-31, twice and independently:
+  //   `cargo test --test cross_circuit_confusion` printed
+  //   [47641, 94897, 69761, 79597, 81457, 89821, 82477, 79405]
+  //   and `packages/stark-prover/src/wireFormat.test.ts`, which GENERATES real
+  //   proof bytes from the shipped wasm, pins the same C1 94,897.
+  //
+  // \U0001f3af So the reship landed and the two provers agree byte for byte. The
+  // four that moved -- C1, C3, C6, C7 -- are exactly the four that took a ZK lift
+  // column, which is what makes this a measurement rather than a coincidence.
+  //
+  // \u26a0 THE DEVNET FLOAT OBSERVATION IS OLDER THAN THESE NUMBERS. See the
+  // note in `subscribeFloat.test.ts`: the pre-fund devnet actually charged was
+  // observed against the previous blob, so the computed pair no longer equals
+  // it and cannot until someone subscribes again and records what was charged.
+  c1: 94_897,
+  c3: 79_597,
+  c7: 79_405,
 } as const;
 
 /** Rent for one proof buffer holding `proofBytes` of proof. */

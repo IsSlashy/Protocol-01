@@ -28,7 +28,12 @@ const MODULES: ReadonlyArray<readonly [name: string, description: string]> = [
   ['Private Subscriptions', 'Pay recurring bills from a vault addressed by a commitment to a note secret, so the vault does not name your wallet. The price and the interval sit in public in the merchant\'s registry entry.'],
   ['Token Swap', 'Trade one token for another in-app through the Jupiter aggregator. The swap itself is a public Solana transaction.'],
   ['AI Agent', 'An on-device assistant that runs your privacy actions (shield, pay, rebalance) on command.'],
-  ['ZK Proofs', 'A STARK proof checked on-chain shows a spend is valid. The proof bytes do not yet hide the note values; the masking that would close this is in development.'],
+  // The old text said the proof bytes did not yet hide the note values and the
+  // masking was 'in development'. It shipped: the four production circuits took
+  // a blinding mask and a lift column, and their committed values were measured
+  // exactly uniform. C0 and C5 did not, and C0's witness recovery still works,
+  // which is why the sentence keeps a second half.
+  ['ZK Proofs', 'A STARK proof checked on-chain shows a spend is valid. The four circuits production uses carry a blinding mask and a lift column, and every committed value was measured exactly uniform. Two older circuits carry neither, and a private witness has been recovered from one of them.'],
   ['Confidential Balances', 'Token balances sit behind Poseidon commitments instead of clear numbers. The zkspl program is not deployed on devnet today.'],
   ['Stealth Meta-Addresses', 'One shareable address spawns a fresh one-time address for every payment you receive. The receiving address is new each time; the sender is not hidden.'],
   ['Subscription Vaults', 'An on-chain account that pays a merchant a fixed amount over time. The vault is addressed by a commitment to a note secret, not by your wallet, so nobody can rederive its address to ask whether you subscribe. A merchant\'s vaults themselves are enumerable on-chain.'],

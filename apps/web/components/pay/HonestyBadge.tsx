@@ -43,10 +43,20 @@ import type { ChainId } from "@/lib/privacy/chains/types";
  *
  * The pointer to the other tab is deliberately not a privacy upsell. The note
  * handoff broadcasts nothing, which is real; it does NOT make the money
- * untraceable, because the recipient's eventual withdrawal republishes the
- * commitment the original deposit published — measured on devnet, leaf 16,
- * commitment 8901821612542787864, in both the deposit and the withdrawal. Both
- * halves of that have to travel together or the pointer becomes the overstate.
+ * untraceable.
+ *
+ * ⚠️ THE REASON GIVEN HERE CHANGED, AND ONLY THE REASON. It used to be that the
+ * recipient's withdrawal republished the deposit's commitment — measured on
+ * devnet, leaf 16, commitment 8901821612542787864, in BOTH transactions. That is
+ * no longer how a v4 withdrawal is built: verified in
+ * `buildUnshieldDenominatedStarkV4Ix`, whose buffer is allocated as
+ * `8 + 32 + 32 + 8 + siblings + directions + 32` and has no room for a
+ * commitment at all.
+ *
+ * What still makes the money traceable is different and must travel with the
+ * pointer: a note whose blinding is unknown falls back to v3, which DOES
+ * republish it; and whoever pays for a withdrawal is named at accountKeys[0]
+ * unless the spend is relayed.
  *
  * Starknet: same recipient-only envelope, plus one extra caveat — the sender
  * technically retains spend authority over the stealth account until the
@@ -89,8 +99,10 @@ export default function HonestyBadge({ chain }: { chain: ChainId }) {
         </span>{" "}
         Your wallet signs the transfer, pays the fee and funds the one-time address, and this
         page submits it straight from your browser, there is no relayer, so nothing here hides
-        the sender. Handing over a note instead (other tab) broadcasts nothing at all, but the
-        recipient&apos;s later withdrawal still republishes your deposit&apos;s commitment.
+        the sender. Handing over a note instead (other tab) broadcasts nothing at all, and a v4
+        withdrawal carries no commitment &mdash; though a note that falls back to v3 still
+        republishes yours, and whoever pays for a withdrawal names themselves unless it is
+        relayed.
       </p>
     </div>
   );

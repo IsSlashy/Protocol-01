@@ -22,10 +22,16 @@
  *      exists to keep out.
  *
  * The pointer to the note-handoff tab is asserted in BOTH halves deliberately.
- * "Broadcasts nothing" on its own is the overstate — the recipient's later
- * withdrawal still republishes the deposit's commitment (devnet leaf 16,
- * commitment 8901821612542787864, present in both transactions), so the two
- * clauses have to travel together.
+ * "Broadcasts nothing" on its own is the overstate, and the second clause has to
+ * travel with it.
+ *
+ * ⚠️ THE SECOND CLAUSE CHANGED, AND ONLY THE CLAUSE. It used to be that the
+ * recipient's withdrawal republished the deposit's commitment — devnet leaf 16,
+ * commitment 8901821612542787864, present in both transactions. A v4 withdrawal
+ * no longer carries one: `buildUnshieldDenominatedStarkV4Ix` allocates
+ * `8 + 32 + 32 + 8 + siblings + directions + 32` and has no room for it. What
+ * still stops the pointer being an upsell is the v3 fallback, which does
+ * republish it, and the fee payer, who names themselves unless relayed.
  */
 
 import { describe, expect, it } from "vitest";
@@ -70,7 +76,8 @@ describe("HonestyBadge — Solana stealth send", () => {
     const text = badgeText();
     expect(text).toContain("broadcasts nothing at all");
     // The half that stops it being an upsell.
-    expect(text).toMatch(/still republishes your deposit's commitment/);
+    // Either half of the surviving caveat will do; both are in the copy.
+    expect(text).toMatch(/falls back to v3 still\s+republishes yours|names themselves unless it is\s+relayed/);
   });
 
   it("never claims the send is unlinkable, private or anonymous", () => {

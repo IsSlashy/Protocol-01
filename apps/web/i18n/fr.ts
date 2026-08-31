@@ -55,7 +55,7 @@ const fr: Translations = {
       badge: 'TAILLE DES POOLS',
       title: 'La foule dans laquelle vous dispara\u00eetrez',
       subtitle:
-        'Chaque pool est un ensemble de notes identiques. Aujourd\u2019hui un retrait publie encore l\u2019engagement du d\u00e9p\u00f4t qu\u2019il d\u00e9pense : l\u2019ensemble ne vous cache donc pas encore, cela demande le circuit de d\u00e9pense. Voici les foules qu\u2019il vous donnera.',
+        'Chaque pool est un ensemble de notes identiques. Le retrait v4 ne porte aucun engagement \u2014 le circuit de d\u00e9pense qu\u2019il fallait est livr\u00e9 \u2014 il ne republie donc plus la valeur \u00e9mise par son d\u00e9p\u00f4t. La non-reliabilit\u00e9 d\u00e9p\u00f4t-retrait n\u2019est pas encore prouv\u00e9e de bout en bout. Voici les foules dans lesquelles vous \u00eates.',
       of: 'sur',
       empty: 'Aucun d\u00e9p\u00f4t pour le moment sur devnet. Soyez la premi\u00e8re note.',
       loading: 'Lecture du r\u00e9seau\u2026',
@@ -176,7 +176,7 @@ const fr: Translations = {
       privateSubscriptions: 'Payez vos factures r\u00e9currentes depuis un coffre adress\u00e9 par un engagement sur un secret de note : le coffre ne nomme pas votre portefeuille. Le prix et l\u2019intervalle sont publics dans l\u2019entr\u00e9e de registre du marchand.',
       tokenSwap: '\u00c9changez un token contre un autre dans l\u2019app via l\u2019agr\u00e9gateur Jupiter. Le swap lui-m\u00eame est une transaction Solana publique.',
       aiAgent: 'Un assistant embarqu\u00e9 qui ex\u00e9cute vos actions de confidentialit\u00e9 (blinder, payer, r\u00e9\u00e9quilibrer) \u00e0 la demande.',
-      zkProofs: 'Une preuve STARK contr\u00f4l\u00e9e on-chain montre qu\u2019une d\u00e9pense est valide. Les octets de preuve ne cachent pas encore les valeurs de la note ; le masquage qui refermerait cela est en d\u00e9veloppement.',
+      zkProofs: 'Une preuve STARK contr\u00f4l\u00e9e on-chain montre qu\u2019une d\u00e9pense est valide. Les quatre circuits utilis\u00e9s en production portent un masque d\u2019aveuglement et une colonne de lift, et chaque valeur engag\u00e9e a \u00e9t\u00e9 mesur\u00e9e exactement uniforme. Deux circuits plus anciens n\u2019en ont aucun, et un t\u00e9moin priv\u00e9 a \u00e9t\u00e9 r\u00e9cup\u00e9r\u00e9 depuis les octets de l\u2019un d\u2019eux.',
       confidentialBalances: 'Les soldes de tokens vivent derri\u00e8re des engagements Poseidon plut\u00f4t qu\u2019en clair. Le programme zkspl n\u2019est pas d\u00e9ploy\u00e9 sur devnet aujourd\u2019hui.',
       stealthMetaAddresses: 'Une seule adresse partageable g\u00e9n\u00e8re une adresse \u00e0 usage unique pour chaque paiement re\u00e7u. L\u2019adresse de r\u00e9ception est neuve \u00e0 chaque fois ; l\u2019exp\u00e9diteur n\u2019est pas masqu\u00e9.',
       subscriptionVaults: 'Un compte on-chain qui verse un montant fixe \u00e0 un marchand dans le temps. Le coffre est adress\u00e9 par un engagement sur un secret de note, pas par votre portefeuille : personne ne peut red\u00e9river son adresse pour demander si vous \u00eates abonn\u00e9. Les coffres d\u2019un marchand restent \u00e9num\u00e9rables on-chain.',

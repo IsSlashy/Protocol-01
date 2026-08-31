@@ -317,3 +317,89 @@ if (!globalThis.crypto) {
     },
   });
 }
+
+// ---------- Global: window.localStorage / sessionStorage ----------
+//
+// 🚨 SIX TEST FILES WERE DARK BECAUSE OF THIS, AND THEY LOOKED LIKE FAILURES
+// NOBODY HAD GOT ROUND TO. `window.localStorage.clear is not a function`, 73
+// times, across buyerKey, knownSpentNoteKeys, paySubscriptions,
+// paySubscriptionsRecovery, SendForm and SubscriptionsPanel. Every one failed in
+// its first `beforeEach`, so nothing inside them ran and none of their
+// assertions had been protecting anything for as long as this had been true.
+//
+// ⛔ That is the same shape as the circuit-7 depth break: the test that would
+// have caught it was not running. A red suite nobody can read is a suite that is
+// switched off.
+//
+// THE CAUSE, measured rather than guessed. `Object.getOwnPropertyDescriptor(
+// window, 'localStorage')` is an OWN accessor whose getter stringifies to
+// `FunctionPrototypeCall(check, this)` — Node's own primordials. Node 22+ defines
+// a `localStorage` global of its own, and it shadows the one jsdom would put on
+// `Window.prototype`. Without `--localstorage-file` it yields a bare object with
+// no Storage methods at all. Deleting it does not help: jsdom's is not underneath.
+//
+// ⚠️ THIS IS A POLYFILL AND IT IS ONLY FAITHFUL ENOUGH TO TEST OUR CODE. It
+// implements the Storage contract the app actually uses — get/set/remove/clear,
+// `length`, `key`, string coercion of both key and value — and nothing else. It
+// does NOT model quota errors, cross-tab `storage` events, or the SecurityError
+// a real browser raises with site data blocked. Code that must survive those
+// still needs its own case with an explicitly throwing stub.
+{
+  /** Per-instance backing, so two stores never share a map. */
+  const BACKING = new WeakMap<object, Map<string, string>>();
+
+  // ⛔ THE IMPLEMENTATION GOES ON `Storage.prototype`, NOT ON A CLASS OF OUR
+  // OWN, and that is not a style choice. `buyerKey.test.ts` proves the app
+  // survives storage that REFUSES, with
+  // `vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw })`.
+  // Methods on some other prototype would shadow the spy, the throw would never
+  // reach the code under test, and the two cases guarding the most dangerous
+  // shape there is -- a save that quietly does nothing -- would pass while
+  // testing the opposite.
+  const StorageCtor =
+    (globalThis as unknown as { Storage?: new () => Storage }).Storage ??
+    (function Storage(this: unknown) {} as unknown as new () => Storage);
+  (globalThis as unknown as { Storage: unknown }).Storage = StorageCtor;
+  const proto = StorageCtor.prototype as unknown as Record<string, unknown>;
+
+  const own = (o: object) => BACKING.get(o)!;
+  const methods = {
+    // Real Storage coerces BOTH key and value to strings, and code that stores a
+    // number then compares against a string depends on it.
+    getItem(this: object, key: string) {
+      const m = own(this);
+      return m.has(String(key)) ? m.get(String(key))! : null;
+    },
+    setItem(this: object, key: string, value: string) {
+      own(this).set(String(key), String(value));
+    },
+    removeItem(this: object, key: string) {
+      own(this).delete(String(key));
+    },
+    clear(this: object) {
+      own(this).clear();
+    },
+    key(this: object, index: number) {
+      return [...own(this).keys()][index] ?? null;
+    },
+  };
+
+  for (const [name, fn] of Object.entries(methods)) {
+    Object.defineProperty(proto, name, { value: fn, writable: true, configurable: true });
+  }
+  Object.defineProperty(proto, 'length', {
+    get(this: object) {
+      return own(this).size;
+    },
+    configurable: true,
+  });
+
+  for (const name of ['localStorage', 'sessionStorage'] as const) {
+    const store = Object.create(proto as object) as Storage;
+    BACKING.set(store, new Map());
+    Object.defineProperty(window, name, { value: store, writable: false, configurable: true });
+    // Some modules reach for the bare global rather than `window.`, and under a
+    // real browser those are the same object.
+    Object.defineProperty(globalThis, name, { value: store, writable: false, configurable: true });
+  }
+}

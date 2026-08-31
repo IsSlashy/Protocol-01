@@ -15,6 +15,23 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    /**
+     * 🚨 WITHOUT A URL, jsdom RUNS ON `about:blank` -- AN OPAQUE ORIGIN,
+     * WHERE `localStorage` IS NOT A REAL STORAGE OBJECT.
+     *
+     * `window.localStorage.clear is not a function`, 73 times, across SIX test
+     * files: buyerKey, knownSpentNoteKeys, paySubscriptions,
+     * paySubscriptionsRecovery, SendForm and SubscriptionsPanel. Every one of
+     * them failed in its first `beforeEach`, so nothing inside them ran at all
+     * and none of their assertions had been protecting anything.
+     *
+     * ⛔ That is the same shape as the circuit-7 depth break: the tests that
+     * would have caught it were not running. A suite that reports failures
+     * nobody reads is indistinguishable from a suite that is switched off.
+     */
+    environmentOptions: {
+      jsdom: { url: 'http://localhost:3000' },
+    },
     globals: true,
     include: ['__tests__/**/*.test.ts', '__tests__/**/*.test.tsx'],
     setupFiles: ['__tests__/setup.tsx'],

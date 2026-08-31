@@ -181,7 +181,7 @@ async function selfTest() {
     // in the first is why the decode above exists. They stay here so a later
     // edit to the rules cannot silently start flagging honesty again.
     "<p>Le README annonce de la confidentialite par preuve a divulgation nulle. Ce n&#x27;est pas ce qui tourne.</p>",
-    "<p>None of that makes a deposit and its withdrawal unlinkable. The withdrawal republishes the deposit commitment.</p>",
+    "<p>None of that makes a deposit and its withdrawal unlinkable. The v3 fallback republishes the deposit commitment.</p>",
   ];
 
   let bad = 0;
