@@ -76,8 +76,14 @@ describe('the note inventory can grow at runtime', () => {
   });
 
   it('scopes the acquired set to a pool, because leaf indices are per-pool', () => {
+    // The second argument is the CHAIN-DISCOVERED set: the treasury asks the
+    // tree which leaves its own seed can open, because a hand-maintained list
+    // drifts. Measured 2026-08-31: it owned six leaves and named one.
     expect(code, 'the issuance path no longer scopes the inventory to its pool').toMatch(
-      /await\s+inventoryLeaves\s*\(\s*pool\.poolPDA\.toBase58\(\)\s*\)/,
+      /await\s+inventoryLeaves\s*\(\s*pool\.poolPDA\.toBase58\(\)\s*,\s*discovered\s*\)/,
+    );
+    expect(code, 'the treasury no longer discovers what it owns').toMatch(
+      /function\s+discoverOwnedLeaves\s*\(/,
     );
     expect(code, 'the KV key is no longer pool-scoped').toMatch(
       /KV_INVENTORY_PREFIX\s*\+\s*poolKey/,

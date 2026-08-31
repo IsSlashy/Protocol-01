@@ -306,11 +306,80 @@ export async function recordInventoryLeaf(poolKey: string, leafIndex: number): P
  * Called with no pool for the readiness check, where only the configured half
  * is meaningful — a GET has no pool to scope the acquired set to.
  */
-async function inventoryLeaves(poolKey?: string): Promise<number[]> {
+/**
+ * How far past the tree's height to look for leaves this treasury can open.
+ *
+ * Each step is a Poseidon derivation and a map lookup, no RPC, so a few hundred
+ * costs nothing next to the two chain reads the route already makes.
+ */
+const DISCOVERY_LOOKAHEAD = 64;
+
+/**
+ * The leaves this treasury can actually OPEN, read off the tree.
+ *
+ * \U0001f6a8 THE BUG THIS FIXES, MEASURED 2026-08-31. The treasury owned six
+ * leaves in the 1 SOL pool -- 18, 19, 20, 21, 25, 26 -- and
+ * `P01_TREASURY_NOTE_LEAVES` named exactly one of them. Five notes it had
+ * deposited and could derive were invisible to this route, which reported an
+ * inventory of one while sitting on six. Nothing was wrong with the notes; the
+ * LIST was wrong, and a list maintained by a human in two places (a Vercel
+ * variable and a GitHub secret, with no sync check) drifts by default.
+ *
+ * The treasury does not need to be told what it owns. It derives every note it
+ * ever deposited from its own seed, so it can ask the tree directly: for each
+ * index, is MY commitment sitting there? A leaf that answers yes is stock by
+ * definition -- the same derivation `issue-note` uses to hand it over.
+ *
+ * \u26a0 ADDITIVE, NEVER SUBTRACTIVE, like the KV set beside it. A configured
+ * leaf stays configured even if a chain read fails or returns nothing, so a
+ * flaky RPC can never make stock vanish. Discovery only ever ADDS.
+ *
+ * \u26d4 AND IT CANNOT INVENT ONE. A leaf is discovered only when the commitment
+ * derived from THIS seed at THAT index is the commitment on the tree at that
+ * index -- which is precisely the check the issuance loop makes before sealing.
+ * Notes deposited under a different seed are not found, and must not be: this
+ * route could not open them.
+ */
+function discoverOwnedLeaves(
+  seed: Uint8Array,
+  pool: { poolPDA: PublicKey; tokenMint: PublicKey },
+  commitments: Map<string, OnChainCommitment>,
+): number[] {
+  let maxLeaf = -1;
+  for (const c of commitments.values()) if (c.leafIndex > maxLeaf) maxLeaf = c.leafIndex;
+  // An EMPTY map is not an empty tree, it is far more likely an RPC that
+  // answered with nothing. Discovering from it would find nothing anyway, but
+  // the bound is stated so a future edit cannot read it as "scan everything".
+  if (maxLeaf < 0) return [];
+
+  const mintField = pubkeyToField(pool.tokenMint);
+  const found: number[] = [];
+  const ceiling = Math.min(maxLeaf + DISCOVERY_LOOKAHEAD, MAX_INVENTORY_LEAVES * 4);
+  for (let leafIndex = 0; leafIndex <= ceiling; leafIndex += 1) {
+    const { secret, nullifierPreimage } = deriveNoteMaterial(seed, pool.poolPDA, leafIndex);
+    const commitment = createCommitmentV3(
+      nullifierPreimage,
+      secret,
+      deriveNoteBlinding(seed, pool.poolPDA, leafIndex),
+      mintField,
+    );
+    const onChain = commitments.get(commitment.toString());
+    if (onChain && onChain.leafIndex === leafIndex) found.push(leafIndex);
+  }
+  return found;
+}
+
+async function inventoryLeaves(
+  poolKey?: string,
+  discovered?: number[],
+): Promise<number[]> {
   const seeded = seededInventoryLeaves();
   if (!poolKey) return seeded;
   const acquired = await acquiredInventoryLeaves(poolKey);
-  return [...new Set([...seeded, ...acquired])].slice(0, MAX_INVENTORY_LEAVES);
+  return [...new Set([...seeded, ...acquired, ...(discovered ?? [])])].slice(
+    0,
+    MAX_INVENTORY_LEAVES,
+  );
 }
 
 
@@ -500,18 +569,36 @@ export async function POST(request: NextRequest) {
     return res;
   };
 
-  const leaves = await inventoryLeaves(pool.poolPDA.toBase58());
-  if (leaves.length === 0) return release(bad(503, 'this deployment has no note inventory configured'));
-
-  // The pool's leaves, once, for both the on-chain check below and the Merkle
-  // path. Building the path HERE rather than leaving the recipient to rebuild
-  // it is the difference between a subscription that starts immediately and one
-  // that walks the pool's whole history first.
+  // The pool's leaves, once, for the discovery below, the on-chain check further
+  // down and the Merkle path. Building the path HERE rather than leaving the
+  // recipient to rebuild it is the difference between a subscription that starts
+  // immediately and one that walks the pool's whole history first.
+  //
+  // ⚠ READ BEFORE THE INVENTORY IS DECIDED, and that ordering moved. The
+  // inventory used to be a pure read of configuration, so "no inventory" could
+  // be answered without touching the chain. It cannot be any more: the treasury
+  // now DISCOVERS what it owns by asking the tree, and a leaf it can open is
+  // stock whether or not a human wrote it down. The cost is that an unreadable
+  // pool answers 502 where it once answered 503 — which is the honest order,
+  // since "we cannot see the tree" is not "we have nothing".
   let commitments: Map<string, OnChainCommitment>;
   try {
     commitments = await fetchPoolCommitments(connection, pool.poolPDA);
   } catch (e) {
     return release(bad(502, `the pool's history could not be read: ${(e as Error).message}`));
+  }
+
+  const discovered = discoverOwnedLeaves(seed, pool, commitments);
+  const leaves = await inventoryLeaves(pool.poolPDA.toBase58(), discovered);
+  if (leaves.length === 0) {
+    return release(bad(503, 'this deployment has no note inventory', {
+      discovered: discovered.length,
+      hint:
+        'Nothing is configured and the treasury seed opens no leaf on this pool. Either it has ' +
+        'never deposited, or it is deriving from a different seed than the one that did — the ' +
+        'derivation takes a wallet signature AND an origin, so the same wallet on a different ' +
+        'origin is a different treasury.',
+    }));
   }
 
   /**

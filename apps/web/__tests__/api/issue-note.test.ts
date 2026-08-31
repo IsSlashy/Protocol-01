@@ -435,7 +435,10 @@ describe('the refusals that come before the gate', () => {
     vi.stubEnv('P01_TREASURY_NOTE_LEAVES', '');
     const res = await POST(req(goodBody()));
     expect(res.status).toBe(503);
-    expect((await res.json()).error).toMatch(/no note inventory configured/);
+    // "configured" left the message when the treasury started DISCOVERING what
+    // it owns off the tree: with nothing configured AND nothing openable, the
+    // honest sentence is that there is no inventory, not that none was typed.
+    expect((await res.json()).error).toMatch(/no note inventory/);
   });
 
   it('400s a recipient that is not a note address', async () => {
