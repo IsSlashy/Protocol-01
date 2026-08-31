@@ -269,10 +269,23 @@ async function acquiredInventoryLeaves(poolKey: string): Promise<number[]> {
 /**
  * Record a leaf this deployment now owns, so it can be issued later.
  *
- * ⛔ THE CALLER MUST HAVE VERIFIED THE NOTE FIRST — that the commitment is a
- * leaf of this pool, that its nullifier is unspent, and that its denomination
- * matches. This function is bookkeeping; it establishes nothing. Writing an
- * unverified leaf here would hand the next buyer a note that cannot be spent.
+ * 🚨 ONLY LEAVES WHOSE OPENING THIS TREASURY *DERIVES*. Issuance does not
+ * store note secrets — it recomputes them with `deriveNoteMaterial(seed, pool,
+ * leafIndex)` and `deriveNoteBlinding(...)` and checks the result against the
+ * chain. So a leaf whose secrets belong to somebody else derives to a
+ * commitment that is NOT the one on the tree at that index, and the loop below
+ * answers 500 'the configured inventory does not match the chain' — to a
+ * buyer, on a paid request, having already marked the leaf issued.
+ *
+ * ⛔ A NOTE HANDED IN BY A USER IS THEREFORE NOT INVENTORY, however well it is
+ * verified. It becomes inventory only once the treasury has SPENT it and
+ * re-shielded the value into a leaf it derives. `swap-note` keeps those
+ * submissions in a separate pending queue for exactly this reason; pointing it
+ * at this function instead would look correct and break issuance for everyone.
+ *
+ * ⛔ AND THE CALLER MUST STILL HAVE VERIFIED THE NOTE — that the commitment is
+ * a leaf of this pool, that its nullifier is unspent, and that its denomination
+ * matches. This function is bookkeeping; it establishes nothing.
  */
 export async function recordInventoryLeaf(poolKey: string, leafIndex: number): Promise<boolean> {
   const kv = getStore();
