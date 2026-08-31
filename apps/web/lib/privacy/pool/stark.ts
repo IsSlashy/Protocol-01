@@ -602,9 +602,12 @@ export async function submitStarkProof(
   if (resizeTarget > MAX_INIT_SIZE) {
     const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
     for (let r = 0; r < resizesNeeded; r++) {
-      onProgress?.(`Resizing proof buffer (${r + 1}/${resizesNeeded})...`);
       const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
-      await signSendConfirm(connection, resizeTx, signer);
+      await audible(
+        `Resizing proof buffer (${r + 1}/${resizesNeeded})...`,
+        onProgress,
+        () => signSendConfirm(connection, resizeTx, signer),
+      );
     }
   }
 
@@ -612,11 +615,12 @@ export async function submitStarkProof(
   // see uploadProofChunks for why confirmations alone cannot prove completeness.
   await uploadProofChunks(connection, signer, proofBuffer, proof.proofBytes, onProgress);
 
-  onProgress?.('Verifying STARK proof on-chain...');
   const verifyTx = new Transaction()
     .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
     .add(buildVerifyStarkProofIx(proof.commitment, proofBuffer, authority));
-  const txSig = await signSendConfirm(connection, verifyTx, signer);
+  const txSig = await audible('Verifying STARK proof on-chain...', onProgress, () =>
+    signSendConfirm(connection, verifyTx, signer),
+  );
 
   onProgress?.('Closing proof buffer...');
   const closeTx = new Transaction().add(buildCloseProofBufferIx(proofBuffer, authority));
@@ -679,6 +683,38 @@ export async function submitGenericStarkProof(
  * `transfer_denominated_stark`) can cross-program-read it. Caller is
  * responsible for calling `closeStarkProofBuffer` afterwards.
  */
+/**
+ * Keep a long `await` AUDIBLE.
+ *
+ * 🚨 MEASURED 2026-08-31, ON REAL MONEY. The main thread's watchdog fires
+ * after 180 s of SILENCE and re-arms on every progress message. The resize loop
+ * emitted one message per step and then blocked on `signSendConfirm`, so a
+ * single slow confirmation went quiet for longer than that and the page gave up
+ * on a job that was working fine. The buyer had already paid the till; the
+ * ephemeral finished its ten transactions and was swept; nothing landed.
+ *
+ * The proof step has had a heartbeat since 2026-08-05 for exactly this reason.
+ * Every other step that can block for minutes needs one too, and "it usually
+ * takes two seconds" is not a bound.
+ */
+async function audible<T>(
+  label: string,
+  onProgress: ((step: string) => void) | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  if (!onProgress) return run();
+  const startedAt = Date.now();
+  onProgress(label);
+  const beat = setInterval(() => {
+    onProgress(`${label} (${Math.round((Date.now() - startedAt) / 1000)}s)`);
+  }, 10_000);
+  try {
+    return await run();
+  } finally {
+    clearInterval(beat);
+  }
+}
+
 export async function submitAndVerifyStarkProof(
   proof: GenericStarkProof,
   signer: WalletSigner,
@@ -720,9 +756,12 @@ export async function submitAndVerifyStarkProof(
   if (resizeTarget > MAX_INIT_SIZE) {
     const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
     for (let r = 0; r < resizesNeeded; r++) {
-      onProgress?.(`Resizing proof buffer (${r + 1}/${resizesNeeded})...`);
       const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
-      await signSendConfirm(connection, resizeTx, signer);
+      await audible(
+        `Resizing proof buffer (${r + 1}/${resizesNeeded})...`,
+        onProgress,
+        () => signSendConfirm(connection, resizeTx, signer),
+      );
     }
   }
 
