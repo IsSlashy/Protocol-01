@@ -221,23 +221,60 @@ struct C7Internals {
 
 /// One C7 witness, held fixed. Only the mask varies across calls in this file;
 /// that is the entire experiment.
+/// One C7 witness, addressed by seed.
+///
+/// ⛔ SEED 0 IS THE ORIGINAL, BYTE FOR BYTE. Every measurement written before
+/// 2026-09-01 was validated on those exact inputs, so changing them to add a
+/// second witness would have re-run the whole file against something it had
+/// never been checked on and called the result the same measurement.
+fn witness_for(
+    seed: u64,
+) -> (BaseElement, BaseElement, BaseElement, BaseElement, Vec<BaseElement>, Vec<u8>) {
+    if seed == 0 {
+        let pe: Vec<BaseElement> =
+            (0..CANONICAL_DEPTH as u64).map(|i| BaseElement::new(1000 + i * 37)).collect();
+        let bits: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+        return (
+            BaseElement::new(42),
+            BaseElement::new(999),
+            BaseElement::new(7),
+            BaseElement::new(555),
+            pe,
+            bits,
+        );
+    }
+    let mut z = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut next = || {
+        z ^= z << 13;
+        z ^= z >> 7;
+        z ^= z << 17;
+        z % GOLDILOCKS_PRIME
+    };
+    let a = BaseElement::new(next());
+    let b = BaseElement::new(next());
+    let c = BaseElement::new(next());
+    let d = BaseElement::new(next());
+    let pe: Vec<BaseElement> = (0..CANONICAL_DEPTH).map(|_| BaseElement::new(next())).collect();
+    let bits: Vec<u8> = (0..CANONICAL_DEPTH).map(|_| (next() & 1) as u8).collect();
+    (a, b, c, d, pe, bits)
+}
+
 fn c7_internals(
     mask: &[u64],
     alpha: BaseElement,
     alpha_bnd: BaseElement,
     z: BaseElement,
+    witness: u64,
 ) -> C7Internals {
     assert_eq!(mask.len(), MASK_LEN);
-    let pe: Vec<BaseElement> =
-        (0..CANONICAL_DEPTH as u64).map(|i| BaseElement::new(1000 + i * 37)).collect();
-    let bits: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
+    let (w0, w1, w2, w3, pe, bits) = witness_for(witness);
     let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
 
     let (trace, nullifier, root) = build_spend_trace(
-        BaseElement::new(42),
-        BaseElement::new(999),
-        BaseElement::new(7),
-        BaseElement::new(555),
+        w0,
+        w1,
+        w2,
+        w3,
         &pe,
         &bits,
         &mask_felts,
@@ -379,11 +416,17 @@ const ALPHA_BND: u64 = 0x0FED_CBA9_8765_4321;
 const OOD_Z: u64 = 0xDEAD_BEEF_CAFE_1234;
 
 fn run(mask: &[u64]) -> C7Internals {
+    run_w(mask, 0)
+}
+
+/// The same pipeline on witness `w`. Seed 0 is what `run` uses.
+fn run_w(mask: &[u64], w: u64) -> C7Internals {
     c7_internals(
         mask,
         BaseElement::new(ALPHA),
         BaseElement::new(ALPHA_BND),
         BaseElement::new(OOD_Z),
+        w,
     )
 }
 
@@ -823,6 +866,143 @@ fn deep_and_every_fri_layer_are_exactly_uniform_in_one_blinding_element() {
     );
     println!("     X3 closes on the same argument as X1 and X2, and the counting margin is no");
     println!("     longer load-bearing anywhere in this proof.");
+}
+
+// ===========================================================================
+// X6 -- the same answer on every witness
+// ===========================================================================
+
+/// How many distinct witnesses X6 repeats the measurement on. Seed 0 is the one
+/// every other test in this file uses; 1.. are drawn from a reproducible stream.
+const X6_WITNESSES: u64 = 8;
+
+/// **Closing the "one witness" caveat, which is the one this file kept writing.**
+///
+/// Every result above is taken on a single witness, and that is a real limit
+/// rather than a formality: a value could be affine in the mask for THIS secret
+/// and not for another, and nothing measured so far would have seen it. Zero
+/// knowledge is a statement about every witness, so a measurement on one is
+/// evidence about one.
+///
+/// So this repeats the core degree measurement on `X6_WITNESSES` distinct
+/// witnesses: different note secret, different nullifier preimage, different
+/// amount, different blinding, different Merkle path elements and different
+/// direction bits. If the answer is degree 1 on all of them, the property does
+/// not depend on which secret is being hidden, which is what it has to mean.
+///
+/// ⚠️ THIS TEST CLOSES ONE AXIS AND ONLY ONE. It samples positions rather than
+/// sweeping every committed value, because the exhaustive-over-positions result
+/// is already established on witness 0 by X2 and X3 and repeating it eight times
+/// would measure the same axis again at eight times the cost. Positions are
+/// covered exhaustively there; witnesses are covered here. Neither test covers
+/// both, and saying so is cheaper than implying it.
+#[test]
+fn every_witness_gives_the_same_answer() {
+    let xs: Vec<u64> = (1..=10u64).map(|i| i * 1_000_003 + 17).collect();
+    let slot = mask_index(0, ZK_LIFT_COL);
+    let ctrl = mask_index(0, 0);
+
+    // Spread across the trace tree, the quotient tree, DEEP and the FRI layers,
+    // so a witness-dependent failure has nowhere in the pipeline to hide.
+    let positions: Vec<usize> = (0..24).map(|i| i * (LDE_SIZE / 24) + 5).collect();
+
+    let mut per_witness: Vec<(u64, std::collections::BTreeMap<i32, usize>)> = Vec::new();
+    let mut control_seen: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
+
+    for w in 0..X6_WITNESSES {
+        let mut hist = std::collections::BTreeMap::<i32, usize>::new();
+
+        let mut runs = Vec::new();
+        let mut base = base_mask(0x5EED_0006 ^ w);
+        for &x in xs.iter() {
+            base[slot] = x;
+            runs.push(run_w(&base, w));
+        }
+        for &pos in positions.iter() {
+            // ⛔ ONLY the lift column's own trace values. A mask element writes
+            // into ONE column, so sweeping the lift element and then measuring
+            // the other eleven columns reads them CONSTANT and calls it a
+            // failure. The first run of this test did exactly that: 264 of 560
+            // at degree 0, identical on every witness, which was the experiment
+            // reaching for values it could not move. The other columns are
+            // covered by their own element in the control sweep below.
+            let ys: Vec<u64> =
+                runs.iter().map(|r| r.trace_lde[ZK_LIFT_COL][pos].as_int()).collect();
+            *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+            for j in 0..K {
+                let ys: Vec<u64> = runs.iter().map(|r| r.q_lde[j][pos]).collect();
+                *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+            }
+            let ys: Vec<u64> = runs.iter().map(|r| r.deep_lde[pos]).collect();
+            *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+        }
+        for l in 0..runs[0].fri_layers.len() {
+            let n = runs[0].fri_layers[l].len();
+            for k in 0..8 {
+                let pos = (k * (n / 8) + 3) % n;
+                let ys: Vec<u64> = runs.iter().map(|r| r.fri_layers[l][pos]).collect();
+                *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+            }
+        }
+
+        // The control, on the same witness: a Poseidon column must NOT read 1.
+        let mut cbase = base_mask(0x5EED_0006 ^ w);
+        let mut cruns = Vec::new();
+        for &x in xs.iter() {
+            cbase[ctrl] = x;
+            cruns.push(run_w(&cbase, w));
+        }
+        // One sweep, two results. Column 0's own trace values must be degree 1
+        // -- that is the per-column trace mechanism, checked here on every
+        // witness rather than only on witness 0 -- while the QUOTIENT values it
+        // reaches must not be, because a Poseidon column enters them through six
+        // multiplications. A single element that satisfies both is the strongest
+        // form the control can take.
+        for &pos in positions.iter() {
+            let ys: Vec<u64> = cruns.iter().map(|r| r.trace_lde[0][pos].as_int()).collect();
+            *hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+        }
+        for &pos in positions.iter().take(4) {
+            for j in 0..K {
+                let ys: Vec<u64> = cruns.iter().map(|r| r.q_lde[j][pos]).collect();
+                control_seen.insert(degree(&interpolate(&xs, &ys)));
+            }
+        }
+
+        per_witness.push((w, hist));
+    }
+
+    println!();
+    println!("X6 / witnesses - the same degree measurement on {X6_WITNESSES} distinct witnesses:");
+    for (w, hist) in per_witness.iter() {
+        let total: usize = hist.values().sum();
+        let ones = hist.get(&1).copied().unwrap_or(0);
+        let tag = if *w == 0 { " (the one every other test uses)" } else { "" };
+        println!("  witness {w}{tag}: {ones} of {total} values at degree 1");
+    }
+    println!("  control degrees seen across all witnesses: {control_seen:?}");
+
+    for (w, hist) in per_witness.iter() {
+        let total: usize = hist.values().sum();
+        assert_eq!(
+            hist.get(&1).copied().unwrap_or(0),
+            total,
+            "witness {w} does not give degree 1 everywhere: {hist:?}. The hiding property \
+             depends on WHICH secret is being hidden, which means it is not a property of the \
+             construction and none of the other measurements in this file generalise."
+        );
+    }
+    assert!(
+        !control_seen.contains(&1),
+        "the Poseidon control reached degree 1 on some witness: {control_seen:?}. The sweep is \
+         not distinguishing the lift column from an ordinary trace column, so the assertions \
+         above are measuring nothing."
+    );
+
+    println!();
+    println!("  => the answer does not depend on the witness. The 'one witness' caveat is");
+    println!("     closed for the degree result; the joint result in X4 and the exhaustive");
+    println!("     position sweeps in X2 and X3 still run on witness 0 alone.");
 }
 
 // ===========================================================================

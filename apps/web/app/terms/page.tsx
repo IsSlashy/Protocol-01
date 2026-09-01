@@ -376,14 +376,17 @@ export default function TermsOfService() {
             <p className="styx-card-value">Privacy limitations.</p>
             <p className="styx-card-note">
               Styx uses hash-based STARK proofs and stealth addresses. Neither
-              makes you anonymous. In the build deployed to devnet today, a
-              withdrawal republishes the commitment recorded by its deposit, so a
-              deposit and the withdrawal that spends it can be linked by anyone
-              reading the chain, and the pool holds too few participants to hide
-              a payment in a crowd. On-chain metadata, amounts, transaction
-              timing, and future advances in cryptanalysis reduce what is
-              concealed further. Do not rely on the Services to keep an activity
-              secret.
+              makes you anonymous. On the circuit-7 path this build takes by
+              default, a spend publishes no deposit commitment, so it cannot be
+              matched to its deposit that way. Three things remain, and each is
+              enough on its own: every Solana transaction has a fee payer whose
+              own funding history is public, the pool holds too few participants
+              to hide a payment in a crowd, and a note the newer circuit cannot
+              prove falls back to an older pair that does republish the
+              commitment, which links it to its deposit for anyone reading the
+              chain. On-chain metadata, amounts, transaction timing, and future
+              advances in cryptanalysis reduce what is concealed further. Do not
+              rely on the Services to keep an activity secret.
             </p>
           </div>
         </div>

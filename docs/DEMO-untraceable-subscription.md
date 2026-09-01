@@ -481,11 +481,19 @@ The sentence that survives being checked, and only this one:
 
 ### Words that may not be said
 
-- **"untraceable"**, **"unlinkable"** — the commitment link is intact at five
-  published sites minimum and always will be before a redeploy. It terminates at
-  the treasury, which is a different and smaller claim.
-- **"the anonymity set is six"**, or any number derived from a pool's note count.
-  It is one note.
+- **"untraceable"** — still forbidden, and the reason changed on 2026-08-25.
+  The commitment link is closed: circuit 7 publishes none, and on 2026-09-01 P11
+  found the buyer's wallet in **none of 109 transactions across 3 surfaces**, 0
+  open linkages. What forbids the word now is the **fee payer**: P6 fails
+  structurally and always will, so the link is moved onto the float rather than
+  removed, and five probe channels are unread. Unread is not closed.
+- **"unlinkable"** — sayable ONLY with its scope attached, never bare.
+  *Unlinkable on this spend, measured against this probe suite, on devnet.* Drop
+  any of the three qualifiers and it becomes a claim about the world that nobody
+  has tested.
+- **"the anonymity set is sixty-one"**, or any number derived from a pool's note
+  count, offered as a privacy claim. The number is true — 61 unspent of 101
+  deposited — and it is small. State it as a fact, never as a guarantee.
 - **"no one can tell which subscription is yours"** — the issuer always can, and
   the merchant does the moment you use the thing you bought.
 - **"zero-knowledge"** of anything the prover produces. The prover is not ZK and

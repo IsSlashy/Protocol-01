@@ -47,9 +47,13 @@ import PayApp from "@/components/pay/PayApp";
  *     A withdrawal or a subscription may be paid entirely by the deployment,
  *     in which case the wallet is on no transaction at all, and the outcome
  *     reports `fundedBy` so the screen can say which happened.
- *   · The withdrawal still republishes the commitment its deposit published:
- *     devnet leaf 16, commitment 8901821612542787864, present in both
- *     transactions. That linkage is NOT fixed and this page says so.
+ *   · The commitment linkage is CONDITIONAL as of 2026-08-25 and this page must
+ *     stay conditional with it. On circuit 7, which this app tries first, the
+ *     spend publishes no commitment at all and there is nothing to match against
+ *     the deposit. A note circuit 7 cannot prove falls back to the C1 + C3 pair,
+ *     which DOES republish it: devnet leaf 16, commitment 8901821612542787864,
+ *     present in both transactions. What is unconditional is the fee payer, and
+ *     P6 fails on it structurally and always will.
  *   · The proof system is hash-based: Poseidon and Merkle trees, no elliptic
  *     curves. The stealth address is hybrid X25519 + ML-KEM-768 (FIPS 203).
  *     Transaction signatures are Ed25519 and stay classical, so the page says
