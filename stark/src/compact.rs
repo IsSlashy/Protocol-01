@@ -3813,6 +3813,8 @@ mod tests {
             MERKLE_UPDATE_NUM_PERIODIC,
         };
 
+        use crate::air::merkle_update::CONSTRAINED_TRACE_WIDTH as MU_CONSTRAINED_WIDTH;
+
         // Small depth for fast test — same math applies to depth 13.
         let depth = 3usize;
         let old_leaf = BaseElement::new(111);
@@ -3852,10 +3854,17 @@ mod tests {
         let c_lde: Vec<BaseElement> = (0..lde_size)
             .map(|pos| {
                 let next_pos = (pos + blowup) % lde_size;
-                let current: Vec<BaseElement> =
-                    (0..10).map(|col| lde[col][pos]).collect();
-                let next: Vec<BaseElement> =
-                    (0..10).map(|col| lde[col][next_pos]).collect();
+                // 🚨 `(0..10)` until 2026-09-01, and it made this test panic
+                // rather than fail: C6's lift wave added ZK_LIFT_COL at index
+                // 10, `evaluate_merkle_update_transition` reads it, and a
+                // 10-element frame indexes out of bounds. Derived now, so the
+                // frame follows the AIR instead of a literal.
+                let current: Vec<BaseElement> = (0..MU_CONSTRAINED_WIDTH)
+                    .map(|col| lde[col][pos])
+                    .collect();
+                let next: Vec<BaseElement> = (0..MU_CONSTRAINED_WIDTH)
+                    .map(|col| lde[col][next_pos])
+                    .collect();
                 let x = lde_coset_shift() * lde_g.exp(pos as u64); // [B7] coset point
                 let periodic_at_x: Vec<BaseElement> = periodic_polys
                     .iter()
@@ -3882,11 +3891,12 @@ mod tests {
         let z = BaseElement::new(0x0BAD_BEEF_1337_CAFEu64);
         let z_next = z * trace_g;
 
-        // Evaluate trace polys at z and z*g to get OOD current/next for all 10 cols.
-        let ood_current: Vec<BaseElement> = (0..10)
+        // OOD current/next over the CONSTRAINED columns -- the randomizer is
+        // committed but never read by the transition, which is the point of it.
+        let ood_current: Vec<BaseElement> = (0..MU_CONSTRAINED_WIDTH)
             .map(|col| evaluate_poly(&inverse_ntt(&trace[col], trace_g), z))
             .collect();
-        let ood_next: Vec<BaseElement> = (0..10)
+        let ood_next: Vec<BaseElement> = (0..MU_CONSTRAINED_WIDTH)
             .map(|col| evaluate_poly(&inverse_ntt(&trace[col], trace_g), z_next))
             .collect();
         let periodic_at_z: Vec<BaseElement> =

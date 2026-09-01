@@ -429,13 +429,13 @@ pub const NUM_HASH_CYCLES: usize = TRACE_LENGTH / HASH_CYCLE_LEN; // 16
 pub const CANONICAL_DEPTH: usize = 11;
 
 /// First cycle whose rows carry no witness and exist only to be blinded.
-pub const FIRST_FREE_CYCLE: usize = CANONICAL_DEPTH; // 12
+pub const FIRST_FREE_CYCLE: usize = CANONICAL_DEPTH; // 11
 
 /// First trace row that is free on every column.
-pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 384
+pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 352
 
 /// Blinding positions this layout offers per column, against R = 4*22+2 = 90.
-pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 128
+pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 160
 
 /// Field elements `build_spend_trace` requires, in one flat slice:
 ///
@@ -444,7 +444,7 @@ pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 128
 ///   [ that .. that + TRACE_LENGTH )              the randomizer column
 /// ```
 ///
-/// 128*10 + 512 = 1792. ⛔ It is ONE argument rather than two because a caller
+/// 160*11 + 512 = 2272. ⛔ It is ONE argument rather than two because a caller
 /// that forgets the second half must fail to COMPILE, not silently prove with a
 /// zero-filled randomizer — which would look exactly like a working proof and
 /// would blind nothing.
@@ -708,6 +708,22 @@ pub fn spend_constraint_degrees() -> Vec<TransitionConstraintDegree> {
         // rounds, which carry base 7 with a 512-cycle and a 32-cycle. The
         // segment count and the FRI rate are unchanged; `segment_quotient_poly`
         // asserts that in both directions and fails in CI, not on chain.
+        //
+        // 🚨 THIS ENTRY WAS MISSING FROM 2026-08-31 TO 2026-09-01. The comment
+        // above landed with the lift wave and the entry did not, so this list
+        // described 18 constraints while `evaluate` wrote 19 and
+        // SPEND_NUM_CONSTRAINTS said 19. `SpendAir::new` asserts the two agree
+        // (spend.rs:624) and therefore panicked on EVERY construction, in
+        // release as well as debug.
+        //
+        // ⚠️ It did not reach the chain, and the reason is worth writing down
+        // rather than trusting: `SpendAir` appears nowhere in `stark/src/`
+        // outside this file, and `generate_spend_compact_proof` imports only
+        // `build_spend_trace`, `CANONICAL_DEPTH` and `MASK_LEN` from here. The
+        // winterfell Air is exercised by tests alone. A shipped C7 proof was
+        // generated while this list was wrong, which is exactly why the gap
+        // stayed invisible.
+        TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, TRACE_LENGTH]), // 18
     ]
 }
 
@@ -1908,21 +1924,42 @@ mod tests {
 
     #[test]
     fn constraint_and_periodic_counts_are_frozen() {
-        // [ZK-RANDOMIZER 2026-08-30] 10 -> 11, and the two constants are pinned
-        // SEPARATELY on purpose: the AIR constrains 10 columns and the wire
-        // carries 11. A future edit that widens the circuit must move
-        // CONSTRAINED_TRACE_WIDTH, and one that widens only the commitment must
-        // move TRACE_WIDTH. Pinning one number could not tell them apart.
-        assert_eq!(CONSTRAINED_TRACE_WIDTH, 10);
-        assert_eq!(TRACE_WIDTH, 11);
-        assert_eq!(RANDOMIZER_COL, 10);
-        assert_eq!(MASK_LEN, MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH);
-        // [ZK-DEPTH-11] 1792 -> 2112: 160 mask rows x 10 constrained columns,
-        // plus 512 for the randomizer column.
-        assert_eq!(MASK_LEN, 2112);
+        // The widths are pinned SEPARATELY on purpose: the AIR constrains 11
+        // columns and the wire carries 12. A future edit that widens the circuit
+        // must move CONSTRAINED_TRACE_WIDTH, and one that widens only the
+        // commitment must move TRACE_WIDTH. Pinning one number could not tell
+        // them apart.
+        //
+        // 🚨 THESE FOUR WERE RED ON HEAD FROM 2026-08-31 TO 2026-09-01, and the
+        // reason is the failure mode this repository keeps paying for. TWO waves
+        // landed two days apart: [ZK-DEPTH-11] on 08-30 moved the DEPTH numbers
+        // and dutifully re-pinned all four of them (CANONICAL_DEPTH,
+        // FIRST_FREE_ROW, MASK_ROWS, ROW_MERKLE_ROOT_OUT, still green below).
+        // [ZK-LIFT-COL] on 08-31 then moved the WIDTH numbers -- 10 -> 11 and
+        // 11 -> 12, adding ZK_LIFT_COL and its constraint [18] -- and re-pinned
+        // none of them. The pin
+        // was not forgotten; it was updated by the wave that did not touch these
+        // constants and left alone by the wave that did.
+        //
+        // ⛔ AND THE PIN COULD NOT CATCH THE DRIFT IN MASK_LEN, because the
+        // assertion guarding it was
+        //     assert_eq!(MASK_LEN, MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH)
+        // which is MASK_LEN's own definition restated. It reads like a check on
+        // the relationship and is a tautology: it holds for every value the
+        // three inputs can ever take, so it stayed green while the real number
+        // moved 1792 -> 2272. A shape pin must assert LITERALS. Every number
+        // below is now a literal for that reason.
+        assert_eq!(CONSTRAINED_TRACE_WIDTH, 11);
+        assert_eq!(TRACE_WIDTH, 12);
+        assert_eq!(ZK_LIFT_COL, 10);
+        assert_eq!(RANDOMIZER_COL, 11);
+        // 160 mask rows x 11 constrained columns, plus 512 for the randomizer.
+        assert_eq!(MASK_LEN, 2272);
         assert_eq!(MASK_ROWS, 160);
         assert_eq!(TRACE_LENGTH, 512);
-        assert_eq!(SPEND_NUM_CONSTRAINTS, 18);
+        // 18 -> 19: constraint [18] is the ZK degree lift on ZK_LIFT_COL
+        // (spend.rs:1040). It arrived with the lift column and belongs to it.
+        assert_eq!(SPEND_NUM_CONSTRAINTS, 19);
         assert_eq!(SPEND_NUM_PERIODIC, 13);
         assert_eq!(SPEND_NUM_PUBLIC_INPUTS, 6);
         assert_eq!(SPEND_NUM_BOUNDARY_ASSERTIONS, 6);
@@ -1955,10 +1992,13 @@ mod tests {
             .map(|d| d.get_evaluation_degree(TRACE_LENGTH))
             .max()
             .unwrap();
-        // 7*511 + 1*511 + 16*31 = 3577 + 511 + 496. Exactly C5's number: the
-        // `active` gate is folded INTO the outer periodic factor rather than
-        // added as a third, which keeps ce_blowup_factor at 8.
-        assert_eq!(max_eval, 4584, "C7 max transition evaluation degree drifted");
+        // [ZK-LIFT] 4584 -> 4599, MEASURED after the lift's degree entry was
+        // restored to `spend_constraint_degrees` on 2026-09-01. The maximum is
+        // now constraint [18] itself: 7*511 + 511 + 511, two period-512 gates,
+        // where the commitment pipeline's degree-7 rows carry 512 + 32 and reach
+        // only 4584. The old number was not a drift -- it was the list missing a
+        // constraint, and this test read 18 degrees and pinned their maximum.
+        assert_eq!(max_eval, 4599, "C7 max transition evaluation degree drifted");
 
         let min_blowup = degrees.iter().map(|d| d.min_blowup_factor()).max().unwrap();
         assert_eq!(min_blowup, 8, "ce_blowup_factor drifted; blowup 16 is the ceiling");
@@ -1967,8 +2007,15 @@ mod tests {
         // divisor (degree n - 1), against the constraint-evaluation domain.
         let composition_degree = max_eval - (TRACE_LENGTH - 1);
         let ce_domain = TRACE_LENGTH * min_blowup;
-        assert_eq!(composition_degree, 4073);
+        assert_eq!(composition_degree, 4088);
         assert!(composition_degree < ce_domain, "composition degree exceeds the CE domain");
+        // ⛔ THE HEADROOM IS 8, and it is the entire reason constraint [18]
+        // carries TWO period-512 gates rather than three. A third puts the
+        // evaluation degree past the CE domain and `ce_blowup_factor` from 8 to
+        // 16 -- a wire break in both directions that the deployed verifier
+        // rejects. Pinned as a NUMBER so that spending the last of it fails
+        // here, in CI, instead of on chain.
+        assert_eq!(ce_domain - composition_degree, 8, "the CE headroom moved");
 
         // And the live AirContext agrees.
         let (trace, nullifier, root, _) = honest();

@@ -73,23 +73,39 @@ const GEN_512: u64 = 0x1905_D02A_5C41_1F4E; // trace generator, 512 rows
 const GEN_8192: u64 = 0x1544_EF23_35D1_7997; // LDE generator, 8192 points
 const COSET_SHIFT: u64 = 7;
 
-const TRACE_LEN: usize = 512;
-const TRACE_WIDTH: usize = 10;
+// ⛔ IMPORTED, NOT RESTATED -- and that is the whole repair.
+//
+// 🚨 Every constant below the import was a LOCAL COPY until 2026-09-01, and the
+// copies drifted: CANONICAL_DEPTH sat at 12 against the AIR's 11, TRACE_WIDTH at
+// 10 against the AIR's 12, and the mask this file built was 1280 elements long
+// where the prover demands MASK_LEN = 2272. So the ONLY harness that has ever
+// attacked C7 could not build a proof at all. It panicked before measuring
+// anything, while the repository went on citing its result.
+//
+// It is the same failure that broke every v4 spend in the browser six days
+// earlier, and the same one the shape pin in `air/spend.rs` was carrying at the
+// same moment: a constant written on both sides of a wire and moved on one side.
+// A corrected copy would only reset the clock. The cure is no copy.
+use p01_stark::air::spend::{
+    CANONICAL_DEPTH, FIRST_FREE_CYCLE, FIRST_FREE_ROW, HASH_CYCLE_LEN, MASK_LEN, MASK_ROWS,
+    TRACE_LENGTH as TRACE_LEN, TRACE_WIDTH,
+};
+
 const LDE_SIZE: u64 = 8192;
 const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 22;
 const QUOTIENT_SEGMENTS: usize = 8;
 const FRI_FINAL_POLY_SIZE: usize = 32; // [C7] not 16
 
-// C7 trace layout, air/spend.rs:290-368.
-const HASH_CYCLE_LEN: usize = 32;
-const CANONICAL_DEPTH: usize = 12;
-const FIRST_FREE_CYCLE: usize = CANONICAL_DEPTH;
-const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 384
-const MASK_ROWS: usize = TRACE_LEN - FIRST_FREE_ROW; // 128
 const HOLD_CONSTANT_LAST: usize = 3 * HASH_CYCLE_LEN - 1; // 95
-/// The hold column: rows 0..=95 carry the commitment.
+/// The hold column: rows 0..=95 carry the commitment. Column 9 is pinned in the
+/// AIR itself (`spend.rs:2102` refuses any boundary assertion targeting it), so
+/// this one is a genuine constant of the layout rather than a duplicated width.
 const HOLD_COL: usize = 9;
+
+/// Filler segments: one per hash cycle between the commitment hold and the first
+/// free row. Derived, because it moves whenever the Merkle depth does.
+const FILLER_SEGMENTS: usize = FIRST_FREE_CYCLE - 3;
 
 fn self_check_field() {
     assert_eq!(fpow(GEN_512, 512), 1, "GEN_512 is not a 512th root");
@@ -277,7 +293,11 @@ fn spend_proof(mask_seed: u64) -> p01_stark::compact::GenericCompactProofData {
         z ^= z << 17;
         z % (P as u64)
     };
-    let mask: Vec<u64> = (0..MASK_ROWS * TRACE_WIDTH).map(|_| next()).collect();
+    // MASK_LEN, not MASK_ROWS * TRACE_WIDTH: the flat slice is the row mask
+    // (MASK_ROWS x CONSTRAINED_TRACE_WIDTH) FOLLOWED BY the randomizer column
+    // (TRACE_LENGTH). Computing it here from a width was what made this file
+    // unable to prove once the randomizer column landed.
+    let mask: Vec<u64> = (0..MASK_LEN).map(|_| next()).collect();
     let path_elements: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 0x51A7 + i * 7919).collect();
     let path_indices: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     let recipient_hash = [0x1111_1111u64, 0x2222_2222, 0x3333_3333, 0x4444_4444];
@@ -311,10 +331,17 @@ fn the_c1_attack_does_not_close_on_c7() {
 
     println!("C7 hold column {HOLD_COL}");
     println!("  published equations : {}", nodes.len());
-    println!("  unknowns            : {} (1 hold + 9 filler + {MASK_ROWS} mask)", segs.len());
+    println!(
+        "  unknowns            : {} (1 hold + {FILLER_SEGMENTS} filler + {MASK_ROWS} mask)",
+        segs.len()
+    );
     println!("  short by            : {}", segs.len() as i64 - nodes.len() as i64);
 
-    assert_eq!(segs.len(), 1 + 9 + MASK_ROWS, "the model must be the repo's own 138");
+    assert_eq!(
+        segs.len(),
+        1 + FILLER_SEGMENTS + MASK_ROWS,
+        "the model must match the AIR's own geometry"
+    );
 
     assert!(
         solve(system(&nodes, &segs), segs.len()).is_none(),
@@ -346,7 +373,11 @@ fn collapsing_the_mask_makes_c7_solvable() {
     println!("  unknowns : {} (was {})", collapsed.len(), segments(false).len());
     println!("  equations: {}", nodes.len());
 
-    assert_eq!(collapsed.len(), 1 + 9 + 1, "1 hold + 9 filler + 1 collapsed mask");
+    assert_eq!(
+        collapsed.len(),
+        1 + FILLER_SEGMENTS + 1,
+        "1 hold + the filler cycles + 1 collapsed mask"
+    );
     assert!(
         nodes.len() > collapsed.len(),
         "the counterfactual must be over-determined or it proves nothing",
@@ -377,13 +408,14 @@ fn the_counting_argument_is_only_as_good_as_the_independence() {
     println!("            unknowns  equations  independent?  verdict");
     println!("  C0 (32)         32        110  n/a           SOLVED by plain Lagrange");
     println!("  C1 (128)        93        110  no, 35 copies SOLVED by the AIR-aware solve");
-    println!("  C7 (512)       138  {published:>9}  yes, CSPRNG   not solved by that instrument");
+    let c7_unknowns = segments(false).len();
+    println!("  C7 (512)  {c7_unknowns:>9}  {published:>9}  yes, CSPRNG   not solved by that instrument");
 
     // C7's margin is the mask's, and nothing else: strip the mask and the hold
-    // column has 10 unknowns against ~90 equations, which is C1's situation
-    // twice over.
-    let without_mask = segments(false).len() - MASK_ROWS;
-    assert_eq!(without_mask, 10, "1 hold + 9 filler");
+    // column has a handful of unknowns against ~90 equations, which is C1's
+    // situation twice over.
+    let without_mask = c7_unknowns - MASK_ROWS;
+    assert_eq!(without_mask, 1 + FILLER_SEGMENTS, "1 hold + the filler cycles");
     assert!(
         published > without_mask,
         "without the mask the hold column is over-determined by {}",
