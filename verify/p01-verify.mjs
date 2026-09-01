@@ -1561,10 +1561,18 @@ async function verifySpend(rpc, signature, opts = {}) {
         'published bytes (stark/tests/air_aware_recovery_c1.rs), because 35 of its rows are copies ' +
         'of others — so "more unknowns than equations" is not a security claim. The same solver ' +
         'does NOT close on C7, and collapsing its mask makes it close, so the margin is the mask ' +
-        '(air_aware_recovery_c7.rs). That is ONE channel: the quotient decomposition, the DEEP ' +
-        'composition polynomial, the vector commitment and the absent FRI salt have no simulation ' +
-        'argument at all (stark/src/air/spend.rs:262-268). A PASS on P3 says the commitment was ' +
-        'not copied into the proof; it says nothing about whether the proof hides it.',
+        '(air_aware_recovery_c7.rs). ⚠️ THIS PARAGRAPH SAID, UNTIL 2026-09-01, that the quotient ' +
+        'decomposition, the DEEP composition polynomial, the vector commitment and the absent FRI ' +
+        'salt had no simulation argument at all. That is out of date and it understated the ' +
+        'result: all four now carry executing measurements in stark/src/compact/zk_hiding.rs, ' +
+        'each reducing to the degree of a committed value in one uniform mask element. X1 reads ' +
+        'rank 7 of 7 on the free OOD claims; X2 reads degree 1 on the trace and quotient trees; ' +
+        'X3 reads degree 1 on the DEEP composition, all seven committed FRI layers and the live ' +
+        'terminal coefficients, against a Poseidon-column control reading 7 at the same ' +
+        'positions. ⛔ It is still not a zero-knowledge proof: those are marginal, per-value ' +
+        'results at SAMPLED positions, not the joint law of the transcript, and they cover ' +
+        'neither the grinding nonce nor the query positions. A PASS on P3 says the commitment ' +
+        'was not copied into the proof; it says nothing about whether the proof hides it.',
     ),
   );
 

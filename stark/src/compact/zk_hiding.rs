@@ -203,6 +203,17 @@ struct C7Internals {
     q_lde: Vec<Vec<u64>>,
     /// `Q_0(z) .. Q_{K-1}(z)` — the OOD claims X1 is about.
     q_ood: Vec<u64>,
+    /// The DEEP composition over the LDE. These are FRI layer 0's values, and
+    /// layer 0 is committed through the quotient root rather than a tree of its
+    /// own — so every one of them is a preimage a verifier never sees.
+    deep_lde: Vec<u64>,
+    /// Committed FRI layers 1..=L-1, each one a tree of its own whose leaves are
+    /// opened at `num_queries` positions and hashed at every other.
+    fri_layers: Vec<Vec<u64>>,
+    /// The terminal polynomial's coefficients. Unlike every layer above it these
+    /// are sent IN THE CLEAR, all 32 of them, so a degree-0 answer here would not
+    /// be a hiding weakness — it would be a published witness function.
+    final_poly: Vec<u64>,
 }
 
 /// One C7 witness, held fixed. Only the mask varies across calls in this file;
@@ -260,7 +271,61 @@ fn c7_internals(
     let segs = segment_quotient_poly(&q_poly, TRACE_LENGTH, LDE_SIZE, lde_g, K);
     let q_ood = segment_ood_values(&segs, z);
 
-    C7Internals { trace_lde: lde, q_lde: segs.lde, q_ood }
+    // ── DEEP + FRI, with the fold challenges supplied for the same reason
+    //    `alpha` and `z` are. Every alpha_i is a Fiat-Shamir output of a
+    //    transcript containing the layer roots, so it moves when the mask moves
+    //    and `mask -> layer_i` is not well defined along the production path. A
+    //    simulator programs those oracle answers, which makes them uniform and
+    //    independent of their preimage; fixing them and varying the mask is the
+    //    correct experiment, exactly as the module header argues for `z`.
+    let ood_current: Vec<u64> =
+        (0..TRACE_WIDTH).map(|c| evaluate_poly(&trace_polys[c], z).as_int()).collect();
+    let ood_next: Vec<u64> = (0..TRACE_WIDTH)
+        .map(|c| evaluate_poly(&trace_polys[c], z * trace_g).as_int())
+        .collect();
+
+    let deep = deep_composition_lde(
+        &lde,
+        &segs.lde,
+        &ood_current,
+        &ood_next,
+        &q_ood,
+        z,
+        trace_g,
+        lde_g,
+        BaseElement::new(GAMMA),
+    );
+
+    // The same loop `fri_commit_phase` runs, with `derive_fri_alpha` replaced by
+    // the fixed table. The layer that reaches the terminal size is NOT committed
+    // -- it ships as coefficients -- so it is excluded here for the same reason.
+    let mut current = deep.clone();
+    let mut cur_gen = lde_g;
+    let mut cur_inv_shift = lde_coset_shift_inv();
+    let mut fri_layers: Vec<Vec<u64>> = Vec::new();
+    let mut i = 0usize;
+    while current.len() > SPEND_FRI_FINAL_POLY_SIZE {
+        let a = BaseElement::new(FRI_ALPHAS[i]);
+        let folded = fri_fold_layer(&current, cur_gen, a, cur_inv_shift);
+        cur_gen = cur_gen * cur_gen;
+        cur_inv_shift = cur_inv_shift * cur_inv_shift;
+        if folded.len() > SPEND_FRI_FINAL_POLY_SIZE {
+            fri_layers.push(folded.iter().map(|f| f.as_int()).collect());
+        }
+        current = folded;
+        i += 1;
+    }
+    let final_poly: Vec<u64> =
+        inverse_ntt(&current, cur_gen).iter().map(|f| f.as_int()).collect();
+
+    C7Internals {
+        trace_lde: lde,
+        q_lde: segs.lde,
+        q_ood,
+        deep_lde: deep.iter().map(|f| f.as_int()).collect(),
+        fri_layers,
+        final_poly,
+    }
 }
 
 /// A reproducible mask. Deliberately NOT a CSPRNG: the experiment needs the same
@@ -285,6 +350,22 @@ fn mask_index(row: usize, col: usize) -> usize {
     assert!(row < MASK_ROWS && col < CONSTRAINED_TRACE_WIDTH);
     row * CONSTRAINED_TRACE_WIDTH + col
 }
+
+/// The DEEP batching coefficient, held fixed. See `c7_internals`.
+const GAMMA: u64 = 0x0A5A_5A5A_1234_9E77;
+
+/// Eight fold challenges: `log2(8192 / 32)`. Fixed for the same reason `GAMMA`
+/// is, and distinct so a fold cannot accidentally be the identity.
+const FRI_ALPHAS: [u64; 8] = [
+    0x1111_1111_0000_0007,
+    0x2222_2222_0000_0013,
+    0x3333_3333_0000_001D,
+    0x4444_4444_0000_0025,
+    0x5555_5555_0000_0033,
+    0x6666_6666_0000_003B,
+    0x7777_7777_0000_0043,
+    0x8888_8888_0000_0055,
+];
 
 const ALPHA: u64 = 0x1234_5678_9ABC_DEF0;
 const ALPHA_BND: u64 = 0x0FED_CBA9_8765_4321;
@@ -525,7 +606,216 @@ fn quotient_leaves_are_exactly_uniform_in_the_lift_column() {
 }
 
 // ===========================================================================
-// X1 — the quotient's seven free OOD coordinates
+// X3 -- the DEEP composition, the FRI layers, and the terminal polynomial
+// ===========================================================================
+
+/// The channel `air/spend.rs` named and nothing measured, until now.
+///
+/// # What was actually open
+///
+/// X1 and X2 close the trace and quotient trees. Everything downstream of them
+/// was carried by a COUNTING margin -- "247 published values against 512 random
+/// ones" -- and the file that produced that number disclaimed it in the same
+/// breath: it does not measure whether the available randomness has full RANK.
+/// A count is not a distribution, and this repository has already been bitten
+/// once by exactly that substitution (`air_aware_recovery_c1.rs`: 93 unknowns
+/// against 110 equations was "more unknowns than equations", and the witness
+/// came out anyway, because 35 of the rows were copies of others).
+///
+/// Three objects sit in that gap, and they are not equivalent:
+///
+///   * **The DEEP composition.** FRI layer 0. It is never given a tree of its
+///     own -- the quotient root commits it -- so every one of its `LDE_SIZE`
+///     values is a preimage no verifier ever sees.
+///   * **The FRI layers.** Seven trees on C7, each unsalted
+///     `SHA256(0x00 | preimage)` over its whole domain and opened at 22
+///     positions. This is X2 again one abstraction lower, and it was the one
+///     place where unsalted leaves met values with no uniformity measurement.
+///   * **The terminal polynomial.** 32 coefficients sent IN THE CLEAR. A
+///     degree-0 answer here would not be weak hiding, it would be a published
+///     function of the witness.
+///
+/// # Why the answer is 1 everywhere, and why measuring it is still the point
+///
+/// The composition is affine in the trace and quotient values, whose degree X1
+/// and X2 already pinned at 1; the fold `even + alpha*odd` is LINEAR in the
+/// layer below it; and `inverse_ntt` is linear too. So degree 1 should survive
+/// all the way down, and that argument is short enough to be suspicious of.
+/// Short arguments about this prover have been wrong before -- the coset offset
+/// was "obviously" applied and the Merkle depth was "obviously" 12 -- so the
+/// chain is measured link by link rather than asserted end to end.
+#[test]
+fn deep_and_every_fri_layer_are_exactly_uniform_in_one_blinding_element() {
+    let xs: Vec<u64> = (1..=10u64).map(|i| i * 1_000_003 + 17).collect();
+
+    type Hist = std::collections::BTreeMap<i32, usize>;
+    #[allow(clippy::type_complexity)]
+    let mut report: Vec<(usize, &str, Hist, Vec<(usize, Hist)>, Hist, Hist)> = Vec::new();
+
+    for (col, label) in [(0usize, "Poseidon state"), (ZK_LIFT_COL, "lift column")] {
+        let slot = mask_index(0, col);
+        let mut mask = base_mask(0x5EED_0007);
+        let mut runs = Vec::new();
+        for &x in xs.iter() {
+            mask[slot] = x;
+            runs.push(run(&mask));
+        }
+
+        let mut deep_hist = Hist::new();
+        for i in 0..64 {
+            let pos = i * (LDE_SIZE / 64) + 3;
+            let ys: Vec<u64> = runs.iter().map(|r| r.deep_lde[pos]).collect();
+            *deep_hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+        }
+
+        let mut layer_hists: Vec<(usize, Hist)> = Vec::new();
+        for l in 0..runs[0].fri_layers.len() {
+            let n = runs[0].fri_layers[l].len();
+            let step = (n / 32).max(1);
+            let mut h = Hist::new();
+            for pos in (0..n).step_by(step) {
+                let ys: Vec<u64> = runs.iter().map(|r| r.fri_layers[l][pos]).collect();
+                *h.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
+            }
+            layer_hists.push((n, h));
+        }
+
+        // The terminal splits into two regions that mean OPPOSITE things, and
+        // reporting them as one histogram is what made the first run of this
+        // test look like a leak. Coefficients at or above
+        // `SPEND_FRI_FINAL_POLY_DEGREE_BOUND` are identically zero BY
+        // CONSTRUCTION -- that zero IS the degree bound FRI enforces, the
+        // shipped prover asserts it (`compact.rs:5404`) and the verifier
+        // re-checks it. A constant there carries no witness information because
+        // it carries no information at all. Below the bound is the real
+        // question.
+        let mut term_live = Hist::new();
+        let mut term_pad = Hist::new();
+        for c in 0..runs[0].final_poly.len() {
+            let ys: Vec<u64> = runs.iter().map(|r| r.final_poly[c]).collect();
+            let d = degree(&interpolate(&xs, &ys));
+            if c < SPEND_FRI_FINAL_POLY_DEGREE_BOUND {
+                *term_live.entry(d).or_insert(0) += 1;
+            } else {
+                *term_pad.entry(d).or_insert(0) += 1;
+                assert!(
+                    runs.iter().all(|r| r.final_poly[c] == 0),
+                    "terminal coefficient {c} is above the degree bound and NOT zero; FRI is \
+                     not enforcing the bound this measurement assumes"
+                );
+            }
+        }
+
+        report.push((col, label, deep_hist, layer_hists, term_live, term_pad));
+    }
+
+    fn describe(d: &i32) -> String {
+        match d {
+            -1 | 0 => "CONSTANT -- no hiding".to_string(),
+            1 => "affine, EXACTLY uniform".to_string(),
+            _ => format!("degree {d}, non-constant but law unproven"),
+        }
+    }
+
+    println!();
+    println!("X3 / DEEP + FRI - degree of a committed value in ONE mask element:");
+    for (col, label, deep, layers, term_live, term_pad) in report.iter() {
+        println!("  mask column {col} ({label}):");
+        for (d, n) in deep.iter() {
+            println!("    DEEP (layer 0, {LDE_SIZE} values) {n:4} sampled : {}", describe(d));
+        }
+        for (i, (n, h)) in layers.iter().enumerate() {
+            for (d, c) in h.iter() {
+                println!(
+                    "    FRI layer {} ({n:5} values)        {c:4} sampled : {}",
+                    i + 1,
+                    describe(d)
+                );
+            }
+        }
+        for (d, n) in term_live.iter() {
+            println!(
+                "    terminal, below the bound         {n:4} coeffs  : {}",
+                describe(d)
+            );
+        }
+        let pad: usize = term_pad.values().sum();
+        println!("    terminal, above the bound         {pad:4} coeffs  : structurally zero");
+    }
+
+    fn all_one(h: &Hist) -> bool {
+        h.len() == 1 && h.contains_key(&1)
+    }
+
+    let (_, _, deep, layers, term_live, term_pad) = &report[1];
+    assert!(
+        all_one(deep),
+        "the DEEP composition is not affine in the lift column at every sampled position: {deep:?}"
+    );
+    for (i, (n, h)) in layers.iter().enumerate() {
+        assert!(
+            all_one(h),
+            "FRI layer {} ({n} values) is not affine in the lift column: {h:?}",
+            i + 1
+        );
+    }
+    assert_eq!(
+        term_live.values().sum::<usize>(),
+        SPEND_FRI_FINAL_POLY_DEGREE_BOUND,
+        "the live region of the terminal polynomial is not the degree bound"
+    );
+    assert!(
+        all_one(term_live),
+        "a terminal coefficient below the degree bound is not affine in the lift column: \
+         {term_live:?}. All {SPEND_FRI_FINAL_POLY_DEGREE_BOUND} of them are transmitted in the \
+         clear, so a constant among them is a published function of the witness."
+    );
+    // Measured, not assumed, and it is a check on the EXPERIMENT: the bound is
+    // 2 and this sweep independently found exactly 2 moving coefficients out of
+    // 32. Had the sweep been tracking something other than the shipped
+    // pipeline, there is no reason it would have rediscovered the constant.
+    assert_eq!(
+        term_pad.keys().copied().collect::<Vec<i32>>(),
+        vec![-1],
+        "coefficients above the degree bound are not the zero polynomial: {term_pad:?}"
+    );
+
+    // THE CALIBRATION, AND IT IS NOT OPTIONAL. Every value in this pipeline is a
+    // field element that moves when the mask moves, so "it changed" proves
+    // nothing: an instrument that answered 1 unconditionally would pass all
+    // three assertions above while measuring the mask's own arithmetic. The
+    // Poseidon column reaches these same values too, and must NOT reach them at
+    // degree 1 -- it enters through six multiplications. If this ever reads 1,
+    // the sweep has stopped tracking the pipeline and the greens above are noise.
+    let (_, _, ctrl_deep, ctrl_layers, ctrl_term, _) = &report[0];
+    assert!(
+        !all_one(ctrl_deep),
+        "the control answered degree 1 through the Poseidon column: {ctrl_deep:?}. The \
+         measurement is not distinguishing the lift column from an ordinary trace column, so \
+         the assertions above are measuring nothing."
+    );
+    assert!(
+        ctrl_layers.iter().any(|(_, h)| !all_one(h)) || !all_one(ctrl_term),
+        "the control answered degree 1 on every FRI layer AND on the live terminal region"
+    );
+
+    println!();
+    println!(
+        "  => the DEEP composition, all {} committed FRI layers and all {} live terminal",
+        layers.len(),
+        term_live.values().sum::<usize>()
+    );
+    println!("     coefficients are affine in one uniform mask element, hence exactly uniform.");
+    println!(
+        "     The other {} terminal coefficients are the zero the degree bound forces.",
+        term_pad.values().sum::<usize>()
+    );
+    println!("     X3 closes on the same argument as X1 and X2, and the counting margin is no");
+    println!("     longer load-bearing anywhere in this proof.");
+}
+
+// ===========================================================================
+// X1 -- the quotient's seven free OOD coordinates
 // ===========================================================================
 
 /// The degree of each OOD claim in one mask element, one constrained column at a

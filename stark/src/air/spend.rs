@@ -260,15 +260,35 @@
 //! only b7 has the coset. A C7 built on master emits a proof the deployed
 //! verifier cannot parse, and would reintroduce the direct-read channels on top.
 //!
-//! **What is still open, and it is not this column.** Masking the trace does
-//! not touch the quotient decomposition, the DEEP composition polynomial, or
-//! the vector commitment, and there is no FRI salt. Those are prover and
-//! commitment-layer channels with no simulation argument here, they are
-//! Winterfell PR #293's territory, and they change proof serialization.
-//! ⛔ Until they are addressed, C7 is **not** perfect zero-knowledge and must
-//! not be described as such. What is now true and measured is narrower and
-//! worth having: the note commitment is not recoverable from the published
-//! evaluations of the trace columns.
+//! **What was open here, and what closed it.** This paragraph used to say that
+//! masking the trace does not touch the quotient decomposition, the DEEP
+//! composition polynomial or the vector commitment, and that there is no FRI
+//! salt -- four channels with no simulation argument. That was true when it was
+//! written and it is quoted downstream, including by `p01-verify.mjs`'s P3b. It
+//! is no longer the state of the tree, and leaving it standing understated the
+//! result as badly as an overclaim would have overstated it.
+//!
+//! All four now have EXECUTING measurements in `compact::zk_hiding`, and they
+//! all reduce to one number: the degree, in a single uniform mask element, of
+//! the value the prover commits to. Degree 1 with a non-zero slope means the
+//! value is `a*m + b` on a uniform `m`, hence exactly uniform on the field
+//! whatever the witness is -- a proof, not an estimate.
+//!
+//!   * the quotient decomposition and its free OOD split -- X1, rank 7 of 7;
+//!   * the trace and quotient trees' unopened leaves -- X2, degree 1;
+//!   * the DEEP composition, all seven committed FRI layers, and the terminal
+//!     polynomial's live coefficients -- X3, degree 1, against a Poseidon-column
+//!     control that reads 7 at every one of the same positions.
+//!
+//! ⛔ C7 IS STILL NOT PERFECT ZERO-KNOWLEDGE AND MUST NOT BE DESCRIBED AS SUCH.
+//! The gap is no longer "an unmeasured channel", it is the distance between what
+//! these measurements are and what a simulation argument would be. They are
+//! taken at SAMPLED positions -- 64 of 8192 on the DEEP layer, 32 per FRI layer,
+//! 48 per circuit on the quotient -- and they establish MARGINAL uniformity per
+//! value plus one 7-dimensional joint result, not the joint law of the whole
+//! published transcript. Nothing here covers the grinding nonce or the query
+//! positions, and the uniformity of `draw_spend_mask`'s own draw is assumed
+//! rather than measured.
 //!
 //! Public inputs: `[nullifier, root, rh0, rh1, rh2, rh3]` — SIX felts. The
 //! recipient hash is the full 256 bits split into four u64s; one felt would be
