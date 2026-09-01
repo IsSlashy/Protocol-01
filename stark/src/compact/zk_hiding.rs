@@ -214,6 +214,9 @@ struct C7Internals {
     /// are sent IN THE CLEAR, all 32 of them, so a degree-0 answer here would not
     /// be a hiding weakness — it would be a published witness function.
     final_poly: Vec<u64>,
+    /// `T_c(z)` and `T_c(z*g)` for every committed column. These go on the wire
+    /// verbatim, so they belong to the published vector X4 takes the rank of.
+    ood_trace: Vec<u64>,
 }
 
 /// One C7 witness, held fixed. Only the mask varies across calls in this file;
@@ -318,6 +321,9 @@ fn c7_internals(
     let final_poly: Vec<u64> =
         inverse_ntt(&current, cur_gen).iter().map(|f| f.as_int()).collect();
 
+    let mut ood_trace = ood_current.clone();
+    ood_trace.extend_from_slice(&ood_next);
+
     C7Internals {
         trace_lde: lde,
         q_lde: segs.lde,
@@ -325,6 +331,7 @@ fn c7_internals(
         deep_lde: deep.iter().map(|f| f.as_int()).collect(),
         fri_layers,
         final_poly,
+        ood_trace,
     }
 }
 
@@ -556,7 +563,11 @@ fn quotient_leaves_are_exactly_uniform_in_the_lift_column() {
     // reaches every committed quotient value at degree 7 -- non-constant, so
     // not guessable, but not proven uniform either. The lift column reaches
     // the same values at degree 1, which IS a proof.
-    let sample: Vec<usize> = (0..64).map(|i| i * (LDE_SIZE / 64) + 3).collect();
+    // EXHAUSTIVE. This read 64 of 8192 until 2026-09-01, and the sampling was
+    // never buying anything: `run` already computes every value, so the sample
+    // only skipped interpolations of ten points. A claim about "every committed
+    // quotient value" that checks 0.8% of them is a claim about the sample.
+    let sample: Vec<usize> = (0..LDE_SIZE).collect();
     let xs: Vec<u64> = (1..=10u64).map(|i| i * 1_000_003 + 17).collect();
 
     let mut report: Vec<(usize, &str, std::collections::BTreeMap<i32, usize>)> = Vec::new();
@@ -661,9 +672,10 @@ fn deep_and_every_fri_layer_are_exactly_uniform_in_one_blinding_element() {
             runs.push(run(&mask));
         }
 
+        // EXHAUSTIVE, for the same reason the quotient sweep above is: the
+        // values are already in hand and the sample was only saving arithmetic.
         let mut deep_hist = Hist::new();
-        for i in 0..64 {
-            let pos = i * (LDE_SIZE / 64) + 3;
+        for pos in 0..LDE_SIZE {
             let ys: Vec<u64> = runs.iter().map(|r| r.deep_lde[pos]).collect();
             *deep_hist.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
         }
@@ -671,9 +683,8 @@ fn deep_and_every_fri_layer_are_exactly_uniform_in_one_blinding_element() {
         let mut layer_hists: Vec<(usize, Hist)> = Vec::new();
         for l in 0..runs[0].fri_layers.len() {
             let n = runs[0].fri_layers[l].len();
-            let step = (n / 32).max(1);
             let mut h = Hist::new();
-            for pos in (0..n).step_by(step) {
+            for pos in 0..n {
                 let ys: Vec<u64> = runs.iter().map(|r| r.fri_layers[l][pos]).collect();
                 *h.entry(degree(&interpolate(&xs, &ys))).or_insert(0) += 1;
             }
@@ -722,12 +733,12 @@ fn deep_and_every_fri_layer_are_exactly_uniform_in_one_blinding_element() {
     for (col, label, deep, layers, term_live, term_pad) in report.iter() {
         println!("  mask column {col} ({label}):");
         for (d, n) in deep.iter() {
-            println!("    DEEP (layer 0, {LDE_SIZE} values) {n:4} sampled : {}", describe(d));
+            println!("    DEEP (layer 0)  {n:6} of {LDE_SIZE} values : {}", describe(d));
         }
         for (i, (n, h)) in layers.iter().enumerate() {
             for (d, c) in h.iter() {
                 println!(
-                    "    FRI layer {} ({n:5} values)        {c:4} sampled : {}",
+                    "    FRI layer {}    {c:6} of {n:5} values : {}",
                     i + 1,
                     describe(d)
                 );
@@ -812,6 +823,329 @@ fn deep_and_every_fri_layer_are_exactly_uniform_in_one_blinding_element() {
     );
     println!("     X3 closes on the same argument as X1 and X2, and the counting margin is no");
     println!("     longer load-bearing anywhere in this proof.");
+}
+
+// ===========================================================================
+// X5 -- the mask itself
+// ===========================================================================
+
+/// Everything above assumes the mask is uniform. This is the one file that
+/// checks it, and the assumption has been false in this crate before.
+///
+/// ⛔ X1 through X4 all measure the same shape: a committed value is `a*m + b`
+/// with `a != 0`, therefore exactly uniform BECAUSE `m` is. Every one of those
+/// results is conditional on the last three words. Until 2026-08-30 they were
+/// false on the shipping path: `draw_blinding_mask` lived inside
+/// `#[cfg(feature = "wasm")]`, so every non-wasm caller wrote its own mask and
+/// each one wrote a DETERMINISTIC xorshift -- `bin/gen_proof.rs` seeded all four
+/// of its arms with the same literal. A proof it emitted blinded nothing at all,
+/// and no measurement in this file would have noticed, because they all take the
+/// mask as given.
+///
+/// So this checks the three things that make the mask a mask:
+///
+///   1. **In-field by rejection, not by reduction.** `v % p` biases the low
+///      2^32 of Goldilocks by a factor of two. The bias is statistically
+///      invisible at any sample size a test can draw -- one input in 2^32 is
+///      remapped -- so it is pinned at the SOURCE, where it is visible.
+///   2. **Not deterministic.** Two draws must differ, and no value may repeat
+///      inside one draw. A xorshift regression fails both.
+///   3. **Balanced.** A grossly broken entropy source shows up in the bit
+///      frequencies long before it shows up anywhere else.
+///
+/// And a structural scan, because the 08-30 defect was structural: every mask
+/// the shipping binary binds must come from the CSPRNG, counted rather than
+/// eyeballed.
+#[test]
+fn the_mask_every_other_measurement_assumes_is_uniform() {
+    const GOLDILOCKS: u64 = 0xFFFF_FFFF_0000_0001;
+    const N: usize = 4096;
+
+    let a = crate::draw_blinding_mask(N).expect("the platform CSPRNG is unavailable");
+    let b = crate::draw_blinding_mask(N).expect("the platform CSPRNG is unavailable");
+
+    assert_eq!(a.len(), N);
+    assert!(
+        a.iter().chain(b.iter()).all(|&v| v < GOLDILOCKS),
+        "a drawn value is outside Goldilocks; the rejection loop is not rejecting"
+    );
+
+    assert_ne!(
+        a, b,
+        "two consecutive draws are IDENTICAL. The mask is deterministic, and every uniformity \
+         result in this file is conditional on it not being."
+    );
+
+    let uniq: std::collections::BTreeSet<u64> = a.iter().copied().collect();
+    assert_eq!(
+        uniq.len(),
+        a.len(),
+        "a value repeats inside one draw of {N}; on a 2^64 field the birthday probability of \
+         that is about 2^-40, so it is a broken source, not luck"
+    );
+
+    // Bit frequencies. sigma of a proportion over 8192 samples is ~0.0055, so
+    // 0.06 is an eleven-sigma gate: it cannot fire by chance and it catches a
+    // stuck bit, a zero-filled buffer or a byte-order slip.
+    let mut ones = [0usize; 64];
+    for &v in a.iter().chain(b.iter()) {
+        for (bit, slot) in ones.iter_mut().enumerate() {
+            if (v >> bit) & 1 == 1 {
+                *slot += 1;
+            }
+        }
+    }
+    let n = (a.len() + b.len()) as f64;
+    let mut worst = (0usize, 0.5f64);
+    for bit in 0..32 {
+        let f = ones[bit] as f64 / n;
+        if (f - 0.5).abs() > (worst.1 - 0.5).abs() {
+            worst = (bit, f);
+        }
+        assert!(
+            (f - 0.5).abs() < 0.06,
+            "bit {bit} is 1 in {f:.4} of {n} draws; the entropy source is not balanced"
+        );
+    }
+
+    // ── the structural half ────────────────────────────────────────────────
+    const GEN: &str = include_str!("../bin/gen_proof.rs");
+    let bindings = GEN.matches("let mask").count();
+    let draws = GEN.matches("draw_blinding_mask").count();
+    assert!(bindings > 0, "the scan found no mask binding at all in gen_proof.rs");
+    assert_eq!(
+        bindings, draws,
+        "gen_proof.rs binds {bindings} masks but reaches the CSPRNG {draws} times. One of its \
+         arms is building a mask some other way, which is exactly the 2026-08-30 defect: four \
+         arms, four deterministic xorshifts, all seeded with the same literal."
+    );
+
+    println!();
+    println!("X5 / the mask - the assumption every other result rests on:");
+    println!("  drawn                  : {} values, all inside Goldilocks", 2 * N);
+    println!("  distinct within a draw : {} of {N}", uniq.len());
+    println!("  two draws differ       : yes");
+    println!("  worst bit balance      : bit {} at {:.4}", worst.0, worst.1);
+    println!("  gen_proof mask sources : {draws} CSPRNG draws for {bindings} bindings");
+    println!();
+    println!("  => the mask is drawn by rejection from the platform CSPRNG on every shipping");
+    println!("     path, so X1..X4's 'because m is uniform' has something under it.");
+    println!("     ⛔ This is a sanity floor, not a randomness certification: it would pass on");
+    println!("     any decent PRNG, and the rejection-not-reduction property is pinned at the");
+    println!("     source because no sample size can see a one-in-2^32 remap.");
+}
+
+// ===========================================================================
+// X4 -- the published transcript, jointly
+// ===========================================================================
+
+/// How many query positions X4 folds into the published vector.
+///
+/// C7 ships 22. Each one contributes 54 field elements (12 trace columns and 8
+/// quotient segments, each as a PAIR, plus a lo/hi pair on each of 7 FRI
+/// layers), so the full transcript is 34 + 22*54 = 1222 values and needs at
+/// least that many mask elements swept to have a chance at full rank. That run
+/// exists -- raise this to 22 and the slot budget with it -- and it costs about
+/// twelve minutes, which is why the default is two.
+const X4_QUERIES: usize = 2;
+
+/// Mask elements swept, spread across EVERY constrained column.
+///
+/// 🚨 The first run of this test swept 150 elements of the lift column alone and
+/// read rank 55 of 142. That was the experiment failing, not the prover: the
+/// published vector carries the opened pair values of all 12 trace columns, and
+/// a mask element in column 10 moves column 10. The other 22 coordinates per
+/// query were constant by construction, contributed zero rows, and capped the
+/// rank at what one column can reach. A sweep must cover the columns whose
+/// values it is taking the rank of.
+const X4_SLOTS: usize = 150;
+
+/// Extra elements drawn from the randomizer column, which lives past the row
+/// mask in the flat slice and is committed without being constrained.
+const X4_RANDOMIZER_SLOTS: usize = 20;
+
+/// The mask element swept at step `i`: column-major over the constrained
+/// columns so that every column is reached early, then the randomizer.
+fn x4_slot(i: usize) -> usize {
+    if i < X4_SLOTS {
+        let col = i % CONSTRAINED_TRACE_WIDTH;
+        let row = (i / CONSTRAINED_TRACE_WIDTH) % MASK_ROWS;
+        mask_index(row, col)
+    } else {
+        MASK_ROWS * CONSTRAINED_TRACE_WIDTH + ((i - X4_SLOTS) * 7) % TRACE_LENGTH
+    }
+}
+
+/// Assemble the field elements a verifier actually receives.
+fn published_vector(r: &C7Internals, queries: &[usize]) -> Vec<u64> {
+    let mut v: Vec<u64> = Vec::new();
+    v.extend_from_slice(&r.ood_trace);
+    v.extend_from_slice(&r.q_ood);
+    v.extend_from_slice(&r.final_poly[..SPEND_FRI_FINAL_POLY_DEGREE_BOUND]);
+
+    let half = LDE_SIZE / 2;
+    for &pos in queries {
+        let mirror = pos ^ half;
+        for c in 0..TRACE_WIDTH {
+            v.push(r.trace_lde[c][pos].as_int());
+            v.push(r.trace_lde[c][mirror].as_int());
+        }
+        for j in 0..K {
+            v.push(r.q_lde[j][pos]);
+            v.push(r.q_lde[j][mirror]);
+        }
+        for layer in r.fri_layers.iter() {
+            let n = layer.len();
+            let j = pos % (n / 2);
+            v.push(layer[j]);
+            v.push(layer[j + n / 2]);
+        }
+    }
+    v
+}
+
+/// **The step from "each value is uniform" to "the transcript is uniform".**
+///
+/// X1, X2 and X3 measure MARGINALS. Every committed value is exactly uniform in
+/// one mask element, and every one of them could still be uniform while some
+/// linear combination of them is CONSTANT -- in which case a distinguisher
+/// computes that combination, gets the same answer from every honest proof, and
+/// separates honest from simulated in one query. Marginal uniformity does not
+/// exclude that. Rank does.
+///
+/// So this takes the published vector -- the OOD claims, the terminal
+/// coefficients, and the opened pair values at each query position -- and
+/// measures the rank of its slope matrix in the mask.
+///
+/// # The rank is NOT full, and that is the correct answer
+///
+/// A transcript the verifier accepts cannot be uniform on all of `F^m`: the
+/// verifier checks equations ON the published values, and anything satisfying an
+/// equation lives in a proper subspace. Measured, twice, and the two agree:
+///
+/// ```text
+///   1 query :  88 published values, rank 80  -> deficiency  8
+///   2 queries: 142 published values, rank 126 -> deficiency 16
+/// ```
+///
+/// The deficiency is exactly `queries * (committed FRI layers + 1)`. Per query
+/// that is the seven fold-consistency checks -- each layer's opened value is
+/// determined by the pair opened one layer below it, which is the whole point of
+/// FRI -- plus the terminal check, where the last layer's pair is folded and
+/// compared against an evaluation of the transmitted polynomial.
+///
+/// So the transcript is exactly uniform ON THE SUBSPACE THE VERIFIER'S OWN
+/// CHECKS CUT OUT, and nowhere less. That is the strongest true statement
+/// available, and it is the structure a simulator needs: sample the free
+/// coordinates uniformly, solve the checked ones. It generalises what X1 already
+/// showed on the eight quotient claims, where `S` samples seven and solves the
+/// eighth, to every field element on the wire.
+///
+/// ⚠️ The scaling is the evidence, not the single number. A deficiency of 16 on
+/// its own could be any coincidence; a deficiency that moves 8 -> 16 when the
+/// query count moves 1 -> 2 is the verifier's equation count and little else.
+///
+/// ⛔ THE ADDITIVITY CHECK IS NOT A FORMALITY. A slope matrix only describes the
+/// map if the map is additive in the mask. Degree 1 in each element SEPARATELY
+/// -- which is all X1..X3 establish -- still permits cross terms like
+/// `m_i * m_j`, and under a cross term the single-element slopes do not compose
+/// and the rank below would be measuring a linearization that the prover does
+/// not implement. So perturbing two elements together is checked against
+/// perturbing them apart, before the rank is believed.
+#[test]
+fn the_published_transcript_is_jointly_uniform() {
+    let queries: Vec<usize> = (0..X4_QUERIES).map(|i| 137 + i * 1013).collect();
+
+    let base = base_mask(0x5EED_00A4);
+    let f0 = run(&base);
+    let v0 = published_vector(&f0, &queries);
+    let m = v0.len();
+
+    let total_slots = X4_SLOTS + X4_RANDOMIZER_SLOTS;
+    assert!(
+        total_slots > m,
+        "sweeping {total_slots} mask elements cannot establish rank {m}: the sweep, not the \
+         pipeline, would be the binding constraint and a rank-deficient transcript would \
+         still read as full rank"
+    );
+
+    // Slopes at a fixed baseline, one mask element at a time.
+    let mut rows: Vec<Vec<u64>> = Vec::with_capacity(total_slots);
+    for i in 0..total_slots {
+        let slot = x4_slot(i);
+        let mut mask = base.clone();
+        mask[slot] = fadd(mask[slot], 1);
+        let v = published_vector(&run(&mask), &queries);
+        rows.push(v.iter().zip(v0.iter()).map(|(&a, &b)| fsub(a, b)).collect());
+    }
+
+    // ── additivity, before the rank means anything ──────────────────────────
+    // One pair inside the row mask, one crossing columns, one reaching the
+    // randomizer -- a cross term could hide in any of the three shapes.
+    for (i, j) in [(0usize, 1usize), (3, 40), (17, X4_SLOTS + 5)] {
+        let si = x4_slot(i);
+        let sj = x4_slot(j);
+        let mut both = base.clone();
+        both[si] = fadd(both[si], 1);
+        both[sj] = fadd(both[sj], 1);
+        let vb = published_vector(&run(&both), &queries);
+        for t in 0..m {
+            let joint = fsub(vb[t], v0[t]);
+            let apart = fadd(rows[i][t], rows[j][t]);
+            assert_eq!(
+                joint, apart,
+                "the map is not additive at value {t} for mask elements ({i}, {j}): perturbing \
+                 both differs from the sum of perturbing each. A cross term exists, the slope \
+                 matrix does not describe the map, and the rank below would be measuring a \
+                 linearization this prover does not implement."
+            );
+        }
+    }
+
+    let r = rank(rows);
+    // Seven fold-consistency checks and one terminal check, per query. Derived
+    // from the shape rather than pinned, so raising X4_QUERIES or changing the
+    // fold schedule moves it without an edit here.
+    let checks = X4_QUERIES * (f0.fri_layers.len() + 1);
+
+    println!();
+    println!("X4 / joint — the published transcript as a linear image of the mask:");
+    println!("  query positions        : {queries:?}");
+    println!("  published field values : {m}");
+    println!("    OOD trace claims     : {}", f0.ood_trace.len());
+    println!("    OOD quotient claims  : {}", f0.q_ood.len());
+    println!("    terminal, live       : {SPEND_FRI_FINAL_POLY_DEGREE_BOUND}");
+    println!(
+        "    opened per query     : {} x {}",
+        X4_QUERIES,
+        (m - f0.ood_trace.len() - f0.q_ood.len() - SPEND_FRI_FINAL_POLY_DEGREE_BOUND)
+            / X4_QUERIES.max(1)
+    );
+    println!("  mask elements swept    : {total_slots} across {CONSTRAINED_TRACE_WIDTH} columns + randomizer");
+    println!("  additivity             : verified on 3 element pairs, all {m} values");
+    println!("  verifier equations     : {checks} = {X4_QUERIES} x ({} folds + 1 terminal)", f0.fri_layers.len());
+    println!("  rank                   : {r} of {m}, free dimension {}", m - checks);
+
+    assert_eq!(
+        r,
+        m - checks,
+        "the published transcript has rank {r}, and the verifier's own checks account for only \
+         {checks} of the {} it is short. The remainder is a linear combination of published \
+         values that is CONSTANT in the mask and that the verifier never constrains: it takes the \
+         same value on every honest proof, so a distinguisher reads it in one query and separates \
+         honest from simulated. Every value being individually uniform does not save this -- that \
+         is exactly the gap between a marginal and a joint result.",
+        m - r
+    );
+
+    println!();
+    println!("  => the published vector is an ONTO affine image of the uniform mask MODULO the");
+    println!("     verifier's own equations, so it is exactly uniform on the {}-dimensional", m - checks);
+    println!("     subspace those equations cut out -- not merely coordinate by coordinate.");
+    println!("     That is the law a simulator samples: draw the free coordinates uniformly,");
+    println!("     solve the {checks} checked ones, exactly as X1 does for the eighth quotient claim.");
+    println!("     ⛔ Still not a simulation argument: one witness, one query set, one baseline,");
+    println!("     and it says nothing about the grinding nonce or how query positions are drawn.");
 }
 
 // ===========================================================================
@@ -1355,7 +1689,11 @@ fn quotient_leaves_are_exactly_uniform_on_every_circuit() {
     for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
         let g = geom(c);
         let pubs = public_inputs_for(c);
-        let sample: Vec<usize> = (0..48).map(|i| i * (g.lde / 48) + 3).collect();
+        // EXHAUSTIVE across all four production circuits. The docs quoted this
+        // as "384 of 384", which was 8 segments x 48 SAMPLED positions -- a true
+        // sentence that read like a statement about the committed domain. On C7
+        // the committed domain is 8 x 8192.
+        let sample: Vec<usize> = (0..g.lde).collect();
 
         // Two sweeps, and the CONTRAST is the measurement: a Poseidon column
         // reaches every committed quotient value at degree 7 -- non-constant, so
