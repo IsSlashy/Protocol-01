@@ -18,11 +18,13 @@
  * ───────────────────────────────
  * Claimed: receiving a note broadcasts nothing. There is no transaction, so
  * there is no sender, recipient, amount or timing for anyone to correlate.
- * NOT claimed: that the note is untraceable. When it is later withdrawn, the
- * withdrawal republishes the same commitment the ORIGINAL deposit published,
- * so the exit is publicly matchable to that deposit (measured on devnet). And
- * the sender keeps a spendable copy until someone spends the note. The copy
- * below says all of it; do not soften it before C7 ships.
+ * NOT claimed: that the note is untraceable. What the withdrawal publishes went
+ * CONDITIONAL when C7 shipped, and the copy below must STAY conditional rather
+ * than collapse into either half: on circuit 7 (this client and the extension)
+ * the withdrawal carries no commitment, so the exit is NOT matchable to the
+ * deposit; from the phone, or on any note C7 cannot prove, it republishes the
+ * ORIGINAL deposit's commitment and the exit IS matchable (measured on devnet).
+ * And the sender keeps a spendable copy until someone spends the note.
  *
  * LAYOUT RULE (same contract as SendForm)
  * ───────────────────────────────────────
@@ -586,10 +588,11 @@ export default function ReceivePanel({
                     timing for anyone to correlate, and no fee.
                   </p>
                   <p className="text-p01-yellow">
-                    What it does not hide: when the note is withdrawn, the withdrawal
-                    publishes the same commitment the original deposit published, so that
-                    exit is publicly matchable to the deposit. Measured on devnet. Receiving
-                    is invisible; the note leaving the pool is not.
+                    What it does not hide depends on where it is withdrawn. From here or the
+                    extension, on circuit 7, the withdrawal carries no commitment and that exit
+                    is NOT matchable to the deposit. From the phone, or on any note circuit 7
+                    cannot prove, it republishes the deposit&apos;s commitment and that exit IS
+                    publicly matchable to it. Measured on devnet.
                   </p>
                   <p className="text-p01-yellow">
                     Until someone withdraws it, the sender keeps a spendable copy of the

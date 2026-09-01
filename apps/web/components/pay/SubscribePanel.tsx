@@ -282,9 +282,10 @@ function CostDisclosure() {
           The screen after the purchase names which happened.
         </li>
         <li>
-          The subscription hides your wallet only as well as the pool does, which today is not at
-          all: the note commitment is published in the clear by the deposit, so treat this spend as
-          matchable to it. The Pool tab&apos;s disclosure has the details.
+          A circuit-7 subscription carries no note commitment, so the merchant cannot walk from it
+          back to the deposit that created your note. What is left is the fee payer, and the funder
+          signs it rather than you. The C1 + C3 fallback does republish the commitment; the screen
+          after the purchase names which one ran. The Pool tab&apos;s disclosure has the details.
         </li>
       </ul>
     </details>

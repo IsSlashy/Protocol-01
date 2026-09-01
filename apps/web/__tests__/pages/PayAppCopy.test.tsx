@@ -222,11 +222,23 @@ describe('the subscribe cost disclosure, read before signing', () => {
     });
   });
 
-  it('keeps the two hard sentences it has always carried', () => {
-    // The disclosure was softened in one place; nothing else may have moved.
+  it('keeps the refund sentence absolute and the linkage sentence CONDITIONAL', () => {
+    // The refund sentence is absolute and must stay absolute.
+    //
+    // 🚨 The linkage sentence went conditional when C7 shipped, and the pin that
+    // used to live here demanded the COLLAPSED v3 form -- "hides your wallet only
+    // as well as the pool does, which today is not at all". That was false from
+    // 2026-08-25, and a real buyer read it on 2026-09-01 while subscribing on a
+    // circuit-7 spend that published no commitment at all.
+    //
+    // ⛔ So it is pinned as a PAIR. Collapsing to either half is a false claim in
+    // one direction or the other: drop the first and the copy understates what
+    // C7 achieved, drop the second and it hides the C1 + C3 fallback, which
+    // really does republish the commitment.
     const rendered = codeOnly(read(SUBSCRIBE));
     expect(rendered).toMatch(/There is no cancel and no refund/);
-    expect(rendered).toMatch(/hides your wallet only as well as the pool does/);
+    expect(rendered).toMatch(/circuit-7 subscription carries no note commitment/);
+    expect(rendered).toMatch(/C1 \+ C3 fallback does republish the commitment/);
   });
 });
 

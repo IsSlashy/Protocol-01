@@ -40,6 +40,22 @@ describe('a deposit is relayed unless someone deliberately said otherwise', () =
     expect(shieldClient()).not.toMatch(/relayThroughDeployment:\s*true\s*,/);
   });
 
+  it('forces the relay on a contribution, and names the invariant to say why', () => {
+    // 🚨 THE ONE PLACE A FORCED RELAY IS CORRECT. A contribution's deposit is
+    // funded by the deployment precisely so the buyer's wallet never appears on
+    // it, and unlike the shield there is no deployment in which the public path
+    // would be right: a contribution requires a till by construction, because
+    // the buyer has just paid it.
+    //
+    // ⛔ It earns that exemption by being a NAMED invariant instead of the bare
+    // literal the assertion above bans file-wide. The ban keeps protecting
+    // `shieldToPool` -- which is what closed the treasury out in 2026-08-21 --
+    // while this line still says which path it is and why.
+    const src = shieldClient();
+    expect(src).toMatch(/const CONTRIBUTION_IS_ALWAYS_RELAYED = true;/);
+    expect(src).toMatch(/relayThroughDeployment: CONTRIBUTION_IS_ALWAYS_RELAYED/);
+  });
+
   it('derives the choice from an explicit intent, not from availability', () => {
     // ⚠️ NOT "relay if a till is configured". That would be the silent fallback
     // this whole path exists to refuse: a deployment that lost its till would

@@ -1455,17 +1455,19 @@ export default function PoolPanel({
                       : ''}{' '}
                     in one signature, and it funded the one-time key that made the deposit above —
                     so the deposit does not name you. What still connects the two is the amount and
-                    the minutes between them, which nothing here hides. Spending this note later
-                    republishes the commitment printed above, and that is what lets a reader start
-                    from the spend.
+                    the minutes between them, which nothing here hides. Spending this note on
+                    circuit 7 — what this app tries first — publishes no commitment at all, so a
+                    reader cannot walk back from the spend to this deposit; only the C1 + C3
+                    fallback republishes it, and the screen after the spend names which one ran.
                   </span>
                 ) : (
                   <span>
                     <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
                     This deposit was made without the relay, so it comes from your address by name
                     and the leftover rent came back to it afterwards. Anyone reading this deposit
-                    reaches your wallet in three steps, and spending this note later republishes
-                    the commitment printed above, which is what lets them start from the spend.
+                    reaches your wallet in three steps. Spending it on circuit 7 publishes no
+                    commitment, so that walk has to start here at the deposit rather than at the
+                    spend — the deposit, not the spend, is the exposure on this one.
                   </span>
                 )}
               </p>

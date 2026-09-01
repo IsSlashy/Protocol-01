@@ -251,8 +251,13 @@ describe("the disclosure before any import", () => {
     expect(
       screen.getByText(/Receiving a note broadcasts nothing/i),
     ).toBeInTheDocument();
-    // The measured limit, verbatim class: the exit is matchable to the deposit.
-    expect(screen.getByText(/publicly matchable to the deposit/i)).toBeInTheDocument();
+    // 🚨 CONDITIONAL SINCE C7 SHIPPED. This used to pin the collapsed v3 claim
+    // that the exit is always matchable to the deposit. Both halves are pinned
+    // now, because either one alone is a lie: circuit 7 (here and the extension)
+    // carries no commitment, while the phone -- and any note C7 cannot prove --
+    // still republishes it.
+    expect(screen.getByText(/carries no commitment/i)).toBeInTheDocument();
+    expect(screen.getByText(/publicly matchable to it/i)).toBeInTheDocument();
     expect(screen.getByText(/sender keeps a spendable copy/i)).toBeInTheDocument();
   });
 });
