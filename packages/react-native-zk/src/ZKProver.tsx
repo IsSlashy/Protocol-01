@@ -103,6 +103,18 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
     return true;
   }
 
+  // ---- Refusals ----
+  //
+  // The Rust wrappers do not throw. When one refuses -- no CSPRNG for the
+  // blinding mask (C1, C3, C5, C6 and C7 all draw one since the lift-column
+  // wave), a path of the wrong arity -- it returns {"error": "..."} IN PLACE
+  // OF the proof JSON. Every handler below checks for that before it reads a
+  // field. Until 2026-09-02 none did, so a refused C1 came back as
+  // {type:'proof'} with circuitId, proofHex and proofSize all undefined --
+  // which is exactly how webviewProver.test.ts caught it -- and the host
+  // resolved its promise with proofHex ''. A refusal must arrive as
+  // {type:'error'}, in the prover's own words.
+
   // ---- Circuit dispatch ----
 
   function generateProof(id, secret) {
@@ -112,6 +124,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
       var json = glue.generate_stark_proof(BigInt(secret));
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
+      if (r.error) throw new Error('Prover refused: ' + r.error);
       post({
         type: 'proof', id: id,
         circuitId: 0,
@@ -150,6 +163,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
       var json = glue.generate_pool_commitment_stark_proof(BigInt(np), BigInt(secret), BigInt(epoch), BigInt(mint));
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
+      if (r.error) throw new Error('Prover refused: ' + r.error);
       post({
         type: 'proof', id: id,
         circuitId: r.circuit_id,
@@ -172,6 +186,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
       var json = glue.generate_balance_stark_proof(BigInt(sk), BigInt(balance), BigInt(salt), BigInt(mint));
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
+      if (r.error) throw new Error('Prover refused: ' + r.error);
       post({
         type: 'proof', id: id,
         circuitId: r.circuit_id,
@@ -195,6 +210,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
       );
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
+      if (r.error) throw new Error('Prover refused: ' + r.error);
       post({
         type: 'proof', id: id,
         circuitId: r.circuit_id,
@@ -219,6 +235,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
       );
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
+      if (r.error) throw new Error('Prover refused: ' + r.error);
       post({
         type: 'proof', id: id,
         circuitId: 4,
@@ -246,6 +263,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
       );
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
+      if (r.error) throw new Error('Prover refused: ' + r.error);
       post({
         type: 'proof', id: id,
         circuitId: 5,
@@ -279,6 +297,7 @@ const PROVER_HTML_HEAD = `<!DOCTYPE html><html><head>
       );
       var dt = Math.round(performance.now() - t0);
       var r = JSON.parse(json);
+      if (r.error) throw new Error('Prover refused: ' + r.error);
       post({
         type: 'proof', id: id,
         circuitId: r.circuit_id,

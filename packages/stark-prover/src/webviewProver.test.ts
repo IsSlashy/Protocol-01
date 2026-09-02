@@ -89,7 +89,19 @@ function extractTemplate(src: string, name: string): string {
   const start = i + decl.length;
   const end = src.indexOf('`', start);
   if (end < 0) throw new Error(`${name} has no closing backtick`);
-  return src.slice(start, end);
+  const tpl = src.slice(start, end);
+  // The first backtick after the opening one is where TypeScript ends the
+  // literal too — so if it is not the one after </html>, the page is cut
+  // short for the app exactly as it is here. That happened on 2026-08-31: a
+  // comment inside the mobile prover quoted three file names in backticks,
+  // and this test reported "expected 1 to be 2" script tags, which reads like
+  // a dropped glue injection rather than what it was.
+  if (!tpl.trimEnd().endsWith('</html>')) {
+    const line = src.slice(0, end).split('\n').length;
+    throw new Error(`${name} is closed by a backtick at line ${line}, before </html> — `
+      + 'a backtick anywhere inside the template, comments included, ends the literal there');
+  }
+  return tpl;
 }
 
 /** The glue source, as the surface's own twin carries it. */
@@ -138,15 +150,29 @@ function bootProver(html: string): {
     crypto: globalThis.crypto,
     performance,
     console,
-    window: {
-      ReactNativeWebView: {
-        postMessage: (s: string) => { posts.push(JSON.parse(s) as Post); },
-      },
-      addEventListener: listen,
+    ReactNativeWebView: {
+      postMessage: (s: string) => { posts.push(JSON.parse(s) as Post); },
     },
+    addEventListener: listen,
     document: { addEventListener: listen },
   };
+  // In a WebView `window`, `self` and `globalThis` are ONE object, and this
+  // realm has to say so. Until 2026-09-02 `window` was a separate literal
+  // holding only ReactNativeWebView and addEventListener — harmless while
+  // circuit 1 was deterministic. Since the lift-column wave every circuit
+  // draws a CSPRNG mask, and the glue reaches the CSPRNG through js-sys's
+  // global lookup: `self`, then `window`, then `globalThis`, then `global`,
+  // in that order (the four `__wbg_static_accessor_*` imports). A `window`
+  // without `crypto` won that lookup and the prover refused with "Web Crypto
+  // API is unavailable" — a harness artefact no phone reproduces, because
+  // `window.crypto` is defined wherever `crypto` is. MEASURED 2026-09-02: the
+  // same HTML, with `crypto` reachable through `window`, proves circuit 1
+  // (94,897 bytes). Nothing from Node is added here; the anti-vacuity above
+  // still holds. `apps/mobile/services/stark/webviewSpend.test.ts` has
+  // carried the same shape since 2026-08-27.
   sandbox.globalThis = sandbox;
+  sandbox.window = sandbox;
+  sandbox.self = sandbox;
   const ctx = createContext(sandbox);
 
   const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);

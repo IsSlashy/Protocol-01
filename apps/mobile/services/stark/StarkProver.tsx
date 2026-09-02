@@ -124,6 +124,18 @@ const STARK_HTML = `<!DOCTYPE html>
   // The glue's wrappers take and return real JS values, which is why the
   // handlers below pass CSV strings directly and no longer decode (ptr,len).
 
+  // ---- Refusals ----
+  //
+  // The Rust wrappers do not throw. When one refuses -- no CSPRNG for the
+  // blinding mask (C1, C3, C5, C6 and C7 all draw one since the lift-column
+  // wave), a path of the wrong arity, a malformed recipient hash -- it returns
+  // {"error": "..."} IN PLACE OF the proof JSON. Every handler below checks
+  // for that before it reads a field. Until 2026-09-02 only the C7 handler
+  // did, so a refused C1 came back as {type:'proof'} with circuitId, proofHex
+  // and proofSize all undefined, and the host found out when it tried to
+  // upload nothing. A refusal must arrive as {type:'error'}, in the prover's
+  // own words.
+
   // ---- WASM initialization ----
   function handleMessage(event) {
     var data;
@@ -195,6 +207,7 @@ const STARK_HTML = `<!DOCTYPE html>
       var jsonStr = glue.generate_stark_proof(secret);
       var elapsed = Math.round(performance.now() - startTime);
       var result = JSON.parse(jsonStr);
+      if (result.error) throw new Error('Prover refused: ' + result.error);
       post({
         type: 'proof',
         id: id,
@@ -228,6 +241,7 @@ const STARK_HTML = `<!DOCTYPE html>
       );
       var elapsed = Math.round(performance.now() - startTime);
       var result = JSON.parse(jsonStr);
+      if (result.error) throw new Error('Prover refused: ' + result.error);
       post({
         type: 'proof', id: id,
         circuitId: result.circuit_id,
@@ -252,6 +266,7 @@ const STARK_HTML = `<!DOCTYPE html>
       );
       var elapsed = Math.round(performance.now() - startTime);
       var result = JSON.parse(jsonStr);
+      if (result.error) throw new Error('Prover refused: ' + result.error);
       post({
         type: 'proof', id: id,
         circuitId: result.circuit_id,
@@ -275,6 +290,7 @@ const STARK_HTML = `<!DOCTYPE html>
       );
       var elapsed = Math.round(performance.now() - startTime);
       var result = JSON.parse(jsonStr);
+      if (result.error) throw new Error('Prover refused: ' + result.error);
       // [C3 depth binding] depth is the 3rd public input, bound on-chain
       // (verifier rejects depth != 15). Fall back to the path length for
       // older WASM that does not emit the depth field.
@@ -308,6 +324,7 @@ const STARK_HTML = `<!DOCTYPE html>
       );
       var elapsed = Math.round(performance.now() - startTime);
       var result = JSON.parse(jsonStr);
+      if (result.error) throw new Error('Prover refused: ' + result.error);
       post({
         type: 'proof', id: id,
         circuitId: 4,
@@ -330,6 +347,7 @@ const STARK_HTML = `<!DOCTYPE html>
       );
       var elapsed = Math.round(performance.now() - startTime);
       var result = JSON.parse(jsonStr);
+      if (result.error) throw new Error('Prover refused: ' + result.error);
       post({
         type: 'proof', id: id,
         circuitId: result.circuit_id,
@@ -364,6 +382,7 @@ const STARK_HTML = `<!DOCTYPE html>
       );
       var elapsed = Math.round(performance.now() - startTime);
       var result = JSON.parse(jsonStr);
+      if (result.error) throw new Error('Prover refused: ' + result.error);
       post({
         type: 'proof', id: id,
         circuitId: 5,
@@ -412,11 +431,19 @@ const STARK_HTML = `<!DOCTYPE html>
       // a truncated path and a malformed one are indistinguishable by the time
       // it sees them -- and an 11-deep proof is a valid proof of a tree nobody
       // uses. It would upload, verify, and settle nothing.
-      // \U0001f6a8 THIS LITERAL WAS 12 AND THE CIRCUIT HAD MOVED TO 11, so every
+      // THIS LITERAL WAS 12 AND THE CIRCUIT HAD MOVED TO 11, so every
       // circuit-7 spend failed HERE, before the wasm was reached. Rust owns the
-      // depth (`air/spend.rs` CANONICAL_DEPTH, `lib.rs`, `verify.rs`); this
-      // mirrors it across a wire that carries no types and moves with it. The
-      // comment above is now inverted: 11 IS the tree that is used.
+      // depth (air/spend.rs CANONICAL_DEPTH, lib.rs, verify.rs); this mirrors
+      // it across a wire that carries no types and moves with it. The comment
+      // above is now inverted: 11 IS the tree that is used.
+      //
+      // NO BACKTICKS ANYWHERE IN THIS SCRIPT, COMMENTS INCLUDED. The whole page
+      // is one TypeScript template literal, so a backtick here closes
+      // STARK_HTML early. From 2026-08-31 to 2026-09-02 this very comment
+      // quoted three file names in backticks: TypeScript stopped parsing the
+      // file (19 diagnostics) and webviewProver.test.ts saw a page with a
+      // single <script> tag. Nothing else noticed, because nothing else reads
+      // the string as a template.
       const C7_PATH_DEPTH = 11;
       if (data.pathElements.length !== C7_PATH_DEPTH || data.pathIndices.length !== C7_PATH_DEPTH) {
         post({ type: 'error', id: id, error: 'Circuit 7 needs exactly ' + C7_PATH_DEPTH
