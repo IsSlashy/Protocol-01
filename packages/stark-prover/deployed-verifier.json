@@ -302,7 +302,35 @@
         "⚠ What it does NOT establish: P11 is OPEN on that same run. The spend's fee payer is an",
         "ephemeral funded by the float, and the float's own history names the buyer's wallet. That is a",
         "linkage question, not a verifier-compatibility one, and this field is only about the latter."
-      ]
+      ],
+      "negative_controls_2026_09_02": {
+        "_note": "Gate 8 of the pre-deploy contract, black-box against the DEPLOYED program with the SHIPPED blob: the same honest witness, rejected when one thing is wrong. Run with `npx tsx packages/stark-prover/scripts/c7-live-proof.ts --tamper` / `--forge`; every buffer was closed and read back as absent.",
+        "honest_again": {
+          "transaction": "2ZJQt6cywiTdinikyBaA3yw31ysC9rKB6GxRwRT1PVxwHC2cmnC62NqYgXFWTHETE1TyGGtRHF5Y7xGzBPcoCPNt",
+          "slot": 491998762,
+          "phase2_compute_units": 193026,
+          "result": "ACCEPTED"
+        },
+        "tampered_public_input": {
+          "transaction": "2j5H83Fi7LuyL9gUitmNhN2K1Ct4jGsg7MFXcAYM6ZZBPLDwTRTBXaHj7ESM3cCrsVHuFyYxSpKFKjXu6QA4t76D",
+          "slot": 492000324,
+          "compute_units": 18110,
+          "result": "REJECTED at step 1b: `[verify] OOD z mismatch`, InvalidProof 6003 -- the OOD point is re-derived from a transcript that absorbs the public inputs, so a changed input dies before DEEP-ALI runs"
+        },
+        "forged_merkle_byte": {
+          "transaction": "2PKrAzsvzoezv9rhSxLRS8BuRVafLT6vA3zGWBBW1VdHpNkJrTB6Qbif2zXV566xxactDcCPhhuEYMYL15h4khGV",
+          "slot": 492000853,
+          "compute_units": 26423,
+          "result": "REJECTED at step 3 (Merkle), InvalidProof 6003"
+        },
+        "forged_fri_byte": {
+          "transaction": "33nRCCYizMFWRVessECP9hFedPcrw8AWH75wnXEMrvNMAA7BXeQR8vugfdRsRFasTEBHZdqZfmhQZ4BuaSURgJLa",
+          "slot": 492001419,
+          "compute_units": 277171,
+          "result": "REJECTED at step 3.5 (FRI fold), InvalidProof 6003"
+        },
+        "what_it_shows": "lib.rs maps every VerifyError to InvalidProof (6003); the failing step is only readable from the last `[verify] stepN ok` log line, which the script reports. Rejections are all phase 1: the DEEP-ALI binding of phase 2 is NOT what these exercise."
+      }
     }
   },
   "client_blob": {
