@@ -1885,6 +1885,14 @@ const S1_PER_COLUMN: usize = 11;
 /// model this whole file argues in. The grinding nonce and the derivation of
 /// query positions are outside it. Two witnesses, one query set.
 ///
+/// ⚠️ And two queries is the ONLY count at which "the verifier's solution set"
+/// is the whole story. FRI's intermediate layers are low-degree polynomials,
+/// and once a layer is opened at more points than it has coefficients the
+/// opened values satisfy relations the verifier never checks; at two queries
+/// no layer is, at the shipping twenty-two four of them are. S2
+/// (`affine_reach_at_the_shipping_query_count`) carries those relations and
+/// the simulator that respects them.
+///
 /// ⚠️ THE HOLE THIS CLOSES IN X4. X4 checked additivity on three mask-element
 /// pairs, all in DIFFERENT columns. The transition constraints raise a column's
 /// own values to the seventh power, so two mask elements in the SAME column

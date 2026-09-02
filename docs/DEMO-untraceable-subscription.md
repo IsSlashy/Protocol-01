@@ -504,7 +504,8 @@ The sentence that survives being checked, and only this one:
   channels are measured uniform on C7 and the simulator is run against the
   verifier's own equations (`compact::zk_hiding`, 15 tests, exhaustive over every
   committed value). That changes the evidence, not the verdict: an argument
-  executed on two witnesses and one query set, with the hash oracle programmed, is
+  executed on two witnesses and at the shipping query count, with the hash oracle
+  programmed, is
   not a theorem over all of them, so the word stays banned. See
   `docs/zk-simulation-argument.md` §5.
 - **"the buyer's wallet signs nothing"** — not before confirming on a real run

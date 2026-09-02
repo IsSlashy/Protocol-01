@@ -313,8 +313,8 @@ the C7 proof are measured exactly uniform in the mask
 (`stark/src/compact/zk_hiding.rs`, exhaustive over every committed value,
 2026-09-01), and a simulator built from the verifier's own equations and no
 witness passes every one of them at the algebraic layer (2026-09-02). **That is
-an argument executed on two witnesses and one query set with the hash oracle
-programmed, not a theorem over every witness and challenge**: the word
+an argument executed on two witnesses and at the shipping query count with the
+hash oracle programmed, not a theorem over every witness and challenge**: the word
 *zero-knowledge* is still not used here.
 `docs/zk-simulation-argument.md` says exactly what is and is not claimed.
 

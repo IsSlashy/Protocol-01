@@ -21,6 +21,18 @@ denominated-pool production path.
 > found four directions the verifier never checks and the blinding columns never
 > reach — the quotient identity at each opened row, satisfied by the honest
 > prover through next-row values nobody publishes. §3.1 is rewritten around that.
+>
+> **What the third revision changed (2026-09-02, later the same day).** Running
+> the same accounting at the query count the proof actually ships with found a
+> **protocol defect**: the lift column had 160 free entries and a 22-query wire
+> needs 361 affine dimensions on the quotient side. The gate of the lift
+> constraint was changed on all four circuits so the column is free on every row
+> but a handful, the verifier twin changed with it, and §3.2 carries the
+> measurement before and after. It also found that the simulator of §2 was
+> incomplete: FRI's intermediate layers are low-degree polynomials, and at 22
+> queries the honest openings satisfy 58 linear relations the verifier never
+> checks. Step 5 now says so. This is a wire-incompatible change to the
+> verifier: proofs made under the old gate fail `DeepAliFailed`.
 
 Every claim below is backed by a measurement that runs in CI. Where a claim
 rests on an assumption instead, the assumption is named. Where something is out
@@ -86,6 +98,20 @@ oracle.
    B7 retired the per-query arm, so it is not an equation of the verifier and
    `S` ignores it. The honest prover satisfies it anyway — and §3.1 is about why
    that difference is invisible.
+
+   ⛔ **And one structure `S` must satisfy that the verifier does not check.**
+   `D` has degree at most `n − 2`, so FRI layer `l` is a polynomial of degree at
+   most `(n − 2)/2^l`: layer 5 has 16 coefficients, layer 7 has 4. A proof that
+   opens 22 pairs opens 44 values of each layer, and from layer 4 on those values
+   satisfy linear relations that hold on every honest transcript and carry no
+   witness at all — 58 of them, independent of the verifier's equations
+   (§3.2). A simulator that sampled the verifier's solution set uniformly would
+   violate them, and anyone who interpolates layer 5 would catch it. So `S`
+   samples its FRI layers as folds of a random polynomial of degree `≤ n − 2`
+   consistent with the opened `D` values, which is the same as adding those
+   relations to the equations it solves. At two queries the relations are
+   vacuous — every layer has more coefficients than opened points — which is
+   why §3.1's two-query run never met them.
 
 The verifier accepts `S`'s transcript with probability about `1 - 2^-54`.
 
@@ -198,6 +224,71 @@ cannot reach; X4's additivity never crossed rows inside a column. Each time the
 number was real and the sentence attached to it was not. The cure was the same
 each time: name what the instrument can and cannot see before reading it.
 
+### 3.2 The lift column was too small for the wire it ships on
+
+Everything in §3.1 was measured at **two** queries. The C7 proof opens
+**twenty-two**, and the quotient side of the wire grows with them: eight segment
+values per opened row, 352 at 22 queries, plus the eight OOD claims. Of those,
+315 have to come out independently uniform — one is fixed by the identity the
+verifier checks at `z`, one per opened row by the identity it does not check —
+and the same entries also supply the lift column's own 46 published evaluations.
+**361 affine dimensions.** The lift is the only affine source the quotient has;
+the randomizer never reaches a quotient value, and the constrained columns that
+enter the constraints linearly (3, 5 and 9) reach only the low coefficient
+blocks. The lift had **160** free entries, because its constraint was gated by
+`active · nba` and `active` is 1 on every witness row.
+
+Measured, on the protocol as deployed on 2026-08-31
+(`affine_reach_at_the_shipping_query_count`, run by hand):
+
+```
+lift alone on the quotient side      rank 160 of 315 needed
+with columns 3, 5 and 9 added        rank 295 of 315 needed
+```
+
+So at the shipping query count the honest transcript was **not** uniform on the
+verifier's solution set by any argument this document could make — the honest
+quotient openings lay in a witness-dependent 160-dimensional affine family
+inside a 315-dimensional free space. Whether an efficient distinguisher could
+exploit that is a different question, and not the one statistical
+zero-knowledge asks.
+
+**The fix is one factor in one constraint per circuit.** The lift constraint's
+gate is now a one-hot period-`n` column times `nba` — `row0_flag` on C7,
+`chain_flag` on C1, `hash_start` on C3 and C6 — so the column is pinned to zero
+on at most a handful of rows and free everywhere else: 511 entries on C7, 512
+on C1, 469 on C3 and C6 against needs of 361, 441, 361 and 361. Degree, segment
+count, FRI rate and wire size are unchanged: the new gate is a period-`n`
+column exactly as `active` was. The prover fills the freed rows from the same
+CSPRNG draw (`MASK_LEN` 2272 → 2623 on C7), and the on-chain verifier evaluates
+the new gate at `z`. A proof made under the old gate is rejected, and must be.
+
+Measured again, after the change, on C7 at 22 queries:
+
+```
+lift alone on the quotient side      rank 360 of 360
+rest of the wire (762)               affine 483 + hidden 44 + verifier 177 + low-degree 58 = 762
+```
+
+Four terms now, not three. The hidden term is the same object as in §3.1 — the
+directions the blinding never takes and the verifier never checks, moved by mask
+entries that leave every published value of their column untouched (built
+analytically from the Lagrange basis, applied, and confirmed to leave the block
+fixed) — and it is moved affinely and in full rank; at 22 queries it is exactly
+the 44 local identities. The **low-degree term is new**: FRI's intermediate
+layers are polynomials of degree `≤ (n − 2)/2^l`, and 44 opened values of a
+16-coefficient layer satisfy relations that no blinding can move and the
+verifier does not check, because it does not need to — soundness comes from the
+terminal bound. They hold on every honest transcript, carry no witness, and the
+simulator reproduces them by building its layers from a random low-degree `D`
+(§2 step 5). With them the accounting closes, and a transcript built from
+public data alone passes all 177 verifier equations and every one of the
+relations. So at the shipping query count, given the opened trace values, the
+honest rest is uniform on exactly the set that the verifier's equations and
+FRI's own degree structure cut out, and the simulator samples that set. S1's
+two-query result is unchanged by the new gate: `61 + 4 + 17 = 82` on both
+witnesses.
+
 ---
 
 ### The one thing that made it work
@@ -267,11 +358,16 @@ Three assumptions, named rather than buried.
 - ⛔ **Devnet.** There is no mainnet deployment.
 - ⛔ **An executed argument, not a quantified proof.** S1 runs the simulator
   against the verifier's equations and shows the honest law equals the simulated
-  one — on **two witnesses and one query set**, with the oracle programmed and the
-  Merkle roots not modelled. A simulation theorem quantifies over every witness
-  and every challenge; X6 covers eight witnesses for the marginal result and
-  nothing covers a second query set. That is the honest distance still to
-  travel, and it is shorter than it was.
+  one — on **two witnesses at two queries, and one witness at the shipping
+  twenty-two**, with the oracle programmed and the Merkle roots not modelled. A
+  simulation theorem quantifies over every witness and every challenge; X6
+  covers eight witnesses for the marginal result. That is the honest distance
+  still to travel, and it is shorter than it was.
+- ✅ **On chain since 2026-09-02.** §3.2's fix changes the verifier, and the
+  verifier at `DGY37k3J…` was redeployed at slot 491,973,056 with it (bytes
+  dumped and compared against the local build), the blob reshipped, and a C7
+  proof from the shipped blob accepted through both phases at slot 491,973,951.
+  The argument now describes the program that is deployed. ⛔ Devnet.
 - ⛔ **The grinding nonce and the query-position derivation are not measured.**
   §2 step 1 argues *structurally* that the positions are the terminal node of the
   Fiat-Shamir chain, and that argument is read off the verifier's own source. It
@@ -301,6 +397,10 @@ Fifteen tests. The six that carry the argument:
 - `a_simulator_with_no_witness_produces_the_verifier_s_own_law` — §3.1, the
   simulator run: `61 + 4 + 17 = 82` on two baselines, and three witness-free
   transcripts through the verifier's seventeen equations
+- `affine_reach_at_the_shipping_query_count` — §3.2, the same accounting at 22
+  queries with FRI's low-degree relations, and a 22-query transcript from public
+  data; `#[ignore]`d for cost, run by hand:
+  `cargo test -p p01-stark --release --lib affine_reach -- --ignored --nocapture`
 
 ⛔ Every one of them prints a **control** alongside its result: a Poseidon column
 reaching the same values at degree 7. Every value in this pipeline moves when the

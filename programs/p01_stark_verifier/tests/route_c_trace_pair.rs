@@ -1233,7 +1233,12 @@ fn route_c_wire_sizes_match_the_closed_form() {
     // [ZK-MASK 2026-08-30] All four masked circuits moved. The C1 entry was two
     // generations stale (68,881) and never fired, because the delta arm above it
     // failed first every time.
-    let absolute: [usize; 7] = [47_641, 94_017, 69_761, 78_877, 81_457, 89_821, 81_757];
+    // [ZK-LIFT 2026-08-31] C1 94_017 -> 94_897, C3 78_877 -> 79_597, C6 81_757 -> 82_477:
+    // one more trace column each (the lift), nq*4 + 2 felts. Re-pinned 2026-09-02
+    // to the sizes the JS twin (wireFormat.test.ts `absolute`) and the shipped
+    // blob had carried since the reship; the [ZK-LIFT-FULL] gate change of the
+    // same day moves none of them.
+    let absolute: [usize; 7] = [47_641, 94_897, 69_761, 79_597, 81_457, 89_821, 82_477];
 
     for (i, (label, baseline, cfg, actual)) in cases.into_iter().enumerate() {
         // Two independent terms against the SAME pre-Route-C baseline. Keeping
