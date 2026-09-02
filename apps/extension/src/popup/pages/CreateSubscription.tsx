@@ -27,9 +27,11 @@
  * a registry address is read from chain for the name, the price, the interval
  * and — the part that was fuzzy-matched by name before — the retailer to pay.
  *
- * ⚠️ `SLOTS_PER_DAY` and `intervalToSlots` are exported and pinned by
- * CreateSubscription.intervals.test.ts. The no-refund sentence is pinned by
- * shared/services/no-refund-warning.test.ts and must stay above `handleCreate`.
+ * ⚠️ `SLOTS_PER_DAY`, `intervalToSlots` and `registryVaultTerms` are exported
+ * and pinned by CreateSubscription.intervals.test.ts; the registry write path
+ * and the key-before-cleanup order by CreateSubscription.test.tsx. The
+ * no-refund sentence is pinned by shared/services/no-refund-warning.test.ts and
+ * must stay above `handleCreate`.
  */
 
 import { useEffect, useState } from 'react';
@@ -156,14 +158,43 @@ export function intervalToSlots(interval: SubscriptionInterval): bigint {
   }
 }
 
-/** The inverse, for a registry entry that stores raw slots. Buckets, because a
- *  merchant's period is whatever they set and need only READ as a period. */
-function intervalFromSlots(slots: number): SubscriptionInterval {
-  const days = (slots * 0.4) / 86_400;
-  if (days >= 300) return 'yearly';
-  if (days >= 20) return 'monthly';
-  if (days >= 5) return 'weekly';
-  return 'daily';
+/**
+ * The terms a REGISTRY arrival writes into its vault: the merchant's registered
+ * price and period, verbatim, as the u64s the instruction takes.
+ *
+ * 🚨 UNTIL 2026-09-02 THE PERIOD WAS ROUNDED TO A 1/7/30/365-DAY BUCKET FIRST.
+ * A helper written so a period would READ as a word ("a month") was used as the
+ * value sent, so a merchant registered at 14 days got vaults billing weekly and
+ * one registered at 1 500 slots (the seeded 10-minute test loop) got 216 000.
+ * The merchant SDK's `verifyMerchantLicense` requires the vault's
+ * `interval_slots` and `rate` to EQUAL the registry entry's, so every key sold
+ * against a non-bucket interval was refused as `service_mismatch`. Nothing
+ * downstream corrects a wrong value: the store, the instruction encoder and
+ * the program all pass it through untouched.
+ */
+export function registryVaultTerms(
+  entry: Pick<OnchainServiceEntry, 'priceAtomic' | 'intervalSlots'>,
+): { rateAtomic: bigint; intervalSlots: bigint } {
+  return {
+    rateAtomic: BigInt(entry.priceAtomic),
+    intervalSlots: BigInt(entry.intervalSlots),
+  };
+}
+
+/**
+ * How a raw period reads, exactly: "every 30 days", "every 10 minutes". No
+ * bucketing, because what is shown here is what is written to the vault.
+ */
+export function describeIntervalSlots(slots: number): string {
+  const seconds = slots * 0.4;
+  const units: [number, string][] = [[86_400, 'day'], [3_600, 'hour'], [60, 'minute'], [1, 'second']];
+  for (const [size, name] of units) {
+    if (seconds >= size) {
+      const n = Math.round((seconds / size) * 10) / 10;
+      return n === 1 ? `every ${name}` : `every ${n} ${name}s`;
+    }
+  }
+  return `every ${seconds} seconds`;
 }
 
 /** How a period reads in a sentence. `formatInterval` gives "Monthly"; a price
@@ -401,11 +432,13 @@ export default function CreateSubscription() {
   // Resolved duration (days) — the custom box overrides the chips.
   const durationDays = selectedDurationDays === -1 ? (Number(customDuration) || 0) : selectedDurationDays;
 
+  // A registry arrival has no interval WORD: its period is the raw slot count
+  // on the entry, shown by `describeIntervalSlots` and written verbatim by
+  // `registryVaultTerms`. The word below serves only the personal picker and
+  // the branding handoff, which carry nothing finer than a word.
   const activeInterval: SubscriptionInterval = isPersonal
     ? frequency
-    : registryService
-      ? intervalFromSlots(registryService.intervalSlots)
-      : (svc?.frequency || 'monthly');
+    : (svc?.frequency || 'monthly');
 
   // For a personal payment the user enters a TOTAL over `durationDays`; the
   // recurring rate is total ÷ number of billing periods. A merchant keeps its
@@ -435,11 +468,18 @@ export default function CreateSubscription() {
    * merchant verifies `blake3(decode(presentedKey)) == vault.license_commitment`
    * with NO shared secret. The caller derives the key from the SAME
    * (noteSecret, serviceId) it handed to the subscribe builder.
+   *
+   * Since 2026-09-02 `subscribePrivate` persists this same entry itself the
+   * instant the tx confirms; this call is the same-value write that also puts
+   * the key on screen, and it files the vault address and tag so the store can
+   * rebuild the key later.
    */
   const mintLicense = (params: {
     licenseKey: string;
     retailer: string;
     mode: 'standard' | 'zk';
+    vaultAddress?: string;
+    serviceTag?: string;
   }) => {
     try {
       const entry: LicenseEntry = {
@@ -448,6 +488,8 @@ export default function CreateSubscription() {
         mode: params.mode,
         serviceName: activeName || undefined,
         createdAt: Date.now(),
+        vaultAddress: params.vaultAddress,
+        serviceTag: params.serviceTag,
       };
       saveLicense(entry);
       setCreatedLicense(entry);
@@ -560,8 +602,29 @@ export default function CreateSubscription() {
         return;
       }
 
-      // Rate in atomic units. Private subscribe requires rate <= denomination.
-      const rateAtomic = BigInt(Math.round(activeAmount * 1e9));
+      // A registry arrival is billed in the merchant's registered mint. The
+      // only note this screen can spend is a SOL note, so any other mint would
+      // write a price in the wrong unit into a SOL vault and be refused by the
+      // merchant's check anyway. Say so now, not after a two-minute proof.
+      if (registryService && registryService.tokenMint !== NATIVE_MINT) {
+        fail(`${activeName || 'This merchant'} bills in a token this wallet cannot pay from a SOL note.`);
+        setIsCreating(false);
+        setProgressMsg(null);
+        return;
+      }
+
+      // The terms written to the vault. A registry arrival writes the entry's
+      // own price and period, verbatim: the merchant's license check requires
+      // both to EQUAL the registry. A personal payment is the user's choice of
+      // total, duration and frequency, reduced to a rate and a bucketed period.
+      const { rateAtomic, intervalSlots } = registryService
+        ? registryVaultTerms(registryService)
+        : {
+            rateAtomic: BigInt(Math.round(activeAmount * 1e9)),
+            intervalSlots: intervalToSlots(activeInterval),
+          };
+
+      // Private subscribe requires rate <= denomination.
       if (rateAtomic > poolConfig.denominationAtomic) {
         fail(
           `${activeAmount} ${note.token} per period is more than the note holds ` +
@@ -572,8 +635,6 @@ export default function CreateSubscription() {
         setProgressMsg(null);
         return;
       }
-
-      const intervalSlots = intervalToSlots(activeInterval);
 
       // ── Subscriber-ownership commitment ───────────────────────────────
       // The subscriber secret IS the note's own Goldilocks secret
@@ -609,7 +670,22 @@ export default function CreateSubscription() {
         recipient,
       );
 
+      // The vault PDA, derived up front so the key can be filed under it the
+      // moment the vault exists. Keyed by [retailer, subscriberCommitmentBytes,
+      // tokenMint]; for SOL the mint == SystemProgram.programId, identical to
+      // the value subscribePrivate uses to persist the subscriber secret.
+      const { goldilocksU64To32: toBytes32 } = await import('@/shared/services/subscriptionVault');
+      const subscriberCommitmentBytes = toBytes32(subscriberOwnershipCommitment);
+      const vaultPDA = deriveVaultPDA(
+        new PublicKey(recipient),
+        subscriberCommitmentBytes,
+        poolConfig.tokenMint, // SOL = SystemProgram.programId
+      );
+
       // ── Create private vault ───────────────────────────────────────────
+      // subscribePrivate persists the subscriber secret (encrypted) BEFORE the
+      // tx and the license key the instant the tx is confirmed, before its own
+      // rent-recovery closes. Nothing below is needed for the key to survive.
       setProgressMsg('Opening the private vault');
       await createPrivateVault({
         receipt: note,
@@ -621,26 +697,25 @@ export default function CreateSubscription() {
         subscriberOwnershipCommitment,
         vkHashSubscriber,
         serviceId: licenseServiceId,
+        serviceName: activeName || undefined,
         onProgress: (step) => setProgressMsg(step),
       });
 
-      // Subscriber secret is already persisted (encrypted, BEFORE creation)
-      // inside subscribePrivate → store.saveSecret, keyed by this same vault
-      // PDA. We only re-derive the PDA here to fetch + locally record the
-      // vault. Vault PDA is keyed by [retailer, subscriberCommitmentBytes,
-      // tokenMint]; for SOL the mint == SystemProgram.programId, identical to
-      // the value subscribePrivate uses for the persistence key.
-      const { goldilocksU64To32: toBytes32 } = await import('@/shared/services/subscriptionVault');
-      const subscriberCommitmentBytes = toBytes32(subscriberOwnershipCommitment);
-      const vaultPDA = deriveVaultPDA(
-        new PublicKey(recipient),
-        subscriberCommitmentBytes,
-        poolConfig.tokenMint, // SOL = SystemProgram.programId
-      );
+      // Put the key on screen FIRST, before any further RPC. It is derived
+      // from the SAME (master note secret, serviceId) that produced the on-chain
+      // license_commitment = blake3(deriveLicenseSecret(note.secret, serviceId)),
+      // so this is the same value the service already persisted.
+      mintLicense({
+        licenseKey: licenseKeyForPrivate(note.secret, licenseServiceId),
+        retailer: recipient,
+        mode: 'zk',
+        vaultAddress: vaultPDA.toBase58(),
+        serviceTag: licenseServiceId,
+      });
 
       // Record the vault LOCALLY. A private vault is keyed on-chain by an
       // anonymous commitment, so it is NOT discoverable by scanning the chain
-      // with our wallet — the creating client must keep its own record.
+      // with our wallet: the creating client must keep its own record.
       try {
         const { fetchVault } = await import('@/shared/services/subscriptionVault');
         const vaultInfo = await fetchVault(vaultPDA.toBase58());
@@ -653,15 +728,6 @@ export default function CreateSubscription() {
       // from the local store so it can't be reused (it would collide on the
       // nullifier record on-chain).
       removeNote(note.commitment.toString());
-
-      // Display the license key under the commitment scheme: derive it from
-      // the SAME (master note secret, serviceId) that produced the on-chain
-      // license_commitment = blake3(deriveLicenseSecret(note.secret, serviceId)).
-      mintLicense({
-        licenseKey: licenseKeyForPrivate(note.secret, licenseServiceId),
-        retailer: recipient,
-        mode: 'zk',
-      });
     } catch (err) {
       console.error('[Subscription/ZK] Create error:', err);
       // If the note was already spent on-chain (stale local entry), drop it so
@@ -824,6 +890,15 @@ export default function CreateSubscription() {
                 onChange={setFrequency}
               />
 
+              {/* The picker above exists only here. A merchant's registry check
+                  compares the vault to the registered service, and a payment the
+                  user describes has no registered service to compare against. */}
+              <p className="text-tiny text-p01-text-dim">
+                A personal payment names a wallet, not a registered merchant service. Its key is
+                not recognised by a merchant's registry check; it is for payments you arrange
+                yourself.
+              </p>
+
               {personalTotal > 0 && durationDays > 0 && (
                 <Panel tone="quiet">
                   <div className="flex items-center justify-between">
@@ -850,16 +925,29 @@ export default function CreateSubscription() {
               {activeAmount > 0 && (
                 <div className="mt-1.5 flex items-baseline gap-1.5">
                   <Amount value={activeAmount} unit="SOL" size="lg" />
-                  <span className="text-sm text-p01-text-muted">{PER_INTERVAL[activeInterval]}</span>
+                  <span className="text-sm text-p01-text-muted">
+                    {registryService
+                      ? describeIntervalSlots(registryService.intervalSlots)
+                      : PER_INTERVAL[activeInterval]}
+                  </span>
                 </div>
               )}
               {/* ⚠️ Only a real payee is shown. The subscriptions list hands
                   over a branding id ("netflix"), and printing that in mono
                   under the price would read as an address it is not. */}
               {registryService && (
-                <p className="mt-2 truncate font-mono text-tiny text-p01-text-dim">
-                  {registryService.retailer}
-                </p>
+                <>
+                  <p className="mt-2 truncate font-mono text-tiny text-p01-text-dim">
+                    {registryService.retailer}
+                  </p>
+                  {/* Read-only by design: the merchant's license check compares
+                      the vault's price and period to the registry entry and
+                      refuses anything else, so there is nothing to choose. */}
+                  <p className="mt-2 text-tiny text-p01-text-dim">
+                    Price and period are the merchant's registered terms and are written to your
+                    vault exactly as listed. That is what the merchant checks your key against.
+                  </p>
+                </>
               )}
             </div>
           )}

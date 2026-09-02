@@ -5,11 +5,13 @@ import {
   AlertCircle,
   Bot,
   Briefcase,
+  Check,
   CheckCircle,
   ChevronRight,
   Clock,
   Cloud,
   Compass,
+  Copy,
   CreditCard,
   Dumbbell,
   EyeOff,
@@ -17,6 +19,7 @@ import {
   GraduationCap,
   Grid,
   Info,
+  KeyRound,
   Loader2,
   MessageCircle,
   Music,
@@ -33,9 +36,10 @@ import {
   User,
   Wallet,
 } from 'lucide-react';
-import { cn, formatCurrency } from '@/shared/utils';
+import { cn, formatCurrency, truncateAddress } from '@/shared/utils';
 import { useSubscriptionsStore, useSubscriptionStats } from '@/shared/store/subscriptions';
 import { useWalletStore } from '@/shared/store/wallet';
+import { useLicenseStore, type PresentableLicense } from '@/shared/store/license';
 import type { StreamSubscription } from '@/shared/services/stream';
 import { formatInterval } from '@/shared/services/stream';
 import {
@@ -187,6 +191,24 @@ export default function Subscriptions() {
     })();
     return () => { cancelled = true; };
   }, [network]);
+
+  // Every license key this device can present: the ones minted at purchase
+  // and the ones rebuilt from a vault's note secret and recorded service tag.
+  // Until 2026-09-02 a key existed only if the popup survived the whole
+  // post-confirmation cleanup; a vault paid for in that window had no key
+  // anywhere. The store can now rebuild it, and this is where it is offered.
+  const licenses = useLicenseStore((s) => s.licenses);
+  const vaultTags = useLicenseStore((s) => s.vaultTags);
+  const presentableLicenses = useLicenseStore((s) => s.presentableLicenses);
+  const [keys, setKeys] = useState<PresentableLicense[]>([]);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    presentableLicenses()
+      .then((list) => { if (!cancelled) setKeys(list); })
+      .catch((error) => console.error('[Subscriptions] presentableLicenses failed:', error));
+    return () => { cancelled = true; };
+  }, [licenses, vaultTags, presentableLicenses]);
 
   // Filter out cancelled subscriptions
   const activeSubscriptions = subscriptions.filter(s => s.status !== 'cancelled');
@@ -349,6 +371,58 @@ export default function Subscriptions() {
                   </button>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {keys.length > 0 && (
+          <div>
+            <Eyebrow>License keys</Eyebrow>
+            <p className="mt-1.5 text-tiny text-p01-text-dim">
+              One per private subscription opened on this device. A key is what the merchant
+              checks against the commitment your vault posted on chain; it is rebuilt from your
+              note here even if it was never shown at purchase.
+            </p>
+            <div className="mt-1.5">
+              {keys.map((k, i) => {
+                const copied = copiedKey === k.licenseKey;
+                return (
+                  <div key={k.vaultAddress ?? `${k.retailer}:${k.mode}`}>
+                    {i > 0 && <Hairline className="bg-p01-border-soft" />}
+                    <div className="py-3">
+                      <div className="flex items-center gap-1.5">
+                        <KeyRound className="h-3.5 w-3.5 shrink-0 text-p01-cyan" aria-hidden="true" />
+                        <span className="truncate text-sm text-p01-text">
+                          {k.serviceName || truncateAddress(k.retailer, 4)}
+                        </span>
+                        {!k.confirmed && <Pill tone="warn">Unconfirmed</Pill>}
+                      </div>
+                      <p className="mt-1.5 break-all rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-tiny leading-relaxed text-p01-text">
+                        {k.licenseKey}
+                      </p>
+                      {!k.confirmed && (
+                        <p className="mt-1 text-tiny text-p01-text-dim">
+                          This device never saw that subscription confirm. The key opens the
+                          vault only if the payment went through.
+                        </p>
+                      )}
+                      <Button
+                        variant="secondary"
+                        full
+                        className="mt-2"
+                        icon={copied ? Check : Copy}
+                        onClick={() => {
+                          void navigator.clipboard?.writeText(k.licenseKey);
+                          setCopiedKey(k.licenseKey);
+                          setTimeout(() => setCopiedKey(null), 1500);
+                        }}
+                      >
+                        {copied ? 'Copied' : 'Copy license key'}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}

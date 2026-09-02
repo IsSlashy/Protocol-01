@@ -37,7 +37,8 @@ import {
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { deriveLicenseSecret, licenseCommitment } from './license';
+import { deriveLicenseSecret, encodeLicenseKey, licenseCommitment } from './license';
+import { useLicenseStore } from '../store/license';
 import { useWalletStore } from '../store/wallet';
 import { getConnection } from './wallet';
 import type { VaultInfo, SubscribePrivateParams, ProofData } from './subscriptionVault.types';
@@ -892,6 +893,17 @@ function buildSubscribePrivateStarkIx(
  * unmounts before the old post-creation save ran, the (encrypted) secret is
  * already on disk, so the vault stays controllable (pause/resume).
  *
+ * FIX C (2026-09-02): the LICENSE KEY gets the same treatment. It used to be
+ * derived and saved by the page only after this function returned, i.e. after
+ * the two proof-buffer closes in `finally` (two more confirmed transactions),
+ * the store's getProgramAccounts reload and a fetchVault. A popup that closed
+ * in that window left a paid vault whose commitment was on chain and no key
+ * anywhere, and nothing could rebuild one. Now the service tag is recorded in
+ * the license store the instant before the tx is sent, and the key is saved
+ * synchronously the instant the tx is confirmed, before anything else runs.
+ * The license store can rebuild the key from the tag plus the note secret FIX
+ * B already saved, which covers a confirmation this device never observed.
+ *
  * Mirrors mobile subscribePrivateStark + extension unshieldDenominatedStarkV3.
  * Adaptation: uses extension's legacy submitAndVerifyStarkProof (non-uniform).
  */
@@ -912,6 +924,8 @@ export async function subscribePrivate(params: {
    * a merchant can verify a presented license key. When omitted, None is posted.
    */
   serviceId?: string;
+  /** Display name stored next to the license key (registry name, else what the user typed). */
+  serviceName?: string;
   onProgress?: (step: string) => void;
 }): Promise<string> {
   const {
@@ -924,6 +938,7 @@ export async function subscribePrivate(params: {
     subscriberOwnershipCommitment,
     vkHashSubscriber,
     serviceId,
+    serviceName,
     onProgress,
   } = params;
 
@@ -967,11 +982,11 @@ export async function subscribePrivate(params: {
   // (arg #10, LAST). The chain stores it verbatim (no verification); a merchant
   // later checks blake3(decode(presentedKey)) against it off-chain. The displayed
   // key is encodeLicenseKey(licenseSecret) from the same inputs (CreateSubscription).
+  let licenseSecretBytes: Uint8Array | undefined;
   let licenseCommitmentBytes: Uint8Array | undefined;
   if (serviceId) {
-    licenseCommitmentBytes = licenseCommitment(
-      deriveLicenseSecret(receipt.secret, serviceId),
-    );
+    licenseSecretBytes = deriveLicenseSecret(receipt.secret, serviceId);
+    licenseCommitmentBytes = licenseCommitment(licenseSecretBytes);
   }
 
   onProgress?.('Deriving vault PDA...');
@@ -1105,7 +1120,49 @@ export async function subscribePrivate(params: {
     // walks add ~103,400. Matches the web app and the v4 path.
     tx.add(...buildComputeBudgetIxs(400_000));
     tx.add(ix);
+
+    // FIX C, part 1: from the next line on the vault may exist on chain, so the
+    // tag that rebuilds its key is recorded now. If confirmation is never
+    // observed here (popup closed, RPC timed out on a tx that landed), the
+    // license store can still derive the key from this tag and the secret
+    // FIX B saved. Recorded here rather than with FIX B so a proof or upload
+    // failure never leaves a tag for a vault that was never created.
+    if (serviceId) {
+      useLicenseStore.getState().recordVaultTag({
+        vaultAddress: vaultPDA.toBase58(),
+        retailer,
+        serviceTag: serviceId,
+        serviceName,
+      });
+    }
+
     const sig = await signSendConfirmTx(connection, tx, signer);
+
+    // FIX C, part 2: the key is persisted HERE, synchronously, the moment the
+    // tx is confirmed. No await sits between the confirmation and this write,
+    // and the proof-buffer closes in `finally` (two more confirmed
+    // transactions) only start after it. The bytes encoded are the very
+    // preimage of the commitment posted above, so this key verifies against
+    // this vault.
+    if (serviceId && licenseSecretBytes) {
+      try {
+        useLicenseStore.getState().saveLicense({
+          licenseKey: encodeLicenseKey(licenseSecretBytes),
+          retailer,
+          mode: 'zk',
+          serviceName,
+          createdAt: Date.now(),
+          vaultAddress: vaultPDA.toBase58(),
+          serviceTag: serviceId,
+        });
+      } catch (e) {
+        // Non-fatal: the tag recorded above still lets the store rebuild it.
+        console.warn(
+          '[SubscriptionVault] license key persist failed (rebuildable from the vault tag):',
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
 
     onProgress?.('Done!');
     return sig;

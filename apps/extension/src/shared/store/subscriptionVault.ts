@@ -125,6 +125,8 @@ interface SubscriptionVaultState {
     vkHashSubscriber?: Uint8Array;
     /** Service id for the license-key HKDF info (slug, else retailer base58). */
     serviceId?: string;
+    /** Display name stored next to the license key the service persists at confirmation. */
+    serviceName?: string;
     onProgress?: (step: string) => void;
   }) => Promise<string>;
 
@@ -346,6 +348,7 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             subscriberOwnershipCommitment: params.subscriberOwnershipCommitment,
             vkHashSubscriber: params.vkHashSubscriber ?? new Uint8Array(32),
             serviceId: params.serviceId,
+            serviceName: params.serviceName,
             onProgress: params.onProgress,
           });
           // Reload vaults after successful subscription.

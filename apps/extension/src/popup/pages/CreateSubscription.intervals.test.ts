@@ -14,7 +14,12 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { SLOTS_PER_DAY, intervalToSlots } from './CreateSubscription';
+import {
+  SLOTS_PER_DAY,
+  intervalToSlots,
+  registryVaultTerms,
+  describeIntervalSlots,
+} from './CreateSubscription';
 
 /** Canonical Solana slot time, and the same 400 ms every other definition in
  *  this repository uses (packages/merchant-sdk/src/period-math.ts:255). */
@@ -59,5 +64,46 @@ describe('subscription intervals map to real durations', () => {
    */
   it('agrees with the interval the live registry service actually carries', () => {
     expect(intervalToSlots('monthly')).toBe(6_480_000n);
+  });
+});
+
+/**
+ * The table above is for a PERSONAL payment, where the user picks a word. A
+ * registry arrival has a number, and until 2026-09-02 that number was rounded
+ * to the nearest word before being written: 100 000 slots became 216 000,
+ * 3 024 000 (14 days) became 1 512 000, and the merchant SDK, which requires
+ * the vault's interval to EQUAL the registry's, refused every such key as
+ * `service_mismatch`. The assertions are on values no bucket can produce.
+ */
+describe('a registry entry is written verbatim', () => {
+  it('keeps a period that is not a day, a week, a month or a year', () => {
+    expect(registryVaultTerms({ priceAtomic: 60_000_000, intervalSlots: 100_000 })).toEqual({
+      rateAtomic: 60_000_000n,
+      intervalSlots: 100_000n,
+    });
+  });
+
+  it('keeps the seeded 10-minute test loop and a 14-day plan', () => {
+    expect(registryVaultTerms({ priceAtomic: 1, intervalSlots: 1_500 }).intervalSlots).toBe(1_500n);
+    expect(registryVaultTerms({ priceAtomic: 1, intervalSlots: 3_024_000 }).intervalSlots).toBe(
+      3_024_000n,
+    );
+  });
+
+  it('never passes through the bucket table', () => {
+    const buckets = (['daily', 'weekly', 'monthly', 'yearly'] as const).map(intervalToSlots);
+    for (const slots of [1_500, 100_000, 3_024_000, 6_048_000, 19_440_000]) {
+      const written = registryVaultTerms({ priceAtomic: 1, intervalSlots: slots }).intervalSlots;
+      expect(buckets).not.toContain(written);
+      expect(written).toBe(BigInt(slots));
+    }
+  });
+
+  it('reads the period as the number it is, not the nearest word', () => {
+    expect(describeIntervalSlots(1_500)).toBe('every 10 minutes');
+    expect(describeIntervalSlots(100_000)).toBe('every 11.1 hours');
+    expect(describeIntervalSlots(3_024_000)).toBe('every 14 days');
+    expect(describeIntervalSlots(6_480_000)).toBe('every 30 days');
+    expect(describeIntervalSlots(216_000)).toBe('every day');
   });
 });
