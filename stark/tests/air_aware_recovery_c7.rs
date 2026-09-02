@@ -1,8 +1,10 @@
 //! The same attack, pointed at C7 — where it must FAIL, and why that matters.
 //!
-//! `air_aware_recovery_c1.rs` recovers all four private inputs of C1 from the
+//! `air_aware_recovery_c1.rs` recovered all four private inputs of C1 from the
 //! published bytes, by adding the AIR's 35 linear equalities to 110 openings.
-//! It refutes "more unknowns than equations" as a security claim.
+//! It refutes "more unknowns than equations" as a security claim. Since the
+//! mask landed on C1 (2026-08-31) that file reads under-determined too, and
+//! keeps the pre-mask model beside it as the positive control, still solving.
 //!
 //! C7's design rests on exactly that sentence: 138 unknowns against 90
 //! equations (`air/spend.rs:1425-1449`). So the honest question is not whether
@@ -14,18 +16,21 @@
 //! failed" is worthless unless the same code is shown recovering something. So
 //! two calibrations sit beside the measurement, and neither is optional:
 //!
-//!   * `air_aware_recovery_c1.rs` — the same solver, recovering, today.
+//!   * `air_aware_recovery_c1.rs` — the same solver, recovering on the
+//!     pre-mask model of C1 (its `counterfactual (pinned tail)` line), today.
 //!   * `collapsing_the_mask_makes_c7_solvable` below — the same solver on the
 //!     same C7 proof, closing the instant the mask rows are (wrongly) modelled
 //!     as copies of one another. That isolates the MASK as the cause, rather
 //!     than leaving "it did not solve" to stand on its own.
 //!
 //! WHAT A PASS HERE DOES NOT MEAN. It does not mean C7 is zero-knowledge.
-//! `air/spend.rs:262-268` lists what trace masking does not touch — the
-//! quotient decomposition, the DEEP composition polynomial, the vector
-//! commitment, and there is no FRI salt — and none of those has a simulation
-//! argument. This file measures ONE channel: whether the published trace-column
-//! evaluations determine the witness. They do on C1. They do not on C7.
+//! This file measures ONE channel: whether the published trace-column
+//! evaluations determine the witness. They did on C1 before its mask; they do
+//! not on C7. The other channels — the quotient decomposition, the DEEP
+//! composition, every FRI layer, the transcript jointly and the mask draw —
+//! carry measurements of their own in `compact::zk_hiding` since 2026-09-01,
+//! and a measurement on one witness and one query set is still not a
+//! simulation argument.
 //!
 //! ⚠️ AND THE MASK USED HERE IS NOT A CSPRNG MASK. It is a deterministic
 //! xorshift, the same shortcut `wire_parity.rs:82-105` takes, and it is

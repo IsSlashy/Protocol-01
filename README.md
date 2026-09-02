@@ -303,13 +303,20 @@ devnet.
 
 Since the 2026-08-04 coset-LDE deployment, **no raw trace cells are
 transmitted** in the proofs the devnet verifier accepts. Said precisely,
-because the imprecise version would oversell it: what the coset removes is the
-verbatim-cell line — recovering trace values by Lagrange interpolation remains
-possible, so this is *not* "the witness is hidden". The prover that produces
-coset proofs currently lives on the unmerged `b7-drop-aligned-checks` branch;
-**the deployed web app, the installed APK, and `@protocol-01/stark-prover@0.1.2`
-still carry the pre-coset blob and are rejected by the chain** until they are
-rebuilt from that branch.
+because the imprecise version would oversell it: the coset removes the
+verbatim-cell line, and until 2026-08-31 trace values could still be recovered
+by Lagrange interpolation (`stark/tests/air_aware_recovery_c1.rs` recovered all
+four C1 private inputs). A blinding region and a lift column shipped on every
+production circuit that day; the same solver now reads under-determined, with
+the pre-mask model kept beside it as the positive control. Five channels of
+the C7 proof are measured exactly uniform in the mask
+(`stark/src/compact/zk_hiding.rs`, exhaustive over every committed value,
+2026-09-01), and a simulator built from the verifier's own equations and no
+witness passes every one of them at the algebraic layer (2026-09-02). **That is
+an argument executed on two witnesses and one query set with the hash oracle
+programmed, not a theorem over every witness and challenge**: the word
+*zero-knowledge* is still not used here.
+`docs/zk-simulation-argument.md` says exactly what is and is not claimed.
 
 The on-chain verifier is written from scratch (no Winterfell dependency at
 runtime) and fits in a **667,000-byte** SBF binary (sha `90c75a0e…`), upgraded

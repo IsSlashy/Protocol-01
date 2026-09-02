@@ -10,9 +10,10 @@
  * note_count is a POOL SIZE, not a delivered anonymity set. The v3 unshield
  * passes the note commitment as a public instruction argument (bytes 80..88)
  * and the deposit emitted the same value, so a withdrawal is publicly matchable
- * to its deposit and the effective anonymity set is ONE. Closing that needs the
- * C7 spend circuit (docs/C7_SPEND_CIRCUIT_PLAN.md). Copy rendered from these
- * numbers must not call them an anonymity set until it ships.
+ * to its deposit and the effective anonymity set is ONE. The C7 spend circuit
+ * (devnet since 2026-08-25) publishes no commitment, so on that path the count
+ * bounds the crowd — and it is small. Copy rendered from these numbers states
+ * them as a pool size, never as a guarantee.
  *
  * Pools from superseded seed versions (v2/v3/v4) can coexist on-chain for the
  * same (token, denomination); we keep the one with the most notes (the active

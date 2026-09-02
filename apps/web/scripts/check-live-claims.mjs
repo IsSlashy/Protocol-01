@@ -60,13 +60,13 @@ const ROUTES = [
 const RULES = [
   {
     id: "zero-knowledge",
-    // Seven of the eight circuits apply no trace blinding at all; `spend`
-    // applies a coset LDE and 128 mask rows and is still not zero-knowledge,
-    // because that buys underdetermination rather than secrecy.
-    // Probe P3b of verify/p01-verify.mjs
-    // carries the measurement: four C1 witnesses, the spend secret among them,
-    // recovered from the published proof bytes in 5 ms. (This used to cite
-    // stark/tests/zk_feasibility.rs, deleted in dc9dd515.)
+    // Every production circuit carries a blinding region and a lift column
+    // since 2026-08-31, and five channels of the C7 proof are measured exactly
+    // uniform in the mask (stark/src/compact/zk_hiding.rs). It is STILL not
+    // zero-knowledge: those are measurements on one witness and one query set,
+    // not a simulation argument. The C1 witness recovery this rule used to
+    // cite (four witnesses in 5 ms) stopped working when the mask landed;
+    // air_aware_recovery_c1.rs keeps the pre-mask model beside it, solving.
     patterns: [/zero[-\s]?knowledge/gi, /divulgation nulle/gi],
     allow: [
       // Saying the property is NOT held is the whole point of the honesty pass.
@@ -110,8 +110,10 @@ const RULES = [
   },
   {
     id: "untraceable",
-    // A withdrawal republishes the commitment its deposit emitted, so the two
-    // are pairable by anyone reading the chain.
+    // On the v3 path a withdrawal republishes the commitment its deposit
+    // emitted. C7 (devnet, 2026-08-25) publishes none, and the fee payer still
+    // stands one hop from its funder, so the bare word stays banned: sayable
+    // only with its scope attached (this spend, this probe suite, devnet).
     patterns: [/untraceable/gi, /unlinkable/gi, /intraçable/gi, /non liable/gi],
     allow: [
       "not yet unlinkable",
@@ -171,7 +173,7 @@ async function selfTest() {
   // And these must NOT be caught, because they are the true sentences the
   // rules exist to protect. A guard that over-corrects gets switched off.
   const mustPass = [
-    "<p>Not zero-knowledge today: a private witness has been recovered from the published proof bytes</p>",
+    "<p>Not zero-knowledge, and not claimed to be. Until 31 August 2026 a private witness could be recovered from the published proof bytes</p>",
     "<p>Amounts are not hidden: pools are fixed-denomination</p>",
     "<p>Transaction signatures are Ed25519 and stay Ed25519</p>",
     "<p>Post-quantum STARK proofs, stealth addresses and shielded pools</p>",

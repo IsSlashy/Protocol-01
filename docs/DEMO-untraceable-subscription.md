@@ -395,9 +395,9 @@ node verify/p01-verify.mjs --spend <SUBSCRIPTION_SIGNATURE> \
 |---|---|---|
 | **P11** | **PASS** — "appears in the account keys of NONE of the N transactions read, each read in full" | ⭐ **this is the audit answer.** See below. |
 | **P6** | names the **funder**, and `--wallet: … is NOT among the spend payer's counterparties` | the buyer did not pay for the subscription |
-| **P9** | names the **treasury**, and `--wallet: … is NOT among the deposit payer's counterparties` | the buyer did not pay for the deposit either |
-| **P8** | disjoint sets, neither containing the buyer | no single wallet funded both ends |
-| **P1/P2/P4** | **FAIL** | the subscription is still publicly matchable to its deposit — read this out too, it is the honest half |
+| **P1/P2/P4** | **PASS** on a circuit 7 spend | no commitment on the wire, so there is nothing to match the deposit on. ⚠️ On a v3 spend these read **FAIL** — read that out too, it is the honest half |
+| **P9** | **FAIL**, pinned, on a circuit 7 spend | P9 reaches the deposit through the commitment and circuit 7 publishes none, so it cannot look. A consequence of the win, not a leak; the deposit side is what P11 covers by walking every reachable transaction |
+| **P8** | **FAIL**, pinned, for the same reason | it needs the deposit P4 could not find. On a v3 spend it reads the two funder sets and expects them disjoint |
 
 ### Why P11 is the one to put in front of an auditor
 
@@ -496,8 +496,17 @@ The sentence that survives being checked, and only this one:
   deposited — and it is small. State it as a fact, never as a guarantee.
 - **"no one can tell which subscription is yours"** — the issuer always can, and
   the merchant does the moment you use the thing you bought.
-- **"zero-knowledge"** of anything the prover produces. The prover is not ZK and
-  this repo has an executable positive control that recovers a private witness.
+- **"zero-knowledge"** of anything the prover produces. The prover is not ZK.
+  ⚠️ The sentence that used to follow — *this repo has an executable positive
+  control that recovers a private witness* — stopped being true on 2026-08-31:
+  the mask landed on C1, `stark/tests/air_aware_recovery_c1.rs` now reads
+  under-determined and keeps the pre-mask model beside it, still solving. Five
+  channels are measured uniform on C7 and the simulator is run against the
+  verifier's own equations (`compact::zk_hiding`, 15 tests, exhaustive over every
+  committed value). That changes the evidence, not the verdict: an argument
+  executed on two witnesses and one query set, with the hash oracle programmed, is
+  not a theorem over all of them, so the word stays banned. See
+  `docs/zk-simulation-argument.md` §5.
 - **"the buyer's wallet signs nothing"** — not before confirming on a real run
   that the result says the funder paid. On a bundle built before the funder was
   configured, it signs the pre-fund.

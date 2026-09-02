@@ -5,7 +5,7 @@
   <h2>A deposit can still be matched to its withdrawal.</h2>
 
   <p class="lede">
-    The withdrawal has to republish a value the deposit already emitted. That join
+    On the v3 path the withdrawal has to republish a value the deposit already emitted. That join
     is deterministic, so the effective anonymity set is one and no amount of pool
     growth dilutes it.
   </p>
@@ -24,14 +24,18 @@
       </p>
     </div>
     <div>
-      <h4>Why it is still open</h4>
+      <h4>Why it was still open, and what changed</h4>
       <p>
         No client-side change closes it: the value must be public or the proof
-        cannot verify. The fix is a merged spend circuit that proves Merkle
-        membership without naming the leaf. It is specified in
-        docs/C7_SPEND_CIRCUIT_PLAN.md and costed there at 79 to 96 hours of serial
-        work. It is not built. Until it is, private in this document means
-        confidential amounts and shielded balances, and nothing more.
+        cannot verify. The fix is a spend circuit that proves Merkle membership
+        without naming the leaf, specified in docs/C7_SPEND_CIRCUIT_PLAN.md.
+        <strong>Erratum, 2 September 2026:</strong> it shipped to devnet on 25
+        August 2026 as circuit 7, whose instruction carries no commitment. The
+        join above survives on the phone and for notes deposited before the
+        blinding was randomised. What no circuit removes is the fee payer, one
+        hop from whoever funded it, so private in this document still means
+        confidential amounts, shielded balances, and an unlinkability that is
+        measured per spend rather than guaranteed.
       </p>
     </div>
   </div>

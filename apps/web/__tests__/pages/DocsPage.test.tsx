@@ -467,12 +467,19 @@ describe('DocsPage -- Privacy technologies documentation', () => {
      * verify/p01-verify.mjs, which is pinned FAIL by construction. Flipping
      * this back requires a positive control that runs and fails -- building
      * one is the work, not finding one.
+     *
+     * 2026-09-02: that positive control exists and it FAILS TO RECOVER. The
+     * trace mask landed on C1 on 2026-08-31; air_aware_recovery_c1.rs now
+     * reads under-determined and keeps the pre-mask model beside it, still
+     * solving. The line changed exactly as its own rule said it would, and it
+     * did NOT flip to a positive claim: five channels measured uniform on one
+     * witness and one query set is a measurement, not a simulation argument.
      */
     it('states the proofs are not zero-knowledge, naming the witness recovery', () => {
       openTopic('Security Model');
       expect(screen.queryAllByText(/Proofs reveal nothing beyond validity/i)).toHaveLength(0);
       expect(
-        screen.getByText(/Not zero-knowledge today: a private witness has been recovered/),
+        screen.getByText(/Not zero-knowledge, and not claimed to be\. Until 31 August 2026 a private witness could be recovered/),
       ).toBeInTheDocument();
     });
 

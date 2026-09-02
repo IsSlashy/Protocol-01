@@ -64,11 +64,11 @@ const ZK_DENIAL =
 const ZK_ALLOWED = new Map<string, string>([
   [
     'docs.sections.zkProofs.desc',
-    'Names the property to deny it: trace values are recoverable from the published proof bytes (verify/p01-verify.mjs, probe P3b), masking not landed.',
+    'Names the property to deny it: five channels are measured uniform on the production circuits (stark/src/compact/zk_hiding.rs), which is a measurement and not a simulation argument (verify/p01-verify.mjs, probe P3b).',
   ],
   [
     'docs.guaranteeZk',
-    'The guarantees card states the property is NOT held and names the witness recovery that proves it. Flips only when a positive control shows the recovery failing; verify/p01-verify.mjs probe P3b is pinned FAIL by construction.',
+    'The guarantees card states the property is NOT held. The witness recovery it used to name stopped working on 2026-08-31 (air_aware_recovery_c1.rs, pre-mask model still solving beside it) and the card says so; it flips only when a simulation argument exists, and verify/p01-verify.mjs probe P3b stays pinned FAIL by construction.',
   ],
 ]);
 
@@ -383,7 +383,7 @@ describe('claims lexicon: the guard itself bites', () => {
       e: 'Les montants ne sont pas cachés : les pools sont à dénomination fixe',
       // Rule 4's two shapes of truth: the denial, and the measurement.
       f: 'Deposit-to-withdrawal unlinkability is not shipped yet.',
-      g: 'Deposits and withdrawals are NOT yet unlinkable: the unshield republishes the commitment.',
+      g: 'Deposits and withdrawals are NOT yet unlinkable from the phone: the v3 unshield republishes the commitment.',
       h: 'The anonymity set is seven unspent notes in this pool, measured on chain.',
       i: "L'ensemble d'anonymat compte sept notes non dépensées, mesuré sur la chaîne.",
     };

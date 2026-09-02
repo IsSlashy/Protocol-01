@@ -57,6 +57,22 @@
 //! reach a shipped blob and `wasmProbeScan` has nothing to find.
 //!
 //! Run: `cargo test -p p01-stark --release --lib zk_hiding -- --nocapture`
+//!
+//! # What followed X1 and X2
+//!
+//!   * X3 -- the DEEP composition, every committed FRI layer and the terminal,
+//!     exhaustive over the committed domain.
+//!   * X4 -- the published transcript's finite-difference rank. ⚠️ Read with S1:
+//!     its additivity check never crossed rows inside a column, and the map is
+//!     not affine there, so its rank is not the dimension of a subspace.
+//!   * X5 -- the mask draw every other result is conditional on.
+//!   * X6 -- the same degree result on eight distinct witnesses.
+//!   * S1 -- the simulator, run: the verifier's seventeen equations written
+//!     against the wire, the honest law shown uniform on exactly their solution
+//!     set (61 blinding + 4 hidden-frame + 17 verifier = 82, on two witnesses),
+//!     and witness-free transcripts passing every equation. It also names the
+//!     four directions the verifier never checks: the quotient identity at each
+//!     opened row, dead on chain since B7.
 
 use super::*;
 use crate::air::spend::{
@@ -217,6 +233,9 @@ struct C7Internals {
     /// `T_c(z)` and `T_c(z*g)` for every committed column. These go on the wire
     /// verbatim, so they belong to the published vector X4 takes the rank of.
     ood_trace: Vec<u64>,
+    /// The public inputs the boundary fold binds. A function of the witness
+    /// and not of the mask; S1 hands them to the simulator as public data.
+    public_inputs: Vec<u64>,
 }
 
 /// One C7 witness, held fixed. Only the mask varies across calls in this file;
@@ -369,6 +388,7 @@ fn c7_internals(
         fri_layers,
         final_poly,
         ood_trace,
+        public_inputs,
     }
 }
 
@@ -1197,41 +1217,37 @@ fn published_vector(r: &C7Internals, queries: &[usize]) -> Vec<u64> {
 /// coefficients, and the opened pair values at each query position -- and
 /// measures the rank of its slope matrix in the mask.
 ///
-/// # The rank is NOT full, and that is the correct answer
+/// # The rank is NOT full, and what that does and does not mean
 ///
-/// A transcript the verifier accepts cannot be uniform on all of `F^m`: the
-/// verifier checks equations ON the published values, and anything satisfying an
-/// equation lives in a proper subspace. Measured, twice, and the two agree:
+/// Measured, twice, and the two agree:
 ///
 /// ```text
 ///   1 query :  88 published values, rank 80  -> deficiency  8
 ///   2 queries: 142 published values, rank 126 -> deficiency 16
 /// ```
 ///
-/// The deficiency is exactly `queries * (committed FRI layers + 1)`. Per query
-/// that is the seven fold-consistency checks -- each layer's opened value is
-/// determined by the pair opened one layer below it, which is the whole point of
-/// FRI -- plus the terminal check, where the last layer's pair is folded and
-/// compared against an evaluation of the transmitted polynomial.
+/// The deficiency is `queries * (committed FRI layers + 1)`, the count of fold
+/// and terminal checks. That is a real regularity and this test pins it.
 ///
-/// So the transcript is exactly uniform ON THE SUBSPACE THE VERIFIER'S OWN
-/// CHECKS CUT OUT, and nowhere less. That is the strongest true statement
-/// available, and it is the structure a simulator needs: sample the free
-/// coordinates uniformly, solve the checked ones. It generalises what X1 already
-/// showed on the eight quotient claims, where `S` samples seven and solves the
-/// eighth, to every field element on the wire.
+/// 🚨 IT IS NOT THE DIMENSION OF A SUBSPACE, AND UNTIL 2026-09-02 THIS COMMENT
+/// SAID IT WAS. A slope matrix describes a map only where the map is affine.
+/// The additivity check below pairs mask elements from DIFFERENT columns, and
+/// the transition constraints raise a column's own values to the seventh power,
+/// so two elements of the SAME column meet in a cross term the check never
+/// saw: S1 measures that pair as non-additive on 70 of the 82 non-trace
+/// coordinates. The rows below are finite differences on a curved set, their
+/// rank is a secant rank, and "uniform on the 126-dimensional subspace the
+/// verifier cuts out" did not follow from it. The verifier also has SEVENTEEN
+/// equations on this vector, not sixteen -- the DEEP-ALI identity is the one
+/// that is not linear -- and there are four more directions it never checks.
+/// `a_simulator_with_no_witness_produces_the_verifier_s_own_law` is the
+/// argument that holds; this test stays as the pin it always was.
 ///
-/// ⚠️ The scaling is the evidence, not the single number. A deficiency of 16 on
-/// its own could be any coincidence; a deficiency that moves 8 -> 16 when the
-/// query count moves 1 -> 2 is the verifier's equation count and little else.
-///
-/// ⛔ THE ADDITIVITY CHECK IS NOT A FORMALITY. A slope matrix only describes the
-/// map if the map is additive in the mask. Degree 1 in each element SEPARATELY
-/// -- which is all X1..X3 establish -- still permits cross terms like
-/// `m_i * m_j`, and under a cross term the single-element slopes do not compose
-/// and the rank below would be measuring a linearization that the prover does
-/// not implement. So perturbing two elements together is checked against
-/// perturbing them apart, before the rank is believed.
+/// ⛔ THE ADDITIVITY CHECK IS STILL NOT A FORMALITY -- it is what made the hole
+/// visible once the right pair was tried. It stays here as it was, so the
+/// history is readable next to the correction, and S1 carries the pairs that
+/// matter: two lift rows, lift with randomizer, two randomizer rows, and two
+/// rows of one constrained column.
 #[test]
 fn the_published_transcript_is_jointly_uniform() {
     let queries: Vec<usize> = (0..X4_QUERIES).map(|i| 137 + i * 1013).collect();
@@ -1309,23 +1325,936 @@ fn the_published_transcript_is_jointly_uniform() {
     assert_eq!(
         r,
         m - checks,
-        "the published transcript has rank {r}, and the verifier's own checks account for only \
-         {checks} of the {} it is short. The remainder is a linear combination of published \
-         values that is CONSTANT in the mask and that the verifier never constrains: it takes the \
-         same value on every honest proof, so a distinguisher reads it in one query and separates \
-         honest from simulated. Every value being individually uniform does not save this -- that \
-         is exactly the gap between a marginal and a joint result.",
-        m - r
+        "the finite-difference rank of the published transcript is {r}, not {} = m - the fold and \
+         terminal checks. This is a PIN on a measured regularity, not a uniformity claim -- see \
+         the doc comment and S1. If it moved, either the fold schedule or the query count \
+         changed, or the map changed shape; find out which before editing the number.",
+        m - checks
     );
 
     println!();
-    println!("  => the published vector is an ONTO affine image of the uniform mask MODULO the");
-    println!("     verifier's own equations, so it is exactly uniform on the {}-dimensional", m - checks);
-    println!("     subspace those equations cut out -- not merely coordinate by coordinate.");
-    println!("     That is the law a simulator samples: draw the free coordinates uniformly,");
-    println!("     solve the {checks} checked ones, exactly as X1 does for the eighth quotient claim.");
-    println!("     ⛔ Still not a simulation argument: one witness, one query set, one baseline,");
-    println!("     and it says nothing about the grinding nonce or how query positions are drawn.");
+    println!("  => finite-difference rank {r} = {m} - {checks} fold/terminal checks. A PIN, not a law:");
+    println!("     the map is not affine across rows of one column (S1 measures the pair X4 never");
+    println!("     tried), so this rank is a secant rank on a curved set. The argument that holds,");
+    println!("     with the verifier's 17 equations and the 4 it never checks, is");
+    println!("     a_simulator_with_no_witness_produces_the_verifier_s_own_law.");
+}
+
+// ===========================================================================
+// S1 -- the simulator, run
+// ===========================================================================
+//
+// Everything above MEASURES. This section ARGUES, and then executes the
+// argument: it writes the verifier's equations against the wire, shows that
+// the honest transcript is uniform on exactly their solution set, and then
+// builds a transcript from public data alone -- no witness, no trace, no
+// polynomial -- that passes every one of them through the same code path.
+//
+// The test's doc comment carries the argument, and the hole in X4 it closes.
+
+/// Coordinates of the vector `published_vector` assembles, so the verifier's
+/// equations can be written against the WIRE rather than against arrays only
+/// the prover holds. A simulator has the wire and nothing else.
+struct Wire {
+    queries: Vec<usize>,
+    layers: usize,
+}
+
+impl Wire {
+    fn ood_cur(&self, c: usize) -> usize {
+        c
+    }
+    fn ood_next(&self, c: usize) -> usize {
+        TRACE_WIDTH + c
+    }
+    fn q_ood(&self, j: usize) -> usize {
+        2 * TRACE_WIDTH + j
+    }
+    fn final_coeff(&self, i: usize) -> usize {
+        2 * TRACE_WIDTH + K + i
+    }
+    fn per_query(&self) -> usize {
+        2 * TRACE_WIDTH + 2 * K + 2 * self.layers
+    }
+    fn base(&self, q: usize) -> usize {
+        2 * TRACE_WIDTH + K + SPEND_FRI_FINAL_POLY_DEGREE_BOUND + q * self.per_query()
+    }
+    fn trace_at(&self, q: usize, c: usize, mirror: bool) -> usize {
+        self.base(q) + 2 * c + mirror as usize
+    }
+    fn quot_at(&self, q: usize, j: usize, mirror: bool) -> usize {
+        self.base(q) + 2 * TRACE_WIDTH + 2 * j + mirror as usize
+    }
+    fn fri_at(&self, q: usize, l: usize, hi: bool) -> usize {
+        self.base(q) + 2 * TRACE_WIDTH + 2 * K + 2 * l + hi as usize
+    }
+    fn len(&self) -> usize {
+        self.base(self.queries.len())
+    }
+    /// The coordinates the constrained columns `0..ZK_LIFT_COL` own: their OOD
+    /// claims and their opened pairs. Affine in the mask, and the block the
+    /// argument conditions on.
+    fn is_trace_block(&self, i: usize) -> bool {
+        if i < 2 * TRACE_WIDTH {
+            return (i % TRACE_WIDTH) < ZK_LIFT_COL;
+        }
+        for q in 0..self.queries.len() {
+            let b = self.base(q);
+            if i >= b && i < b + 2 * ZK_LIFT_COL {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// What the verifier has that the prover's secrets do not decide: the
+/// challenges and the public inputs.
+struct Public {
+    alpha: BaseElement,
+    alpha_bnd: BaseElement,
+    z: BaseElement,
+    gamma: BaseElement,
+    fri_alphas: Vec<BaseElement>,
+    public_inputs: Vec<u64>,
+}
+
+/// The DEEP composition at ONE opened point, from the wire. Mirrors
+/// `deep_composition_lde` term for term and is checked against it below.
+fn deep_at(v: &[u64], w: &Wire, p: &Public, q: usize, mirror: bool) -> BaseElement {
+    let f = |i: usize| BaseElement::new(v[i]);
+    let lde_g = get_domain_generator_generic(LDE_SIZE);
+    let trace_g = get_domain_generator_generic(TRACE_LENGTH);
+    let pos = w.queries[q] ^ if mirror { LDE_SIZE / 2 } else { 0 };
+    let x = lde_coset_shift() * lde_g.exp(pos as u64);
+    let z = p.z;
+    let zg = z * trace_g;
+
+    let mut gp: Vec<BaseElement> = Vec::with_capacity(TRACE_WIDTH + K);
+    let mut g_pow = p.gamma;
+    for _ in 0..TRACE_WIDTH + K {
+        gp.push(g_pow);
+        g_pow = g_pow * p.gamma;
+    }
+    let mut sv = BaseElement::ZERO;
+    let mut svp = BaseElement::ZERO;
+    let mut s_x = BaseElement::ZERO;
+    for c in 0..TRACE_WIDTH {
+        sv += gp[c] * f(w.ood_cur(c));
+        svp += gp[c] * f(w.ood_next(c));
+        s_x += gp[c] * f(w.trace_at(q, c, mirror));
+    }
+    let b0 = (svp - sv) * (zg - z).inv();
+    let a0 = sv - z * b0;
+    let mut q_acc = BaseElement::ZERO;
+    for j in 0..K {
+        q_acc += gp[TRACE_WIDTH + j] * (f(w.quot_at(q, j, mirror)) - f(w.q_ood(j)));
+    }
+    let den = x * x - (z + zg) * x + z * zg;
+    (s_x - a0 - x * b0 + q_acc * (x - zg)) * den.inv()
+}
+
+/// The eight equations the verifier checks on ONE query -- seven folds and the
+/// terminal -- each as `published value minus what the layer below implies`.
+/// Written against the wire the way `verify_fri_generic` reads it, with the
+/// fold arithmetic of `fri_fold_layer`.
+fn fri_residuals(v: &[u64], w: &Wire, p: &Public, q: usize) -> Vec<BaseElement> {
+    let lde_g = get_domain_generator_generic(LDE_SIZE);
+    let pos = w.queries[q];
+    let half = LDE_SIZE / 2;
+    let two_inv = BaseElement::new(2).inv();
+
+    // The smaller index of an opened pair sits at +y, the larger at -y.
+    let (mut f_pos, mut f_neg) = if pos < half {
+        (deep_at(v, w, p, q, false), deep_at(v, w, p, q, true))
+    } else {
+        (deep_at(v, w, p, q, true), deep_at(v, w, p, q, false))
+    };
+    let mut j = pos & (half - 1);
+    let mut n = LDE_SIZE;
+    let mut shift = lde_coset_shift();
+    let mut gen = lde_g;
+    let mut out = Vec::with_capacity(w.layers + 1);
+    for l in 0..=w.layers {
+        let y = shift * gen.exp(j as u64);
+        let even = (f_pos + f_neg) * two_inv;
+        let odd = (f_pos - f_neg) * two_inv * y.inv();
+        let folded = even + p.fri_alphas[l] * odd;
+        n /= 2;
+        shift = shift * shift;
+        gen = gen * gen;
+        if l < w.layers {
+            let lo = BaseElement::new(v[w.fri_at(q, l, false)]);
+            let hi = BaseElement::new(v[w.fri_at(q, l, true)]);
+            let published = if j < n / 2 { lo } else { hi };
+            out.push(published - folded);
+            f_pos = lo;
+            f_neg = hi;
+            j %= n / 2;
+        } else {
+            // The terminal layer is transmitted as coefficients over the
+            // UNSHIFTED subgroup (`inverse_ntt(&current, cur_gen)` in
+            // `c7_internals`), so it is evaluated at `gen^j`, not at the coset
+            // point. Every coefficient past the degree bound is zero on the wire
+            // by the verifier's `check_final_poly_degree_bound`.
+            let mut coeffs = vec![BaseElement::ZERO; SPEND_FRI_FINAL_POLY_SIZE];
+            for (i, c) in coeffs.iter_mut().enumerate().take(SPEND_FRI_FINAL_POLY_DEGREE_BOUND) {
+                *c = BaseElement::new(v[w.final_coeff(i)]);
+            }
+            out.push(evaluate_poly(&coeffs, gen.exp(j as u64)) - folded);
+        }
+    }
+    out
+}
+
+/// The unpublished evaluations the quotient identity at an opened row reads:
+/// `T_c(g . x)` for each constrained column `c < ZK_LIFT_COL`, at every opened
+/// position. A verifier never sees them; the argument conditions on them.
+fn hidden_next_vector(r: &C7Internals, queries: &[usize]) -> Vec<u64> {
+    let half = LDE_SIZE / 2;
+    let mut v = Vec::new();
+    for &pos in queries {
+        for mirror in [false, true] {
+            let p = pos ^ if mirror { half } else { 0 };
+            let next = (p + GENERIC_BLOWUP) % LDE_SIZE;
+            for c in 0..ZK_LIFT_COL {
+                v.push(r.trace_lde[c][next].as_int());
+            }
+        }
+    }
+    v
+}
+
+/// C7's periodic columns at an arbitrary point, materialised exactly as
+/// `compute_quotient_lde_circuit_7` materialises them.
+fn c7_periodic_at(pt: BaseElement) -> Vec<BaseElement> {
+    use crate::air::spend::build_spend_periodic_columns;
+    let trace_g = get_domain_generator_generic(TRACE_LENGTH);
+    build_spend_periodic_columns()
+        .iter()
+        .map(|col| {
+            let full: Vec<BaseElement> = (0..TRACE_LENGTH).map(|i| col[i % col.len()]).collect();
+            evaluate_poly(&inverse_ntt(&full, trace_g), pt)
+        })
+        .collect()
+}
+
+/// `C(x) / Z_T(x) + B(x) - SUM_j x^(jn) Q_j(x)` at one point `x`, from a
+/// `current` frame, a `next` frame and the eight quotient values there. At `z`
+/// this is the DEEP-ALI identity the verifier checks; at an opened LDE row it
+/// is the same polynomial identity, which the verifier does NOT check.
+fn quotient_identity_at(
+    x: BaseElement,
+    current: &[BaseElement],
+    next: &[BaseElement],
+    q_vals: &[BaseElement],
+    p: &Public,
+) -> BaseElement {
+    use crate::air::spend::{evaluate_spend_transition, SPEND_NUM_CONSTRAINTS};
+    let trace_g = get_domain_generator_generic(TRACE_LENGTH);
+    let periodic = c7_periodic_at(x);
+    let mut cs = vec![BaseElement::ZERO; SPEND_NUM_CONSTRAINTS];
+    evaluate_spend_transition(current, next, &periodic, &mut cs);
+    let c_x = rlc_combine(&cs, p.alpha);
+
+    let g_last = trace_g.exp((TRACE_LENGTH - 1) as u64);
+    let xn = x.exp(TRACE_LENGTH as u64);
+    let z_t = (xn - BaseElement::ONE) * (x - g_last).inv();
+
+    let mut b_x = BaseElement::ZERO;
+    let mut a_pow = BaseElement::ONE;
+    for &(col, row, val) in boundary_assertions_for_circuit(7, &p.public_inputs).iter() {
+        b_x += a_pow * (current[col] - val) * (x - trace_g.exp(row as u64)).inv();
+        a_pow = a_pow * p.alpha_bnd;
+    }
+    let mut q_x = BaseElement::ZERO;
+    let mut xp = BaseElement::ONE;
+    for &q in q_vals.iter() {
+        q_x += xp * q;
+        xp = xp * xn;
+    }
+    c_x * z_t.inv() + b_x - q_x
+}
+
+/// The DEEP-ALI identity at `z`, against the wire.
+fn ood_identity(v: &[u64], w: &Wire, p: &Public) -> BaseElement {
+    let f = |i: usize| BaseElement::new(v[i]);
+    let cur: Vec<BaseElement> = (0..TRACE_WIDTH).map(|c| f(w.ood_cur(c))).collect();
+    let nxt: Vec<BaseElement> = (0..TRACE_WIDTH).map(|c| f(w.ood_next(c))).collect();
+    let qs: Vec<BaseElement> = (0..K).map(|j| f(w.q_ood(j))).collect();
+    quotient_identity_at(p.z, &cur, &nxt, &qs, p)
+}
+
+/// The quotient identity at ONE opened row, from the wire plus the hidden
+/// next-row frame at that position. Zero on every honest transcript; the
+/// verifier never evaluates it.
+fn local_identity(v: &[u64], hidden: &[u64], w: &Wire, p: &Public, q: usize, mirror: bool) -> BaseElement {
+    let f = |i: usize| BaseElement::new(v[i]);
+    let lde_g = get_domain_generator_generic(LDE_SIZE);
+    let pos = w.queries[q] ^ if mirror { LDE_SIZE / 2 } else { 0 };
+    let x = lde_coset_shift() * lde_g.exp(pos as u64);
+    let cur: Vec<BaseElement> = (0..TRACE_WIDTH).map(|c| f(w.trace_at(q, c, mirror))).collect();
+    let slot = (2 * q + mirror as usize) * ZK_LIFT_COL;
+    let mut nxt: Vec<BaseElement> = vec![BaseElement::ZERO; TRACE_WIDTH];
+    for c in 0..ZK_LIFT_COL {
+        nxt[c] = BaseElement::new(hidden[slot + c]);
+    }
+    let qs: Vec<BaseElement> = (0..K).map(|j| f(w.quot_at(q, j, mirror))).collect();
+    quotient_identity_at(x, &cur, &nxt, &qs, p)
+}
+
+/// Every equation the verifier holds the wire to, as one vector: the fold and
+/// terminal checks of each query, then the DEEP-ALI identity.
+fn verifier_residuals(v: &[u64], w: &Wire, p: &Public) -> Vec<u64> {
+    let mut out: Vec<u64> = Vec::new();
+    for q in 0..w.queries.len() {
+        out.extend(fri_residuals(v, w, p, q).iter().map(|r| r.as_int()));
+    }
+    out.push(ood_identity(v, w, p).as_int());
+    out
+}
+
+/// The verifier's equations restricted to `coords`, as a matrix `V` and a
+/// right-hand side `rhs`, such that `V . t[coords] == rhs` is exactly
+/// `verifier_residuals(t) == 0` for every `t` agreeing with `anchor` outside
+/// `coords`. Built by unit perturbations, and only valid where the residuals
+/// are affine in `coords` -- which the caller checks.
+fn verifier_matrix(
+    anchor: &[u64],
+    coords: &[usize],
+    w: &Wire,
+    p: &Public,
+) -> (Vec<Vec<u64>>, Vec<u64>) {
+    let r0 = verifier_residuals(anchor, w, p);
+    let m = r0.len();
+    let mut cols: Vec<Vec<u64>> = Vec::with_capacity(coords.len());
+    for &i in coords {
+        let mut t = anchor.to_vec();
+        t[i] = fadd(t[i], 1);
+        let r = verifier_residuals(&t, w, p);
+        cols.push((0..m).map(|k| fsub(r[k], r0[k])).collect());
+    }
+    let v: Vec<Vec<u64>> = (0..m).map(|k| cols.iter().map(|c| c[k]).collect()).collect();
+    let rhs: Vec<u64> = (0..m).map(|k| fsub(0, r0[k])).collect();
+    (v, rhs)
+}
+
+/// Reduced row echelon form over the field, with the pivot column of each
+/// surviving row. Zero rows are dropped.
+fn rref(rows: &[Vec<u64>], n: usize) -> (Vec<Vec<u64>>, Vec<usize>) {
+    let mut a: Vec<Vec<u64>> = rows.to_vec();
+    let m = a.len();
+    let mut pivots: Vec<usize> = Vec::new();
+    let mut r = 0usize;
+    for c in 0..n {
+        if r == m {
+            break;
+        }
+        let Some(pr) = (r..m).find(|&k| a[k][c] != 0) else { continue };
+        a.swap(r, pr);
+        let inv = finv(a[r][c]);
+        for x in a[r].iter_mut() {
+            *x = fmul(*x, inv);
+        }
+        for k in 0..m {
+            if k != r && a[k][c] != 0 {
+                let f = a[k][c];
+                for j in 0..n {
+                    let t = fmul(f, a[r][j]);
+                    a[k][j] = fsub(a[k][j], t);
+                }
+            }
+        }
+        pivots.push(c);
+        r += 1;
+    }
+    a.truncate(r);
+    (a, pivots)
+}
+
+/// A basis of `{ phi : row . phi == 0 for every row }`.
+fn nullspace(rows: &[Vec<u64>], n: usize) -> Vec<Vec<u64>> {
+    let (a, pivots) = rref(rows, n);
+    let mut is_pivot = vec![false; n];
+    for &c in pivots.iter() {
+        is_pivot[c] = true;
+    }
+    let mut basis = Vec::new();
+    for f in 0..n {
+        if is_pivot[f] {
+            continue;
+        }
+        let mut phi = vec![0u64; n];
+        phi[f] = 1;
+        for (k, &pc) in pivots.iter().enumerate() {
+            phi[pc] = fsub(0, a[k][f]);
+        }
+        basis.push(phi);
+    }
+    basis
+}
+
+/// Reduce `phi` against an RREF: subtract each row times phi's entry at that
+/// row's pivot, so the result is supported away from the pivots.
+fn reduce_against(phi: &[u64], a: &[Vec<u64>], pivots: &[usize]) -> Vec<u64> {
+    let mut out = phi.to_vec();
+    for (k, &pc) in pivots.iter().enumerate() {
+        if out[pc] != 0 {
+            let f = out[pc];
+            for j in 0..out.len() {
+                let t = fmul(f, a[k][j]);
+                out[j] = fsub(out[j], t);
+            }
+        }
+    }
+    out
+}
+
+/// Sample the affine solution set of `V x = rhs` uniformly: reduce to RREF,
+/// draw every free coordinate from the field, solve the pivots. Panics if the
+/// system is inconsistent, because a simulator that cannot satisfy the
+/// verifier is not a simulator.
+fn sample_solution(v: &[Vec<u64>], rhs: &[u64], rng: &mut u64) -> Vec<u64> {
+    let n = v[0].len();
+    let aug: Vec<Vec<u64>> = v
+        .iter()
+        .zip(rhs.iter())
+        .map(|(row, &b)| {
+            let mut r = row.clone();
+            r.push(b);
+            r
+        })
+        .collect();
+    let (a, pivots) = rref(&aug, n + 1);
+    assert!(
+        !pivots.contains(&n),
+        "the verifier's equations are inconsistent: no transcript satisfies them"
+    );
+    let mut is_pivot = vec![false; n];
+    for &c in pivots.iter() {
+        is_pivot[c] = true;
+    }
+    let mut x = vec![0u64; n];
+    for c in 0..n {
+        if !is_pivot[c] {
+            *rng ^= *rng << 13;
+            *rng ^= *rng >> 7;
+            *rng ^= *rng << 17;
+            x[c] = *rng % GOLDILOCKS_PRIME;
+        }
+    }
+    for (k, &pc) in pivots.iter().enumerate() {
+        let mut acc = a[k][n];
+        for f in 0..n {
+            if !is_pivot[f] && a[k][f] != 0 {
+                acc = fsub(acc, fmul(a[k][f], x[f]));
+            }
+        }
+        x[pc] = acc;
+    }
+    x
+}
+
+/// Human name of a wire coordinate.
+fn coord_name(w: &Wire, i: usize) -> String {
+    if i < TRACE_WIDTH {
+        return format!("ood_cur[{i}]");
+    }
+    if i < 2 * TRACE_WIDTH {
+        return format!("ood_next[{}]", i - TRACE_WIDTH);
+    }
+    if i < 2 * TRACE_WIDTH + K {
+        return format!("q_ood[{}]", i - 2 * TRACE_WIDTH);
+    }
+    if i < 2 * TRACE_WIDTH + K + SPEND_FRI_FINAL_POLY_DEGREE_BOUND {
+        return format!("final[{}]", i - 2 * TRACE_WIDTH - K);
+    }
+    for q in 0..w.queries.len() {
+        let b = w.base(q);
+        if i >= b && i < b + w.per_query() {
+            let o = i - b;
+            let side = if o % 2 == 0 { "pos" } else { "mir" };
+            if o < 2 * TRACE_WIDTH {
+                return format!("q{q}.trace[{}].{side}", o / 2);
+            }
+            let o = o - 2 * TRACE_WIDTH;
+            if o < 2 * K {
+                return format!("q{q}.quot[{}].{side}", o / 2);
+            }
+            let o = o - 2 * K;
+            return format!("q{q}.fri[{}].{}", o / 2, if o % 2 == 0 { "lo" } else { "hi" });
+        }
+    }
+    format!("?{i}")
+}
+
+/// One honest run at `mask`, as the published vector and the hidden next-row
+/// frames side by side.
+fn wire_and_hidden(mask: &[u64], queries: &[usize], witness: u64) -> (Vec<u64>, Vec<u64>) {
+    let r = run_w(mask, witness);
+    (published_vector(&r, queries), hidden_next_vector(&r, queries))
+}
+
+/// The slope, in one mask element, of the published vector and of the hidden
+/// frames.
+fn slope_pair(
+    base: &[u64],
+    slot: usize,
+    v0: &[u64],
+    h0: &[u64],
+    queries: &[usize],
+    witness: u64,
+) -> (Vec<u64>, Vec<u64>) {
+    let mut mask = base.to_vec();
+    mask[slot] = fadd(mask[slot], 1);
+    let (v, h) = wire_and_hidden(&mask, queries, witness);
+    (
+        v.iter().zip(v0.iter()).map(|(&a, &b)| fsub(a, b)).collect(),
+        h.iter().zip(h0.iter()).map(|(&a, &b)| fsub(a, b)).collect(),
+    )
+}
+
+/// How many independent baselines the conditional rank is measured at. A rank
+/// is a generic property and one baseline would do for a generic point; two
+/// is the cheapest way to show the first was not special. Baseline `b > 0`
+/// runs on witness `3 * b` under a different mask, so the joint result is not
+/// a statement about one witness.
+const S1_BASELINES: u64 = 2;
+
+/// The public side of one run: the fixed challenges plus that run's public
+/// inputs, which the boundary fold binds and a simulator is handed.
+fn public_for(public_inputs: &[u64]) -> Public {
+    Public {
+        alpha: BaseElement::new(ALPHA),
+        alpha_bnd: BaseElement::new(ALPHA_BND),
+        z: BaseElement::new(OOD_Z),
+        gamma: BaseElement::new(GAMMA),
+        fri_alphas: FRI_ALPHAS.iter().map(|&a| BaseElement::new(a)).collect(),
+        public_inputs: public_inputs.to_vec(),
+    }
+}
+
+/// Mask elements swept per constrained column in step 1. Each column
+/// publishes six evaluations and hides four more at the opened rows; eleven
+/// elements is one more than the ten that have to come out independent.
+const S1_PER_COLUMN: usize = 11;
+
+/// **The simulator, executed against the verifier's own equations.**
+///
+/// # The argument
+///
+/// Split the wire into the *trace block* -- the OOD claims and opened pairs of
+/// the constrained columns `0..10` -- and the *rest*: the lift and randomizer
+/// columns' claims and openings, the quotient claims and openings, every FRI
+/// pair, and the terminal. Beside the wire sit forty values nobody publishes:
+/// the constrained columns' *next-row* evaluations `T_c(g x)` at each opened
+/// row, which the quotient identity at that row reads. Then:
+///
+/// 1. The trace block and the hidden next-row frames together are an affine,
+///    full-rank image of the constrained columns' mask rows -- ten evaluations
+///    per column, from 160 free rows -- so they are **jointly exactly
+///    uniform**, and the hidden frames are independent of everything published.
+/// 2. **Conditional on the block and the hidden frames**, the rest is affine
+///    in the lift and randomizer elements. Its rank, plus the rank of the
+///    verifier's equations, falls exactly **four** short of the rest -- and
+///    the four missing directions are named: they are the quotient identity
+///    `Q(x) = C(x)/Z_T(x) + B(x)` at each of the four opened rows, which the
+///    on-chain verifier stopped evaluating when B7 killed the per-query arm.
+///    The honest prover satisfies it anyway, and its right-hand side is affine
+///    in the hidden frames with full rank four.
+/// 3. So, given the block: the four unchecked directions are uniform because
+///    the hidden frames are, and the remaining sixty-one are uniform because
+///    the lift and randomizer are. The honest rest is uniform on **exactly the
+///    verifier's solution set**. A simulator that samples that set needs the
+///    equations and nothing else; it is built below and run through the same
+///    residual functions the honest transcript is checked with.
+///
+/// # What is still not covered
+///
+/// The oracle is programmed: `z`, `gamma` and every fold challenge are held
+/// fixed and the Merkle roots are not modelled, which is the random-oracle
+/// model this whole file argues in. The grinding nonce and the derivation of
+/// query positions are outside it. Two witnesses, one query set.
+///
+/// ⚠️ THE HOLE THIS CLOSES IN X4. X4 checked additivity on three mask-element
+/// pairs, all in DIFFERENT columns. The transition constraints raise a column's
+/// own values to the seventh power, so two mask elements in the SAME column
+/// meet in a cross term, and the transcript is NOT affine in those directions
+/// (measured below: non-additive on 70 rest coordinates). X4's rank of 126 is
+/// a rank of finite differences, not of a linear map, and "uniform on a
+/// 126-dimensional subspace" did not follow from it. This test reaches the
+/// same conclusion by conditioning on the block first, where the map is
+/// affine, and by naming what the verifier leaves unchecked.
+#[test]
+fn a_simulator_with_no_witness_produces_the_verifier_s_own_law() {
+    let queries: Vec<usize> = (0..X4_QUERIES).map(|i| 137 + i * 1013).collect();
+    let base = base_mask(0x5EED_0051);
+    let f0 = run(&base);
+    let v0 = published_vector(&f0, &queries);
+    let h0 = hidden_next_vector(&f0, &queries);
+    let w = Wire { queries: queries.clone(), layers: f0.fri_layers.len() };
+    let p = public_for(&f0.public_inputs);
+    let m = w.len();
+    assert_eq!(m, v0.len(), "the wire layout and published_vector disagree");
+    let n_pos = 2 * queries.len();
+    assert_eq!(h0.len(), n_pos * ZK_LIFT_COL);
+
+    // ── control A: the equations written here ARE the pipeline's ────────────
+    for q in 0..queries.len() {
+        for mirror in [false, true] {
+            let pos = queries[q] ^ if mirror { LDE_SIZE / 2 } else { 0 };
+            assert_eq!(
+                deep_at(&v0, &w, &p, q, mirror).as_int(),
+                f0.deep_lde[pos],
+                "deep_at disagrees with deep_composition_lde at position {pos}: the equations \
+                 below would be checking a verifier this prover does not face"
+            );
+            assert_eq!(
+                local_identity(&v0, &h0, &w, &p, q, mirror),
+                BaseElement::ZERO,
+                "the quotient identity does not hold at opened position {pos}: the identity is \
+                 transcribed wrongly, or the committed quotient is not C/Z_T + Q_b"
+            );
+        }
+    }
+    let r_honest = verifier_residuals(&v0, &w, &p);
+    let n_eq = r_honest.len();
+    assert!(
+        r_honest.iter().all(|&r| r == 0),
+        "the honest transcript fails the equations as written: {r_honest:?}. Either the fold, \
+         the terminal or the DEEP-ALI identity is transcribed wrongly, and nothing below means \
+         anything until it is not."
+    );
+    assert_eq!(n_eq, queries.len() * (w.layers + 1) + 1);
+
+    // ── control B: none of the equations is vacuous ─────────────────────────
+    {
+        let mut t = v0.clone();
+        t[w.fri_at(0, 3, false)] = fadd(t[w.fri_at(0, 3, false)], 1);
+        assert!(verifier_residuals(&t, &w, &p).iter().any(|&r| r != 0), "a FRI opening moved and no fold noticed");
+        let mut t = v0.clone();
+        t[w.q_ood(0)] = fadd(t[w.q_ood(0)], 1);
+        let r = verifier_residuals(&t, &w, &p);
+        assert_ne!(r[n_eq - 1], 0, "Q_0(z) moved and the DEEP-ALI identity did not");
+        let mut t = v0.clone();
+        t[w.final_coeff(1)] = fadd(t[w.final_coeff(1)], 1);
+        assert!(verifier_residuals(&t, &w, &p).iter().any(|&r| r != 0), "the terminal moved and no check noticed");
+        let mut t = v0.clone();
+        t[w.quot_at(1, 2, true)] = fadd(t[w.quot_at(1, 2, true)], 1);
+        assert_ne!(local_identity(&t, &h0, &w, &p, 1, true), BaseElement::ZERO, "a quotient opening moved and the local identity did not");
+    }
+
+    let trace_block: Vec<usize> = (0..m).filter(|&i| w.is_trace_block(i)).collect();
+    let rest: Vec<usize> = (0..m).filter(|&i| !w.is_trace_block(i)).collect();
+    println!();
+    println!("S1 / simulator -- the verifier's equations against the wire:");
+    println!("  published values       : {m} = trace block {} + rest {}", trace_block.len(), rest.len());
+    println!("  hidden next-row frames : {} = {n_pos} opened rows x {ZK_LIFT_COL} constrained columns", h0.len());
+    println!("  verifier equations     : {n_eq} = {} x ({} folds + 1 terminal) + 1 DEEP-ALI identity", queries.len(), w.layers);
+
+    // ── step 1: block + hidden frames are affine and full rank in the mask ──
+    let mut joint_rows: Vec<Vec<u64>> = Vec::new();
+    // Per column, the slopes on its own six published coordinates -- the
+    // matrix whose kernel gives a mask move that changes only hidden values.
+    let mut col_slots: Vec<Vec<usize>> = Vec::new();
+    let mut col_block_slopes: Vec<Vec<Vec<u64>>> = Vec::new();
+    for c in 0..ZK_LIFT_COL {
+        let own: Vec<usize> = trace_block
+            .iter()
+            .copied()
+            .filter(|&i| {
+                if i < 2 * TRACE_WIDTH {
+                    i % TRACE_WIDTH == c
+                } else {
+                    (0..queries.len()).any(|q| i == w.trace_at(q, c, false) || i == w.trace_at(q, c, true))
+                }
+            })
+            .collect();
+        assert_eq!(own.len(), 6);
+        let slots: Vec<usize> = (0..S1_PER_COLUMN).map(|k| mask_index((k * 13 + c) % MASK_ROWS, c)).collect();
+        let mut slopes6: Vec<Vec<u64>> = vec![vec![0u64; S1_PER_COLUMN]; 6];
+        for (e, &sl) in slots.iter().enumerate() {
+            let (rv, rh) = slope_pair(&base, sl, &v0, &h0, &queries, 0);
+            let mut row: Vec<u64> = trace_block.iter().map(|&i| rv[i]).collect();
+            row.extend_from_slice(&rh);
+            joint_rows.push(row);
+            for (k, &i) in own.iter().enumerate() {
+                slopes6[k][e] = rv[i];
+            }
+        }
+        col_slots.push(slots);
+        col_block_slopes.push(slopes6);
+    }
+    let joint_dim = trace_block.len() + h0.len();
+    let r_joint = rank(joint_rows);
+    // Two elements in ONE column, different rows: the pair X4 never tested.
+    let non_affine_rest = {
+        let sa = col_slots[0][0];
+        let sb = col_slots[0][1];
+        let (ra, _) = slope_pair(&base, sa, &v0, &h0, &queries, 0);
+        let (rb, _) = slope_pair(&base, sb, &v0, &h0, &queries, 0);
+        let mut both = base.clone();
+        both[sa] = fadd(both[sa], 1);
+        both[sb] = fadd(both[sb], 1);
+        let vb = published_vector(&run(&both), &queries);
+        let mut bad_trace = 0usize;
+        let mut bad_rest = 0usize;
+        for i in 0..m {
+            if fsub(vb[i], v0[i]) != fadd(ra[i], rb[i]) {
+                if w.is_trace_block(i) { bad_trace += 1 } else { bad_rest += 1 }
+            }
+        }
+        assert_eq!(bad_trace, 0, "the trace block is not affine in the mask, which Lagrange says is impossible");
+        bad_rest
+    };
+    println!("  block + hidden frames  : rank {r_joint} of {joint_dim} from {} constrained-column elements", ZK_LIFT_COL * S1_PER_COLUMN);
+    println!("    same column, two rows: additive on the block, non-additive on {non_affine_rest} rest coordinates");
+    assert_eq!(
+        r_joint, joint_dim,
+        "the constrained columns' published evaluations and hidden next-row frames are not jointly \
+         uniform: some linear combination of them is fixed by the witness, and the simulator \
+         below has no way to sample it."
+    );
+
+    // ── step 2: conditional on block + frames ───────────────────────────────
+    let lift_slots: Vec<usize> = (0..70).map(|k| mask_index((k * 2 + 1) % MASK_ROWS, ZK_LIFT_COL)).collect();
+    let rand_slots: Vec<usize> = (0..12)
+        .map(|k| MASK_ROWS * CONSTRAINED_TRACE_WIDTH + (k * 37 + 3) % TRACE_LENGTH)
+        .collect();
+    let mut rv_seen: Vec<usize> = Vec::new();
+    for b in 0..S1_BASELINES {
+        let wit_b = 3 * b;
+        let base_b = if b == 0 { base.clone() } else { base_mask(0x5EED_0051 ^ (b * 0x9E37)) };
+        let (fb, hb, pb) = if b == 0 {
+            (v0.clone(), h0.clone(), public_for(&f0.public_inputs))
+        } else {
+            let rb = run_w(&base_b, wit_b);
+            (published_vector(&rb, &queries), hidden_next_vector(&rb, &queries), public_for(&rb.public_inputs))
+        };
+        // The equations hold on this baseline too, before anything is built on it.
+        assert!(
+            verifier_residuals(&fb, &w, &pb).iter().all(|&r| r == 0),
+            "baseline {b} fails the verifier as written"
+        );
+
+        let mut rows: Vec<Vec<u64>> = Vec::new();
+        for &s in lift_slots.iter().chain(rand_slots.iter()) {
+            let (row, rh) = slope_pair(&base_b, s, &fb, &hb, &queries, wit_b);
+            for &i in trace_block.iter() {
+                assert_eq!(row[i], 0, "a lift or randomizer element moved the trace block");
+            }
+            assert!(rh.iter().all(|&x| x == 0), "a lift or randomizer element moved a hidden frame");
+            rows.push(rest.iter().map(|&i| row[i]).collect());
+        }
+        // Additivity INSIDE the conditional block, on every coordinate: two lift
+        // rows, lift with randomizer, two randomizer rows.
+        for (sa, sb) in [(lift_slots[0], lift_slots[1]), (lift_slots[2], rand_slots[0]), (rand_slots[1], rand_slots[2])] {
+            let (ra, _) = slope_pair(&base_b, sa, &fb, &hb, &queries, wit_b);
+            let (rb, _) = slope_pair(&base_b, sb, &fb, &hb, &queries, wit_b);
+            let mut both = base_b.clone();
+            both[sa] = fadd(both[sa], 1);
+            both[sb] = fadd(both[sb], 1);
+            let vb = published_vector(&run_w(&both, wit_b), &queries);
+            for i in 0..m {
+                assert_eq!(
+                    fsub(vb[i], fb[i]),
+                    fadd(ra[i], rb[i]),
+                    "not additive in the lift/randomizer directions at coordinate {i}: the \
+                     conditional map is not affine and the rank below describes nothing"
+                );
+            }
+        }
+        let r_cond = rank(rows.clone());
+
+        let (vmat, rhs) = verifier_matrix(&fb, &rest, &w, &pb);
+        {
+            // Affine on the rest block: a pair crossing the identity's two live
+            // inputs.
+            let (ia, ib) = (rest[0], w.q_ood(K - 1));
+            let mut t = fb.clone();
+            t[ia] = fadd(t[ia], 1);
+            t[ib] = fadd(t[ib], 1);
+            let r = verifier_residuals(&t, &w, &pb);
+            let ca = rest.iter().position(|&i| i == ia).unwrap();
+            let cb = rest.iter().position(|&i| i == ib).unwrap();
+            for k in 0..n_eq {
+                assert_eq!(r[k], fadd(vmat[k][ca], vmat[k][cb]), "the verifier's equations are not affine on the rest block");
+            }
+        }
+        assert!(rhs.iter().all(|&x| x == 0), "an honest anchor leaves a non-zero right-hand side");
+        for (ri, row) in rows.iter().enumerate() {
+            for k in 0..n_eq {
+                let mut acc = 0u64;
+                for (c, &x) in row.iter().enumerate() {
+                    if x != 0 {
+                        acc = fadd(acc, fmul(vmat[k][c], x));
+                    }
+                }
+                assert_eq!(acc, 0, "honest slope {ri} violates verifier equation {k}");
+            }
+        }
+        let r_v = rank(vmat.clone());
+        rv_seen.push(r_v);
+
+        // ── the directions neither the prover's blinding takes nor the verifier checks
+        let (v_rref, v_piv) = rref(&vmat, rest.len());
+        let mut fresh: Vec<Vec<u64>> = Vec::new();
+        for phi in nullspace(&rows, rest.len()).iter() {
+            let red = reduce_against(phi, &v_rref, &v_piv);
+            if red.iter().any(|&x| x != 0) {
+                fresh.push(red);
+            }
+        }
+        let (unchecked, _) = rref(&fresh, rest.len());
+        let n_unchecked = unchecked.len();
+        assert_eq!(r_cond + r_v + n_unchecked, rest.len());
+
+        // They are the quotient identity at the opened rows: its gradient on
+        // the rest coordinates spans exactly the same space.
+        let mut grads: Vec<Vec<u64>> = Vec::new();
+        for q in 0..queries.len() {
+            for mirror in [false, true] {
+                let base_val = local_identity(&fb, &hb, &w, &pb, q, mirror).as_int();
+                assert_eq!(base_val, 0, "the quotient identity fails at an opened row on baseline {b}");
+                let mut g = vec![0u64; rest.len()];
+                for (c, &i) in rest.iter().enumerate() {
+                    let mut t = fb.clone();
+                    t[i] = fadd(t[i], 1);
+                    g[c] = fsub(local_identity(&t, &hb, &w, &pb, q, mirror).as_int(), base_val);
+                }
+                grads.push(g);
+            }
+        }
+        let r_grads = rank(grads.clone());
+        let mut span: Vec<Vec<u64>> = unchecked.clone();
+        span.extend(grads.iter().cloned());
+        let r_span = rank(span);
+        if b == 0 {
+            for (k, phi) in unchecked.iter().enumerate() {
+                let names: Vec<String> = phi
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, &x)| x != 0)
+                    .map(|(c, _)| coord_name(&w, rest[c]))
+                    .collect();
+                println!("    unchecked direction {k}: {}", names.join(" "));
+            }
+        }
+
+        // The hidden frames move them, affinely, with full rank: one mask move
+        // per constrained column that fixes that column's six published values.
+        let mut shifts: Vec<Vec<u64>> = Vec::new();
+        let mut kernel_moves: Vec<Vec<u64>> = Vec::new();
+        let dot = |phi: &[u64], v: &[u64]| -> u64 {
+            let mut acc = 0u64;
+            for (c, &i) in rest.iter().enumerate() {
+                if phi[c] != 0 {
+                    acc = fadd(acc, fmul(phi[c], v[i]));
+                }
+            }
+            acc
+        };
+        let phi_base: Vec<u64> = unchecked.iter().map(|phi| dot(phi, &fb)).collect();
+        for c in 0..ZK_LIFT_COL {
+            let kern = nullspace(&col_block_slopes[c], S1_PER_COLUMN);
+            assert!(!kern.is_empty());
+            let mut kmask = base_b.clone();
+            for (e, &sl) in col_slots[c].iter().enumerate() {
+                kmask[sl] = fadd(kmask[sl], kern[0][e]);
+            }
+            let (vk, hk) = wire_and_hidden(&kmask, &queries, wit_b);
+            for &i in trace_block.iter() {
+                assert_eq!(vk[i], fb[i], "the kernel move in column {c} changed {}", coord_name(&w, i));
+            }
+            assert!(hk != hb, "the kernel move in column {c} changed no hidden frame");
+            shifts.push(unchecked.iter().enumerate().map(|(k, phi)| fsub(dot(phi, &vk), phi_base[k])).collect());
+            kernel_moves.push(kmask);
+        }
+        // Affine in the frames: two kernel moves together equal their sum.
+        {
+            let mut both = base_b.clone();
+            for c in [0usize, 1usize] {
+                for &sl in col_slots[c].iter() {
+                    both[sl] = fadd(both[sl], fsub(kernel_moves[c][sl], base_b[sl]));
+                }
+            }
+            let (vb, _) = wire_and_hidden(&both, &queries, wit_b);
+            for (k, phi) in unchecked.iter().enumerate() {
+                assert_eq!(
+                    fsub(dot(phi, &vb), phi_base[k]),
+                    fadd(shifts[0][k], shifts[1][k]),
+                    "unchecked direction {k} is not affine in the hidden frames"
+                );
+            }
+        }
+        let r_shift = rank(shifts);
+
+        println!(
+            "  baseline {b} (witness {wit_b}): conditional rank {r_cond} of {} from {} lift + {} randomizer elements; verifier rank {r_v}; unchecked {n_unchecked}",
+            rest.len(), lift_slots.len(), rand_slots.len()
+        );
+        println!(
+            "    unchecked = span of the quotient identity at the {n_pos} opened rows: rank {r_grads}, joint rank {r_span}; moved by the hidden frames with rank {r_shift}"
+        );
+        assert_eq!(
+            r_span, n_unchecked,
+            "the unchecked directions are not the quotient identity at the opened rows; something \
+             else fixes them and it has not been named"
+        );
+        assert_eq!(r_grads, n_pos);
+        assert_eq!(
+            r_shift, n_unchecked,
+            "the hidden next-row frames do not move every unchecked direction: {} of them are fixed \
+             by the witness given the wire, and a distinguisher reads them in one query.",
+            n_unchecked - r_shift
+        );
+        assert_eq!(
+            r_cond + r_shift + r_v,
+            rest.len(),
+            "conditional on the block, the blinding spans {r_cond}, the hidden frames {r_shift} \
+             more, the verifier cuts {r_v}: together {} short of the {} rest coordinates.",
+            rest.len() - r_cond - r_shift - r_v,
+            rest.len()
+        );
+    }
+
+    // ── step 3: the simulator, with no witness ──────────────────────────────
+    let mut rng = 0x51D0_0000_0000_0007u64;
+    let draw = |rng: &mut u64| {
+        *rng ^= *rng << 13;
+        *rng ^= *rng >> 7;
+        *rng ^= *rng << 17;
+        *rng % GOLDILOCKS_PRIME
+    };
+    let mut simulated = 0usize;
+    for _ in 0..3 {
+        let mut t = vec![0u64; m];
+        for &i in trace_block.iter() {
+            t[i] = draw(&mut rng);
+        }
+        let (vmat, rhs) = verifier_matrix(&t, &rest, &w, &p);
+        let r_v = rank(vmat.clone());
+        assert_eq!(r_v, rv_seen[0], "the verifier's rank changed under a simulated trace block");
+        let x = sample_solution(&vmat, &rhs, &mut rng);
+        for (c, &i) in rest.iter().enumerate() {
+            t[i] = x[c];
+        }
+        let r = verifier_residuals(&t, &w, &p);
+        assert!(r.iter().all(|&x| x == 0), "the simulated transcript fails the verifier: {r:?}");
+        let differs = (0..m).filter(|&i| t[i] != v0[i]).count();
+        assert!(differs > m - 4, "the simulated transcript is the honest one");
+        simulated += 1;
+    }
+    println!("  simulator              : {simulated} transcripts built from public data alone, each passing all {n_eq} equations");
+    println!();
+    println!("  => block and hidden frames jointly uniform (step 1); given them, the honest rest");
+    println!("     is uniform on a coset whose only unchecked offsets are the quotient identity at");
+    println!("     the opened rows, moved by the hidden frames with full rank (step 2); so the");
+    println!("     honest rest is uniform on exactly the verifier's solution set, and the simulator");
+    println!("     samples that law from the equations alone (step 3). Same law, no witness.");
+    println!("     Programmed oracle, fixed challenges, {S1_BASELINES} witnesses, one query set: still");
+    println!("     the random-oracle model, and still nothing about the grinding nonce or the");
+    println!("     derivation of query positions.");
 }
 
 // ===========================================================================

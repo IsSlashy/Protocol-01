@@ -1524,20 +1524,24 @@ async function verifySpend(rpc, signature, opts = {}) {
   //
   //   stark/tests/air_aware_recovery_c1.rs
   //       all FOUR C1 private inputs, the spend secret among them, recovered
-  //       from published bytes. 110 openings against a 128-row column is
-  //       "safe" by counting; the AIR's 35 linear equalities — padding rows
-  //       repeating their predecessors — cut it to 93 effective unknowns and
-  //       it solves. "More unknowns than equations" is NOT a security claim.
+  //       from published bytes — UNTIL 2026-08-31. 110 openings against a
+  //       128-row column was "safe" by counting; the AIR's 35 linear
+  //       equalities — padding rows repeating their predecessors — cut it to
+  //       93 effective unknowns and it solved. "More unknowns than equations"
+  //       is NOT a security claim. The mask landed on C1 that day and the same
+  //       file now reads under-determined, keeping the pre-mask model beside
+  //       it as the positive control, still solving.
   //   stark/tests/air_aware_recovery_c7.rs
   //       the same solver does NOT close on C7. The counterfactual beside it
   //       shows why: collapse the 128 mask rows into one and it closes at
   //       once. The margin is the mask's independence and nothing else.
   //
   // ⛔ THAT STILL DOES NOT MAKE C7 ZERO-KNOWLEDGE, and the verdict below does
-  // not move. ONE channel is measured. `stark/src/air/spend.rs:262-268` names
-  // the ones that are not: the quotient decomposition, the DEEP composition
-  // polynomial, the vector commitment, and the absent FRI salt — no simulation
-  // argument for any of them.
+  // not move. Five channels are measured (stark/src/compact/zk_hiding.rs, X1 to
+  // X6): the OOD split, the unopened leaves, DEEP and every FRI layer, the
+  // transcript jointly, the mask draw itself, and the same answer on eight
+  // witnesses. Measured is not argued: one query set, one baseline, and neither
+  // the grinding nonce nor the query-position derivation is covered.
   //
   // ⛔ AND v3 IS STILL REGISTERED. Notes whose blinding is unknown spend on the
   // C1 + C3 pair, which has no coset masking of its own to appeal to.
@@ -1557,11 +1561,12 @@ async function verifySpend(rpc, signature, opts = {}) {
         'recovery from a STARK proof is polynomial, not a byte copy. Circuit 7 does apply a coset ' +
         'LDE and 128 CSPRNG-drawn mask rows — unlike the C1+C3 pair v3 still uses — but that buys ' +
         'UNDERDETERMINATION (90 published evaluations against ~138 unknowns), not secrecy. ' +
-        'MEASURED in-tree 2026-08-29: an AIR-aware solve recovers all four C1 private inputs from ' +
-        'published bytes (stark/tests/air_aware_recovery_c1.rs), because 35 of its rows are copies ' +
-        'of others — so "more unknowns than equations" is not a security claim. The same solver ' +
-        'does NOT close on C7, and collapsing its mask makes it close, so the margin is the mask ' +
-        '(air_aware_recovery_c7.rs). ⚠️ THIS PARAGRAPH SAID, UNTIL 2026-09-01, that the quotient ' +
+        'MEASURED in-tree 2026-08-29: an AIR-aware solve recovered all four C1 private inputs from ' +
+        'published bytes (stark/tests/air_aware_recovery_c1.rs), because 35 of its rows were copies ' +
+        'of others — so "more unknowns than equations" is not a security claim. The mask landed on ' +
+        'C1 on 2026-08-31 and the same file now reads under-determined, with the pre-mask model ' +
+        'beside it still solving. The same solver does NOT close on C7, and collapsing its mask ' +
+        'makes it close, so the margin is the mask (air_aware_recovery_c7.rs). ⚠️ THIS PARAGRAPH SAID, UNTIL 2026-09-01, that the quotient ' +
         'decomposition, the DEEP composition polynomial, the vector commitment and the absent FRI ' +
         'salt had no simulation argument at all. That is out of date and it understated the ' +
         'result: all four now carry executing measurements in stark/src/compact/zk_hiding.rs, ' +
@@ -1569,9 +1574,12 @@ async function verifySpend(rpc, signature, opts = {}) {
         'rank 7 of 7 on the free OOD claims; X2 reads degree 1 on the trace and quotient trees; ' +
         'X3 reads degree 1 on the DEEP composition, all seven committed FRI layers and the live ' +
         'terminal coefficients, against a Poseidon-column control reading 7 at the same ' +
-        'positions. ⛔ It is still not a zero-knowledge proof: those are marginal, per-value ' +
-        'results at SAMPLED positions, not the joint law of the transcript, and they cover ' +
-        'neither the grinding nonce nor the query positions. A PASS on P3 says the commitment ' +
+        'positions. ⛔ It is still not a zero-knowledge proof. Since 2026-09-02 a simulator built ' +
+        'from the 17 equations the verifier checks and no witness passes every one of them at the ' +
+        'algebraic layer (zk_hiding::a_simulator_with_no_witness_produces_the_verifier_s_own_law), ' +
+        'and the honest transcript is measured uniform on exactly that solution set -- on two ' +
+        'witnesses and one query set, with the hash oracle programmed. Nothing covers the grinding ' +
+        'nonce or the query positions. A PASS on P3 says the commitment ' +
         'was not copied into the proof; it says nothing about whether the proof hides it.',
     ),
   );

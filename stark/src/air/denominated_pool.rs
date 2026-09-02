@@ -156,8 +156,9 @@ pub const FIRST_FREE_ROW: usize = NUM_HASH_CYCLES * HASH_CYCLE_LEN; // 96
 /// used to fill rows 96..127 by copying row 95, and with the periodic flags at
 /// zero the Poseidon constraints degenerate to `next[i] - current[i] = 0`,
 /// which pins each column constant across the whole tail. That is ONE unknown
-/// per column, not 32, and `stark/tests/air_aware_recovery_c1.rs` turns it into
-/// 35 linear equalities and solves for all four private inputs.
+/// per column, not 32, and `stark/tests/air_aware_recovery_c1.rs` turned it into
+/// 35 linear equalities and solved for all four private inputs. It no longer
+/// does on the masked AIR; the file keeps that pre-mask model as its control.
 pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 160
 
 /// Mask elements `build_pool_commitment_trace` requires.
@@ -430,7 +431,8 @@ pub fn evaluate_pool_commitment_transition<E: FieldElement>(
     // so the substitution rejects NO honest proof, passes every existing test,
     // and silently re-imposes `next[i] - current[i] = 0` on the 160 blinding
     // rows. That degenerate form is exactly what pins each column to a single
-    // unknown, and it is what `stark/tests/air_aware_recovery_c1.rs` solves.
+    // unknown, and it is what `stark/tests/air_aware_recovery_c1.rs` solved
+    // before the mask — and still solves, on the pre-mask model it keeps.
     //
     // ⚠️ COUNT THE PERIODIC FACTORS BEFORE EDITING. Each of these three lines
     // carries exactly TWO, `nba` and `round_flag`, over a degree-7 body. A
@@ -548,9 +550,11 @@ pub fn build_pool_commitment_trace(
     // and were not -- they were a FUNCTION of the witness, and each column
     // contributed ONE unknown across the whole tail instead of one per row.
     //
-    // `air_aware_recovery_c1.rs` turns exactly that into 35 linear equalities,
-    // collapses 128 unknowns per column to 93 effective ones against 110
-    // published openings, and recovers all four private inputs in closed form.
+    // `air_aware_recovery_c1.rs` turned exactly that into 35 linear equalities,
+    // collapsed 128 unknowns per column to 93 effective ones against 110
+    // published openings, and recovered all four private inputs in closed form.
+    // On the masked AIR it reads under-determined; the closed form lives on in
+    // the pre-mask counterfactual the same file runs beside it.
     //
     // Fresh uniform values make each of the 160 rows its own unknown, so the
     // count runs the other way: 160 * 3 unknowns against 110 openings.

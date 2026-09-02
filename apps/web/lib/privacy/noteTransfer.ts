@@ -23,11 +23,12 @@
  * No transaction exists, so there is no send for an observer to pair with a
  * receive — no timing, no amount, no counterparty. That much is unconditional.
  * It is NOT anonymity for the note itself: when the recipient eventually
- * withdraws, that withdrawal republishes the same commitment the sender's
- * deposit published, which is publicly matchable (measured on devnet: leaf 16,
- * commitment 8901821612542787864, in both the deposit and the withdrawal). The
- * handoff is unobservable; the note's exit from the pool is not. Only the C7
- * spend circuit changes that — `docs/C7_SPEND_CIRCUIT_PLAN.md`.
+ * withdraws on the v3 path, that withdrawal republishes the same commitment the
+ * sender's deposit published, which is publicly matchable (measured on devnet:
+ * leaf 16, commitment 8901821612542787864, in both the deposit and the
+ * withdrawal). The handoff is unobservable; a v3 exit from the pool is not. A
+ * circuit 7 exit (devnet since 2026-08-25) publishes no commitment, and its fee
+ * payer is still one public transfer from whoever funded it.
  */
 
 import { poolRequest } from './workerClient';

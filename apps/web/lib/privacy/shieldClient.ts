@@ -1288,9 +1288,10 @@ export interface ImportNoteOutcome {
  * and `resolveSpentNotes` covers the note's spent status from then on.
  *
  * NO transaction is involved in receiving. What the mechanism does not give:
- * when this note is later withdrawn, the withdrawal republishes the commitment
- * the original deposit published, and the sender keeps a spendable copy until
- * someone spends it. Every surface that shows the import must say both.
+ * when this note is later withdrawn on the v3 path, the withdrawal republishes
+ * the commitment the original deposit published (a v4 spend publishes none), and
+ * on every path the sender keeps a spendable copy until someone spends it. Every
+ * surface that shows the import must say both.
  */
 export async function importReceivedNote(params: {
   meta: string;

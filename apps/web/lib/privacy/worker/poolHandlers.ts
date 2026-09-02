@@ -446,9 +446,10 @@ export interface PoolSubscribeExecuteRequest {
  * NO transaction: the recipient ends up holding the note's secrets and spends
  * it later as their own. Nothing is broadcast, so there is no send transaction
  * for an observer to pair with anything. (What that does NOT buy is stated on
- * the UI — see SendForm.tsx — because the recipient's eventual withdrawal still
- * republishes the commitment this note's deposit already published, so the exit
- * is matchable to the sender's deposit. Only C7 closes that.)
+ * the UI — see SendForm.tsx — because the recipient's eventual withdrawal, on
+ * the v3 path, republishes the commitment this note's deposit already published,
+ * so that exit is matchable to the sender's deposit. C7 publishes none, and which
+ * path the recipient takes is not the sender's to choose.)
  *
  * A `ShareableNote` is made almost entirely of note SECRETS (`secret`,
  * `nullifier_preimage`, the blinding). `PoolNoteView` — the only note shape the
@@ -1057,8 +1058,9 @@ export interface PoolNoteView {
  * unshield passes the note commitment as a public instruction argument and the
  * deposit emitted the same value, so a withdrawal is publicly matchable to its
  * deposit and the effective set is ONE regardless of this count (verified on
- * devnet, docs/PAY_HANDOFF_OPUS5.md §10). PoolPanel says so explicitly — keep
- * it that way until the C7 spend circuit ships.
+ * devnet, docs/PAY_HANDOFF_OPUS5.md §10). A v4 spend publishes no commitment,
+ * so there this count bounds the crowd the note hides in — and 61 of 101 is a
+ * small crowd. PoolPanel states it as a fact, never as a guarantee.
  */
 export interface PoolSizeView {
   denomination: number;

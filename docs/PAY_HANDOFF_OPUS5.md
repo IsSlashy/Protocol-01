@@ -8,6 +8,14 @@
 > **Correction to §3's premise:** routing through the pool does NOT deliver
 > funding↔claim unlinkability. The V3 unshield publishes the note commitment in
 > cleartext, so deposits and withdrawals are publicly matchable — see §10.
+>
+> **UPDATE 2026-09-02.** The C7 spend circuit that §10 said was needed shipped to
+> devnet on 2026-08-25 (`subscribe_private_stark_v4`, `unshield_denominated_stark_v4`,
+> no commitment in the instruction). On 2026-09-01 a subscription paid through it
+> was measured with the buyer's wallet absent from all 109 reachable transactions
+> (`verify/records/v4-subscribe-2026-09-01`). The v3 statements below stay true
+> for the phone and for notes deposited before the blinding was randomised. The
+> fee payer remains one hop from its funder on every path (P6, structural).
 
 
 Session date: 2026-07-24. Author: Fable 5. Everything below is committed to `origin/master`

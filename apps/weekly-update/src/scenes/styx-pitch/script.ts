@@ -130,7 +130,7 @@ export const ACT_III: Beat[] = [
     act: 'III',
     eyebrow: 'Act three, the result',
     statement: 'And here is what it does not do yet.',
-    lede: 'A deposit can still be paired with its withdrawal: the withdrawal republishes the commitment the deposit created. The spend circuit that closes it is in development.',
+    lede: 'From this web app a deposit and its withdrawal can no longer be paired by commitment: the spend circuit that closes it shipped on 25 August. The phone still republishes it, and the fee payer still stands one hop behind every spend.',
     evidence: 'not audited · devnet only · no mainnet deployment',
   },
 ];

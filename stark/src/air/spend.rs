@@ -281,14 +281,18 @@
 //!     control that reads 7 at every one of the same positions.
 //!
 //! ⛔ C7 IS STILL NOT PERFECT ZERO-KNOWLEDGE AND MUST NOT BE DESCRIBED AS SUCH.
-//! The gap is no longer "an unmeasured channel", it is the distance between what
-//! these measurements are and what a simulation argument would be. They are
-//! taken at SAMPLED positions -- 64 of 8192 on the DEEP layer, 32 per FRI layer,
-//! 48 per circuit on the quotient -- and they establish MARGINAL uniformity per
-//! value plus one 7-dimensional joint result, not the joint law of the whole
-//! published transcript. Nothing here covers the grinding nonce or the query
-//! positions, and the uniformity of `draw_spend_mask`'s own draw is assumed
-//! rather than measured.
+//! Since this paragraph was first written the measurements became exhaustive
+//! over the committed domain (X3), the mask draw is checked rather than assumed
+//! (X5), the degree result holds on eight witnesses (X6), and the simulator is
+//! RUN against the verifier's seventeen equations written on the wire (S1):
+//! conditional on the opened trace values the honest transcript is uniform on
+//! exactly the verifier's solution set, and witness-free transcripts pass every
+//! equation. S1 also names four directions the verifier never checks -- the
+//! quotient identity at each opened row, dead on chain since B7 -- satisfied by
+//! the honest prover through next-row values nobody publishes, which the mask
+//! rows make uniform. The gap that remains: two witnesses and one query set for
+//! the joint result, a programmed oracle, and nothing on the grinding nonce or
+//! the query positions.
 //!
 //! Public inputs: `[nullifier, root, rh0, rh1, rh2, rh3]` — SIX felts. The
 //! recipient hash is the full 256 bits split into four u64s; one felt would be

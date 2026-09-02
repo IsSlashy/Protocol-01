@@ -91,11 +91,12 @@ const tx = await unshieldDenominatedStark({ proofBuffer, stealthRecipient });
 // WHAT THIS DOES NOT HIDE. The wallet pre-funds the ephemeral signer in
 // a public transfer one hop earlier, so an observer sees
 // "wallet -> ephemeral" and then "ephemeral -> one-time recipient" a
-// minute apart for a distinctive amount. And the unshield republishes
-// the note commitment the DEPOSIT published, so the exit is publicly
-// matchable to the deposit (measured on devnet: leaf 16, commitment
-// 8901821612542787864, present in both transactions). The anonymity set
-// is 1 until the C7 spend circuit ships.`,
+// minute apart for a distinctive amount. On the v3 path the unshield
+// also republishes the note commitment the DEPOSIT published, so that
+// exit is publicly matchable to the deposit (measured on devnet: leaf 16,
+// commitment 8901821612542787864, present in both transactions). The v4
+// spend (circuit 7, devnet since 2026-08-25) publishes no commitment;
+// the fee payer hop above is what remains on every path.`,
   },
   {
     id: "poseidon-hash",
@@ -249,12 +250,13 @@ await program.methods.unshieldDenominatedStark(starkProof)
   .accounts({ pool, recipient: recipient.address, nullifierPda })
   .signers([signer]).rpc();
 
-// Deposit and withdrawal are NOT unlinkable. The withdrawal publishes
-// the same note commitment the deposit published, so the two are
-// publicly matchable by anyone. Fixed denominations remove the amount
-// as a distinguisher; they do not break that link. The mobile client
-// also sweeps the one-time recipient to the wallet a few seconds later,
-// which is a convenience, not decorrelation.`,
+// Deposit and withdrawal are NOT unlinkable from the phone: the v3
+// withdrawal publishes the same note commitment the deposit published,
+// so the two are publicly matchable by anyone. Fixed denominations remove
+// the amount as a distinguisher; they do not break that link. The mobile
+// client also sweeps the one-time recipient to the wallet a few seconds
+// later, which is a convenience, not decorrelation. The web app spends a
+// recent note on circuit 7 instead, which publishes no commitment.`,
   },
   {
     id: "zkspl",
@@ -430,10 +432,10 @@ const route = await startPrivateRoute({
 // Each hop uses a different stealth address
 //
 // What the hops buy today is time and address churn, NOT an unlinkable
-// path: every unshield republishes the commitment of the deposit it
-// spends, so each hop can be matched to the one before it by commitment
-// alone. The chain of hops is walkable until the C7 spend circuit
-// removes that republication.`,
+// path: a v3 unshield republishes the commitment of the deposit it
+// spends, so each such hop can be matched to the one before it by
+// commitment alone. A circuit 7 hop publishes none, and its fee payer is
+// still one public transfer from whoever funded it.`,
   },
   {
     id: "ai-agent",
@@ -848,13 +850,16 @@ function SecurityTopic({ t }: { t: (k: string) => string }) {
   //
   // They published, as the security model, three absolutes the protocol is
   // measured NOT to deliver today:
-  //   · "Blockchain observers cannot link senders and recipients" — a pool
+  //   · "Blockchain observers cannot link senders and recipients" — a v3 pool
   //     withdrawal republishes the note commitment its deposit published, so the
   //     two are publicly matchable. Confirmed on devnet: leaf 16, commitment
   //     8901821612542787864, present in both the deposit and the withdrawal
-  //     transaction. The anonymity set is 1 until the C7 spend circuit ships
-  //     (docs/C7_SPEND_CIRCUIT_PLAN.md). On the stealth path the sender is not
-  //     hidden at all — the wallet signs and pays the transfer.
+  //     transaction. Circuit 7 (devnet, 2026-08-25) publishes no commitment, and
+  //     on 2026-09-01 P11 measured a buyer wallet absent from every reachable
+  //     transaction — on one spend, against one probe suite. The fee payer is
+  //     still one hop from its funder (P6, structural), so the absolute stays
+  //     retracted. On the stealth path the sender is not hidden at all — the
+  //     wallet signs and pays the transfer.
   //   · "Spending patterns cannot be analyzed" and "Balance tracking is
   //     impossible for third parties" — both follow from the same link. With
   //     deposits and withdrawals matchable and pool denominations public, a

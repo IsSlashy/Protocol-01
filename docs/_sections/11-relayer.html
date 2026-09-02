@@ -28,9 +28,12 @@
     <div>
       <h4>What it cannot change</h4>
       <p>
-        A withdrawal republishes the commitment its deposit inserted. That pairing
+        A v3 withdrawal republishes the commitment its deposit inserted. That pairing
         sits in the instruction data, not in the signature, so it survives any
-        change of fee payer. Page 17 carries the consequence in full.
+        change of fee payer. Page 17 carries the consequence in full. <em>Erratum,
+        2 September 2026: the circuit 7 spend, on devnet since 25 August, carries no
+        commitment; what a relayer cannot change there is that the fee payer it
+        supplies has a funding history of its own.</em>
       </p>
       <p>
         Nor does it remove the observer. Proof chunks reach the chain as a loop from

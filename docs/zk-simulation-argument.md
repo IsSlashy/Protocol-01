@@ -11,6 +11,17 @@ denominated-pool production path.
 > published transcript measured **jointly** rather than value by value (§3.1),
 > and the mask draw itself, which every other result is conditional on (§4).
 
+> **What the second revision changed (2026-09-02).** §3.1's joint result had a
+> hole: its additivity check never paired two mask elements of the SAME column,
+> which is exactly where the seventh-power constraints put a cross term, so the
+> rank it reported was a rank of finite differences and "uniform on the subspace
+> the checks cut out" did not follow from it. The simulator of §2 is now
+> **executed** against the verifier's equations
+> (`a_simulator_with_no_witness_produces_the_verifier_s_own_law`), and doing so
+> found four directions the verifier never checks and the blinding columns never
+> reach — the quotient identity at each opened row, satisfied by the honest
+> prover through next-row values nobody publishes. §3.1 is rewritten around that.
+
 Every claim below is backed by a measurement that runs in CI. Where a claim
 rests on an assumption instead, the assumption is named. Where something is out
 of scope, it is said so rather than left to be inferred.
@@ -60,10 +71,21 @@ oracle.
    `SUM_j z^(jn) Q_j(z) = C_total(z) / Z_T(z)` — the one equation the verifier
    checks — then samples `Q_0(z) .. Q_{k-2}(z)` uniform and solves `Q_{k-1}(z)`.
 
-5. **Fake the openings.** `S` samples the opened trace rows uniform, derives the
-   quotient and FRI openings consistently with them, and programs the oracle for
-   the Merkle roots and authentication paths. Only the positions fixed in step 1
-   have to be consistent — the other 99% of every tree is never revealed.
+5. **Fake the openings.** `S` samples the constrained columns' opened rows
+   uniform, then samples everything else the wire carries — the lift and
+   randomizer openings, the quotient openings, every FRI pair and the terminal —
+   **uniformly on the solution set of the verifier's equations**: seven fold
+   checks and one terminal check per query, plus the DEEP-ALI identity. That is
+   `sample_solution` in `zk_hiding.rs`, and it is run, not described. It then
+   programs the oracle for the Merkle roots and authentication paths. Only the
+   positions fixed in step 1 have to be consistent — the other 99% of every tree
+   is never revealed.
+
+   ⚠️ One identity `S` does **not** satisfy, on purpose: `Q(x) = C(x)/Z_T(x) +
+   B(x)` at the opened rows themselves. The verifier stopped evaluating it when
+   B7 retired the per-query arm, so it is not an equation of the verifier and
+   `S` ignores it. The honest prover satisfies it anyway — and §3.1 is about why
+   that difference is invisible.
 
 The verifier accepts `S`'s transcript with probability about `1 - 2^-54`.
 
@@ -103,53 +125,78 @@ printed in the test output on purpose: the Poseidon column reads `0/384`, the
 lift column `384/384`. An instrument that could not tell them apart would be
 measuring nothing.
 
-### 3.1 The transcript jointly, not value by value
+### 3.1 The transcript jointly — what X4 measured, and what S1 proves
 
 Everything above is a **marginal**. Every published value can be exactly uniform
 while some linear combination of them is **constant**, and a distinguisher that
 computes that combination gets the same answer from every honest proof and
 separates honest from simulated in one query. Marginal uniformity does not
-exclude that. Rank does.
+exclude that.
 
-So `the_published_transcript_is_jointly_uniform` assembles the vector a verifier
-actually receives — the OOD claims, the live terminal coefficients, and the
-opened pair values at each query position — and takes the rank of its slope
-matrix in the mask.
+`the_published_transcript_is_jointly_uniform` (X4) assembles the vector a
+verifier receives — the OOD claims, the live terminal coefficients, the opened
+pairs at each query position, 142 values for two queries — and takes the rank
+of its finite differences in 170 mask elements. It reads **126**, and 142 − 126
+is the count of fold and terminal checks. Both numbers are still what the test
+prints.
 
-**The rank is not full, and that is the correct answer.** A transcript the
-verifier accepts satisfies the verifier's equations, so it lives in a proper
-subspace. Measured twice:
+🚨 **What that rank does not mean, and the hole that hid it.** A slope matrix
+describes a map only where the map is affine, and X4 checked additivity on three
+pairs of mask elements — all three in *different* columns. The transition
+constraints raise a column's own values to the seventh power, so two elements of
+the *same* column meet in a cross term: measured on 2026-09-02, that pair is
+non-additive on **70 of the 82** non-trace coordinates. X4's 126 is a rank of
+secants on a curved set, not the dimension of a subspace, and "exactly uniform on
+the subspace the verifier's checks cut out" did not follow from it. The sentence
+was true. The argument under it was not.
+
+**The route that holds** is
+`a_simulator_with_no_witness_produces_the_verifier_s_own_law` (S1). It
+conditions first on the *trace block* — the constrained columns' OOD claims and
+opened pairs, 60 values — where the map is affine by Lagrange, and on forty
+values nobody publishes: those columns' **next-row evaluations** `T_c(g·x)` at
+the opened rows. Then it counts, against the verifier's own equations written
+out on the wire (seven folds and a terminal per query, plus the DEEP-ALI
+identity: 17):
 
 ```
-1 query  :  88 published values, rank  80  →  deficiency  8
-2 queries: 142 published values, rank 126  →  deficiency 16
+block + hidden frames  : rank 100 of 100   — jointly uniform, by 110 mask elements
+given them, the rest   : 82 coordinates
+  reached by lift + randomizer   61
+  cut by the verifier            17
+  unchecked and unreached         4
 ```
 
-The deficiency is exactly `queries × (committed FRI layers + 1)`: the seven
-fold-consistency checks, each layer's opened value being determined by the pair
-opened one layer below it, plus the terminal check. So the transcript is exactly
-uniform **on the subspace the verifier's own checks cut out**, and nowhere less.
+The four are named, not left as a residue: reduced against the verifier's
+equations, each is supported on exactly one opened row's lift opening and its
+eight quotient openings, and their span **is** the span of the gradients of
+`Q(x) = C(x)/Z_T(x) + B(x)` at the four opened rows — the per-query quotient
+identity the on-chain verifier has not evaluated since B7. The honest prover
+satisfies it at every row because it is a polynomial identity; its right-hand
+side reads the hidden next-row frame, and moving that frame (a mask move that
+fixes every published value of the column) shifts the four directions with
+**rank 4**, affinely. Measured on two baselines that are two distinct witnesses under
+two different masks, both `61 + 4 + 17 = 82`.
 
-That is precisely the law `S` produces. Step 4 samples seven quotient claims and
-solves the eighth; §3.1 says the same shape holds for every field element on the
-wire — sample the free coordinates, solve the checked ones. The **scaling** is
-the evidence rather than the single number: a deficiency of 16 alone could be a
-coincidence, a deficiency that moves 8 → 16 when the query count moves 1 → 2 is
-the verifier's equation count and little else.
+So, given the block: four directions are uniform because the hidden frames are,
+sixty-one because the lift and randomizer are, and seventeen are determined.
+**The honest rest is uniform on exactly the verifier's solution set.** That is
+the law `S` samples in step 5 — and S1 then builds three transcripts from the
+equations and public data alone and runs them through the same residual
+functions the honest transcript is checked with. All 17 hold on each.
 
-⛔ **The additivity check is not a formality.** A slope matrix only describes the
-map if the map is additive in the mask, and degree 1 in each element *separately*
-still permits cross terms `m_i·m_j`. Under a cross term the single-element slopes
-do not compose and the rank would describe a linearization this prover does not
-implement. So perturbing two elements together is checked against perturbing them
-apart, on all 142 values, before the rank is believed.
+⛔ **Every equation in S1 is validated before it is trusted.** The DEEP value it
+reconstructs from the wire equals the prover's `deep_composition_lde` at every
+opened position; the honest transcript reads zero on all 17 residuals and on the
+four local identities; and perturbing one opening, one quotient claim or one
+terminal coefficient makes the corresponding residual non-zero. An equation set
+that accepted everything would pass step 3 while proving nothing.
 
-🚨 **The first run of this measurement read rank 55 of 142, and that was the
-experiment failing rather than the prover.** It swept the lift column alone,
-while the published vector carries the opened values of all twelve trace columns
-— a mask element in column 10 moves column 10, and the other twenty-two
-coordinates per query were constant by construction. A sweep must cover the
-columns whose values it takes the rank of.
+🚨 **Three instrument failures of one shape, in three days.** X4 first swept the
+lift column alone and read 55 of 142; X6 first measured values a mask element
+cannot reach; X4's additivity never crossed rows inside a column. Each time the
+number was real and the sentence attached to it was not. The cure was the same
+each time: name what the instrument can and cannot see before reading it.
 
 ---
 
@@ -218,11 +265,13 @@ Three assumptions, named rather than buried.
   deployment property, entirely independent of the cryptography, and it must not
   be blurred into the ZK claim.
 - ⛔ **Devnet.** There is no mainnet deployment.
-- ⛔ **Measurements, not a quantified proof.** Every number here is taken on
-  **one witness, one query set and one baseline mask**. A simulation argument
-  quantifies over all witnesses and all challenges; these measurements do not,
-  and the gap between them is the honest distance still to travel. They are
-  exhaustive over the committed domain, which is a different axis entirely.
+- ⛔ **An executed argument, not a quantified proof.** S1 runs the simulator
+  against the verifier's equations and shows the honest law equals the simulated
+  one — on **two witnesses and one query set**, with the oracle programmed and the
+  Merkle roots not modelled. A simulation theorem quantifies over every witness
+  and every challenge; X6 covers eight witnesses for the marginal result and
+  nothing covers a second query set. That is the honest distance still to
+  travel, and it is shorter than it was.
 - ⛔ **The grinding nonce and the query-position derivation are not measured.**
   §2 step 1 argues *structurally* that the positions are the terminal node of the
   Fiat-Shamir chain, and that argument is read off the verifier's own source. It
@@ -238,7 +287,7 @@ Three assumptions, named rather than buried.
 cargo test -p p01-stark --release --lib zk_hiding -- --nocapture
 ```
 
-Thirteen tests. The five that carry the argument:
+Fifteen tests. The six that carry the argument:
 
 - `the_lde_domain_never_meets_the_trace_domain_on_any_circuit` — the coset proof,
   per circuit, printing `n` and `lde` for each rather than asserting once
@@ -247,8 +296,11 @@ Thirteen tests. The five that carry the argument:
   position on every circuit, against the degree-7 control
 - `deep_and_every_fri_layer_are_exactly_uniform_in_one_blinding_element` — the
   DEEP composition, all seven committed FRI layers and the terminal, exhaustive
-- `the_published_transcript_is_jointly_uniform` — §3.1, rank against the
-  verifier's own equation count
+- `the_published_transcript_is_jointly_uniform` — §3.1, the finite-difference
+  rank, kept as a pin; read it with S1
+- `a_simulator_with_no_witness_produces_the_verifier_s_own_law` — §3.1, the
+  simulator run: `61 + 4 + 17 = 82` on two baselines, and three witness-free
+  transcripts through the verifier's seventeen equations
 
 ⛔ Every one of them prints a **control** alongside its result: a Poseidon column
 reaching the same values at degree 7. Every value in this pipeline moves when the
@@ -268,23 +320,26 @@ What can be said, in full:
 > Every value our prover publishes is provably uniform, and we measured it at
 > every committed position — rank 7 of 7 on the free quotient claims, degree 1 on
 > all 65,536 committed quotient values, on the DEEP composition and on all seven
-> FRI layers, on all four production circuits. Taken jointly, the published
-> transcript is exactly uniform on the subspace the verifier's own checks cut
-> out. The proof is statistically zero-knowledge in the random-oracle model.
+> FRI layers, on all four production circuits. Given the opened trace values,
+> the rest of the transcript is exactly uniform on the verifier's own solution
+> set, and a simulator built from those equations and no witness passes every
+> one of them. The proof is statistically zero-knowledge in the random-oracle
+> model.
 
 The two qualifiers stay attached. **"Statistically"** and **"in the
 random-oracle model"** are what make the sentence true, and a technical audience
 will respect them far more than their absence.
 
 🚨 **And there is a third qualifier that belongs in any conversation where this
-sentence is challenged**, even though it does not fit in the sentence: these are
-**measurements**, exhaustive over the committed domain but taken on one witness
-and one query set. The construction of `S` in §2 is the argument; §3 is evidence
-for it, not a substitute. Anyone who asks for the simulation argument should be
-pointed at §2 and told plainly which parts of §3 are measured and which are
-structural. Do not let the exhaustiveness of the sweeps stand in for a
-quantification over witnesses — they are different claims, and only one of them
-is finished.
+sentence is challenged**, even though it does not fit in the sentence: the
+simulator has been **run**, not only described — against the verifier's
+equations, at the algebraic layer, with the hash oracle programmed — on two
+witnesses and one query set. §2 is the argument, §3.1 executes it, and neither
+quantifies over every witness and every challenge. Anyone who asks for the
+simulation argument should be pointed at §2 and S1 and told plainly what is
+executed, what is measured on one witness, and what is structural. Do not let
+the exhaustiveness of the sweeps stand in for a quantification over witnesses —
+they are different claims, and only one of them is finished.
 
 And one thing to say separately, not folded in: **the upgrade key is a single
 key.** Do not say "trustless" on the same breath as "zero-knowledge". They are

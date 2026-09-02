@@ -433,7 +433,10 @@ pre {
         Every figure printed here was verified against the repository, the npm
         registry or Solana devnet on 11 August 2026, and then handed to a second
         reader whose job was to disprove it. Anything that did not survive that
-        pass was removed rather than softened.
+        pass was removed rather than softened. An erratum dated 2 September 2026
+        sits on pages 4, 11 and 17: the spend circuit those pages describe as not
+        built shipped on 25 August 2026, and the pairing they measure no longer
+        exists on the path the web app uses.
       </p>
       <p>
         Where a number could not be sourced, the sentence went instead of the
@@ -641,9 +644,18 @@ pre {
   </div>
 
   <div class="admission" style="margin-top:5mm;">
-    <h4>The one pairing this design does not yet break</h4>
+    <h4>The one pairing this design did not break on 11 August</h4>
+    <p>
+      <strong>Erratum, 2 September 2026.</strong> The spend circuit this page and
+      page 17 describe as not built shipped to devnet on 25 August 2026. Its
+      instruction carries no commitment, and on 1 September a buyer wallet was
+      measured absent from all 109 transactions reachable from a subscription it
+      paid for. The pairing below still holds on the phone and for any note
+      deposited before the blinding was randomised; the fee payer remains one hop
+      from its funder on every path.
+    </p>
     <p style="margin:0;">
-      A withdrawal republishes the commitment its deposit published. The unshield
+      A v3 withdrawal republishes the commitment its deposit published. The unshield
       instruction carries <span class="mono">13889827819971897881</span> at offset
       80; the shield twenty minutes earlier carries the same value at offset 8, and
       a second field matches at offset 40 in both. Two public fields therefore pair
@@ -1145,9 +1157,12 @@ pre {
     <div>
       <h4>What it cannot change</h4>
       <p>
-        A withdrawal republishes the commitment its deposit inserted. That pairing
+        A v3 withdrawal republishes the commitment its deposit inserted. That pairing
         sits in the instruction data, not in the signature, so it survives any
-        change of fee payer. Page 17 carries the consequence in full.
+        change of fee payer. Page 17 carries the consequence in full. <em>Erratum,
+        2 September 2026: the circuit 7 spend, on devnet since 25 August, carries no
+        commitment; what a relayer cannot change there is that the fee payer it
+        supplies has a funding history of its own.</em>
       </p>
       <p>
         Nor does it remove the observer. Proof chunks reach the chain as a loop from
@@ -1673,7 +1688,7 @@ pre {
   <h2>A deposit can still be matched to its withdrawal.</h2>
 
   <p class="lede">
-    The withdrawal has to republish a value the deposit already emitted. That join
+    On the v3 path the withdrawal has to republish a value the deposit already emitted. That join
     is deterministic, so the effective anonymity set is one and no amount of pool
     growth dilutes it.
   </p>
@@ -1692,14 +1707,18 @@ pre {
       </p>
     </div>
     <div>
-      <h4>Why it is still open</h4>
+      <h4>Why it was still open, and what changed</h4>
       <p>
         No client-side change closes it: the value must be public or the proof
-        cannot verify. The fix is a merged spend circuit that proves Merkle
-        membership without naming the leaf. It is specified in
-        docs/C7_SPEND_CIRCUIT_PLAN.md and costed there at 79 to 96 hours of serial
-        work. It is not built. Until it is, private in this document means
-        confidential amounts and shielded balances, and nothing more.
+        cannot verify. The fix is a spend circuit that proves Merkle membership
+        without naming the leaf, specified in docs/C7_SPEND_CIRCUIT_PLAN.md.
+        <strong>Erratum, 2 September 2026:</strong> it shipped to devnet on 25
+        August 2026 as circuit 7, whose instruction carries no commitment. The
+        join above survives on the phone and for notes deposited before the
+        blinding was randomised. What no circuit removes is the fee payer, one
+        hop from whoever funded it, so private in this document still means
+        confidential amounts, shielded balances, and an unlinkability that is
+        measured per spend rather than guaranteed.
       </p>
     </div>
   </div>
