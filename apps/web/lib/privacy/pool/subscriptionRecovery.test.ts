@@ -47,7 +47,7 @@ import {
   base58Encode,
   bytesToHex,
 } from './subscriptionVaultAccount';
-import { deriveLicenseSecret, encodeLicenseKey } from '../license';
+import { deriveLicenseSecret, encodeLicenseKey, licenseCommitment } from '../license';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -77,6 +77,8 @@ function writeVault(v: {
   rate?: bigint;
   intervalSlots?: bigint;
   sourcePool?: Uint8Array | null;
+  /** `blake3(licenseSecret)` as the subscribe path posts it; absent = None. */
+  licenseCommitment?: Uint8Array;
 }): Uint8Array {
   const parts: number[] = [...SUBSCRIPTION_VAULT_DISCRIMINATOR];
   const u64 = (x: bigint) => {
@@ -101,7 +103,9 @@ function writeVault(v: {
   if (v.sourcePool === null) parts.push(0);
   else parts.push(1, ...(v.sourcePool ?? POOL.poolPDA.toBytes()));
   parts.push(254); // bump
-  parts.push(0, 0); // client_stealth_meta: None, license_commitment: None
+  parts.push(0); // client_stealth_meta: None
+  if (v.licenseCommitment) parts.push(1, ...v.licenseCommitment);
+  else parts.push(0); // license_commitment: None
   const out = new Uint8Array(361);
   out.set(parts);
   return out;
@@ -143,8 +147,10 @@ function makeConnection(
   return { conn, calls };
 }
 
-/** The full planted-vault scenario: this seed's note at COUNTER paid RETAILER. */
-async function plantVault() {
+/** The full planted-vault scenario: this seed's note at COUNTER paid RETAILER.
+ *  With `boughtUnderTag` the vault also carries the license commitment the
+ *  subscribe path posts for a purchase scoped to that tag. */
+async function plantVault(boughtUnderTag?: string) {
   const { secret } = deriveNoteMaterial(SEED, POOL.poolPDA, COUNTER);
   const commitment = BigInt(await stubCommitment(secret.toString()));
   const commitment32 = goldilocksU64To32(commitment);
@@ -153,6 +159,10 @@ async function plantVault() {
   const data = writeVault({
     subscriberCommitment: commitment32,
     retailer: retailer.toBytes(),
+    licenseCommitment:
+      boughtUnderTag === undefined
+        ? undefined
+        : licenseCommitment(deriveLicenseSecret(secret, boughtUnderTag)),
   });
   return { secret, commitment, commitment32, retailer, vaultPDA, data };
 }
@@ -183,8 +193,78 @@ describe('recoverSubscriptionVaults — the record comes back', () => {
     };
     expect(res.vaultsScanned).toBe(1);
     expect(res.recovered).toEqual([
-      { ...subscribeTimeRecord, tokenMint: NATIVE_SOL_MINT_BASE58 },
+      {
+        ...subscribeTimeRecord,
+        tokenMint: NATIVE_SOL_MINT_BASE58,
+        // This fixture vault stores no license commitment, so no tag can be
+        // verified for it: null on both, never a retailer-address guess.
+        licenseCommitment: null,
+        serviceTag: null,
+      },
     ]);
+  });
+
+  describe('the serviceTag is verified against the vault commitment', () => {
+    const roster = (retailer: PublicKey) => [
+      { slug: 'acme-basic', retailer: retailer.toBase58(), tokenMint: NATIVE_SOL_MINT_BASE58 },
+      { slug: 'acme-pro', retailer: retailer.toBase58(), tokenMint: NATIVE_SOL_MINT_BASE58 },
+    ];
+
+    it('two listings on one (retailer, mint): picks the one the vault was bought under', async () => {
+      const planted = await plantVault('acme-pro');
+      const { conn } = makeConnection([{ pubkey: planted.vaultPDA, data: planted.data }]);
+      const keyAtPurchase = encodeLicenseKey(deriveLicenseSecret(planted.secret, 'acme-pro'));
+
+      const res = await recoverSubscriptionVaults(conn, [SEED], {
+        computeSubscriberCommitment: stubCommitment,
+        services: roster(planted.retailer), // a join would take acme-basic, first in order
+      });
+      expect(res.recovered).toHaveLength(1);
+      const rec = res.recovered[0]!;
+      expect(rec.serviceTag).toBe('acme-pro');
+      expect(rec.licenseCommitment).toBe(
+        bytesToHex(licenseCommitment(deriveLicenseSecret(planted.secret, 'acme-pro'))),
+      );
+      // The key under the recovered tag IS the key the merchant accepted.
+      expect(encodeLicenseKey(deriveLicenseSecret(planted.secret, rec.serviceTag!))).toBe(
+        keyAtPurchase,
+      );
+    });
+
+    it('a roster without the bought slug yields null, never the retailer-address guess', async () => {
+      const planted = await plantVault('acme-pro'); // listing removed since
+      const { conn } = makeConnection([{ pubkey: planted.vaultPDA, data: planted.data }]);
+
+      const res = await recoverSubscriptionVaults(conn, [SEED], {
+        computeSubscriberCommitment: stubCommitment,
+        services: [roster(planted.retailer)[0]!],
+      });
+      expect(res.recovered[0]!.serviceTag).toBeNull();
+      expect(res.recovered[0]!.licenseCommitment).toHaveLength(64);
+
+      const empty = await recoverSubscriptionVaults(conn, [SEED], {
+        computeSubscriberCommitment: stubCommitment,
+      });
+      expect(empty.recovered[0]!.serviceTag).toBeNull();
+    });
+
+    it('a purchase with no registry (retailer address as tag) still verifies', async () => {
+      const planted = await plantVault(); // placeholder to build the retailer
+      const retailer58 = planted.retailer.toBase58();
+      const { secret } = deriveNoteMaterial(SEED, POOL.poolPDA, COUNTER);
+      const data = writeVault({
+        subscriberCommitment: planted.commitment32,
+        retailer: planted.retailer.toBytes(),
+        licenseCommitment: licenseCommitment(deriveLicenseSecret(secret, retailer58)),
+      });
+      const { conn } = makeConnection([{ pubkey: planted.vaultPDA, data }]);
+
+      const res = await recoverSubscriptionVaults(conn, [SEED], {
+        computeSubscriberCommitment: stubCommitment,
+        services: roster(planted.retailer),
+      });
+      expect(res.recovered[0]!.serviceTag).toBe(retailer58);
+    });
   });
 
   it('the license key re-derives from the recovered record alone', async () => {

@@ -2332,6 +2332,15 @@ export async function resolveSpentNotes(
  * (spent from another device, or storage wiped); the key is then only
  * re-derivable on a device that does.
  *
+ * The tag is VERIFIED against the vault, not trusted: pass the vault's
+ * on-chain `licenseCommitment` (hex, or null when the account stores none)
+ * and the ordered `candidateTags` from `licenseTagCandidates`, and the worker
+ * returns the key only under the tag whose derived key hashes to it. A stored
+ * tag rebuilt from a registry join can be wrong; a key under a wrong tag is
+ * one no merchant accepts, so with no match this throws
+ * `KEY_NOT_RECOVERABLE` instead. Omitting `licenseCommitment` derives under
+ * `serviceTag` unchecked, which only an older call site should do.
+ *
  * ⛔ The returned key is a bearer credential. Show it, let the user copy it,
  * and never log or persist it.
  */
@@ -2343,7 +2352,11 @@ export async function deriveSubscriptionLicenseKey(params: {
   leafIndex: number;
   /** The tag the key is scoped to: registry slug, else retailer address. */
   serviceTag: string;
-}): Promise<string> {
+  /** Tags to try after `serviceTag`, in order. See `licenseTagCandidates`. */
+  candidateTags?: string[];
+  /** The vault's `license_commitment`, lowercase hex; null when it stores none. */
+  licenseCommitment?: string | null;
+}): Promise<{ licenseKey: string; serviceTag: string }> {
   const res = await poolRequest({
     kind: 'poolLicenseKey',
     meta: params.meta,
@@ -2351,6 +2364,10 @@ export async function deriveSubscriptionLicenseKey(params: {
     pool: params.pool,
     leafIndex: params.leafIndex,
     serviceTag: params.serviceTag,
+    ...(params.candidateTags !== undefined ? { candidateTags: params.candidateTags } : {}),
+    ...(params.licenseCommitment !== undefined
+      ? { licenseCommitment: params.licenseCommitment }
+      : {}),
   });
-  return res.licenseKey;
+  return { licenseKey: res.licenseKey, serviceTag: res.serviceTag };
 }

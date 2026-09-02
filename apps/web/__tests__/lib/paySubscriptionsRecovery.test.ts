@@ -5,9 +5,12 @@
  * pinned in `lib/privacy/pool/subscriptionRecovery.test.ts` under the pool
  * suite. This file is about what the page does with the wire result:
  *
- *   - a recovered vault becomes a real store record, with the serviceTag
- *     resolved from the registry by (retailer, mint) and the retailer-address
- *     fallback `licenseServiceTag` defines;
+ *   - a recovered vault becomes a real store record, with the serviceTag the
+ *     worker VERIFIED against the vault's license commitment when the wire
+ *     carries one, else (older worker, or nothing matched) the registry join
+ *     by (retailer, mint) and the retailer-address fallback `licenseServiceTag`
+ *     defines, as a label the Reveal path re-checks before showing a key;
+ *   - the roster reaches the worker as public strings, names left behind;
  *   - a vault this browser already tracks is NOT overwritten — the recovered
  *     record has no cosmetics, and clobbering serviceName/openTxSig would turn
  *     a recovery into a small loss;
@@ -38,9 +41,11 @@ function seedFor(meta: string): Uint8Array {
 let recoverResponse: Record<string, unknown> | Error = { kind: 'poolRecoverSubscriptions' };
 /** Blobs the last recovery request carried, for the pass-through assertion. */
 let lastRecoverBlobs: string[] | undefined;
+/** Registry listings the last recovery request carried. */
+let lastRecoverServices: unknown;
 
 vi.mock('@/lib/privacy/workerClient', () => ({
-  poolRequest: vi.fn(async (req: { kind: string; meta: string; blobs?: string[] }) => {
+  poolRequest: vi.fn(async (req: { kind: string; meta: string; blobs?: string[]; services?: unknown }) => {
     const seed = seedFor(req.meta);
     if (req.kind === 'poolStoreLabel') {
       return {
@@ -73,6 +78,7 @@ vi.mock('@/lib/privacy/workerClient', () => ({
     }
     if (req.kind === 'poolRecoverSubscriptions') {
       lastRecoverBlobs = req.blobs;
+      lastRecoverServices = req.services;
       if (recoverResponse instanceof Error) throw recoverResponse;
       return recoverResponse;
     }
@@ -107,6 +113,60 @@ beforeEach(() => {
   localStorage.clear();
   recoverResponse = { kind: 'poolRecoverSubscriptions', subscriptions: [], vaultsScanned: 0 };
   lastRecoverBlobs = undefined;
+  lastRecoverServices = undefined;
+});
+
+describe('recoverSubscriptions: the serviceTag is the one verified against the chain', () => {
+  const TWO_SLUGS = [
+    { slug: 'acme-basic', name: 'Acme Basic', retailer: WIRE.retailer, tokenMint: WIRE.tokenMint },
+    { slug: 'acme-pro', name: 'Acme Pro', retailer: WIRE.retailer, tokenMint: WIRE.tokenMint },
+  ];
+
+  it('stores the tag the worker verified, not the join\'s first match, and its name', async () => {
+    // Two listings on one (retailer, mint). The join takes acme-basic; the
+    // worker, holding the note secret and the vault's commitment, says acme-pro.
+    recoverResponse = {
+      kind: 'poolRecoverSubscriptions',
+      subscriptions: [{ ...WIRE, licenseCommitment: 'ab'.repeat(32), serviceTag: 'acme-pro' }],
+      vaultsScanned: 1,
+    };
+    const res = await recoverSubscriptions(META, WALLET, { services: TWO_SLUGS });
+    expect(res.recovered[0].serviceTag).toBe('acme-pro');
+    expect(res.recovered[0].serviceName).toBe('Acme Pro');
+
+    const listed = (await loadSubscriptions(META, WALLET)).records;
+    expect(listed[0]).toMatchObject({ serviceTag: 'acme-pro', serviceName: 'Acme Pro' });
+
+    // The roster reached the worker as public strings; names stayed here.
+    expect(lastRecoverServices).toEqual([
+      { slug: 'acme-basic', retailer: WIRE.retailer, tokenMint: WIRE.tokenMint },
+      { slug: 'acme-pro', retailer: WIRE.retailer, tokenMint: WIRE.tokenMint },
+    ]);
+  });
+
+  it('a verified tag outside the roster (retailer address, no registry) is stored as is', async () => {
+    recoverResponse = {
+      kind: 'poolRecoverSubscriptions',
+      subscriptions: [{ ...WIRE, licenseCommitment: 'ab'.repeat(32), serviceTag: WIRE.retailer }],
+      vaultsScanned: 1,
+    };
+    const res = await recoverSubscriptions(META, WALLET, { services: TWO_SLUGS });
+    expect(res.recovered[0].serviceTag).toBe(WIRE.retailer);
+    expect(res.recovered[0].serviceName).toBeUndefined();
+  });
+
+  it('a worker that matched nothing (null) leaves the join as a label; Reveal re-checks it', async () => {
+    recoverResponse = {
+      kind: 'poolRecoverSubscriptions',
+      subscriptions: [{ ...WIRE, licenseCommitment: null, serviceTag: null }],
+      vaultsScanned: 1,
+    };
+    const res = await recoverSubscriptions(META, WALLET, { services: TWO_SLUGS });
+    expect(res.recovered[0].serviceTag).toBe('acme-basic');
+    expect(res.recovered[0].serviceName).toBe('Acme Basic');
+    // The record still carries what Reveal needs to verify against the chain.
+    expect(res.recovered[0]).toMatchObject({ pool: WIRE.pool, leafIndex: WIRE.leafIndex });
+  });
 });
 
 describe('recoverSubscriptions — records what the scan found', () => {

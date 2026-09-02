@@ -65,8 +65,15 @@ import {
   type DecodedSubscriptionVault,
 } from '../privacy/pool/subscriptionVaultAccount';
 import { licenseServiceTag } from '../privacy/license';
+import { licenseTagCandidates, KEY_NOT_RECOVERABLE } from '../privacy/licenseTagMatch';
 
 export type { EntitlementStatus, VaultPeriodState };
+
+// The tag-verification rule, re-exported so the panel reaches it through the
+// same module it already reads everything else from. Definition and rationale:
+// `lib/privacy/licenseTagMatch.ts`.
+export { licenseTagCandidates, KEY_NOT_RECOVERABLE };
+export type { LicenseTagListing } from '../privacy/licenseTagMatch';
 
 // ---------------------------------------------------------------------------
 // Account decoding + base58 — moved to lib/privacy/pool/subscriptionVaultAccount.ts
@@ -645,10 +652,16 @@ export interface RecoverSubscriptionsResult {
  *
  * `blobs` are the encrypted note blobs from local storage — optional, but a
  * RECEIVED note's secrets exist only there, so without them a subscription
- * paid with a received note cannot be recovered. `services` resolves each
- * vault's registry slug into the serviceTag the license key is scoped to;
- * without a match the tag falls back to the retailer address, exactly as
- * `licenseServiceTag` defines and as the subscribe path would have written.
+ * paid with a received note cannot be recovered. `services` is the registry
+ * roster, forwarded to the Worker so it can settle each vault's serviceTag
+ * against the vault's on-chain `license_commitment` while it holds the paying
+ * note's secret (`lib/privacy/licenseTagMatch.ts`): a slug is accepted only
+ * if the key it derives hashes to what the chain stores. The wire's
+ * `serviceTag` is that verified answer. When it is null (no candidate matched,
+ * or a vault with no commitment) or absent (an older worker), the record falls
+ * back to the (retailer, mint) join, which the Reveal path re-checks against
+ * the chain before ever showing a key; a fallback tag can mislabel the row,
+ * never mint a wrong key.
  *
  * A vault already tracked is NOT overwritten: the recovered record carries no
  * cosmetics, and replacing a richer record with a sparser one would turn a
@@ -661,7 +674,17 @@ export async function recoverSubscriptions(
 ): Promise<RecoverSubscriptionsResult> {
   let res;
   try {
-    res = await poolRequest({ kind: 'poolRecoverSubscriptions', meta, blobs: opts.blobs });
+    res = await poolRequest({
+      kind: 'poolRecoverSubscriptions',
+      meta,
+      blobs: opts.blobs,
+      // Public strings only; the display name stays on this side.
+      services: (opts.services ?? []).map((s) => ({
+        slug: s.slug,
+        retailer: s.retailer,
+        ...(s.tokenMint !== undefined ? { tokenMint: s.tokenMint } : {}),
+      })),
+    });
   } catch (e) {
     // A worker so old it predates the handler rejects with the dispatcher's
     // "Unknown pool request". That is version skew, not a scan result — say so
@@ -691,16 +714,21 @@ export async function recoverSubscriptions(
       alreadyTracked += 1;
       continue;
     }
-    // (retailer, mint) join, the same rule the panel's `serviceForVault`
-    // applies — one retailer may list a SOL and an SPL plan.
+    // The tag the worker verified against the vault's commitment, when it
+    // reported one. Otherwise the (retailer, mint) join, the same rule the
+    // panel's `serviceForVault` applies (one retailer may list a SOL and an
+    // SPL plan), as a label only: see the header.
+    const verifiedTag = typeof w.serviceTag === 'string' ? w.serviceTag : null;
+    const onThisVault = (s: RecoverServiceEntry) =>
+      s.retailer === w.retailer && (s.tokenMint === undefined || s.tokenMint === w.tokenMint);
     const svc =
-      services.find(
-        (s) => s.retailer === w.retailer && (s.tokenMint === undefined || s.tokenMint === w.tokenMint),
-      ) ?? null;
+      (verifiedTag !== null
+        ? services.find((s) => s.slug === verifiedTag && onThisVault(s))
+        : services.find(onThisVault)) ?? null;
     const rec: StoredSubscription = {
       vaultPDA: w.vaultPDA,
       retailer: w.retailer,
-      serviceTag: licenseServiceTag(svc?.slug ?? null, w.retailer),
+      serviceTag: verifiedTag ?? licenseServiceTag(svc?.slug ?? null, w.retailer),
       token: w.token,
       denomination: w.denomination,
       rate: w.rate,

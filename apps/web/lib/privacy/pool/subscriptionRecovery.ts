@@ -66,6 +66,11 @@ import {
   decodeSubscriptionVault,
   type DecodedSubscriptionVault,
 } from './subscriptionVaultAccount';
+import {
+  licenseTagCandidates,
+  matchLicenseServiceTag,
+  type LicenseTagListing,
+} from '../licenseTagMatch';
 
 /**
  * The one filter the enumeration sends: the account discriminator at offset 0.
@@ -117,12 +122,26 @@ export interface RecoveredSubscriptionVault {
   /** The note that paid: its pool and leaf index, hence the license key. */
   pool: string;
   leafIndex: number;
+  /** The vault's `license_commitment`, lowercase hex; null when it stores none. */
+  licenseCommitment: string | null;
+  /**
+   * The service tag the license key is scoped to, VERIFIED: the first of
+   * `licenseTagCandidates` (registry slugs on this (retailer, mint) from
+   * `opts.services`, then the retailer address) whose derived key hashes to
+   * `licenseCommitment`. Null when none does, or the vault stores no
+   * commitment. Settled here because this is the one place that holds the
+   * matching note secret and the decoded vault together; a tag guessed from
+   * a registry join on the main thread was the defect this closes.
+   */
+  serviceTag: string | null;
 }
 
 export interface RecoverSubscriptionVaultsOptions {
   /** Notes whose secrets only local blobs know (received notes). Already
    *  decrypted by the caller — this module never sees ciphertext. */
   blobCandidates?: CandidateNoteSecret[];
+  /** The registry roster, reduced to strings, for `serviceTag` above. */
+  services?: LicenseTagListing[];
   /**
    * `starkProver.computeCommitment` — the circuit-0 commitment over a note
    * secret, as a decimal string in and out. Injected so there is exactly ONE
@@ -273,6 +292,21 @@ export async function recoverSubscriptionVaults(
     const poolConfig = poolsByBase58.get(candidate.pool);
     if (!poolConfig) continue; // a blob note from a pool this build does not know
 
+    // The tag, checked against the chain while the secret is in hand. Local
+    // hashing only; nothing here touches the RPC.
+    const licenseCommitment = vault.decoded.licenseCommitment
+      ? bytesToHex(vault.decoded.licenseCommitment)
+      : null;
+    const serviceTag = matchLicenseServiceTag(
+      candidate.secret,
+      licenseCommitment,
+      licenseTagCandidates({
+        services: opts.services,
+        retailer: vault.decoded.retailer,
+        tokenMint: vault.decoded.tokenMint,
+      }),
+    );
+
     recovered.push({
       vaultPDA: vault.pubkey.toBase58(),
       retailer: vault.decoded.retailer,
@@ -283,6 +317,8 @@ export async function recoverSubscriptionVaults(
       intervalSlots: vault.decoded.intervalSlots.toString(),
       pool: candidate.pool,
       leafIndex: candidate.leafIndex,
+      licenseCommitment,
+      serviceTag,
     });
   }
 

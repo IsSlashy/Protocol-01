@@ -29,9 +29,12 @@ import type { Connection, PublicKey } from "@solana/web3.js";
 import SubscriptionsPanel from "@/components/pay/SubscriptionsPanel";
 import {
   ZK_SHIELDED_PROGRAM_ID_BASE58,
+  bytesToHex,
+  decodeSubscriptionVault,
   recordSubscription,
   loadSubscriptions,
 } from "@/lib/pay/subscriptions";
+import { loadServiceRegistry, type ServiceEntry } from "@/lib/privacy/serviceRegistry";
 
 // ---------------------------------------------------------------------------
 // Stub: the vendor roster (network) and its formatter.
@@ -99,6 +102,7 @@ vi.mock("@/lib/privacy/workerClient", async () => {
 
 import { deriveSubscriptionLicenseKey } from "@/lib/privacy/shieldClient";
 const mockDeriveKey = vi.mocked(deriveSubscriptionLicenseKey);
+const mockRegistry = vi.mocked(loadServiceRegistry);
 
 // ---------------------------------------------------------------------------
 // Fixtures: the real devnet vault, byte for byte.
@@ -124,6 +128,24 @@ function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return out;
+}
+
+const RETAILER = "q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr";
+const SOL_MINT = "11111111111111111111111111111111";
+/** The fixture vault's on-chain license fingerprint, read through the real
+ *  decoder: the value the Reveal path must hand the Worker to check against. */
+const FIXTURE_LICENSE_HEX = bytesToHex(
+  decodeSubscriptionVault(hexToBytes(DEVNET_VAULT_HEX)).licenseCommitment!,
+);
+
+/** A registry listing as the panel reads it; only the joined fields matter. */
+function listing(slug: string, name: string): ServiceEntry {
+  return {
+    slug,
+    name,
+    retailer: { toBase58: () => RETAILER },
+    tokenMint: { toBase58: () => SOL_MINT },
+  } as unknown as ServiceEntry;
 }
 
 const OWNER = { toBase58: () => "wallet1" } as unknown as PublicKey;
@@ -175,6 +197,7 @@ async function seedRecord(over: Partial<Parameters<typeof recordSubscription>[2]
 beforeEach(() => {
   localStorage.clear();
   mockDeriveKey.mockReset();
+  mockRegistry.mockImplementation(() => Promise.resolve({ services: [] } as never));
   worker.mode = "dead";
 });
 
@@ -321,6 +344,37 @@ describe("track a vault", () => {
     // Tracking lands on the detail page for the vault just added.
     expect(await screen.findByText("No cancel, no refund")).toBeInTheDocument();
   });
+
+  it("tracking an already-tracked vault keeps the richer record: paying note and tag", async () => {
+    // Written at purchase: knows the note and the slug the key is scoped to.
+    await seedRecord({
+      serviceTag: "acme-pro",
+      pool: "PoolPda11111111111111111111111111111111111",
+      leafIndex: 19,
+    });
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    await screen.findByText("Bitwarden Test");
+    await userEvent.type(screen.getByPlaceholderText("Vault address"), VAULT_ADDR);
+    await userEvent.click(screen.getByRole("button", { name: /Track/ }));
+
+    // Lands on the detail page without rewriting the record from chain data
+    // alone, which would have dropped the note and replaced the tag by a guess.
+    expect(await screen.findByText("No cancel, no refund")).toBeInTheDocument();
+    const recs = (await loadSubscriptions(null, "wallet1")).records;
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toMatchObject({
+      serviceTag: "acme-pro",
+      serviceName: "Bitwarden Test",
+      pool: "PoolPda11111111111111111111111111111111111",
+      leafIndex: 19,
+      openTxSig: "4PfrkFakeSignatureForTests",
+    });
+    expect(screen.getByRole("button", { name: /Reveal key/ })).toBeInTheDocument();
+  });
 });
 
 describe("license key reveal", () => {
@@ -337,7 +391,10 @@ describe("license key reveal", () => {
   }
 
   it("re-derives the key in the Worker on demand and shows it with a copy button", async () => {
-    mockDeriveKey.mockResolvedValue("P01-000G-40R4-0M30-E209-185G-R38E-1W");
+    mockDeriveKey.mockResolvedValue({
+      licenseKey: "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+      serviceTag: "bitwarden-test",
+    });
     await openDetailWithNote();
 
     // Nothing shows a key before the user asks.
@@ -348,18 +405,110 @@ describe("license key reveal", () => {
     expect(screen.getByRole("button", { name: /Copy key/ })).toBeInTheDocument();
 
     // The exact identity of the derivation call: this browser's session, the
-    // paying note, and the tag the vault's commitment is scoped to.
+    // paying note, the stored tag first, then the candidates the chain check
+    // may fall through to (no roster here, so only the retailer address), and
+    // the vault's on-chain fingerprint the key must hash to.
     expect(mockDeriveKey).toHaveBeenCalledWith({
       meta: "meta-test",
       walletPubkey: "wallet1",
       pool: "PoolPda11111111111111111111111111111111111",
       leafIndex: 19,
       serviceTag: "bitwarden-test",
+      candidateTags: ["bitwarden-test", RETAILER],
+      licenseCommitment: FIXTURE_LICENSE_HEX,
     });
+    // The record is untouched when the stored tag is the one that verified.
+    expect((await loadSubscriptions(null, "wallet1")).records[0]!.serviceTag).toBe(
+      "bitwarden-test",
+    );
 
     // Hide takes it back off the screen.
     await userEvent.click(screen.getByRole("button", { name: /^Hide$/ }));
     expect(screen.queryByText("P01-000G-40R4-0M30-E209-185G-R38E-1W")).not.toBeInTheDocument();
+  });
+
+  it("two registry slugs on one (retailer, mint): every slug is a candidate, and the tag the chain confirmed replaces a wrong stored one", async () => {
+    // The record was rebuilt by a join that picked acme-basic; the vault was
+    // bought under acme-pro. The Worker answers with the tag that verified.
+    mockRegistry.mockResolvedValue({
+      services: [listing("acme-basic", "Acme Basic"), listing("acme-pro", "Acme Pro")],
+    } as never);
+    mockDeriveKey.mockResolvedValue({
+      licenseKey: "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+      serviceTag: "acme-pro",
+    });
+    await seedRecord({
+      serviceTag: "acme-basic",
+      serviceName: undefined,
+      pool: "PoolPda11111111111111111111111111111111111",
+      leafIndex: 19,
+    });
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    // Named by the join while the tag is a guess...
+    await userEvent.click(await screen.findByText("Acme Basic"));
+    expect(screen.getByText(/scoped to: acme-basic/i)).toBeInTheDocument();
+
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    expect(await screen.findByText("P01-000G-40R4-0M30-E209-185G-R38E-1W")).toBeInTheDocument();
+
+    expect(mockDeriveKey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serviceTag: "acme-basic",
+        candidateTags: ["acme-basic", "acme-pro", RETAILER],
+        licenseCommitment: FIXTURE_LICENSE_HEX,
+      }),
+    );
+
+    // ...and relabelled by the chain: the record now carries the verified tag
+    // and keeps everything else it knew.
+    expect(await screen.findByText(/scoped to: acme-pro/i)).toBeInTheDocument();
+    await waitFor(async () =>
+      expect((await loadSubscriptions(null, "wallet1")).records[0]).toMatchObject({
+        serviceTag: "acme-pro",
+        pool: "PoolPda11111111111111111111111111111111111",
+        leafIndex: 19,
+        openTxSig: "4PfrkFakeSignatureForTests",
+      }),
+    );
+    expect(await screen.findAllByText("Acme Pro")).not.toHaveLength(0);
+  });
+
+  it("a key none of the candidates reproduces is not shown: the panel says so", async () => {
+    mockDeriveKey.mockRejectedValue(
+      new Error(
+        "key not recoverable for this subscription: none of the 2 service tags tried derives " +
+          "the key the vault's license fingerprint was computed from.",
+      ),
+    );
+    await openDetailWithNote();
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    expect(
+      await screen.findByText(/key not recoverable for this subscription/i),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/P01-[0-9A-Z]{4}-/);
+    expect(screen.queryByRole("button", { name: /Copy key/ })).not.toBeInTheDocument();
+  });
+
+  it("a closed vault has no fingerprint left to check against: no Worker call, no key", async () => {
+    await seedRecord({ pool: "PoolPda11111111111111111111111111111111111", leafIndex: 19 });
+    render(
+      <SubscriptionsPanel
+        meta="meta-test"
+        owner={OWNER}
+        connection={fakeConnection({ slot: START_SLOT + 1_500, accounts: {} })}
+      />,
+    );
+    await userEvent.click(await screen.findByText("Bitwarden Test"));
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    expect(
+      await screen.findByText(/key not recoverable for this subscription/i),
+    ).toBeInTheDocument();
+    expect(mockDeriveKey).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toMatch(/P01-[0-9A-Z]{4}-/);
   });
 
   it("a failed re-derivation shows the reason, not a key", async () => {

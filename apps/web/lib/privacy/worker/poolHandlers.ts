@@ -105,6 +105,11 @@ import {
   licenseCommitment,
   licenseServiceTag,
 } from '../license';
+import {
+  KEY_NOT_RECOVERABLE,
+  matchLicenseServiceTag,
+  type LicenseTagListing,
+} from '../licenseTagMatch';
 
 // ---------------------------------------------------------------------------
 // Wire protocol
@@ -742,14 +747,32 @@ export interface PoolLicenseKeyRequest {
   /** Pool PDA (base58) + leaf index identifying the note that paid. */
   pool: string;
   leafIndex: number;
-  /** The string the key is scoped to: registry slug, else retailer address. */
+  /** The string the key is scoped to: registry slug, else retailer address.
+   *  With `licenseCommitment` set this is only the FIRST candidate tried. */
   serviceTag: string;
+  /**
+   * Further tags to try after `serviceTag`, in order: the registry slugs on the
+   * vault's (retailer, mint), then the retailer address. See
+   * `lib/privacy/licenseTagMatch.ts` for why the tag is never trusted. Ignored
+   * without `licenseCommitment`.
+   */
+  candidateTags?: string[];
+  /**
+   * The vault's on-chain `license_commitment`, lowercase hex, read by the
+   * caller from the account. When present, the key is returned ONLY under a
+   * tag whose derived key hashes to it; `null` says the vault stores none, so
+   * no key can be verified for it. Absent (an older caller): the key derives
+   * under `serviceTag` unchecked, as before this field existed.
+   */
+  licenseCommitment?: string | null;
 }
 
 export interface PoolLicenseKeyResponse {
   kind: 'poolLicenseKey';
   /** The "P01-…" key, re-derived. Displayed, never stored, never logged. */
   licenseKey: string;
+  /** The tag the key was derived under: the one that matched the vault's
+   *  commitment when the request carried it, else the request's `serviceTag`. */
   serviceTag: string;
 }
 
@@ -898,6 +921,14 @@ export interface PoolRecoverSubscriptionsRequest {
    *  Optional, but a received note's secrets exist ONLY in its blob, so a
    *  subscription paid with one is unrecoverable without them. */
   blobs?: string[];
+  /**
+   * The registry roster, reduced to public strings, so the scan can settle
+   * each vault's service tag WHILE it holds the matching note secret: the tag
+   * is verified against the vault's `license_commitment`, never guessed from
+   * a (retailer, mint) join. Optional; without it only the retailer address
+   * is tried, which no registry purchase commits under.
+   */
+  services?: LicenseTagListing[];
 }
 
 /** The recovered-subscription fields that cross back to the page. Public
@@ -907,8 +938,7 @@ export interface PoolRecoverSubscriptionsRequest {
 export interface RecoveredSubscriptionWire {
   vaultPDA: string;
   retailer: string;
-  /** Base58; `NATIVE_SOL_MINT_BASE58` for SOL vaults. The page joins the
-   *  registry on (retailer, mint) to resolve the serviceTag. */
+  /** Base58; `NATIVE_SOL_MINT_BASE58` for SOL vaults. */
   tokenMint: string;
   token: string;
   denomination: number;
@@ -918,6 +948,13 @@ export interface RecoveredSubscriptionWire {
    *  `deriveSubscriptionLicenseKey` needs to re-derive the license key. */
   pool: string;
   leafIndex: number;
+  /** The vault's on-chain `license_commitment`, lowercase hex; null when the
+   *  vault stores none. Public chain data. Absent from an older worker. */
+  licenseCommitment?: string | null;
+  /** The tag VERIFIED against that commitment (`lib/privacy/licenseTagMatch.ts`),
+   *  or null when no candidate reproduced it. Absent from an older worker, in
+   *  which case the page falls back to its registry join. */
+  serviceTag?: string | null;
 }
 
 export interface PoolRecoverSubscriptionsResponse {
@@ -3643,6 +3680,13 @@ async function handlePoolResolveSpent(
  * Same derivation `handlePoolSubscribeExecute` performs at purchase time, on
  * the same secret, scoped by the same tag. See `PoolLicenseKeyRequest`.
  *
+ * The tag is verified, not trusted, whenever the request carries the vault's
+ * `licenseCommitment`: `serviceTag` first, then `candidateTags` in order, and
+ * the key comes back only under the tag whose derived key hashes to the
+ * commitment. A record rebuilt from a registry join can name the wrong slug
+ * (two slugs on one retailer, a paused or closed listing); this is what keeps
+ * that from surfacing as a key no merchant accepts.
+ *
  * ⛔ The key must never be logged and never appear in an error message.
  */
 function handlePoolLicenseKey(req: PoolLicenseKeyRequest): PoolLicenseKeyResponse {
@@ -3652,8 +3696,29 @@ function handlePoolLicenseKey(req: PoolLicenseKeyRequest): PoolLicenseKeyRespons
     const note = decryptOwnedBlob(candidates, blob);
     if (!note || note.pool !== req.pool || note.leafIndex !== req.leafIndex) continue;
 
-    const licenseKey = encodeLicenseKey(deriveLicenseSecret(note.secret, req.serviceTag));
-    return { kind: 'poolLicenseKey', licenseKey, serviceTag: req.serviceTag };
+    if (req.licenseCommitment === undefined) {
+      // An older caller with no chain value to check against: the stored tag,
+      // unchecked, exactly as before the field existed.
+      const licenseKey = encodeLicenseKey(deriveLicenseSecret(note.secret, req.serviceTag));
+      return { kind: 'poolLicenseKey', licenseKey, serviceTag: req.serviceTag };
+    }
+
+    // Insertion order is the trial order; a caller may repeat the stored tag.
+    const tags = [...new Set([req.serviceTag, ...(req.candidateTags ?? [])])];
+    const serviceTag = matchLicenseServiceTag(note.secret, req.licenseCommitment, tags);
+    if (serviceTag === null) {
+      const tried = tags.filter((t) => t).length;
+      throw new Error(
+        req.licenseCommitment === null
+          ? `${KEY_NOT_RECOVERABLE}: the vault stores no license fingerprint, so no key can be ` +
+              'checked against it.'
+          : `${KEY_NOT_RECOVERABLE}: none of the ${tried} service tag${tried === 1 ? '' : 's'} ` +
+              'tried derives the key the vault\'s license fingerprint was computed from. The ' +
+              'registry listing this was bought under may have been renamed or removed.',
+      );
+    }
+    const licenseKey = encodeLicenseKey(deriveLicenseSecret(note.secret, serviceTag));
+    return { kind: 'poolLicenseKey', licenseKey, serviceTag };
   }
 
   throw new Error(
@@ -3709,12 +3774,19 @@ async function handlePoolRecoverSubscriptions(
         }
         return starkProver.computeCommitment(secretDecimal);
       },
+      // Reduced to the three strings the candidate rule reads, whatever else
+      // the page sent along.
+      services: (req.services ?? []).map((s) => ({
+        slug: s.slug,
+        retailer: s.retailer,
+        ...(s.tokenMint !== undefined ? { tokenMint: s.tokenMint } : {}),
+      })),
       onProgress,
     },
   );
 
   // Whitelist copy, the same discipline as `handlePoolOpenRecords`: exactly
-  // these nine public fields cross, whatever else the scan result carries.
+  // these eleven public fields cross, whatever else the scan result carries.
   return {
     kind: 'poolRecoverSubscriptions',
     vaultsScanned,
@@ -3728,6 +3800,8 @@ async function handlePoolRecoverSubscriptions(
       intervalSlots: r.intervalSlots,
       pool: r.pool,
       leafIndex: r.leafIndex,
+      licenseCommitment: r.licenseCommitment,
+      serviceTag: r.serviceTag,
     })),
   };
 }

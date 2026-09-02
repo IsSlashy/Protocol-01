@@ -37,12 +37,17 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicKey } from '@solana/web3.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { derivePoolSeedLegacy, derivePoolSeedSalted } from './seedDerivation';
 import { findPoolV3 } from './denominatedPool';
 import { createNoteEncryptionAddress, encryptNote } from './noteCrypto';
-import { licenseKeyForPrivate } from '../license';
+import {
+  decodeLicenseKey,
+  deriveLicenseSecret,
+  licenseCommitment,
+  licenseKeyForPrivate,
+} from '../license';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -322,5 +327,116 @@ describe('poolLicenseKey', () => {
     } catch (e) {
       expect((e as Error).message).not.toMatch(/P01-/);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The tag is verified against the vault's commitment, never trusted.
+//
+// A record rebuilt after a loss (recovery scan, track-by-address) guessed the
+// tag from a (retailer, mint) registry join. Two slugs on one retailer, or a
+// paused or removed listing, and the key derived under the guess hashed to
+// nothing on chain: `verifyMerchantLicense` refused a paid-for subscription.
+// With `licenseCommitment` on the request the handler tries the stored tag,
+// then every candidate, and answers only under the one the chain confirms.
+// ---------------------------------------------------------------------------
+
+describe('poolLicenseKey verifies the tag against the vault commitment', () => {
+  const RETAILER = 'q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr';
+  /** What the subscribe path posted on chain for a purchase under `tag`. */
+  const onChainFor = (tag: string) =>
+    bytesToHex(licenseCommitment(deriveLicenseSecret(LIVE_NOTE.secret, tag)));
+
+  const base = {
+    kind: 'poolLicenseKey' as const,
+    meta: META,
+    pool: POOL_58,
+    leafIndex: LIVE_NOTE.leafIndex,
+  };
+
+  it('two listings on one (retailer, mint): the key comes back under the slug the vault was bought under', async () => {
+    // Bought under acme-pro; the rebuilt record carries the join's first
+    // match, acme-basic.
+    const res = await handlePoolRequest({
+      ...base,
+      blobs: [blobFor(SALTED_SEED, LIVE_NOTE)],
+      serviceTag: 'acme-basic',
+      candidateTags: ['acme-basic', 'acme-pro', RETAILER],
+      licenseCommitment: onChainFor('acme-pro'),
+    });
+    expect(res.serviceTag).toBe('acme-pro');
+    expect(res.licenseKey).toBe(licenseKeyForPrivate(LIVE_NOTE.secret, 'acme-pro'));
+    // The merchant's own check on the key shown: blake3 of the decoded key
+    // equals the vault's commitment.
+    expect(bytesToHex(licenseCommitment(decodeLicenseKey(res.licenseKey)))).toBe(
+      onChainFor('acme-pro'),
+    );
+  });
+
+  it('a stored tag that matches is accepted first', async () => {
+    const res = await handlePoolRequest({
+      ...base,
+      blobs: [blobFor(SALTED_SEED, LIVE_NOTE)],
+      serviceTag: 'acme-pro',
+      candidateTags: ['acme-basic', 'acme-pro', RETAILER],
+      licenseCommitment: onChainFor('acme-pro'),
+    });
+    expect(res.serviceTag).toBe('acme-pro');
+    expect(res.licenseKey).toBe(licenseKeyForPrivate(LIVE_NOTE.secret, 'acme-pro'));
+  });
+
+  it('the retailer-address fallback is reached when no slug matches', async () => {
+    const res = await handlePoolRequest({
+      ...base,
+      blobs: [blobFor(LEGACY_SEED, LIVE_NOTE)],
+      serviceTag: 'acme-basic',
+      candidateTags: [RETAILER],
+      licenseCommitment: onChainFor(RETAILER),
+    });
+    expect(res.serviceTag).toBe(RETAILER);
+  });
+
+  it('no candidate matches: no key, a stated verdict, no key material in the message', async () => {
+    const req = {
+      ...base,
+      blobs: [blobFor(SALTED_SEED, LIVE_NOTE)],
+      serviceTag: 'acme-basic',
+      candidateTags: ['acme-basic', RETAILER],
+      licenseCommitment: onChainFor('acme-pro'), // the listing was removed since
+    };
+    await expect(handlePoolRequest(req)).rejects.toThrow(
+      /^key not recoverable for this subscription/,
+    );
+    try {
+      await handlePoolRequest(req);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect((e as Error).message).not.toMatch(/P01-/);
+      expect((e as Error).message).not.toContain(LIVE_NOTE.secret.toString());
+    }
+  });
+
+  it('a vault storing no commitment verifies no key', async () => {
+    await expect(
+      handlePoolRequest({
+        ...base,
+        blobs: [blobFor(SALTED_SEED, LIVE_NOTE)],
+        serviceTag: 'acme-basic',
+        candidateTags: ['acme-basic', RETAILER],
+        licenseCommitment: null,
+      }),
+    ).rejects.toThrow(/^key not recoverable for this subscription/);
+  });
+
+  it('an older caller that sends no commitment still derives under the stored tag', async () => {
+    // Backward compatibility of the wire: the field is optional, and its
+    // absence means "no chain value to check against", not "refuse".
+    const res = await handlePoolRequest({
+      ...base,
+      blobs: [blobFor(SALTED_SEED, LIVE_NOTE)],
+      serviceTag: 'acme-basic',
+    });
+    expect(res.serviceTag).toBe('acme-basic');
+    expect(res.licenseKey).toBe(licenseKeyForPrivate(LIVE_NOTE.secret, 'acme-basic'));
   });
 });

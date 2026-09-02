@@ -68,6 +68,8 @@ import {
   formatApproxDuration,
   formatAtomic,
   isBase58Address,
+  KEY_NOT_RECOVERABLE,
+  licenseTagCandidates,
   loadSubscriptions,
   SUBSCRIPTIONS_CHANGED_EVENT,
   recordSubscription,
@@ -77,6 +79,7 @@ import {
   toPeriodState,
   type DecodedSubscriptionVault,
   type EntitlementStatus,
+  type LicenseTagListing,
   type StoredSubscription,
   type SubscriptionSummary,
 } from "@/lib/pay/subscriptions";
@@ -182,7 +185,10 @@ function explorerTxUrl(sig: string): string {
   return `https://explorer.solana.com/tx/${sig}?cluster=devnet`;
 }
 
-/** Registry entry for a vault: joined on (retailer, mint), not retailer alone. */
+/** Registry entry for a vault: joined on (retailer, mint), not retailer alone.
+ *  A LABEL, never a key scope: one retailer may list several slugs on one
+ *  mint, and only the chain check in `licenseTagCandidates` /
+ *  `deriveSubscriptionLicenseKey` says which one a vault was bought under. */
 function serviceForVault(
   services: ServiceEntry[],
   decoded: DecodedSubscriptionVault,
@@ -195,6 +201,16 @@ function serviceForVault(
       return wantSol ? isNative : s.tokenMint.toBase58() === decoded.tokenMint;
     }) ?? null
   );
+}
+
+/** The roster reduced to the strings the tag-candidate rule reads. The SOL
+ *  sentinel the registry stores is the same string a SOL vault carries. */
+function registryListings(services: ServiceEntry[]): LicenseTagListing[] {
+  return services.map((s) => ({
+    slug: s.slug,
+    retailer: s.retailer.toBase58(),
+    tokenMint: s.tokenMint.toBase58(),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -226,13 +242,17 @@ export default function SubscriptionsPanel({
   // `staleWorker`.
   const [lostSession, setLostSession] = useState(false);
 
-  // Vendor roster, best effort and cached: it only decorates the list with
-  // merchant names and lets an imported vault pick up its service tag. A
-  // failed read must not block the list, so errors land in nothing.
+  // Vendor roster, best effort and cached: it decorates the list with merchant
+  // names and supplies the candidate slugs the Reveal path checks against the
+  // vault's on-chain license fingerprint. Paused listings included: a
+  // subscription bought under a slug the merchant has since paused is still
+  // scoped to that slug, and a roster that dropped it would make its key
+  // unrecoverable. A failed read must not block the list, so errors land in
+  // nothing; Reveal then tries the stored tag and the retailer address only.
   const [services, setServices] = useState<ServiceEntry[]>([]);
   useEffect(() => {
     let dead = false;
-    loadServiceRegistry(connection)
+    loadServiceRegistry(connection, { activeOnly: false })
       .then((snap) => {
         if (!dead) setServices(snap.services);
       })
@@ -330,14 +350,44 @@ export default function SubscriptionsPanel({
     setRevealBusy(true);
     setRevealError(null);
     try {
-      const key = await deriveSubscriptionLicenseKey({
+      // The key is checked against the vault's on-chain license fingerprint
+      // before it is shown, so read the account now rather than trust the
+      // list's snapshot. A record rebuilt from a registry join (recovery,
+      // track) can carry the wrong tag, and a key derived under a wrong tag
+      // is one no merchant accepts; the Worker tries the stored tag, every
+      // registry slug on this (retailer, mint), then the retailer address,
+      // and answers only with the one that reproduces the fingerprint.
+      const info = await connection.getAccountInfo(new PublicKey(rec.vaultPDA));
+      if (!info) {
+        throw new Error(
+          `${KEY_NOT_RECOVERABLE}: the vault no longer exists on chain, so there is no ` +
+            "license fingerprint left to check a key against.",
+        );
+      }
+      const decoded = decodeSubscriptionVault(info.data);
+      const res = await deriveSubscriptionLicenseKey({
         meta,
         walletPubkey: walletKey,
         pool: rec.pool,
         leafIndex: rec.leafIndex,
         serviceTag: rec.serviceTag,
+        candidateTags: licenseTagCandidates({
+          storedTag: rec.serviceTag,
+          services: registryListings(services),
+          retailer: decoded.retailer,
+          tokenMint: decoded.tokenMint,
+        }),
+        licenseCommitment: decoded.licenseCommitment
+          ? bytesToHex(decoded.licenseCommitment)
+          : null,
       });
-      setRevealedKey(key);
+      setRevealedKey(res.licenseKey);
+      if (res.serviceTag !== rec.serviceTag) {
+        // The stored tag was a guess and the chain disagreed. Keep the one
+        // that verified, so the row labels itself right from now on.
+        await recordSubscription(meta, walletKey, { ...rec, serviceTag: res.serviceTag });
+        void refresh();
+      }
     } catch (e) {
       setRevealError((e as Error).message || "Could not re-derive the key.");
     } finally {
@@ -372,11 +422,22 @@ export default function SubscriptionsPanel({
         return;
       }
       const decoded = decodeSubscriptionVault(info.data);
+      // Already tracked: keep the record we have. It may know the paying note
+      // and a tag verified against the chain; a record rebuilt from the
+      // account alone knows neither, and `recordSubscription` replaces.
+      if (records.some((r) => r.vaultPDA === addr)) {
+        setTrackAddr("");
+        setSelected(addr);
+        return;
+      }
       const svc = serviceForVault(services, decoded);
       const decimals = decimalsForVaultMint(decoded.tokenMint);
       await recordSubscription(meta, walletKey, {
         vaultPDA: addr,
         retailer: decoded.retailer,
+        // A label only: this browser holds no note for the vault, so no key
+        // is ever derived from this record and nothing can verify the tag.
+        // First registry slug on (retailer, mint), else the retailer address.
         serviceTag: licenseServiceTag(svc?.slug ?? null, decoded.retailer),
         serviceName: svc?.name,
         token: symbolForVaultMint(decoded.tokenMint),
@@ -448,6 +509,13 @@ export default function SubscriptionsPanel({
   }
 
   function merchantName(rec: StoredSubscription): string {
+    // The listing the record is scoped to, when the roster has it: with two
+    // slugs on one retailer, the (retailer, mint) join below can name the
+    // other one.
+    const scoped = services.find(
+      (s) => s.slug === rec.serviceTag && s.retailer.toBase58() === rec.retailer,
+    );
+    if (scoped) return scoped.name;
     const dec = live[rec.vaultPDA];
     if (dec?.kind === "open") {
       const svc = serviceForVault(services, dec.decoded);
