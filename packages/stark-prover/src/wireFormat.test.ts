@@ -311,9 +311,20 @@ describe('checked-in WASM prover — Route C wire format', () => {
     expect(typeof exports.generate_spend_stark_proof).toBe('function');
   });
 
+  // Proof generation is synchronous and, for C5, ~30 s of it. Two proofs back
+  // to back in one test blocked the worker's event loop long enough for the
+  // vitest worker <-> host RPC to time out (`[vitest-worker]: Timeout calling
+  // "onTaskUpdate"`), which vitest counts as an unhandled error and turns
+  // 67/67 into exit code 1 -- MEASURED on CI and on Windows, 2026-09-02, with
+  // every assertion green. One macrotask between the proofs lets the reply
+  // through. It changes nothing about what is measured.
+  const breathe = () => new Promise<void>((resolve) => setImmediate(resolve));
+
   for (const pin of PINS) {
-    it(`${pin.label} matches the Rust prover and the Route C closed form`, () => {
+    it(`${pin.label} matches the Rust prover and the Route C closed form`, async () => {
+      await breathe();
       const { proofBytes } = generateProofBytes(exports, pin.circuitId, pin.inputs);
+      await breathe();
 
       // (1) absolute pin — WASM output must equal the Rust prover byte for byte
       expect(proofBytes.length).toBe(pin.absolute);
@@ -347,10 +358,11 @@ describe('checked-in WASM prover — Route C wire format', () => {
         // columns, would leave two proofs identical here while every length and
         // closed-form check stayed green.
         const second = generateProofBytes(exports, pin.circuitId, pin.inputs).proofBytes;
+        await breathe();
         expect(second.length).toBe(proofBytes.length);
         expect(sha256Hex(second)).not.toBe(sha256Hex(proofBytes));
       }
-    }, 60_000);
+    }, 120_000);
   }
 
   // -------------------------------------------------------------------------
