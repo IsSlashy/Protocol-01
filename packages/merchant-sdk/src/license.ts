@@ -263,11 +263,11 @@ export interface VerifyLicenseKeyOptions
  *
  * NO merchant secret anywhere — verification uses only public on-chain state.
  *
- * @deprecated Use {@link verifyLicenseAgainstVault}, which reads the one vault
- *   the key belongs to instead of the merchant's whole subscriber book. This
- *   form remains the fallback for a merchant that has the key and nothing else:
- *   no vault address from the client, and not enough information (retailer +
- *   subscriber id + mint) to derive one.
+ * @deprecated Use `verifyMerchantLicense` (`./merchant-license`). A merchant
+ *   that has the key and nothing else no longer needs this enumerating form:
+ *   `findVaultByLicenseKey` locates the vault by memcmp on the commitment
+ *   itself (at most two `getProgramAccounts`, returning only matching
+ *   accounts) instead of hydrating the whole subscriber book and scanning it.
  *
  *   MEASURED on devnet 2026-08-01, one verification against a 4-vault merchant:
  *   this path made 2 RPC calls (`getProgramAccounts` + `getSlot`) for 492
@@ -347,9 +347,18 @@ export interface VerifyLicenseAgainstVaultOptions extends ServiceScopedOptions {
 }
 
 /**
- * **The primary license verification path.** Verify a key against the SPECIFIC
- * vault address the client presents (from its subscription receipt), or that
- * the merchant derived itself with `deriveSubscriptionVaultPda`.
+ * Verify a key against the SPECIFIC vault address the client presents (from
+ * its subscription receipt), or that the merchant derived itself with
+ * `deriveSubscriptionVaultPda`.
+ *
+ * @deprecated Use `verifyMerchantLicense` (`./merchant-license`), which closes
+ *   both gaps listed under "Two things this does NOT check" below: it REQUIRES
+ *   the service scope instead of accepting its absence, re-derives the canonical
+ *   PDA from the vault's own seeds, locates the vault from the key alone when
+ *   the client presents no address (`findVaultByLicenseKey`), and names every
+ *   refusal from a closed enum. This function stays exported and behaves as it
+ *   always has; `src/self-minted-vault.test.ts` pins the difference between
+ *   the two so it stays visible.
  *
  * One `getAccountInfo` + one `getSlot`, whatever the merchant's subscriber
  * count. The merchant confirms the account is owned by `zk_shielded` and names

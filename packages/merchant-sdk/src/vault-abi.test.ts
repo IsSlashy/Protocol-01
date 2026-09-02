@@ -63,13 +63,22 @@ describe('published ABI carries no wallet-keyed way to open a subscription', () 
     expect(idl.events.map((e) => e.name)).not.toContain('SubscribeNormalEvent');
   });
 
-  it('leaves exactly one way to open a vault, and it is the private one', () => {
-    // `subscribe_private` (Groth16) and `subscribe_normal` are both gone; if a
-    // third constructor ever appears this fails and someone has to justify it.
+  it('leaves exactly two ways to open a vault, and both are private', () => {
+    // `subscribe_private` (Groth16) and `subscribe_normal` are both gone. The
+    // two that remain are the v3 pair (C1 + C3, republishes the note
+    // commitment) and the circuit-7 opener `subscribe_private_stark_v4`, which
+    // publishes no commitment and binds rate, interval, vk hash and the
+    // license commitment into the proof's public inputs
+    // (docs/SUBSCRIBE_V4_SPEC-2026-08-26.md). v4 landed on 2026-08-25; this
+    // list said "exactly one" until 2026-09-02 and never failed in CI because
+    // turbo replayed a cached pass -- the IDL lives outside this package and
+    // was not part of the cache key (turbo.json now sets `test.cache: false`).
+    // If a THIRD constructor ever appears this fails and someone has to
+    // justify it here.
     const openers = idl.instructions
       .map((i) => i.name)
       .filter((n) => /^subscribe/.test(n));
-    expect(openers).toEqual(['subscribe_private_stark']);
+    expect(openers).toEqual(['subscribe_private_stark', 'subscribe_private_stark_v4']);
   });
 });
 

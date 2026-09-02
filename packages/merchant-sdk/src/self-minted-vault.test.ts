@@ -43,6 +43,7 @@ import {
 } from './vaults';
 import { subscriptionIsCurrent, periodsPaidFor } from './claim';
 import { verifyLicenseAgainstVault, encodeLicenseKey, licenseCommitment, LICENSE_SECRET_BYTES } from './license';
+import { verifyMerchantLicense } from './merchant-license';
 import { ZK_SHIELDED_PROGRAM_ID_DEVNET } from './config';
 import type { ServiceScope } from './service-scope';
 
@@ -350,5 +351,78 @@ describe('a vault the merchant never sold — the shape subscribe_private_stark 
       service: REAL_SERVICE,
     });
     expect(got).not.toBeNull();
+  });
+});
+
+/**
+ * The same decoy against `verifyMerchantLicense`, which has no unscoped mode.
+ *
+ * Every test above records a GRANT that a stranger can buy for one pool note.
+ * The new path cannot be asked the weaker question: `service` is a required
+ * parameter, its absence is a thrown error, and the refusal names the exact
+ * fact the decoy fails on. Pinned next to the old API's grant so the difference
+ * between the two stays measurable rather than narrated.
+ */
+describe('verifyMerchantLicense refuses the decoy by construction', () => {
+  const SELF_MINTED_PRIVATE = {
+    subscriberId: ATTACKER,
+    retailer: MERCHANT,
+    tokenMint: MINT,
+    totalDeposited: 100_000_000n, // pool.denomination — the attacker cannot choose it
+    rate: 1n,                     // …but it can choose this
+    intervalSlots: 216_000n,      // copied from what the merchant sells
+    startSlot: 1_000n,
+  };
+  const secret = new Uint8Array(LICENSE_SECRET_BYTES).fill(0x5a);
+  const key = encodeLicenseKey(secret);
+  const [pda] = deriveSubscriptionVaultPda(MERCHANT, ATTACKER, MINT);
+  const data = buildPrivateVault({ ...SELF_MINTED_PRIVATE, license: licenseCommitment(secret) });
+  const conn = stubConnection({ [pda.toBase58()]: { data, owner: PROGRAM } }, NOW);
+  const params = { merchant: MERCHANT, service: REAL_SERVICE, serviceSlug: 'premium-tier', key, vault: pda };
+
+  it('the old API grants it without a scope; the new one refuses it, naming the price', async () => {
+    const old = await verifyLicenseAgainstVault(conn, key, pda, MERCHANT, 'premium-tier');
+    expect(old.valid).toBe(true);
+
+    const res = await verifyMerchantLicense(conn, params);
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.reason).toBe('service_mismatch');
+      expect(res.detail).toMatch(/rate 1 does not match the service price 50000000/);
+    }
+  });
+
+  it('omitting the scope is a thrown error, not a weaker grant', async () => {
+    await expect(
+      verifyMerchantLicense(conn, { ...params, service: undefined as unknown as ServiceScope }),
+    ).rejects.toThrow(/`service` is required/);
+  });
+
+  it('checks the canonical PDA, which the old license path could not', async () => {
+    const impostorAddress = new PublicKey(new Uint8Array(32).fill(0x5c));
+    const honest = { ...SELF_MINTED_PRIVATE, rate: 50_000_000n, totalDeposited: 500_000_000n, license: licenseCommitment(secret) };
+    // Period 1 of the 10 funded, so the only thing separating the two verdicts is the address.
+    const c = stubConnection(
+      { [impostorAddress.toBase58()]: { data: buildPrivateVault(honest), owner: PROGRAM } },
+      Number(1_000n + 216_000n),
+    );
+    expect((await verifyLicenseAgainstVault(c, key, impostorAddress, MERCHANT, 'x', { service: REAL_SERVICE })).valid).toBe(true);
+    const res = await verifyMerchantLicense(c, { ...params, vault: impostorAddress });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe('non_canonical_pda');
+  });
+
+  it('a genuine subscriber at the registered price is granted, with an ephemeral account', async () => {
+    const honest = { ...SELF_MINTED_PRIVATE, rate: 50_000_000n, totalDeposited: 500_000_000n, license: licenseCommitment(secret) };
+    const honestConn = stubConnection(
+      { [pda.toBase58()]: { data: buildPrivateVault(honest), owner: PROGRAM } },
+      Number(1_000n + 216_000n),
+    );
+    const res = await verifyMerchantLicense(honestConn, params);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.periodsPaidFor).toBe(10n);
+      expect(res.ephemeralAccountId.length).toBeGreaterThanOrEqual(43);
+    }
   });
 });

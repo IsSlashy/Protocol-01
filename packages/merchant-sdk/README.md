@@ -158,7 +158,8 @@ import {
   pollPaymentsForRetailer,
   deriveSubscriptionVaultPda,
   hasActiveVaultAccessForVault,
-  verifyLicenseAgainstVault,
+  verifyMerchantLicense,
+  createEphemeralSession,
   issueAccessToken,
   issueSubscriptionAccessToken,
   verifyAccessToken,
@@ -348,6 +349,142 @@ Two products at the same price are a separate matter: if two of your services
 agree on retailer, mint, price *and* interval, the chain cannot tell them apart
 at all; `verifyLicenseAgainstVault` reports that as `ambiguousService: true`.
 Give each product its own `retailer` key if you need them separated.
+
+### License keys: verify only what you sold
+
+The same question as section 3, asked by a customer who authenticates with the
+`P01-…` key they received at checkout instead of with a session. Merchant X
+installs the SDK and verifies — statelessly, and only for X — a key a customer
+received when they paid X a subscription through the protocol, then turns it
+into an ephemeral account and session without persisting anything.
+
+**The walkthrough, merchant X.**
+
+1. **Register the service** (section 1). The entry's retailer, mint, price and
+   interval are the four facts every key will be checked against.
+2. **The customer pays through the protocol.** Their client locks a note in a
+   `SubscriptionVault` naming your retailer key and posts
+   `blake3(licenseSecret)` on it as `license_commitment`. The customer receives
+   the key — `P01-` followed by the Crockford-base32 of the 16-byte secret,
+   grouped in fours — and keeps it. Nothing reaches you.
+3. **The customer presents the key.** Call `verifyMerchantLicense`:
+
+```typescript
+import {
+  fetchService,
+  serviceScopeFromRegistry,
+  verifyMerchantLicense,
+  createEphemeralSession,
+  verifyAccessToken,
+} from '@protocol-01/merchant-sdk';
+
+// Once, at boot — your own registry facts, not the vault's.
+const entry = await fetchService(connection, merchantKp.publicKey, 'my-saas-pro');
+if (!entry) throw new Error('service not registered — run registerServiceOnChain first');
+const service = serviceScopeFromRegistry(entry);
+
+// Per request. No address from the client, no subscriber ID, no database.
+const res = await verifyMerchantLicense(connection, {
+  merchant: retailerPubkey,       // the payout key you registered
+  service,                        // REQUIRED — there is no unchecked mode
+  serviceSlug: 'my-saas-pro',
+  key: presentedKey,
+  // vault: vaultPdaFromReceipt,  // optional fast path: one getAccountInfo
+});
+if (!res.ok) return Response.json({ error: res.reason, detail: res.detail }, { status: 401 });
+// res.vaultPda · res.vault · res.ephemeralAccountId
+// res.periodsPaidFor · res.periodsElapsed · res.currentUntilSlot
+```
+
+4. **Turn it into a session.** `createEphemeralSession` runs the same check and
+   mints an access token whose subject is the ephemeral account id, through
+   `issueSubscriptionAccessToken` — so `exp` is clamped to the funded window,
+   `svc` is the slug, and the vault's `start_slot` is pinned into the token:
+
+```typescript
+const session = await createEphemeralSession(connection, {
+  merchant: retailerPubkey, service, serviceSlug: 'my-saas-pro', key: presentedKey,
+  issuer: merchantKp,        // signs the token; verify later with its public key
+  ttlSeconds: 60 * 60,       // a ceiling, not a promise
+});
+if (!session.ok) return Response.json({ error: session.reason }, { status: 401 });
+return Response.json({
+  token: session.token,
+  account: session.ephemeralAccountId,
+  expiresAt: session.expiresAtUnix,
+});
+
+// later, on any route — no chain, no database:
+const r = verifyAccessToken(token, merchantKp.publicKey, { expectedService: 'my-saas-pro' });
+if (!r.valid) return Response.json({ error: r.reason }, { status: 401 });
+// r.claims.sub === the ephemeral account id
+```
+
+5. **Store nothing.** The token is self-contained. The account id is
+   `base58(blake3("p01-ephemeral-account-v1" ‖ merchant ‖ utf8(slug) ‖ vaultPda ‖ start_slot LE u64))`:
+   stable for the life of one vault, different for a renewal that creates a new
+   vault (the program rewrites `start_slot` on every subscribe), different per
+   merchant and per service, and **not a function of the key** — a leaked table
+   of ids reconstructs no bearer secret. It is a pseudonym, not PII: it reveals
+   the vault, which is public and enumerable anyway, and nothing about the
+   customer's wallet, which private-mode vaults never name.
+
+**What refuses, and why.** `res.reason` is a closed enum; match on it.
+
+| reason | meaning |
+|---|---|
+| `malformed_key` | the string does not decode to a 16-byte secret |
+| `vault_not_found` | no vault naming you carries this key's commitment (or nothing lives at `vault`) |
+| `wrong_owner` | the account at `vault` is not owned by `zk_shielded`; its bytes are whoever's |
+| `undecodable` | program-owned, but not a `SubscriptionVault` |
+| `retailer_mismatch` | the vault pays another merchant |
+| `mint_mismatch` | the vault is denominated in another token |
+| `service_mismatch` | `rate` / `interval_slots` are not what you registered — the self-minted decoy at rate 1 and the cheap-key-on-the-dear-tier escalation both land here |
+| `non_canonical_pda` | the address is not the PDA of the vault's own seeds |
+| `no_license_commitment` | the vault predates license keys |
+| `commitment_mismatch` | wrong key for this vault |
+| `subscription_paused` / `subscription_ended` / `subscription_not_current` | `subscriptionIsCurrent` said no: paused, ran past its funded periods (with `is_active` still `true`), or never current |
+| `rpc_error` | the lookup failed; nothing was decided |
+
+The checks run in that order and every one is mandatory. `service` is a
+required parameter — not a `requireService` flag, not a hook — because it is the
+only check that refuses a vault a stranger self-minted naming you at a rate of
+one atomic unit, and the only one that stops a key sold for your cheap tier
+opening your dear one. `verifyLicenseAgainstVault`, now deprecated, made it
+optional and could not check the canonical PDA; `src/self-minted-vault.test.ts`
+pins the old grant next to the new refusal so the difference stays measurable.
+When the lookup returns several vaults — someone copied a real subscriber's
+public commitment onto a decoy — every one is judged and the genuine one wins.
+
+**RPC cost.** From the key alone: at most **two `getProgramAccounts`**, each
+filtered by memcmp on the discriminator, your retailer (offset 42), the mint
+(74) and the 33-byte `Some(commitment)` slot — at offset **224** for a live
+vault and **232** for a paused one, the only variable-width field before it
+that changes after creation being `pause_slot`. Both offsets are derived from
+the Borsh layout in `licenseCommitmentTagOffset` and pinned by tests that
+encode a synthetic vault of each shape and decode it with the real decoder;
+measured on devnet 2026-09-02, all 18 licensed vaults sit at 224. The unpaused
+query runs first, so a live subscription costs **one** call, and only matching
+accounts come back — this does not hydrate your book. With `vault` from the
+client's receipt: **one `getAccountInfo`**. Plus one `getSlot` unless you pass
+`currentSlot`.
+
+**Two honest limits that remain.**
+
+(a) **The note issuer can derive every license secret.** `licenseSecret` is
+`HKDF(masterNoteSecret, serviceId)` (see `LICENSE_SCHEME`), and whoever seeded
+the note holds `masterNoteSecret` — so the treasury that issued a note can
+compute the key of every subscription paid with it, with no records
+(`docs/DEMO-untraceable-subscription.md:194-200`). A v2 derivation mixing a
+client-side nonce would close it. It is **not** in this change: the derivation
+is frozen and mirrored byte-for-byte in three clients.
+
+(b) **You learn the vault, and the key is a bearer secret.** The vault address
+is public and enumerable from the retailer field by anyone with an RPC, so
+verifying tells you nothing the chain did not already. But the key opens the
+subscription for whoever holds the string: the customer must guard it as they
+would a password, and a merchant that logs request bodies is logging
+credentials.
 
 ### 3b. Reconcile the whole book — on a schedule, not per request
 
@@ -550,10 +687,22 @@ deriveSubscriptionVaultPda(retailer, subId, mint)     [PublicKey, bump]
 fetchVaultByAddress(connection, vaultPda, opts?)      { ok, vault } | { ok:false, reason }
 hasActiveVaultAccessForVault(conn, vaultPda, retailer, subId, opts?)
                                                       SubscriptionVaultAccount | null
-verifyLicenseAgainstVault(conn, key, vaultPda, merchant, serviceId, opts?)
-                                                      { valid, vault?, reason?, ambiguousService? }
 vaultMatchesService(vault, scope, opts?)              { matches, reason?, ambiguous? }
 serviceScopeFromRegistry(entry)                       ServiceScope
+
+// License keys — verify only what you sold, store nothing
+verifyMerchantLicense(conn, { merchant, service, serviceSlug, key, vault?, … })
+                                                      { ok:true, vaultPda, vault, ephemeralAccountId, … }
+                                                    | { ok:false, reason, detail, … }   <- reason is a closed enum
+createEphemeralSession(conn, { …same, issuer, ttlSeconds })
+                                                      { ok:true, token, ephemeralAccountId, expiresAtUnix, … }
+findVaultByLicenseKey(conn, { merchant, key, tokenMint? })
+                                                      { vaultPda, vault } | null      <- ≤ 2 getProgramAccounts
+ephemeralAccountId({ merchant, serviceSlug, vaultPda, startSlot })
+                                                      string (base58 of a 32-byte blake3)
+licenseCommitmentTagOffset(shape)                     number   <- 224 live / 232 paused on the current layout
+verifyLicenseAgainstVault(conn, key, vaultPda, merchant, serviceId, opts?)   DEPRECATED → verifyMerchantLicense
+                                                      { valid, vault?, reason?, ambiguousService? }
 
 // Subscriptions — FALLBACK, hydrates the whole subscriber book (deprecated
 // for per-request use; fine on a schedule for reconciliation)
@@ -595,11 +744,11 @@ Instruction builders (`buildRegisterServiceIx`, `buildAttestServiceIx`, etc.) ar
 - **No server state required.** Access tokens are self-contained and signed — verify them anywhere.
 - **Configurable programs.** `MerchantSdkConfig` lets mainnet merchants supply the correct program IDs without forking the package.
 - **One account per question.** The default entitlement path reads the vault the request is about. The enumerating helpers are still there, deprecated for per-request use and supported for reconciliation.
-- **Nothing is trusted because a client sent it.** An account presented by a client is only decoded once its owner is confirmed to be `zk_shielded`. `hasActiveVaultAccessForVault` additionally requires the account to sit at the canonical PDA for the retailer, subscriber and mint in question; `verifyLicenseAgainstVault` cannot — it is given no subscriber ID, so it has no seed set to derive from, and the license commitment is what binds. Owner-checked and program-written is not the same as sold-by-you: see the `service` scope note in section 3.
+- **Nothing is trusted because a client sent it.** An account presented by a client is only decoded once its owner is confirmed to be `zk_shielded`. `hasActiveVaultAccessForVault` and `verifyMerchantLicense` additionally require the account to sit at the canonical PDA for its own retailer, subscriber and mint; the deprecated `verifyLicenseAgainstVault` could not, and the license commitment was all that bound. Owner-checked and program-written is not the same as sold-by-you: see the `service` scope note in section 3, and why `verifyMerchantLicense` makes the scope a required parameter.
 
 ## Example: complete Netflix-style integration
 
-See [`examples/merchant-netflix`](../../examples/merchant-netflix/) in the repo for a runnable end-to-end script (register, poll payments, issue token, verify).
+See [`examples/merchant-netflix`](../../examples/merchant-netflix/) in the repo for a runnable end-to-end script (register, poll payments, issue token, verify, sweep revenue) — including a small HTTP endpoint that turns a customer's `P01-…` key into an ephemeral session with `verifyMerchantLicense` and `createEphemeralSession`, storing nothing.
 
 ## Dependency note
 

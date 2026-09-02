@@ -35,6 +35,10 @@ export * from './claim';
 // stays the only edge between those two and nothing becomes a cycle.
 export * from './claim-send';
 export * from './service-scope';
+// License keys: verify only what you sold, store nothing. Locates the vault
+// from the key alone, refuses anything the registry facts do not vouch for,
+// and mints a session whose subject is a pseudonym of the vault, not the key.
+export * from './merchant-license';
 
 // Re-export the lower-level registry helpers so merchants only need one dep.
 //

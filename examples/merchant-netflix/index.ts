@@ -13,6 +13,11 @@
  *      subscriber can present on later requests.
  *   5. Sweep the revenue: claim every accrued period from every vault, and
  *      release the rent of exhausted ones by closing them.
+ *   6. Serve a tiny HTTP endpoint that turns a customer's `P01-…` license key
+ *      into an ephemeral session — `verifyMerchantLicense` +
+ *      `createEphemeralSession` — storing nothing: the vault is located from
+ *      the key alone, judged against the price and interval THIS service
+ *      registered, and the token is self-contained.
  *
  * ONE THING TO NOTICE about step 5: this script never holds the retailer's
  * secret key. The claim is PERMISSIONLESS — since the 2026-08-04 redeploy the
@@ -39,11 +44,13 @@
 
 import { Connection, Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import {
   claimPeriod,
   claimableAmount,
+  createEphemeralSession,
   fundedPeriodsRemaining,
   issueAccessToken,
   listVaultsForRetailer,
@@ -52,6 +59,8 @@ import {
   subscriptionIsCurrent,
   periodsPaidFor,
   vaultMatchesService,
+  verifyAccessToken,
+  verifyMerchantLicense,
   type ServiceScope,
   type MerchantRegistrationResult,
   type SubscriptionVaultAccount,
@@ -100,6 +109,25 @@ const SERVICE_NAME = 'Netflix Standard';
 const PRICE_LAMPORTS = 50_000_000n; // 0.05 SOL
 const INTERVAL_SLOTS = 6_480_000n; // ≈ 30 days
 const POLL_INTERVAL_MS = 30_000;
+/** Port of the license endpoint (step 6). */
+const LICENSE_PORT = Number(process.env.LICENSE_PORT ?? 8787);
+/** Session TTL — a ceiling; `exp` is clamped to the subscription's funded window. */
+const SESSION_TTL_SECONDS = 60 * 60;
+
+/**
+ * Exactly what this service registered on chain, and the only thing that
+ * distinguishes a subscription we sold from an account anyone can create.
+ * Comes from OUR constants (or `serviceScopeFromRegistry(entry)`), never from
+ * the vault being checked.
+ */
+function serviceScopeFor(retailer: PublicKey): ServiceScope {
+  return {
+    retailer,
+    tokenMint: SystemProgram.programId, // native SOL, as the program records it
+    priceAtomic: PRICE_LAMPORTS,
+    intervalSlots: INTERVAL_SLOTS,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // State (in-memory only for the demo).
@@ -217,18 +245,11 @@ async function pollOnce(
   // subscribers the merchant has not seen before, so hydrating the whole book is
   // the point and `listVaultsForRetailer` is the right tool. A per-REQUEST
   // entitlement check must not look like this: use
-  // `hasActiveVaultAccessForVault` (or `verifyLicenseAgainstVault`), which reads
-  // the one vault the request is about.
+  // `hasActiveVaultAccessForVault`, or — when the customer presents a license
+  // key — `verifyMerchantLicense`, as the endpoint in `startLicenseServer` does.
   try {
     const slot = BigInt(await connection.getSlot('confirmed'));
-    // Exactly what this service registered on chain, and the only thing that
-    // distinguishes a subscription we sold from an account anyone can create.
-    const serviceScope: ServiceScope = {
-      retailer,
-      tokenMint: SystemProgram.programId, // native SOL, as the program records it
-      priceAtomic: PRICE_LAMPORTS,
-      intervalSlots: INTERVAL_SLOTS,
-    };
+    const serviceScope = serviceScopeFor(retailer);
     const vaults = await listVaultsForRetailer(connection, retailer, {
       includePaused: false,
     });
@@ -355,6 +376,119 @@ async function sweepRevenue(
 }
 
 // ---------------------------------------------------------------------------
+// Request handler: a P01- license key → an ephemeral session. Stores nothing.
+// ---------------------------------------------------------------------------
+
+/**
+ * The customer-facing side. A subscriber who paid THIS service through the
+ * protocol holds a `P01-…` key. They POST it here and get back a signed session
+ * token whose subject is an ephemeral account id. Nothing is written anywhere:
+ *
+ *   - the vault is located from the key alone (at most two
+ *     `getProgramAccounts`, memcmp on our retailer and on the key's commitment),
+ *     or read directly when the client includes the address from its receipt;
+ *   - it is judged against the price and interval THIS service registered —
+ *     the `service` argument is required, so a stranger's rate-1 vault naming
+ *     us, and a key sold for some other tier, are both refused with a named
+ *     reason;
+ *   - the token is self-contained and clamped to the funded window; any route
+ *     re-checks it with `verifyAccessToken` and the merchant's public key.
+ *
+ *   POST /license/verify   { key, vault? }   → the verdict, no token minted
+ *   POST /license/session  { key, vault? }   → { token, account, expiresAt }
+ *   GET  /me   Authorization: Bearer <token> → the token's claims
+ *
+ *   curl -s localhost:8787/license/session -d '{"key":"P01-…"}'
+ */
+function startLicenseServer(
+  connection: Connection,
+  merchant: Keypair,
+  retailer: PublicKey,
+  service: ServiceScope,
+): http.Server {
+  const server = http.createServer(async (req, res) => {
+    const json = (status: number, body: unknown): void => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+    try {
+      if (req.method === 'POST' && (req.url === '/license/verify' || req.url === '/license/session')) {
+        const body = await readJsonBody(req);
+        const key = typeof body.key === 'string' ? body.key : '';
+        const vault = typeof body.vault === 'string' ? new PublicKey(body.vault) : undefined;
+        const common = { merchant: retailer, service, serviceSlug: SERVICE_SLUG, key, vault };
+
+        if (req.url === '/license/verify') {
+          // Dry check: says whether the key would be served, mints nothing.
+          const verdict = await verifyMerchantLicense(connection, common);
+          if (!verdict.ok) return json(401, { ok: false, reason: verdict.reason, detail: verdict.detail });
+          return json(200, {
+            ok: true,
+            account: verdict.ephemeralAccountId,
+            vault: verdict.vaultPda.toBase58(),
+            periodsPaidFor: verdict.periodsPaidFor.toString(),
+            periodsElapsed: verdict.periodsElapsed.toString(),
+            currentUntilSlot: verdict.currentUntilSlot?.toString() ?? null,
+          });
+        }
+
+        // The real thing: verify, then a session. `issuer` is the merchant
+        // signer — not the retailer, which is an address we hold no key for.
+        const session = await createEphemeralSession(connection, {
+          ...common,
+          issuer: merchant,
+          ttlSeconds: SESSION_TTL_SECONDS,
+        });
+        if (!session.ok) {
+          logStep(`  – license refused: ${session.reason}`);
+          return json(401, { ok: false, reason: session.reason, detail: session.detail });
+        }
+        logStep(
+          `  ✓ license verified → session for ${session.ephemeralAccountId.slice(0, 12)}… ` +
+            `(vault ${session.vaultPda.toBase58().slice(0, 12)}…, exp ${session.expiresAtUnix})`,
+        );
+        return json(200, {
+          ok: true,
+          token: session.token,
+          account: session.ephemeralAccountId,
+          expiresAt: session.expiresAtUnix,
+        });
+      }
+
+      if (req.method === 'GET' && req.url === '/me') {
+        const token = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+        const r = verifyAccessToken(token, merchant.publicKey, { expectedService: SERVICE_SLUG });
+        if (!r.valid || !r.claims) return json(401, { ok: false, reason: r.reason });
+        return json(200, {
+          ok: true,
+          account: r.claims.sub,
+          service: r.claims.svc,
+          vault: r.claims.vault ?? null,
+          exp: r.claims.exp,
+        });
+      }
+
+      json(404, { ok: false, reason: 'not found' });
+    } catch (err) {
+      json(400, { ok: false, reason: (err as Error).message });
+    }
+  });
+  server.listen(LICENSE_PORT, () => {
+    logStep(`license endpoint listening on http://127.0.0.1:${LICENSE_PORT} (POST /license/session, GET /me)`);
+  });
+  return server;
+}
+
+async function readJsonBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const raw = Buffer.concat(chunks).toString('utf-8');
+  if (!raw) return {};
+  const parsed: unknown = JSON.parse(raw);
+  return parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -396,6 +530,9 @@ async function main(): Promise<void> {
 
   await ensureRegistered(connection, merchant, retailer);
 
+  // Step 6: the customer-facing license endpoint. Stores nothing.
+  const licenseServer = startLicenseServer(connection, merchant, retailer, serviceScopeFor(retailer));
+
   logStep(`entering poll loop — Ctrl-C to exit`);
   await pollOnce(connection, merchant, retailer); // immediate first pass
 
@@ -407,6 +544,7 @@ async function main(): Promise<void> {
 
   process.on('SIGINT', () => {
     clearInterval(interval);
+    licenseServer.close();
     console.log('\n─ summary ─');
     console.log(`  grants: ${accessGrants.size}`);
     for (const g of accessGrants.values()) {
