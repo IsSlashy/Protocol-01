@@ -29,6 +29,31 @@
  * makes the first fail `InvalidProof` — after its payer has already paid. One at
  * a time is the only shape that works.
  *
+ * WHERE THE MONEY COMES FROM (2026-09-02). This spends the RESTOCK wallet,
+ * `P01_TREASURY_KEYPAIR_JSON`, down to `floorLamports`. Buyers pay the till,
+ * and `settle-till` moves the till into the float F and nowhere else, so
+ * nothing refilled this wallet: the takings stopped at F while this logged
+ * FLOOR every four hours. The workflow now runs
+ * `scripts/topUpRestockWallet.mts` BEFORE this step, moving F's surplus above
+ * its own floor to this wallet up to `restockWalletTargetLamports`, on the
+ * settlement's quiet-time policy. The four numbers both steps share live in
+ * `restockConfig.ts`. The whole loop is drawn in
+ * `docs/NOTE-IN-EXCHANGE-2026-09-02.md`.
+ *
+ * ⚠️ THE STOCK COUNT BELOW OVERSTATES, AND THIS FILE CANNOT FIX IT. `stock()`
+ * reads the chain: on the tree and unspent. A note already issued to a buyer
+ * who has not spent it yet is both, so it is counted here and refused by
+ * `/api/issue-note`, which also checks the KV marker
+ * `p01:note:issued:<pool>:<leaf>`. The workflow hands this step an RPC and
+ * the leaf list only (`P01_LIVE_RPC`, `P01_TREASURY_NOTE_LEAVES`), never the
+ * issuer's store credentials, and `GET /api/issue-note` reports the CONFIGURED
+ * size, not the unissued count, by its own stated choice. So the markers are
+ * unreadable from here, by design rather than by accident, and the low-water
+ * mark carries the difference: 7 of 10 rather than 9. A note-in exchange
+ * (`claim-for-payment`, kind `pool-withdrawal`) consumes an issued note
+ * without depositing one, exactly like a plain sale, so it adds to the gap
+ * this margin covers but does not change its shape.
+ *
  * Run (this is what the workflow does):
  *   cd apps/web
  *   P01_RESTOCK=1 P01_LIVE_KEYPAIR=... P01_LIVE_RPC=... \
@@ -60,18 +85,25 @@ import {
   deriveNoteMaterial,
 } from '@/lib/privacy/pool/denominatedPool';
 import { deriveNoteBlinding } from '@/lib/privacy/pool/noteBlinding';
+import { restockConfigFromEnv } from '@/lib/privacy/pool/restockConfig';
 
 const LIVE = process.env.P01_RESTOCK === '1';
 
-/** How many notes the pot should hold. */
-const TARGET = Number(process.env.P01_TREASURY_TARGET ?? 10);
-/** Below this, restock. Above it, do nothing — a tick that deposits every time
- *  is a tick that tracks demand, which is what the clock is here to avoid. */
-const LOW_WATER = Number(process.env.P01_TREASURY_LOW_WATER ?? 7);
-/** Bound per run, so one tick cannot spend the whole treasury on a miscount. */
-const MAX_PER_RUN = Number(process.env.P01_TREASURY_MAX_PER_RUN ?? 3);
-/** Never spend below this: the treasury still has to pay fees. */
-const FLOOR_LAMPORTS = Number(process.env.P01_TREASURY_FLOOR ?? 1_100_000_000);
+/**
+ * The four numbers, from the same module the top-up reads them from, so the
+ * wallet is filled to a target this loop recognises. In order: how many notes
+ * the pot should hold; below what to restock (above it, do nothing: a tick
+ * that deposits every time tracks demand, which is what the clock is here to
+ * avoid); the bound per run, so one tick cannot spend the whole treasury on a
+ * miscount; and the balance never to spend below, because the wallet still
+ * has to pay fees.
+ */
+const {
+  target: TARGET,
+  lowWater: LOW_WATER,
+  maxPerRun: MAX_PER_RUN,
+  floorLamports: FLOOR_LAMPORTS,
+} = restockConfigFromEnv();
 
 const DENOMINATION = 1;
 
@@ -164,7 +196,9 @@ describe.skipIf(!LIVE)('the inventory refills itself, on a clock', () => {
      *
      * Reading true availability needs the KV the route holds, and a harness
      * with the issuer's store credentials is a worse trade than a conservative
-     * threshold.
+     * threshold. Checked again 2026-09-02: the workflow still passes only the
+     * RPC and the leaf list to this step, so the markers stay unreadable here.
+     * See the header.
      */
     async function stock(): Promise<number> {
       const commitments = await fetchPoolCommitments(conn, pool!.poolPDA);

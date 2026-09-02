@@ -24,6 +24,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
+import nacl from 'tweetnacl';
 
 import {
   buildMerkleProofFromLeavesV3,
@@ -100,16 +101,19 @@ import {
   type CandidateNoteSecret,
 } from '../pool/subscriptionRecovery';
 import {
-  deriveLicenseSecret,
+  deriveLicenseSecretV2,
   encodeLicenseKey,
   licenseCommitment,
   licenseServiceTag,
+  type LicenseScheme,
 } from '../license';
 import {
   KEY_NOT_RECOVERABLE,
-  matchLicenseServiceTag,
+  deriveLicenseSecretUnder,
+  matchLicense,
   type LicenseTagListing,
 } from '../licenseTagMatch';
+import { claimChallenge } from '../claimChallenge';
 
 // ---------------------------------------------------------------------------
 // Wire protocol
@@ -347,6 +351,21 @@ export interface PoolUnshieldExecuteRequest {
    * home after someone else paid is worse than not using a funder at all.
    */
   sweepTo?: string;
+  /**
+   * Also sign `claimChallenge(txSig)` with the withdrawal's ephemeral, and
+   * return it as `claimProof`. This is the note-in exchange: the withdrawal
+   * pays the deployment's till, and `/api/claim-for-payment` hands the claim
+   * only to whoever can sign as the transaction's fee payer, which on the
+   * direct circuit-7 path is the ephemeral, whose secret never leaves this
+   * worker. The signature is made BEFORE the job is dropped, because the job
+   * is the only place that key exists.
+   *
+   * Refused with a relayer: the fee payer is then the relayer operator, and no
+   * key the buyer controls can prove the payment. Refused on a v3 job: the
+   * C1 + C3 pair republishes the note's commitment, which is the join the
+   * exchange exists to avoid. Both refusals happen before anything is sent.
+   */
+  signClaim?: boolean;
 }
 
 /**
@@ -765,6 +784,13 @@ export interface PoolLicenseKeyRequest {
    * under `serviceTag` unchecked, as before this field existed.
    */
   licenseCommitment?: string | null;
+  /**
+   * The scheme the local record says the key was minted under. Read ONLY when
+   * `licenseCommitment` is absent (an older caller with nothing to verify
+   * against); with a commitment both schemes are tried and the chain decides.
+   * Absent means v1: every record from before 2026-09-02.
+   */
+  licenseScheme?: LicenseScheme;
 }
 
 export interface PoolLicenseKeyResponse {
@@ -774,6 +800,8 @@ export interface PoolLicenseKeyResponse {
   /** The tag the key was derived under: the one that matched the vault's
    *  commitment when the request carried it, else the request's `serviceTag`. */
   serviceTag: string;
+  /** The scheme the returned key was derived under. */
+  licenseScheme?: LicenseScheme;
 }
 
 /**
@@ -848,6 +876,7 @@ export interface StoredSubscriptionWire {
   pool?: string;
   leafIndex?: number;
   openedAt: number;
+  licenseScheme?: LicenseScheme;
 }
 
 /**
@@ -955,6 +984,8 @@ export interface RecoveredSubscriptionWire {
    *  or null when no candidate reproduced it. Absent from an older worker, in
    *  which case the page falls back to its registry join. */
   serviceTag?: string | null;
+  /** The scheme that reproduced `licenseCommitment`; null when no (tag, scheme) did. */
+  licenseScheme?: LicenseScheme | null;
 }
 
 export interface PoolRecoverSubscriptionsResponse {
@@ -1173,6 +1204,20 @@ export interface PoolUnshieldExecuteResponse {
   kind: 'poolUnshieldExecute';
   txSig: string;
   denomination: number;
+  /**
+   * The transaction's fee payer, base58: the ephemeral on the direct path.
+   * Absent on the relayed path, where the relayer's key paid and this worker
+   * never learns which. Optional so a page against an older worker still
+   * typechecks.
+   */
+  feePayer?: string;
+  /**
+   * Base64 of `nacl.sign.detached(claimChallenge(txSig), ephemeral.secretKey)`,
+   * present only when the request set `signClaim`. Worth exactly one claim on
+   * exactly this payment; see `claimChallenge` for why the signature is inside
+   * the text.
+   */
+  claimProof?: string;
 }
 
 export interface PoolSubscribePrepareResponse {
@@ -1221,6 +1266,11 @@ export interface PoolSubscribePrepareResponse {
    * rather than claim a privacy property the transaction does not have.
    */
   version: 'v3' | 'v4';
+  /**
+   * Which derivation the license key is minted under: 'v2' since 2026-09-02.
+   * Absent from a worker older than that, which minted v1.
+   */
+  licenseScheme?: LicenseScheme;
 }
 
 export interface PoolSubscribeExecuteResponse {
@@ -1239,6 +1289,8 @@ export interface PoolSubscribeExecuteResponse {
   /** The string the key is scoped to. A merchant needs it to check the key. */
   serviceTag: string;
   denomination: number;
+  /** The scheme `licenseKey` was minted under. Absent from an older worker (v1). */
+  licenseScheme?: LicenseScheme;
 }
 
 /**
@@ -1425,7 +1477,15 @@ const preparedUnshields = new Map<string, PreparedUnshieldJob>();
  * is still correct there because nothing binds it.
  */
 type PreparedSubscribeJob =
-  | { version: 'v3'; ctx: PreparedSubscribe; meta: string; subscriberCommitment: bigint }
+  | {
+      version: 'v3';
+      ctx: PreparedSubscribe;
+      meta: string;
+      subscriberCommitment: bigint;
+      /** The seed of the identity the note is filed under: the v2 license
+       *  derivation at execute needs it. Never leaves this worker. */
+      identitySeed: Uint8Array;
+    }
   | {
       version: 'v4';
       ctx: PreparedSubscribeV4;
@@ -1434,6 +1494,8 @@ type PreparedSubscribeJob =
       /** The 16-byte HKDF leg. Never leaves this worker; only its encoding does. */
       licenseSecret: Uint8Array;
       serviceTag: string;
+      /** The scheme `licenseSecret` was derived under, reported at execute. */
+      licenseScheme: LicenseScheme;
     };
 
 const preparedSubscribes = new Map<string, PreparedSubscribeJob>();
@@ -2513,6 +2575,16 @@ async function handlePoolUnshieldExecute(
         );
       }
       if (req.relayerUrl) {
+        // No buyer-controlled signer exists on this path: the relayer's key is
+        // the fee payer, so a claim signed here would verify under nobody the
+        // deployment can check. Refused before the send, so nothing is spent.
+        if (req.signClaim) {
+          throw new Error(
+            'A note-in exchange cannot go through a relayer: the relayer pays the withdrawal, ' +
+              'so no key of yours is its fee payer and no proof of payment can be signed. ' +
+              'Withdraw to the till directly instead. Nothing was sent.',
+          );
+        }
         const relayed = await executeUnshieldV4Relayed(
           job.ctx,
           conn,
@@ -2533,11 +2605,34 @@ async function handlePoolUnshieldExecute(
         onProgress,
         req.sweepTo ? new PublicKey(req.sweepTo) : undefined,
       );
+      // Signed HERE, inside the try, before the `finally` drops the job: the
+      // ephemeral's secret lives on `job.ctx` and nowhere else, so a proof
+      // requested after the job is gone could never be made.
+      const claimProof = req.signClaim
+        ? signClaimProof(job.ctx.ephemeral.secretKey, txSig)
+        : undefined;
       return {
         kind: 'poolUnshieldExecute',
         txSig,
         denomination: job.ctx.poolConfig.denomination,
+        feePayer: job.ctx.ephemeral.publicKey.toBase58(),
+        ...(claimProof !== undefined ? { claimProof } : {}),
       };
+    }
+
+    // ⛔ A v3 job cannot sign a note-in claim, and it is refused BEFORE the
+    // relayer check and before any send: the C1 + C3 pair republishes the
+    // note's commitment in cleartext, so an exchange over it would hand the
+    // issuer's chain reader the deposit that the exchange exists to leave
+    // behind. The client refuses earlier still, before the pre-fund; this is
+    // the backstop for a caller that did not.
+    if (req.signClaim) {
+      throw new Error(
+        'This withdrawal was proved on the C1 + C3 pair, which publishes the note commitment, ' +
+          'so it cannot be a note-in exchange: the exchange exists to leave that deposit ' +
+          'behind. Nothing was sent; the pre-fund is still on the withdrawal signer and ' +
+          'Recover funds returns it.',
+      );
     }
 
     // ⛔ A v3 job cannot be relayed, and saying so beats ignoring the field.
@@ -2574,10 +2669,26 @@ async function handlePoolUnshieldExecute(
       kind: 'poolUnshieldExecute',
       txSig,
       denomination: job.ctx.poolConfig.denomination,
+      feePayer: job.ctx.ephemeral.publicKey.toBase58(),
     };
   } finally {
     preparedUnshields.delete(req.jobId);
   }
+}
+
+/**
+ * Sign the claim challenge for one withdrawal with its ephemeral's secret.
+ *
+ * `utf8ToBytes` and a hand-rolled base64 rather than `Buffer`: this runs in
+ * the worker, where Buffer is a polyfill that has been absent before
+ * (`buffer-polyfill-gap-web-worker`). `nacl.sign.detached` takes the 64-byte
+ * `Keypair.secretKey` as is.
+ */
+function signClaimProof(secretKey: Uint8Array, txSig: string): string {
+  const sig = nacl.sign.detached(utf8ToBytes(claimChallenge(txSig)), secretKey);
+  let s = '';
+  for (let i = 0; i < sig.length; i += 1) s += String.fromCharCode(sig[i]!);
+  return btoa(s);
 }
 
 /**
@@ -3134,7 +3245,12 @@ async function handlePoolSubscribePrepare(
     // correct there because nothing binds it. The SECRET stays in this worker on
     // both routes; only the encoded key ever leaves.
     const serviceTag = licenseServiceTag(req.serviceId, retailer.toBase58());
-    const licenseSecret = deriveLicenseSecret(note.receipt.secret, serviceTag);
+    // v2 since 2026-09-02: the seed of the identity this note is filed under
+    // goes into the derivation, so the treasury cannot recompute the key of a
+    // note it issued (limit D8). The key handed over at execute is encoded
+    // from THIS secret and the commitment inside the digest is blake3 of THIS
+    // secret: one source, both ends.
+    const licenseSecret = deriveLicenseSecretV2(note.receipt.secret, serviceTag, candidate.seed);
     const licenseCommitmentBytes = licenseCommitment(licenseSecret);
 
     // Inert on-chain metadata; zeros unless the caller has something to put
@@ -3195,6 +3311,7 @@ async function handlePoolSubscribePrepare(
         subscriberCommitment: subscriberCommitmentV4,
         licenseSecret,
         serviceTag,
+        licenseScheme: 'v2',
       });
 
       return {
@@ -3213,6 +3330,7 @@ async function handlePoolSubscribePrepare(
         depositFunder,
         depositSignature: origin?.signature ?? null,
         version: 'v4',
+        licenseScheme: 'v2',
       };
     }
   }
@@ -3249,6 +3367,7 @@ async function handlePoolSubscribePrepare(
     ctx,
     meta: req.meta,
     subscriberCommitment,
+    identitySeed: candidate.seed,
   });
 
   return {
@@ -3262,6 +3381,7 @@ async function handlePoolSubscribePrepare(
     depositFunder,
     depositSignature: origin?.signature ?? null,
     version: 'v3',
+    licenseScheme: 'v2',
   };
 }
 
@@ -3351,6 +3471,7 @@ async function handlePoolSubscribeExecute(
         licenseKey: encodeLicenseKey(job.licenseSecret),
         serviceTag: job.serviceTag,
         denomination: job.ctx.poolConfig.denomination,
+        licenseScheme: job.licenseScheme,
       };
     }
 
@@ -3361,7 +3482,13 @@ async function handlePoolSubscribeExecute(
     // key against `blake3(licenseSecret)` with no shared secret anywhere, and the
     // user can reproduce the key on any device holding the note. The SECRET stays
     // here; only the encoded key and its blake3 leave this function.
-    const licenseSecret = deriveLicenseSecret(job.ctx.receipt.secret, serviceTag);
+    // v2 since 2026-09-02: the identity seed stored at prepare goes in too, so
+    // the treasury cannot recompute the key of a note it issued.
+    const licenseSecret = deriveLicenseSecretV2(
+      job.ctx.receipt.secret,
+      serviceTag,
+      job.identitySeed,
+    );
     const licenseKey = encodeLicenseKey(licenseSecret);
     const licenseCommitmentBytes = licenseCommitment(licenseSecret);
 
@@ -3395,6 +3522,7 @@ async function handlePoolSubscribeExecute(
       licenseKey,
       serviceTag,
       denomination: job.ctx.poolConfig.denomination,
+      licenseScheme: 'v2',
     };
   } finally {
     preparedSubscribes.delete(req.jobId);
@@ -3564,6 +3692,8 @@ interface OwnedBlobNote {
   leafIndex: number;
   secret: bigint;
   nullifierPreimage: bigint;
+  /** The seed that decrypted the blob: the identity the note is filed under. */
+  identitySeed: Uint8Array;
 }
 
 /**
@@ -3589,6 +3719,7 @@ function decryptOwnedBlob(candidates: SeedCandidate[], blob: string): OwnedBlobN
         leafIndex,
         secret: BigInt(String(note.secret)),
         nullifierPreimage: BigInt(String(note.nullifier_preimage)),
+        identitySeed: candidate.seed,
       };
     } catch {
       return null; // decrypted, but the shape is not a stored note
@@ -3677,15 +3808,17 @@ async function handlePoolResolveSpent(
 
 /**
  * Re-derive a subscription's license key from the local note that paid for it.
- * Same derivation `handlePoolSubscribeExecute` performs at purchase time, on
- * the same secret, scoped by the same tag. See `PoolLicenseKeyRequest`.
+ * Same derivations the subscribe handlers perform at purchase time, on the
+ * same secret, scoped by the same tag. See `PoolLicenseKeyRequest`.
  *
- * The tag is verified, not trusted, whenever the request carries the vault's
- * `licenseCommitment`: `serviceTag` first, then `candidateTags` in order, and
- * the key comes back only under the tag whose derived key hashes to the
- * commitment. A record rebuilt from a registry join can name the wrong slug
- * (two slugs on one retailer, a paused or closed listing); this is what keeps
- * that from surfacing as a key no merchant accepts.
+ * The tag AND the scheme are verified, not trusted, whenever the request
+ * carries the vault's `licenseCommitment`: `serviceTag` first, then
+ * `candidateTags` in order, each under v2 (every seed of this identity, the
+ * one that decrypted the blob first) and then v1, and the key comes back only
+ * under the pair whose derived key hashes to the commitment. A record rebuilt
+ * from a registry join can name the wrong slug; a record from before
+ * 2026-09-02 names no scheme and its vault carries a v1 commitment. The
+ * chain settles both here.
  *
  * ⛔ The key must never be logged and never appear in an error message.
  */
@@ -3697,28 +3830,46 @@ function handlePoolLicenseKey(req: PoolLicenseKeyRequest): PoolLicenseKeyRespons
     if (!note || note.pool !== req.pool || note.leafIndex !== req.leafIndex) continue;
 
     if (req.licenseCommitment === undefined) {
-      // An older caller with no chain value to check against: the stored tag,
-      // unchecked, exactly as before the field existed.
-      const licenseKey = encodeLicenseKey(deriveLicenseSecret(note.secret, req.serviceTag));
-      return { kind: 'poolLicenseKey', licenseKey, serviceTag: req.serviceTag };
+      // An older caller with no chain value to check against: the stored tag
+      // under the record's scheme, unchecked, exactly as before the field
+      // existed. A record that names no scheme predates v2 and is v1.
+      const scheme: LicenseScheme = req.licenseScheme ?? 'v1';
+      const licenseKey = encodeLicenseKey(
+        deriveLicenseSecretUnder(scheme, note.secret, req.serviceTag, note.identitySeed),
+      );
+      return { kind: 'poolLicenseKey', licenseKey, serviceTag: req.serviceTag, licenseScheme: scheme };
     }
 
     // Insertion order is the trial order; a caller may repeat the stored tag.
+    // Every seed of the identity is offered to the v2 trial, the one that
+    // decrypted this blob first: the seed that minted the key is the one the
+    // note was filed under at purchase, and the commitment says which.
     const tags = [...new Set([req.serviceTag, ...(req.candidateTags ?? [])])];
-    const serviceTag = matchLicenseServiceTag(note.secret, req.licenseCommitment, tags);
-    if (serviceTag === null) {
+    const seeds = [
+      note.identitySeed,
+      ...candidates.map((c) => c.seed).filter((seed) => seed !== note.identitySeed),
+    ];
+    const match = matchLicense(note.secret, seeds, req.licenseCommitment, tags);
+    if (match === null) {
       const tried = tags.filter((t) => t).length;
       throw new Error(
         req.licenseCommitment === null
           ? `${KEY_NOT_RECOVERABLE}: the vault stores no license fingerprint, so no key can be ` +
               'checked against it.'
           : `${KEY_NOT_RECOVERABLE}: none of the ${tried} service tag${tried === 1 ? '' : 's'} ` +
-              'tried derives the key the vault\'s license fingerprint was computed from. The ' +
+              "tried derives the key the vault's license fingerprint was computed from. The " +
               'registry listing this was bought under may have been renamed or removed.',
       );
     }
-    const licenseKey = encodeLicenseKey(deriveLicenseSecret(note.secret, serviceTag));
-    return { kind: 'poolLicenseKey', licenseKey, serviceTag };
+    const licenseKey = encodeLicenseKey(
+      deriveLicenseSecretUnder(match.scheme, note.secret, match.serviceTag, match.identitySeed),
+    );
+    return {
+      kind: 'poolLicenseKey',
+      licenseKey,
+      serviceTag: match.serviceTag,
+      licenseScheme: match.scheme,
+    };
   }
 
   throw new Error(
@@ -3755,7 +3906,12 @@ async function handlePoolRecoverSubscriptions(
     const key = `${note.pool}:${note.leafIndex}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    blobCandidates.push({ pool: note.pool, leafIndex: note.leafIndex, secret: note.secret });
+    blobCandidates.push({
+      pool: note.pool,
+      leafIndex: note.leafIndex,
+      secret: note.secret,
+      identitySeed: note.identitySeed,
+    });
   }
 
   // The wasm boots lazily, on the first candidate that actually needs hashing:
@@ -3786,7 +3942,7 @@ async function handlePoolRecoverSubscriptions(
   );
 
   // Whitelist copy, the same discipline as `handlePoolOpenRecords`: exactly
-  // these eleven public fields cross, whatever else the scan result carries.
+  // these twelve public fields cross, whatever else the scan result carries.
   return {
     kind: 'poolRecoverSubscriptions',
     vaultsScanned,
@@ -3802,6 +3958,7 @@ async function handlePoolRecoverSubscriptions(
       leafIndex: r.leafIndex,
       licenseCommitment: r.licenseCommitment,
       serviceTag: r.serviceTag,
+      licenseScheme: r.licenseScheme,
     })),
   };
 }
@@ -3901,6 +4058,9 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
       };
       if (typeof rec.serviceName === 'string') sub.serviceName = rec.serviceName;
       if (typeof rec.openTxSig === 'string') sub.openTxSig = rec.openTxSig;
+      if (rec.licenseScheme === 'v1' || rec.licenseScheme === 'v2') {
+        sub.licenseScheme = rec.licenseScheme;
+      }
       if (typeof rec.pool === 'string') sub.pool = rec.pool;
       if (Number.isInteger(rec.leafIndex) && (rec.leafIndex as number) >= 0) {
         sub.leafIndex = rec.leafIndex as number;

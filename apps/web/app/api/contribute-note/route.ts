@@ -1,8 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Connection } from '@solana/web3.js';
+import { Connection, PublicKey } from '@solana/web3.js';
+import nacl from 'tweetnacl';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
 import { activeTreasurySeed } from '@/lib/privacy/treasurySeeds';
+import { claimChallenge } from '@/lib/privacy/claimChallenge';
+import {
+  contribClaimKey,
+  contribConfirmedKey,
+  contribReservedKey,
+  contributionBinding,
+  inventoryDenomination,
+  notePaidCodeKey,
+  notePaidKey,
+  relayPaymentContributionKey,
+} from '@/lib/privacy/paymentBinding';
 import {
   createCommitmentV3,
   deriveNoteMaterial,
@@ -31,9 +43,28 @@ import { recordInventoryLeaf } from '@/app/api/issue-note/route';
  * 🎯 THE DEPOSITOR NEVER LEARNS THE OPENING OF WHAT THEY DEPOSIT. That single
  * property is what removes the double-spend an exchange otherwise carries: in a
  * swap, whoever hands a note in still knows its opening and can spend it after
- * being paid, which is why `swap-note` has to be asynchronous and wait for a
- * relayed spend. Here there is no second copy, because there was never a first.
- * Nothing to race, nothing to convert, no relayer on the critical path.
+ * being paid, which is why a note is only ever taken in by SPENDING it first (a
+ * circuit-7 withdrawal to the till, claimed at `claim-for-payment`). Here there
+ * is no second copy, because there was never a first. Nothing to race, nothing
+ * to convert, no relayer on the critical path.
+ *
+ * ── CONFIRM IS BOUND TO THE PAYMENT (a deliberate break, 2026-09-02) ────────
+ *
+ * `confirm` now REQUIRES `paymentSignature` and `proof`, and refuses without
+ * them. Before, any caller naming a confirmed leaf was handed its claim code:
+ * leaf indices are public and the ticket ships in the bundle, so the first
+ * stranger to read the tree could collect the note somebody else paid for.
+ *
+ * Now a confirm has to prove it is the payer (the wallet that paid the till
+ * signs `claimChallenge(paymentSignature)`, verified against the fee payer of
+ * that transaction), and the leaf it names has to be the one the relay funded
+ * WITH that payment (`p01:relay:payment:<sig>:contribution`, written by
+ * `/api/relay-to-buyer` only after the lamports moved). The mint itself is
+ * gated on `p01:note:paid:<sig>`, the same counter `/api/claim-for-payment`
+ * uses, so a deposit that failed and was claimed there, and a confirm of the
+ * same payment, can never both mint: whichever runs first pays, the other
+ * replays its code. Headless callers sign with their keypair
+ * (`scripts/contributeAndCollect.mts`).
  *
  * 🎯 AND THE MATURITY GATE IS THE MIXER. The leaf just contributed is far too
  * young for `issue-note` to hand over (`DEFAULT_MIN_AGE_SLOTS`), so the note the
@@ -67,12 +98,9 @@ const CONTRIBUTIONS_PER_IP_PER_HOUR = (() => {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 5;
 })();
 
-/** A leaf handed to a contributor, so two of them never get the same index. */
-const KV_RESERVED_PREFIX = 'p01:note:contrib-reserved:';
-/** One key per confirmed leaf — `incr` on it is the one-claim-per-deposit rule. */
-const KV_CONFIRMED_PREFIX = 'p01:note:contrib-confirmed:';
-/** The claim code a confirmed contribution earned, so a retry returns the same one. */
-const KV_CONTRIB_CLAIM_PREFIX = 'p01:note:contrib-claim:';
+// The KV keys (reserved, confirmed, claim, paid) live in
+// `lib/privacy/paymentBinding.ts`, shared with relay-to-buyer and
+// claim-for-payment: one format, one file.
 
 /**
  * How far past the tree's current height a reservation may look.
@@ -105,12 +133,6 @@ function clientIp(req: NextRequest): string {
  */
 const treasurySeed = activeTreasurySeed;
 
-/** The denomination this deployment deals in. Mirrors `issue-note`'s reader. */
-function inventoryDenomination(): number {
-  const raw = Number(process.env.P01_TREASURY_NOTE_DENOMINATION);
-  return Number.isFinite(raw) && raw > 0 ? raw : 0.1;
-}
-
 /** 32 hex characters — inside `issue-note`'s claim-code alphabet by construction. */
 function mintCode(): string {
   return crypto.randomUUID().replace(/-/g, '');
@@ -123,8 +145,12 @@ function mintCode(): string {
  * a commitment is public the instant it is deposited — it is the leaf. Handing
  * the opening to the depositor would hand them the note, which is precisely the
  * thing this flow exists not to do.
+ *
+ * Exported for `/api/claim-for-payment`, which asks the same question from the
+ * other side: has the deposit this payment funded landed, in which case the
+ * claim must be collected here and not there.
  */
-function treasuryCommitmentFor(
+export function treasuryCommitmentFor(
   seed: Uint8Array,
   poolPDA: Parameters<typeof deriveNoteMaterial>[1],
   tokenMint: Parameters<typeof pubkeyToField>[0],
@@ -161,7 +187,14 @@ export async function POST(request: NextRequest) {
     return bad(401, 'bad or missing ticket');
   }
 
-  let body: { action?: unknown; token?: unknown; leafIndex?: unknown; commitment?: unknown };
+  let body: {
+    action?: unknown;
+    token?: unknown;
+    leafIndex?: unknown;
+    commitment?: unknown;
+    paymentSignature?: unknown;
+    proof?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -252,17 +285,17 @@ export async function POST(request: NextRequest) {
     for (let leafIndex = start; leafIndex < start + MAX_RESERVATION_LOOKAHEAD; leafIndex += 1) {
       let taken: number;
       try {
-        taken = await kv.incr(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`);
+        taken = await kv.incr(contribReservedKey(poolKey, leafIndex));
         if (taken !== 1 && leafIndex === start) {
           // The tree has not reached this index, so whatever reserved it never
           // deposited. Reclaim it rather than walking past and drifting further.
-          await kv.del(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`);
-          taken = await kv.incr(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`);
+          await kv.del(contribReservedKey(poolKey, leafIndex));
+          taken = await kv.incr(contribReservedKey(poolKey, leafIndex));
         }
         // Self-healing: an abandoned marker stops mattering after an hour even
         // if the branch above never runs.
         if (taken === 1) {
-          await kv.expire?.(`${KV_RESERVED_PREFIX}${poolKey}:${leafIndex}`, 3600);
+          await kv.expire?.(contribReservedKey(poolKey, leafIndex), 3600);
         }
       } catch (e) {
         return bad(503, `the reservation could not be written: ${(e as Error).message}`);
@@ -301,6 +334,71 @@ export async function POST(request: NextRequest) {
   if (!Number.isInteger(leafIndex) || leafIndex < 0) {
     return bad(400, 'leafIndex must be a non-negative integer');
   }
+  const paymentSignature =
+    typeof body.paymentSignature === 'string' ? body.paymentSignature.trim() : '';
+  const proof = typeof body.proof === 'string' ? body.proof.trim() : '';
+  if (!paymentSignature) {
+    return bad(400, 'paymentSignature is required: the transaction that paid the till for this deposit');
+  }
+  if (!proof) {
+    return bad(400, 'proof is required: sign claimChallenge(paymentSignature) with the wallet that paid');
+  }
+
+  /**
+   * WHO PAID. `keys[0]` of the payment is its fee payer, the wallet on the
+   * relayed deposit path, and the proof must verify under it: the tree, the
+   * leaf index and the ticket are all public, so without this the first
+   * stranger to read the chain could collect the note somebody else paid for.
+   */
+  let payer: string;
+  try {
+    const tx = await connection.getTransaction(paymentSignature, {
+      maxSupportedTransactionVersion: 0,
+      commitment: 'confirmed',
+    });
+    if (!tx?.meta) return bad(404, 'that payment is not on chain yet; confirm it and retry');
+    if (tx.meta.err) return bad(400, 'that payment failed on chain, so it paid nothing');
+    const first = tx.transaction.message.getAccountKeys().staticAccountKeys[0];
+    if (!first) return bad(400, 'that payment names no fee payer');
+    payer = first.toBase58();
+  } catch (e) {
+    return bad(502, `the payment could not be read: ${(e as Error).message}`);
+  }
+  try {
+    // Buffer, not TextEncoder: tweetnacl checks `instanceof Uint8Array`, and
+    // under jsdom TextEncoder returns one from another realm. See
+    // claim-for-payment, which verifies the same challenge the same way.
+    const ok = nacl.sign.detached.verify(
+      new Uint8Array(Buffer.from(claimChallenge(paymentSignature), 'utf8')),
+      new Uint8Array(Buffer.from(proof, 'base64')),
+      new PublicKey(payer).toBytes(),
+    );
+    if (!ok) return bad(401, 'that proof was not signed by the wallet that made this payment');
+  } catch {
+    return bad(400, 'proof must be base64 of a 64-byte ed25519 signature');
+  }
+
+  /**
+   * THE LEAF THIS PAYMENT FUNDED, as the relay recorded it after the lamports
+   * moved. A payer can only confirm the reservation their own payment funded:
+   * naming somebody else's leaf, however well it verifies on the tree, earns
+   * nothing here.
+   */
+  let binding: string | null;
+  try {
+    binding = await kv.get<string>(relayPaymentContributionKey(paymentSignature));
+  } catch (e) {
+    return bad(503, `the relay record could not be read: ${(e as Error).message}`);
+  }
+  if (binding !== contributionBinding(poolKey, leafIndex)) {
+    return bad(400, 'that payment did not fund this leaf', {
+      leafIndex,
+      hint: binding
+        ? 'The relay recorded a different contribution for this payment.'
+        : 'The relay recorded no contribution for this payment; a deposit relayed without ' +
+          'one cannot be confirmed.',
+    });
+  }
 
   /**
    * 🚨 THE COMMITMENT IS RECOMPUTED FROM THE TREASURY SEED, NEVER TAKEN FROM
@@ -329,31 +427,76 @@ export async function POST(request: NextRequest) {
   }
 
   /**
-   * ONE CLAIM PER DEPOSIT, and `incr` decides it. Without this a caller could
-   * confirm the same leaf repeatedly and mint a claim each time — one deposit
-   * paying for the whole inventory.
+   * ONE CLAIM PER PAYMENT, and `incr` on `p01:note:paid:<sig>` decides it.
+   *
+   * The gate is SHARED with `/api/claim-for-payment`, which is the fallback
+   * for a deposit that had not landed when the client gave up. Whichever of
+   * the two runs first mints; the other hands back the same code. A retry is
+   * ordinary (a lost response, a reloaded page), so it gets the code rather
+   * than a refusal, and minting a second one would pay twice.
+   *
+   * Taken only now, after every refusal above: a gate consumed by a 409 would
+   * leave the payment claimed with no code behind it, which is the one state
+   * neither route can repair.
+   */
+  const paidKey = notePaidKey(paymentSignature);
+  let paid: number;
+  try {
+    paid = await kv.incr(paidKey);
+  } catch (e) {
+    return bad(503, `the payment could not be claimed: ${(e as Error).message}`);
+  }
+  if (paid !== 1) {
+    let existing: string | null = null;
+    try {
+      existing = await kv.get<string>(notePaidCodeKey(paymentSignature));
+    } catch {
+      /* falls through to the refusal below */
+    }
+    if (!existing) {
+      // Claimed but unreadable. Refusing is right: minting a second code here
+      // is the double-sale this counter exists to stop.
+      return bad(503, 'this payment was already claimed but its code could not be read');
+    }
+    // The leaf IS on the tree (checked above) and IS the treasury's, so it is
+    // stock whichever route minted the code. Recorded here because the
+    // fallback could not: the deposit had not landed when it ran.
+    try {
+      await recordInventoryLeaf(poolKey, leafIndex);
+    } catch {
+      /* issue-note also discovers treasury leaves by derivation; the code is what matters here */
+    }
+    return NextResponse.json({
+      ok: true,
+      claimCode: existing,
+      leafIndex,
+      denomination,
+      token,
+      replayed: true,
+    });
+  }
+
+  /**
+   * ONE CLAIM PER DEPOSIT as well. A leaf already confirmed under a DIFFERENT
+   * payment (the loser of a reservation race) must not be handed the winner's
+   * code. The paid gate is given back so that payment stays claimable where it
+   * belongs; nothing was minted for it here.
    */
   let confirmations: number;
   try {
-    confirmations = await kv.incr(`${KV_CONFIRMED_PREFIX}${poolKey}:${leafIndex}`);
+    confirmations = await kv.incr(contribConfirmedKey(poolKey, leafIndex));
   } catch (e) {
     return bad(503, `the confirmation could not be written: ${(e as Error).message}`);
   }
   if (confirmations !== 1) {
-    // A retry is ordinary — a lost response, a reloaded page — so hand back the
-    // SAME code rather than refusing. Minting a second one would pay twice.
-    let existing: string | null = null;
     try {
-      existing = await kv.get<string>(`${KV_CONTRIB_CLAIM_PREFIX}${poolKey}:${leafIndex}`);
+      await kv.del(paidKey);
     } catch {
-      /* falls through to the refusal below */
+      /* best effort; the refusal below is accurate either way */
     }
-    if (existing) {
-      return NextResponse.json({ ok: true, claimCode: existing, leafIndex, replayed: true });
-    }
-    return bad(409, 'this contribution was already confirmed', {
+    return bad(409, 'this contribution was already confirmed under a different payment', {
       leafIndex,
-      hint: 'Its claim code was issued once and cannot be reissued from here.',
+      hint: 'Its claim code was issued once, to the payment that funded it.',
     });
   }
 
@@ -362,7 +505,10 @@ export async function POST(request: NextRequest) {
     // Recorded BEFORE the claim is minted: a crash between the two leaves the
     // buyer without a code, which they can recover, rather than leaving the
     // treasury short a leaf it paid for and cannot issue.
-    await kv.set(`${KV_CONTRIB_CLAIM_PREFIX}${poolKey}:${leafIndex}`, claimCode);
+    await kv.set(contribClaimKey(poolKey, leafIndex), claimCode);
+    // And under the payment, so the fallback route replays this code instead
+    // of minting another.
+    await kv.set(notePaidCodeKey(paymentSignature), claimCode);
     /**
      * The leaf becomes issuable stock.
      *
@@ -375,8 +521,12 @@ export async function POST(request: NextRequest) {
     await recordInventoryLeaf(poolKey, leafIndex);
     // The value `issue-note` reads to decide the code was MINTED rather than
     // guessed. It tests `if (!minted)`, so an empty string would burn the
-    // buyer's claim without releasing it — hence a real reference.
-    await kv.set(`p01:note:claim-minted:${claimCode}`, `contrib:${poolKey}:${leafIndex}`);
+    // buyer's claim without releasing it, hence a real reference, naming both
+    // the leaf and the payment that bought it.
+    await kv.set(
+      `p01:note:claim-minted:${claimCode}`,
+      `contrib:${poolKey}:${leafIndex}:payment:${paymentSignature}`,
+    );
   } catch (e) {
     return bad(503, `the claim could not be minted: ${(e as Error).message}`);
   }

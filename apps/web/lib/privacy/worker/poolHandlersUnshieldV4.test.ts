@@ -29,11 +29,13 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PublicKey } from '@solana/web3.js';
+import { Keypair, PublicKey } from '@solana/web3.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import nacl from 'tweetnacl';
 
 import type { RecoveredNote } from '../pool/poolNotes';
+import { claimChallenge } from '../claimChallenge';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -53,6 +55,14 @@ const OWNER = '7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU';
 const RECIPIENT = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM';
 /** A DIFFERENT payee, for the mismatch. Circuit 7 was never proved for it. */
 const OTHER_PAYEE = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+
+/**
+ * The circuit-7 job's ephemeral, a REAL keypair rather than a bare address:
+ * the note-in exchange has the handler sign the claim challenge with its
+ * secret, and a stub with no `secretKey` would make every such case fail for
+ * a reason that has nothing to do with the handler.
+ */
+const V4_EPHEMERAL = Keypair.generate();
 
 /**
  * THE REAL JOB-ID FORMULAE, not placeholders — and the difference is the entire
@@ -211,7 +221,7 @@ vi.mock('../pool/unshieldEphemeral', () => ({
       jobId: V4_JOB_ID,
       poolConfig,
       receipt,
-      ephemeral: { publicKey: { toBase58: () => 'EPH_V4' } },
+      ephemeral: V4_EPHEMERAL,
       // Carried in the context because circuit 7 bound it at prove time. The
       // execute handler reads it back off this field, so it is the fixture the
       // mismatch and collision tests both turn on.
@@ -378,7 +388,7 @@ describe('a prepare carrying a payee and a wallet routes to circuit 7', () => {
     // v4 job.
     expect(res.jobId).toContain(V4_JOB_ID);
     expect(res.version).toBe('v4');
-    expect(res.ephemeralPubkey).toBe('EPH_V4');
+    expect(res.ephemeralPubkey).toBe(V4_EPHEMERAL.publicKey.toBase58());
     // Reported from the job, not assumed: one proof buffer is priced, not two.
     expect(res.requiredLamports).toBe(231);
   });
@@ -930,5 +940,123 @@ describe('handing the withdrawal to a relayer', () => {
 
     expect(String(err)).toContain('cannot pay');
     expect(seen.executeRelayed).toEqual([]);
+  });
+});
+
+// ===========================================================================
+
+/**
+ * The note-in exchange: a circuit-7 withdrawal whose recipient is the
+ * deployment's till, and whose fee payer (the ephemeral) signs the claim.
+ *
+ * What is measured is the PROOF, not that a flag was echoed: it must verify
+ * under the ephemeral prepare reported, over `claimChallenge(txSig)` and
+ * nothing else, because `/api/claim-for-payment` hands the note to whoever
+ * can produce exactly that. And the two refusals must fire BEFORE any send,
+ * because after one the pre-fund is on the ephemeral.
+ */
+describe('signing the claim for a note-in withdrawal', () => {
+  function verifies(proofB64: string, txSig: string, pubkey: string): boolean {
+    return nacl.sign.detached.verify(
+      new Uint8Array(Buffer.from(claimChallenge(txSig), 'utf8')),
+      new Uint8Array(Buffer.from(proofB64, 'base64')),
+      new PublicKey(pubkey).toBytes(),
+    );
+  }
+
+  it('returns a proof that verifies under the ephemeral prepare reported, over this payment', async () => {
+    const prep = await handlePoolRequest(
+      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
+    );
+    const done = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+      signClaim: true,
+    });
+
+    expect(done.txSig).toBe('V4_TX');
+    // The fee payer IS the key the route verifies against.
+    expect(done.feePayer).toBe(prep.ephemeralPubkey);
+    expect(done.claimProof).toBeTruthy();
+    expect(Buffer.from(done.claimProof!, 'base64')).toHaveLength(64);
+    expect(verifies(done.claimProof!, 'V4_TX', prep.ephemeralPubkey)).toBe(true);
+    // Bound to THIS transaction: the same bytes prove nothing about another.
+    expect(verifies(done.claimProof!, 'SOME_OTHER_TX', prep.ephemeralPubkey)).toBe(false);
+    // And under nobody else: the wallet did not sign it.
+    expect(verifies(done.claimProof!, 'V4_TX', OWNER)).toBe(false);
+    expect(seen.executeV4).toHaveLength(1);
+  });
+
+  it('returns no proof unless asked, so an ordinary withdrawal is what it was', async () => {
+    const prep = await handlePoolRequest(
+      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
+    );
+    const done = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+    });
+
+    expect(done.txSig).toBe('V4_TX');
+    expect(done.claimProof).toBeUndefined();
+    // The fee payer is reported either way; it costs nothing and names no secret.
+    expect(done.feePayer).toBe(prep.ephemeralPubkey);
+  });
+
+  it('refuses a relayer, whose key would be the fee payer, before anything is sent', async () => {
+    const prep = await handlePoolRequest(
+      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
+    );
+    const err = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+      relayerUrl: 'https://relay.example',
+      signClaim: true,
+    }).catch((e: Error) => e);
+
+    expect(String(err)).toContain('cannot go through a relayer');
+    // Neither path ran: no relayed send, and no direct send either.
+    expect(seen.executeRelayed).toEqual([]);
+    expect(seen.executeV4).toEqual([]);
+  });
+
+  it('refuses a v3 job, whose proof would republish the commitment, before anything is sent', async () => {
+    const prep = await handlePoolRequest(prepareReq());
+    expect(prep.version).toBe('v3');
+    const err = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+      signClaim: true,
+    }).catch((e: Error) => e);
+
+    expect(String(err)).toContain('cannot be a note-in exchange');
+    expect(seen.executeV3).toEqual([]);
+    expect(seen.executeRelayed).toEqual([]);
+  });
+
+  it('drops the refused job, so Recover is not blocked by it', async () => {
+    const prep = await handlePoolRequest(prepareReq());
+    await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+      signClaim: true,
+    }).catch(() => undefined);
+
+    const again = await handlePoolRequest({
+      kind: 'poolUnshieldExecute',
+      jobId: prep.jobId,
+      recipient: RECIPIENT,
+      ownerPubkey: OWNER,
+    }).catch((e: Error) => e);
+    expect(String(again)).toContain('Unknown withdrawal job');
   });
 });

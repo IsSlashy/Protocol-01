@@ -55,6 +55,10 @@ const mockIncr = vi.fn();
 const mockDel = vi.fn();
 /** The rate bucket's stored count. `null` = this IP has not relayed this hour. */
 const mockKvGet = vi.fn();
+/** Every `set`: the contribution binding and the buyer, written after the send. */
+const mockKvSet = vi.fn();
+/** How many `set` calls had happened when the relay's send left. -1 = never sent. */
+let setsAtSend = -1;
 
 /** Account keys of the payment transaction, in order, with their deltas. */
 let paymentKeys: string[] = [];
@@ -140,6 +144,7 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       }
       async sendRawTransaction() {
         if (sendBehaviour === 'send-throws') throw new Error('blockhash not found');
+        setsAtSend = mockKvSet.mock.calls.length;
         return 'RELAYSIG';
       }
       async confirmTransaction() {
@@ -153,6 +158,19 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
     },
   };
 });
+
+/**
+ * The pool table, stubbed. The route resolves a contribution's pool through
+ * `resolveContributionPool`, and the real table lives in a module that builds
+ * PDAs from `SystemProgram.programId` at load, which the web3 stub above does
+ * not carry. One open pool at the configured denomination is all it needs.
+ */
+vi.mock('@/lib/privacy/pool/denominatedPool', () => ({
+  getPoolsForTokenV3: (token: string) =>
+    token === 'SOL'
+      ? [{ token: 'SOL', denomination: 1, deposits: 'open', poolPDA: { toBase58: () => FAKE_POOL_KEY } }]
+      : [],
+}));
 
 /**
  * A NAMESPACE import, deliberately. `GET` does not exist on this route yet, and
@@ -172,6 +190,8 @@ const BUYER = Keypair.generate().publicKey.toBase58();
  *  only account DEBITED by a deposit payment. */
 const WALLET = Keypair.generate().publicKey.toBase58();
 const TICKET = 'test-ticket';
+/** The pool a contribution lands in, as the stub above reports it. */
+const FAKE_POOL_KEY = Keypair.generate().publicKey.toBase58();
 
 /**
  * The VALUE leg of a 1 SOL deposit: the denomination plus the protocol's 0.3%,
@@ -237,8 +257,10 @@ beforeEach(() => {
   // previews the rate bucket without incrementing it. A mock missing the method
   // made the preview throw and report "unknown", which is a real behaviour but
   // not the one under test.
+  mockKvSet.mockResolvedValue(undefined);
   mockGetStore.mockReturnValue({
     get: mockKvGet,
+    set: mockKvSet,
     incr: mockIncr,
     del: mockDel,
     expire: vi.fn(),
@@ -247,6 +269,8 @@ beforeEach(() => {
   buyerBalance = 0;
   funderBalance = 5_000_000_000;
   sendBehaviour = 'ok';
+  setsAtSend = -1;
+  vi.stubEnv('P01_TREASURY_NOTE_DENOMINATION', '1');
   paymentTx({ [TILL]: VALUE, [FEE_WALLET]: FEE });
 });
 
@@ -677,5 +701,71 @@ describe('the operator fee is checked ON CHAIN, or it is not checked at all', ()
     const res = await route.POST(payment());
     expect(res.status).toBe(402);
     expect((await res.json()).feeReceived).toBe(0);
+  });
+});
+
+describe('the payment is bound to the contribution it funded, only once the lamports moved', () => {
+  // The confirm of `/api/contribute-note` and the fallback at
+  // `/api/claim-for-payment` both require `p01:relay:payment:<sig>:contribution`
+  // to name the leaf being claimed, so a payer cannot collect against somebody
+  // else's reservation. The binding must therefore describe a deposit that WAS
+  // funded: written after the send, never on a path that released the claim.
+  const CONTRIBUTION = { token: 'SOL', leafIndex: 6 };
+  const BINDING = `${FAKE_POOL_KEY}:6`;
+  const setOf = (key: string) => mockKvSet.mock.calls.find((c) => c[0] === key)?.[1];
+
+  it('writes the binding and the buyer AFTER the send, and reports the binding', async () => {
+    const res = await route.POST(payment({ contribution: CONTRIBUTION }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.contribution).toBe(BINDING);
+    expect(setOf('p01:relay:payment:PAYSIG:contribution')).toBe(BINDING);
+    expect(setOf('p01:relay:payment:PAYSIG:buyer')).toBe(BUYER);
+    // Nothing had been written when the send left the process.
+    expect(setsAtSend).toBe(0);
+    expect(mockDel).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing when the send never left', async () => {
+    sendBehaviour = 'send-throws';
+    const res = await route.POST(payment({ contribution: CONTRIBUTION }));
+    expect(res.status).toBe(502);
+    expect(mockKvSet).not.toHaveBeenCalled();
+    expect(mockDel).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes nothing on a refusal that released the claim', async () => {
+    paymentTx({ [TILL]: VALUE });
+    const res = await route.POST(payment({ contribution: CONTRIBUTION }));
+    expect(res.status).toBe(402);
+    expect(mockKvSet).not.toHaveBeenCalled();
+    expect(mockDel).toHaveBeenCalledTimes(1);
+  });
+
+  it('still writes it when the send left and only the confirmation timed out', async () => {
+    // The lamports are on the wire and the claim is held; the deposit this
+    // payment funds may land, and its confirm has to find the leaf.
+    sendBehaviour = 'confirm-throws';
+    const res = await route.POST(payment({ contribution: CONTRIBUTION }));
+    const body = await res.json();
+    expect(res.status).toBe(202);
+    expect(body.contribution).toBe(BINDING);
+    expect(setOf('p01:relay:payment:PAYSIG:contribution')).toBe(BINDING);
+    expect(mockDel).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed contribution BEFORE the claim is taken', async () => {
+    const res = await route.POST(payment({ contribution: { token: 'SOL', leafIndex: -1 } }));
+    expect(res.status).toBe(400);
+    expect(mockIncr).not.toHaveBeenCalled();
+    expect(mockKvSet).not.toHaveBeenCalled();
+  });
+
+  it('relays a plain deposit with no contribution, and binds none', async () => {
+    const res = await route.POST(payment());
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.contribution).toBeNull();
+    expect(setOf('p01:relay:payment:PAYSIG:contribution')).toBeUndefined();
   });
 });

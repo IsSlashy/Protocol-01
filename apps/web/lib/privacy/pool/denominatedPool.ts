@@ -1098,6 +1098,21 @@ function getDiscriminator(name: string): Buffer {
   return Buffer.from(hash.slice(0, 8));
 }
 
+/**
+ * The first eight bytes of a circuit-7 withdrawal's instruction data.
+ *
+ * Exported because `/api/claim-for-payment` classifies a transaction that
+ * credited the till: a plain transfer pays the full price, while a withdrawal
+ * routed straight to the till pays the denomination minus `UNSHIELD_FEE_BPS`
+ * and is recognised by exactly these bytes under `ZK_SHIELDED_PROGRAM_ID`. The
+ * relayed variant is exported so it can be REFUSED: its fee payer is the
+ * relayer, so no buyer-controlled key exists to sign a claim.
+ */
+export const UNSHIELD_V4_DISCRIMINATOR: Buffer = getDiscriminator('unshield_denominated_stark_v4');
+export const UNSHIELD_V4_RELAYED_DISCRIMINATOR: Buffer = getDiscriminator(
+  'unshield_denominated_stark_v4_relayed',
+);
+
 // ---------------------------------------------------------------------------
 // Nullifier PDA (mirror mobile lines 1396-1401)
 // ---------------------------------------------------------------------------
@@ -2817,9 +2832,7 @@ export function buildUnshieldDenominatedStarkV4Ix(
       `siblings (${siblings.length}) and directions (${directions.length}) must be the same length`,
     );
   }
-  const disc = getDiscriminator(
-    relayed ? 'unshield_denominated_stark_v4_relayed' : 'unshield_denominated_stark_v4',
-  );
+  const disc = relayed ? UNSHIELD_V4_RELAYED_DISCRIMINATOR : UNSHIELD_V4_DISCRIMINATOR;
   const data = Buffer.alloc(
     8 + 32 + 32 + 8 + (4 + siblings.length * 8) + (4 + directions.length) + 32,
   );

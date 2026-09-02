@@ -514,6 +514,13 @@ export async function relayToBuyer(
   buyerPubkey: string,
   requiredLamports: number,
   signal?: AbortSignal,
+  /**
+   * The treasury reservation this deposit fills, when it is a contribution.
+   * The relay records it under the payment once the lamports have moved, so
+   * the confirm and the fallback claim can both check that THIS payment bought
+   * THIS leaf. Omitted for a plain deposit, and then the body carries no key.
+   */
+  contribution?: JobContributionRef,
 ): Promise<{ signature: string; funder: string | null; lamports: number }> {
   const ticket = funderTicket();
   if (!ticket) throw new Error('This deployment has no funder configured.');
@@ -524,7 +531,12 @@ export async function relayToBuyer(
     // passes through the ephemeral: money forwarded there ends up either inside
     // the note — breaking the exact denomination every other note in the pool
     // shares — or swept to the float, which is not the operator.
-    body: JSON.stringify({ paymentSignature, buyerPubkey, requiredLamports }),
+    body: JSON.stringify({
+      paymentSignature,
+      buyerPubkey,
+      requiredLamports,
+      ...(contribution ? { contribution } : {}),
+    }),
     signal,
   });
   const body = (await res.json().catch(() => ({}))) as {
@@ -682,6 +694,16 @@ export function resetDeploymentAddresses(): void {
 // ---------------------------------------------------------------------------
 
 /** Minimal surface of the things this needs, so it is testable without a chain. */
+/**
+ * `{ token, leafIndex }` of a treasury reservation a relayed deposit fills.
+ * The same shape `/api/contribute-note` reserves and `/api/relay-to-buyer`
+ * binds under the payment.
+ */
+export interface JobContributionRef {
+  token: 'SOL' | 'USDC';
+  leafIndex: number;
+}
+
 export interface JobFundingRequest {
   ephemeralPubkey: string;
   /** Total lamports the ephemeral needs before the job can run. */
@@ -747,12 +769,27 @@ export interface JobFundingRequest {
    * will not.
    */
   feeBasis?: FeeBasis;
+  /**
+   * The reservation this relayed deposit fills, forwarded to the relay so it
+   * can bind the payment to the leaf. Only read on the relayed-deposit path;
+   * a float-only job has no leaf to name.
+   */
+  contribution?: JobContributionRef;
   onProgress?: (step: string) => void;
 }
 
 export interface JobFundingDecision {
   /** Who paid. `'wallet'` means the user's address is on chain for this job. */
   fundedBy: 'wallet' | 'funder';
+  /**
+   * The signature of the buyer's payment to the till, when a relayed deposit
+   * paid one. THE ONE VALUE A FAILED CONTRIBUTION NEEDS BACK: it used to die
+   * in a local `const` at the end of this function, so a deposit that failed
+   * after the till was paid left the buyer with nothing to present. With it,
+   * `/api/claim-for-payment` can still hand over what the payment bought, and
+   * the confirm of `/api/contribute-note` can prove who paid.
+   */
+  paymentSignature?: string;
   /**
    * Where the residual rent must be swept. NON-OPTIONAL on purpose.
    *
@@ -855,6 +892,7 @@ export async function fundEphemeralForJob(
   let funderSignature: string | undefined;
   let funderFallbackReason: string | undefined;
   let operatorFeeLamports: number | undefined;
+  let paymentSignature: string | undefined;
   let sweepTo = owner.toBase58();
 
   // ── Guard 2: never let the treasury buy a note ───────────────────────────
@@ -1183,7 +1221,13 @@ export async function fundEphemeralForJob(
     }
 
     req.onProgress?.('The deployment is funding the deposit...');
-    const relayed = await relayToBuyer(paySig, ephemeralPubkey, requiredLamports);
+    const relayed = await relayToBuyer(
+      paySig,
+      ephemeralPubkey,
+      requiredLamports,
+      undefined,
+      req.contribution,
+    );
     // The lamports have moved. From here the receipt has done its job and
     // keeping it would make a future deposit on this key resume a spent
     // payment.
@@ -1191,6 +1235,9 @@ export async function fundEphemeralForJob(
     fundedBy = 'funder';
     funderSignature = relayed.signature;
     operatorFeeLamports = feeLamports;
+    // Carried out, not forgotten: the caller's only handle on the money it
+    // just moved, whatever the deposit does next.
+    paymentSignature = paySig;
     // ⛔ NOT `owner`, and NOT the till. The float fronted the rent, so the
     // residue is the float's. The relay names the address it actually sent
     // from; the terms are the fallback for a relay that does not say.
@@ -1267,5 +1314,12 @@ export async function fundEphemeralForJob(
     }
   }
 
-  return { fundedBy, sweepTo, funderSignature, funderFallbackReason, operatorFeeLamports };
+  return {
+    fundedBy,
+    sweepTo,
+    funderSignature,
+    funderFallbackReason,
+    operatorFeeLamports,
+    ...(paymentSignature !== undefined ? { paymentSignature } : {}),
+  };
 }

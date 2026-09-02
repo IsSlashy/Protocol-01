@@ -105,6 +105,12 @@ export interface SubscribeFromPoolResult {
   vaultPDA: PublicKey | string;
   licenseKey: string;
   /**
+   * The derivation `licenseKey` was minted under. Optional so an older caller
+   * still typechecks; a missing value is read as 'v1', which is what a worker
+   * that does not report one minted.
+   */
+  licenseScheme?: 'v1' | 'v2';
+  /**
    * Who paid for the job, and therefore whether this wallet is on chain.
    *
    * Optional so an older caller still typechecks, and the panel treats a missing
@@ -787,31 +793,52 @@ const ISSUANCE_UI = true;
     let note_ = spending;
     if (!note_) return;
     const call = subscribeModule.subscribeFromPool;
+    /** The note the refusal below is about, captured for the swap's closure:
+     *  the narrowing on `note_` does not survive into a nested function. */
+    const heldNote: PoolNoteView = note_;
+    const signOneForSwap = signOne;
 
     /**
-     * Swap in a note this deployment deposited, and say so.
+     * Exchange the held note for one this deployment deposited, and say so.
      *
      * Reached when the note the user holds turns out to trace back to their own
      * wallet — which cannot be known before `prepare` walks the deposit. The
      * alternative is to stop and tell them to go and get a different note,
      * which is a correct refusal and a useless product: they came to subscribe,
      * not to learn why a note they own is the wrong kind of note.
+     *
+     * Since 2026-09-02 this is the NOTE-IN EXCHANGE, not a claim-code redeem:
+     * `exchangeNoteForIssued` spends the held note to the deployment's till on
+     * circuit 7 (the pool's 0.5 percent withdrawal fee is the cost), the
+     * withdrawal itself is the payment, and the claim it buys is redeemed for
+     * an older note the treasury deposited. The old path sent an empty claim
+     * code and got 402 every time (measured 2026-08-28).
+     *
+     * Returns null on exactly one condition, unchanged: the deployment stocks
+     * nothing, checked BEFORE anything is spent.
      */
     async function swapForIssuedNote(): Promise<PoolNoteView | null> {
       const issuable = await shieldClient.fetchIssuableNote();
       if (!issuable) return null;
-      const issued = await shieldClient.requestIssuedNote({
+      const exchanged = await shieldClient.exchangeNoteForIssued({
         meta,
-        walletPubkey: owner.toBase58(),
-        token: issuable.token,
-        denomination: issuable.denomination,
-        claimCode: claimCode.trim(),
+        token: heldNote.token,
+        denomination: heldNote.denomination,
+        leafIndex: heldNote.leafIndex,
+        pool: heldNote.pool,
+        owner,
+        encryptedNotes: await shieldClient.loadEncryptedNotes(meta, owner.toBase58()),
+        connection,
+        signOne: signOneForSwap,
         onProgress: setStep,
       });
-      setIssuedDisclosure(issued.disclosure);
-      setNotes((prev) => [...prev, issued.note]);
-      setSelectedNote(noteKey(issued.note));
-      return issued.note;
+      // The held note is spent: it paid the till. Off every picker now, or the
+      // list keeps offering it until the pool scan catches up.
+      setSpentHere((prev) => new Set(prev).add(noteKey(heldNote)));
+      setIssuedDisclosure(exchanged.issued.disclosure);
+      setNotes((prev) => [...prev, exchanged.issued.note]);
+      setSelectedNote(noteKey(exchanged.issued.note));
+      return exchanged.issued.note;
     }
     if (!call) {
       setError(
@@ -869,6 +896,7 @@ const ISSUANCE_UI = true;
           pool: note_.pool,
           leafIndex: note_.leafIndex,
           openedAt: Date.now(),
+          licenseScheme: probe.licenseScheme ?? 'v1',
         });
         void rescan();
         return;
@@ -886,7 +914,7 @@ const ISSUANCE_UI = true;
               'This is a fault in the deposit lookup, not in your note.',
           );
         }
-        setStep('This note traces back to you — fetching one that does not...');
+        setStep('This note traces back to you; exchanging it for one that does not...');
         // 🚨 EVERY REFUSAL BELOW REACHES A BUYER WHO HOLDS A NOTE, so none of
         // them may end on "get a claim code". The swap is OUR attempt to rescue
         // THEIR note; its failures are ours to report, not chores to hand back.
@@ -899,17 +927,31 @@ const ISSUANCE_UI = true;
         try {
           swapped = await swapForIssuedNote();
         } catch (swapErr) {
-          // The issuer refused (402 without a claim, 409 on a spent one, rate
-          // limit, whatever it was). Its reason is kept verbatim at the end
-          // because a 3am debugger needs it, but it is attributed to the issuer
-          // rather than phrased as the buyer's next step: the buyer never asked
-          // to be issued anything, they asked to spend the note they hold.
+          // Two very different situations, and the message must say which.
+          // Before the withdrawal landed nothing moved. After it, the held
+          // note is spent and the till is paid: the receipt is on this device
+          // and the Pool tab's next Shield click resumes collecting the note.
+          // The deployment's reason is kept verbatim at the end because a 3am
+          // debugger needs it, attributed to the deployment rather than
+          // phrased as the buyer's next step.
+          const spendSig = (swapErr as { spendSig?: string }).spendSig;
+          if (spendSig) {
+            setSpentHere((prev) => new Set(prev).add(noteKey(heldNote)));
+            throw new Error(
+              'The only note you hold was deposited by your own wallet, so it was exchanged: ' +
+                `withdrawal ${spendSig} paid the deployment and the note it bought has not been ` +
+                'collected yet. No subscription was opened. The receipt is kept on this device; ' +
+                'open the Pool tab and click Shield to finish collecting the note, then ' +
+                'subscribe with it. The deployment said: ' +
+                ((swapErr as Error).message || 'nothing.'),
+            );
+          }
           throw new Error(
             'The only note you hold was deposited by your own wallet, so spending it would let ' +
               'anyone reading the subscription reach you through that deposit. This deployment ' +
-              'could not hand you a different one, so nothing was spent and no subscription was ' +
-              'opened. Only a note somebody else deposited can buy this privately. The issuer ' +
-              'gave this reason: ' +
+              'could not exchange it for a different one, so nothing was spent and no ' +
+              'subscription was opened. Only a note somebody else deposited can buy this ' +
+              'privately. The deployment gave this reason: ' +
               ((swapErr as Error).message || 'none.'),
           );
         }
@@ -980,6 +1022,9 @@ const ISSUANCE_UI = true;
         pool: note_.pool,
         leafIndex: note_.leafIndex,
         openedAt: Date.now(),
+        // Which derivation the key above came from, so Reveal starts from the
+        // right hint. The chain check re-verifies it either way.
+        licenseScheme: out.licenseScheme ?? 'v1',
       });
       void rescan();
     } catch (e) {

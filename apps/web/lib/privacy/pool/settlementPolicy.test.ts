@@ -2,18 +2,23 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFAULT_SETTLEMENT_CONFIG,
+  MIN_PURCHASE_CREDIT_LAMPORTS,
+  ONE_NOTE_IN_LAMPORTS,
   ONE_PURCHASE_LAMPORTS,
   PREFUND_WORST_CASE_LAMPORTS,
   type SettlementConfig,
   concurrentDepositCapacity,
+  decideQuietTime,
   decideSettlement,
   drawHoldUntil,
   envInt,
   floatRequiredForBatch,
+  purchasesCarried,
   purchasesHeld,
   sequentialDepositCapacity,
   settlementConfigFromEnv,
 } from './settlementPolicy';
+import { UNSHIELD_FEE_BPS, findPoolV3 } from './denominatedPool';
 
 const HOUR = 3600;
 const cfg = DEFAULT_SETTLEMENT_CONFIG;
@@ -85,7 +90,133 @@ describe('capacity arithmetic — pinned to the balances actually measured on de
     expect(ONE_PURCHASE_LAMPORTS).toBe(1_003_000_000);
     expect(purchasesHeld(2 * ONE_PURCHASE_LAMPORTS)).toBe(2);
     expect(purchasesHeld(2 * 1_003_475_300)).toBe(2);
-    expect(purchasesHeld(ONE_PURCHASE_LAMPORTS - 1)).toBe(0);
+    // One lamport short of a plain purchase is still one whole note-in credit
+    // plus dust, so since 2026-09-02 it reads as 1. It used to read as 0, and
+    // so did a till holding exactly one note-in.
+    expect(purchasesHeld(ONE_PURCHASE_LAMPORTS - 1)).toBe(1);
+    expect(purchasesHeld(MIN_PURCHASE_CREDIT_LAMPORTS - 1)).toBe(0);
+  });
+});
+
+describe('note-in credits: the till is counted at the smallest credit a purchase can leave', () => {
+  /**
+   * A note-in exchange withdraws the buyer's pool note straight to the till.
+   * The handler keeps the 0.5 percent withdrawal fee, so the till receives
+   * 995,000,000 for a 1 SOL note, not 1,003,000,000. Counting a till of those
+   * with the plain-purchase divisor read one purchase short per purchase, and
+   * a till of note-in proceeds could sit under the batch floor forever.
+   */
+  it('derives the note-in credit from the pool module\'s fee, and it is 995,000,000', () => {
+    const value = findPoolV3('SOL', 1)!.denominationAtomic;
+    expect(ONE_NOTE_IN_LAMPORTS).toBe(Number(value - (value * UNSHIELD_FEE_BPS) / 10_000n));
+    expect(ONE_NOTE_IN_LAMPORTS).toBe(995_000_000);
+    expect(MIN_PURCHASE_CREDIT_LAMPORTS).toBe(ONE_NOTE_IN_LAMPORTS);
+    expect(MIN_PURCHASE_CREDIT_LAMPORTS).toBeLessThan(ONE_PURCHASE_LAMPORTS);
+  });
+
+  it('counts a till of note-in proceeds exactly, where the old divisor lost one per purchase', () => {
+    for (let k = 1; k <= 10; k++) {
+      expect(purchasesHeld(k * ONE_NOTE_IN_LAMPORTS)).toBe(k);
+      // The bug, pinned so the reason for the change stays checkable.
+      expect(Math.floor((k * ONE_NOTE_IN_LAMPORTS) / ONE_PURCHASE_LAMPORTS)).toBe(k - 1);
+    }
+    expect(purchasesHeld(ONE_NOTE_IN_LAMPORTS - 1)).toBe(0);
+  });
+
+  it('still counts plain purchases exactly up to 124, and over-reads by one from 125', () => {
+    // The over-read is the price of the floor direction, and it is documented
+    // at MIN_PURCHASE_CREDIT_LAMPORTS with this exact number. If the fee
+    // constants move, this test moves the number in the comment.
+    for (let k = 1; k <= 124; k++) expect(purchasesHeld(k * ONE_PURCHASE_LAMPORTS)).toBe(k);
+    expect(purchasesHeld(125 * ONE_PURCHASE_LAMPORTS)).toBe(126);
+  });
+
+  it('counts a mixed till without dropping anyone', () => {
+    expect(purchasesHeld(2 * ONE_PURCHASE_LAMPORTS + ONE_NOTE_IN_LAMPORTS)).toBe(3);
+    expect(purchasesHeld(ONE_PURCHASE_LAMPORTS + 2 * ONE_NOTE_IN_LAMPORTS)).toBe(3);
+  });
+
+  it('a till of exactly the floor in note-ins settles, and one fewer does not', () => {
+    const at = decideSettlement(inputs({ tillLamports: cfg.minPurchases * ONE_NOTE_IN_LAMPORTS }));
+    expect(at.verdict).toBe('settle');
+    expect(at.purchases).toBe(cfg.minPurchases);
+    expect(at.amountLamports).toBe(cfg.minPurchases * ONE_NOTE_IN_LAMPORTS);
+    const short = decideSettlement(
+      inputs({ tillLamports: (cfg.minPurchases - 1) * ONE_NOTE_IN_LAMPORTS }),
+    );
+    expect(short.verdict).toBe('below-batch-floor');
+    expect(short.purchases).toBe(cfg.minPurchases - 1);
+  });
+
+  it('the fund-ephemeral detector tells one from more than one for both credit sizes', () => {
+    // One purchase of either kind is the violation; two of either kind is not.
+    expect(purchasesCarried(ONE_PURCHASE_LAMPORTS)).toBe(1);
+    expect(purchasesCarried(ONE_NOTE_IN_LAMPORTS)).toBe(1);
+    expect(purchasesCarried(ONE_PURCHASE_LAMPORTS - 5000)).toBe(1);
+    expect(purchasesCarried(2 * ONE_NOTE_IN_LAMPORTS)).toBe(2);
+    expect(purchasesCarried(2 * ONE_PURCHASE_LAMPORTS)).toBe(2);
+    expect(purchasesCarried(7 * ONE_PURCHASE_LAMPORTS)).toBe(7);
+    expect(purchasesCarried(7 * ONE_NOTE_IN_LAMPORTS)).toBe(7);
+    // Generous at the boundary: a batch that also swept dust is not a violation.
+    expect(purchasesCarried(ONE_PURCHASE_LAMPORTS * 1.5 - 1)).toBe(1);
+    expect(purchasesCarried(ONE_PURCHASE_LAMPORTS * 1.5)).toBe(2);
+    // A shared transaction that moved nothing at the till reads as one, as it
+    // always has: it is the only case the detector may block on.
+    expect(purchasesCarried(0)).toBe(1);
+  });
+});
+
+describe('decideQuietTime: the clock half of the rule, shared with the restock top-up', () => {
+  it('refuses an unreadable clock', () => {
+    expect(
+      decideQuietTime({ secondsSinceLastActivity: null, holdUntilSeconds: null, nowSeconds: 0 }, cfg),
+    ).toEqual({ verdict: 'history-unknown', waitSeconds: 0 });
+  });
+
+  it('refuses inside the quiet period and says how long is left', () => {
+    const d = decideQuietTime(
+      { secondsSinceLastActivity: cfg.minQuietSeconds - 90, holdUntilSeconds: null, nowSeconds: 0 },
+      cfg,
+    );
+    expect(d).toEqual({ verdict: 'too-soon', waitSeconds: 90 });
+    expect(
+      decideQuietTime(
+        { secondsSinceLastActivity: cfg.minQuietSeconds, holdUntilSeconds: null, nowSeconds: 0 },
+        cfg,
+      ).verdict,
+    ).toBe('go');
+  });
+
+  it('honours a stored hold and then releases it', () => {
+    const now = 1_800_000_000;
+    const quiet = { secondsSinceLastActivity: LONG_AGO, nowSeconds: now };
+    expect(decideQuietTime({ ...quiet, holdUntilSeconds: now + 1 }, cfg).verdict).toBe('holding-off');
+    expect(decideQuietTime({ ...quiet, holdUntilSeconds: now }, cfg).verdict).toBe('go');
+    expect(decideQuietTime({ ...quiet, holdUntilSeconds: null }, cfg).verdict).toBe('go');
+  });
+
+  it('is the decision decideSettlement makes, verdict for verdict', () => {
+    const full = cfg.minPurchases * ONE_PURCHASE_LAMPORTS;
+    const now = 1_800_000_000;
+    const cases: [number | null, number | null, string][] = [
+      [null, null, 'till-history-unknown'],
+      [cfg.minQuietSeconds - 1, null, 'too-soon-after-purchase'],
+      [LONG_AGO, now + 60, 'holding-off'],
+      [LONG_AGO, now - 1, 'settle'],
+      [LONG_AGO, null, 'settle'],
+    ];
+    const map = { 'history-unknown': 'till-history-unknown', 'too-soon': 'too-soon-after-purchase', 'holding-off': 'holding-off', go: 'settle' };
+    for (const [since, hold, expected] of cases) {
+      const shared = decideQuietTime(
+        { secondsSinceLastActivity: since, holdUntilSeconds: hold, nowSeconds: now },
+        cfg,
+      );
+      const whole = decideSettlement(
+        inputs({ tillLamports: full, secondsSinceLastTillCredit: since, holdUntilSeconds: hold, nowSeconds: now }),
+      );
+      expect(map[shared.verdict]).toBe(expected);
+      expect(whole.verdict).toBe(expected);
+    }
   });
 });
 

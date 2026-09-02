@@ -388,8 +388,12 @@ const RELAY_TERMS = {
 /** Everything that happened, in order. The point of several cases below. */
 let calls: string[] = [];
 /** The body the client posted to the relay, so the fee cannot hide in it. */
-let relayedBody: { requiredLamports?: number; buyerPubkey?: string; paymentSignature?: string } | null =
-  null;
+let relayedBody: {
+  requiredLamports?: number;
+  buyerPubkey?: string;
+  paymentSignature?: string;
+  contribution?: unknown;
+} | null = null;
 
 function recordingConnection(balance = 0): Connection {
   return {
@@ -834,6 +838,55 @@ describe('a payment that already left is never made twice', () => {
     expect(e.name).toBe('RelayCannotServeJobError');
     expect(e.reason).toBe('no-receipt-store');
     expect(signed).toHaveLength(0);
+  });
+});
+
+describe('the payment comes back out, and the reservation goes in', () => {
+  // 🚨 THE VALUE A FAILED CONTRIBUTION NEEDS. The payment signature used to die
+  // in a local `const` at the end of `fundEphemeralForJob`: a deposit that
+  // failed after the till was paid left the buyer with nothing to present to
+  // `/api/claim-for-payment`, and nothing with which to prove the confirm.
+
+  it('carries the payment signature on the decision, the same one the relay was shown', async () => {
+    stubDeployment();
+    const d = await fundEphemeralForJob(deposit());
+    expect(d.fundedBy).toBe('funder');
+    expect(d.paymentSignature).toBeTruthy();
+    expect(d.paymentSignature).toBe(relayedBody?.paymentSignature);
+  });
+
+  it('carries the SAME signature when a kept receipt is presented again', async () => {
+    stubDeployment({ relay: 'refuse' });
+    await refusal(fundEphemeralForJob(deposit()));
+    const first = relayedBody?.paymentSignature;
+    expect(first).toBeTruthy();
+
+    stubDeployment({ relay: 'ok' });
+    const d = await fundEphemeralForJob(deposit());
+    expect(d.paymentSignature).toBe(first);
+    expect(signed).toHaveLength(1);
+  });
+
+  it('forwards the contribution to the relay, so the payment is bound to that leaf', async () => {
+    stubDeployment();
+    await fundEphemeralForJob(deposit({ contribution: { token: 'SOL', leafIndex: 41 } }));
+    expect(relayedBody?.contribution).toEqual({ token: 'SOL', leafIndex: 41 });
+  });
+
+  it('sends no contribution key at all for a plain deposit', async () => {
+    // Absent, not null: the route treats a present key as a reference to
+    // parse, and `null` would be a 400 on every ordinary shield.
+    stubDeployment();
+    await fundEphemeralForJob(deposit());
+    expect(relayedBody).not.toBeNull();
+    expect(relayedBody).not.toHaveProperty('contribution');
+  });
+
+  it('reports no payment signature on a float-only grant, which paid the till nothing', async () => {
+    stubFunder('ok');
+    const d = await fundEphemeralForJob(job());
+    expect(d.fundedBy).toBe('funder');
+    expect(d.paymentSignature).toBeUndefined();
   });
 });
 

@@ -36,6 +36,7 @@ import {
   storeEncryptedNote,
   sweepPayout,
   unshieldFromPool,
+  exchangeNoteForIssued,
   scanPoolLocal,
   type PayoutRecord,
   type ShieldOutcome,
@@ -57,6 +58,7 @@ import {
   relayedWithdrawalAffordability,
 } from "@/lib/privacy/pool/denominatedPool";
 import { operatorFeeAtomic } from "@/lib/privacy/pool/ephemeralFunder";
+import { clearContribution } from "@/lib/privacy/pendingContribution";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import {
   requiresSweepHomeConfirmation,
@@ -215,6 +217,19 @@ export default function PoolPanel({
     disclosure: string;
   } | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
+  /**
+   * The note-in exchange that just completed: the note given up, the note
+   * received, and the withdrawal that paid for it. Rendered as its own card
+   * because it is neither a deposit nor a withdrawal and both of those cards
+   * would say something false about it.
+   */
+  const [exchanged, setExchanged] = useState<{
+    spendSig: string;
+    denomination: number;
+    spentLeafIndex: number;
+    issuedLeafIndex: number;
+    disclosure: string;
+  } | null>(null);
   const [withdrawn, setWithdrawn] = useState<
     {
       txSig: string;
@@ -728,7 +743,14 @@ export default function PoolPanel({
        * cleared once a note is in hand, so a failed resume loses nothing and the
        * next attempt tries again.
        */
-      const resumed = await resumeContribution({ meta, owner, onProgress: setStep }).catch(
+      const resumed = await resumeContribution({
+        meta,
+        owner,
+        // Confirm and the fallback both need the wallet to sign the claim
+        // challenge; a record that already holds its claim code needs nothing.
+        signMessage: signMessage ?? undefined,
+        onProgress: setStep,
+      }).catch(
         (e) => {
           console.warn('[pool] resume failed, continuing with a fresh contribution', e);
           return null;
@@ -752,6 +774,18 @@ export default function PoolPanel({
 
       const stock = treasuryMode ? null : await fetchIssuableNote();
       if (stock) {
+        // BEFORE the till is paid. Confirm now requires the wallet's signature
+        // over the claim challenge, and so does the fallback for a deposit
+        // that never lands; a session that cannot sign a message would pay
+        // and then be unable to collect.
+        if (!signMessage) {
+          setError(
+            "This session has no message signer, so a deposit could be paid for but its note " +
+              "could never be collected. Nothing was signed. Connect the browser wallet that " +
+              "owns this identity and try again.",
+          );
+          return;
+        }
         const gave = await contributeToPool({
           meta,
           token: "SOL",
@@ -759,6 +793,7 @@ export default function PoolPanel({
           owner,
           connection,
           signOne,
+          signMessage,
           onProgress: setStep,
         });
         const got = await requestIssuedNote({
@@ -769,6 +804,10 @@ export default function PoolPanel({
           claimCode: gave.claimCode,
           onProgress: setStep,
         });
+        // The note is in hand: the record that said one was owed has done its
+        // job. Left in place, the next Shield click would present the spent
+        // claim again through `resumeContribution` and be refused (409).
+        clearContribution(owner.toBase58(), gave.leafIndex);
         setContributed({ fundedLeafIndex: gave.leafIndex, disclosure: got.disclosure });
         setResult({
           txSig: gave.txSig,
@@ -899,6 +938,64 @@ export default function PoolPanel({
       void rescan();
     } catch (e) {
       setError((e as Error).message || "Withdrawal failed.");
+    } finally {
+      setBusyNote(null);
+      setStep(null);
+    }
+  }
+
+  /**
+   * The note-in exchange: spend this note to the deployment's till on circuit
+   * 7 and receive an OLDER note the treasury deposited.
+   *
+   * Everything that decides the property lives in `exchangeNoteForIssued`
+   * (recipient = the till, `neverExposeWallet`, no relayer, the worker signs
+   * the claim as the ephemeral). This handler only chooses the note and
+   * renders the outcome. It costs the pool's 0.5 percent withdrawal fee and
+   * nothing else from the buyer; the float fronts the proof rent.
+   */
+  async function handleExchange(note: PoolNoteView) {
+    if (!signOne) {
+      setError("This wallet cannot sign transactions.");
+      return;
+    }
+    setError(null);
+    setResult(null);
+    setWithdrawn(null);
+    setExchanged(null);
+    setBusyNote(noteKey(note));
+    try {
+      const out = await exchangeNoteForIssued({
+        meta,
+        token: "SOL",
+        denomination: note.denomination,
+        leafIndex: note.leafIndex,
+        pool: note.pool,
+        owner,
+        encryptedNotes: await loadEncryptedNotes(meta, owner.toBase58()),
+        connection,
+        signOne,
+        onProgress: setStep,
+      });
+      // The given-up note is spent: it paid the till. `exchangeNoteForIssued`
+      // records that in the sealed store; this is the in-memory copy so the
+      // list does not wait for the pool scan.
+      setSpentLocally((prev) => new Set(prev).add(noteKey(note)));
+      setExchanged({
+        spendSig: out.spendSig,
+        denomination: note.denomination,
+        spentLeafIndex: note.leafIndex,
+        issuedLeafIndex: out.issued.leafIndex,
+        disclosure: out.issued.disclosure,
+      });
+      void rescan();
+    } catch (e) {
+      // After the withdrawal landed the held note is spent whatever the
+      // message says; the receipt is kept and the next Shield click resumes.
+      if ((e as { spendSig?: string }).spendSig) {
+        setSpentLocally((prev) => new Set(prev).add(noteKey(note)));
+      }
+      setError((e as Error).message || "Exchange failed.");
     } finally {
       setBusyNote(null);
       setStep(null);
@@ -1471,13 +1568,54 @@ export default function PoolPanel({
                   </span>
                 )}
               </p>
+              {/* Empty on a resumed or fallback-claimed contribution: no
+                  deposit of the buyer's landed, so there is nothing to link. */}
+              {result.txSig ? (
+                <a
+                  href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
+                >
+                  {truncate(result.txSig, 10, 8)} ↗
+                </a>
+              ) : null}
+            </div>
+          </div>
+        )}
+
+        {exchanged && !busyNote && (
+          <div className="space-y-2">
+            <SuccessBurst label={`${exchanged.denomination} SOL note exchanged`} />
+            <div className="card p-4">
+              <p className="font-display text-sm text-p01-text">
+                Exchanged your {exchanged.denomination} SOL note for an older one
+              </p>
+              <p className="mt-1 text-xs text-p01-text-muted">
+                Your note at leaf #{exchanged.spentLeafIndex} was withdrawn to the deployment's
+                till on circuit 7, at the pool's 0.5 percent withdrawal fee, and bought the note
+                at leaf #{exchanged.issuedLeafIndex}: one the treasury deposited before you
+                arrived, which you never deposited. The withdrawal named a signing key funded
+                by the deployment, not your wallet, and published no commitment.
+              </p>
+              <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                <span>
+                  <strong className="text-p01-text">Not private, and here is what remains.</strong>{' '}
+                  The float that funded the signing key, the nullifier of the note you gave up,
+                  and the clock between this withdrawal and the issue. The issuer deposited the
+                  note you now hold and can regenerate every value it will publish; it also saw
+                  this request and where it came from.
+                </span>
+              </p>
+              <p className="mt-2 text-xs text-p01-text-dim">{exchanged.disclosure}</p>
               <a
-                href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
+                href={`https://explorer.solana.com/tx/${exchanged.spendSig}?cluster=devnet`}
                 target="_blank"
                 rel="noreferrer"
                 className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
               >
-                {truncate(result.txSig, 10, 8)} ↗
+                {truncate(exchanged.spendSig, 10, 8)} ↗
               </a>
             </div>
           </div>
@@ -1870,6 +2008,38 @@ export default function PoolPanel({
                         <Shuffle className="h-3.5 w-3.5" />
                       )}
                       Withdraw via relayer
+                    </button>
+                  )}
+                  {/* The note-in exchange.
+
+                      Spends THIS note to the deployment's till on circuit 7
+                      and hands back an older note the treasury deposited. The
+                      sentence in the title is the whole deal: it costs the
+                      pool's 0.5 percent withdrawal fee, and the note that
+                      comes back is one the buyer never deposited, so nothing
+                      spent from it walks back to their wallet through a
+                      deposit. Not "private": the float that funded the
+                      signing key, the nullifier and the clock remain, and the
+                      issuer can regenerate everything the new note publishes. */}
+                  {!handedOver.has(noteKey(n)) && (
+                    <button
+                      onClick={() => handleExchange(n)}
+                      disabled={!!busyNote || shielding || !signOne}
+                      title={
+                        "Exchanges this note for an older one the treasury deposited before you " +
+                        "arrived. It costs the pool's 0.5 percent withdrawal fee (the note is " +
+                        "withdrawn to the deployment's till on circuit 7) and yields a note you " +
+                        "never deposited, so nothing you spend from it points back at a deposit " +
+                        "of yours. Your wallet signs nothing on chain for it."
+                      }
+                      className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
+                    >
+                      {busyNote === `${n.pool}:${n.leafIndex}` ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-3.5 w-3.5" />
+                      )}
+                      Exchange for an older note
                     </button>
                   )}
                 </li>

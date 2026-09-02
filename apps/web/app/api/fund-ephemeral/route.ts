@@ -3,6 +3,7 @@ import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@sol
 import bs58 from 'bs58';
 import { sendWithFreshBlockhash } from '@/lib/privacy/pool/sendTx';
 import { sharedTransaction } from '@/lib/privacy/coNaming';
+import { purchasesCarried } from '@/lib/privacy/pool/settlementPolicy';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
 
@@ -167,13 +168,19 @@ function feeWalletAddress(): string | null {
  *
  * One purchase pays the till the note's VALUE — the denomination plus the
  * protocol's own 0.3% — which for the 1 SOL pool is 1,003,000,000 lamports
- * (`lib/privacy/pool/shieldEphemeral.ts:293`). A settlement of k purchases
- * therefore moves about k of those, less the fee it pays itself.
+ * (`lib/privacy/pool/shieldEphemeral.ts:293`). A note-in exchange pays the
+ * denomination MINUS the 0.5 percent withdrawal fee, 995,000,000, and the
+ * amount does not say which kind it carried. A settlement of k purchases
+ * therefore moves about k credits of one size or the other, less the fee it
+ * pays itself.
  *
  * ⚠️ ROUNDED, AND DELIBERATELY GENEROUS AT THE BOUNDARY. The point is to
  * separate one from more-than-one, not to audit the operator's arithmetic:
  * anything at least one and a half notes wide counts as more than one, so a
- * batch that also swept some dust is not called a violation.
+ * batch that also swept some dust is not called a violation. The arithmetic
+ * is `purchasesCarried` in `settlementPolicy.ts`, the same module that counts
+ * the till for the settler, so the two cannot disagree about what a purchase
+ * is worth.
  *
  * `null` means the transaction could not be read, which the caller reports as
  * unknown rather than as clean.
@@ -195,9 +202,7 @@ async function settlementPurchaseCount(
     const i = keys.indexOf(till);
     if (i < 0) return null;
     const moved = Math.abs((tx.meta.postBalances[i] ?? 0) - (tx.meta.preBalances[i] ?? 0));
-    const ONE_PURCHASE = 1_003_000_000;
-    if (moved < ONE_PURCHASE * 1.5) return 1;
-    return Math.round(moved / ONE_PURCHASE);
+    return purchasesCarried(moved);
   } catch {
     return null;
   }

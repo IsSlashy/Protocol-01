@@ -2,6 +2,7 @@
 // decimals) has to come from the same table the pool itself is built from, or
 // the two drift and the buyer is charged in the wrong currency.
 import { findPoolV3, type PoolToken } from './pool/denominatedPool';
+import type { LicenseScheme } from './license';
 import { sendWithFreshBlockhash } from './pool/sendTx';
 /**
  * shieldClient — main-thread driver for a denominated-pool shield.
@@ -30,7 +31,15 @@ import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
-import { rememberContribution, attachClaim, pendingFor, clearContribution } from './pendingContribution';
+import {
+  rememberContribution,
+  attachClaim,
+  attachPayment,
+  pendingFor,
+  clearContribution,
+  type PendingContribution,
+} from './pendingContribution';
+import { claimChallenge } from './claimChallenge';
 import {
   fetchFunderLookup,
   funderTicket,
@@ -283,6 +292,19 @@ export interface UnshieldParams {
    * only when the infrastructure felt well.
    */
   relayerUrl?: string;
+  /**
+   * Have the worker sign `claimChallenge(txSig)` with the withdrawal's
+   * ephemeral and return it as `claimProof`. Set by `exchangeNoteForIssued`
+   * and by nothing else: it only means something when the recipient is the
+   * deployment's till, where `/api/claim-for-payment` hands the claim to
+   * whoever can sign as the fee payer.
+   *
+   * Refused BEFORE the pre-fund when the worker reports a v3 job: the C1 + C3
+   * pair republishes the note's commitment, and an exchange over it would
+   * carry the deposit the exchange exists to leave behind. Refused by the
+   * worker with a relayer, whose key is then the fee payer.
+   */
+  signClaim?: boolean;
 }
 
 /**
@@ -293,6 +315,12 @@ export interface UnshieldParams {
 export interface UnshieldOutcome {
   txSig: string;
   denomination: number;
+  /** The fee payer the worker reports: the ephemeral on the direct path. Absent
+   *  on the relayed path and from a worker that predates the field. */
+  feePayer?: string;
+  /** Base64 signature over `claimChallenge(txSig)` by the ephemeral, present
+   *  only when `signClaim` was set and the worker honoured it. */
+  claimProof?: string;
   /**
    * Which withdrawal circuit actually ran, as reported by the worker.
    *
@@ -353,6 +381,9 @@ export interface UnshieldOutcome {
  * unless the treasury's own commitment is actually sitting at the reserved
  * index, so a caller who never landed the deposit is owed nothing.
  */
+/** Sign an arbitrary message with the connected wallet (ed25519, 64 bytes). */
+export type SignMessage = (message: Uint8Array) => Promise<Uint8Array>;
+
 export interface ContributeParams {
   meta: string;
   token: PoolToken;
@@ -360,10 +391,20 @@ export interface ContributeParams {
   owner: PublicKey;
   connection: Connection;
   signOne: (tx: Transaction) => Promise<Transaction>;
+  /**
+   * Signs `claimChallenge(paymentSignature)` as the wallet that paid the till.
+   * REQUIRED, because `/api/contribute-note` confirm now refuses a leaf whose
+   * payer cannot prove itself (the replay branch used to hand the claim to
+   * anyone naming a confirmed leaf), and because the fallback below presents
+   * the same proof to `/api/claim-for-payment` when the deposit never lands.
+   * A caller without a message signer must refuse BEFORE paying, not after.
+   */
+  signMessage: SignMessage;
   onProgress?: (step: string) => void;
 }
 
 export interface ContributeOutcome {
+  /** Empty when the deposit did not land and the claim came from the fallback. */
   txSig: string;
   /** The leaf this buyer funded — the treasury's, not theirs. */
   leafIndex: number;
@@ -371,6 +412,100 @@ export interface ContributeOutcome {
   /** Redeemable at `/api/issue-note` for a DIFFERENT, older note. */
   claimCode: string;
   fundedBy: 'wallet' | 'funder';
+  /**
+   * False when the deposit failed after the till was paid and the claim was
+   * collected through `/api/claim-for-payment` instead. The buyer is owed
+   * exactly the same note either way; what differs is that no leaf of the
+   * treasury's landed, and the float may hold a stranded pre-fund that
+   * `poolRecover` sweeps.
+   */
+  depositLanded: boolean;
+}
+
+/**
+ * The wallet's proof that it made one payment: its signature over
+ * `claimChallenge(signature)`, base64, the shape both `/api/contribute-note`
+ * confirm and `/api/claim-for-payment` verify against the fee payer.
+ *
+ * `utf8ToBytes` rather than `TextEncoder`: a wallet adapter hands the bytes to
+ * tweetnacl, whose `instanceof Uint8Array` check rejects a foreign-realm array
+ * under jsdom, and the same bytes come out either way.
+ */
+async function walletClaimProof(signMessage: SignMessage, signature: string): Promise<string> {
+  const sig = await signMessage(utf8ToBytes(claimChallenge(signature)));
+  return Buffer.from(sig).toString('base64');
+}
+
+export interface ClaimForPaymentOutcome {
+  claimCode: string;
+  /** How the deployment classified the payment. */
+  kind: 'transfer' | 'pool-withdrawal';
+  /** Lamports the till received, as the deployment read them off the chain. */
+  received: number;
+  /** The fee payer the proof was verified against. */
+  payer: string;
+}
+
+/**
+ * Turn one payment to the till into one claim code.
+ *
+ * `POST /api/claim-for-payment { signature, proof }`, retried on 404 the way
+ * the live test does (`liveBuyIssuedNote.test.ts`): a 404 means the
+ * deployment's RPC has not seen the transaction our RPC confirmed, which is a
+ * timing difference between two nodes and not a refusal. Every other status
+ * is final and thrown with the deployment's own reason.
+ *
+ * `contribution` names the reservation a relayed deposit was bound to; the
+ * route requires it when the payment funded one, and ignores it otherwise.
+ * The route is idempotent on the signature, so calling this twice for the
+ * same payment returns the same code rather than a second one.
+ */
+export async function claimForPayment(params: {
+  signature: string;
+  proof: string;
+  contribution?: { token: PoolToken; leafIndex: number };
+  onProgress?: (step: string) => void;
+  /** Retry budget for the 404 case. Defaults match the live test. */
+  attempts?: number;
+  delayMs?: number;
+}): Promise<ClaimForPaymentOutcome> {
+  const attempts = params.attempts ?? 10;
+  const delayMs = params.delayMs ?? 3000;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const res = await fetch('/api/claim-for-payment', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        signature: params.signature,
+        proof: params.proof,
+        ...(params.contribution ? { contribution: params.contribution } : {}),
+      }),
+    });
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (res.status === 404) {
+      params.onProgress?.('The deployment has not seen the payment yet; waiting for its node...');
+      if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
+      continue;
+    }
+    if (!res.ok || body.ok !== true || typeof body.claimCode !== 'string' || !body.claimCode) {
+      throw new Error(
+        typeof body.error === 'string'
+          ? `The deployment refused the claim: ${body.error}`
+          : `/api/claim-for-payment answered ${res.status}`,
+      );
+    }
+    return {
+      claimCode: body.claimCode,
+      kind: body.kind === 'pool-withdrawal' ? 'pool-withdrawal' : 'transfer',
+      received: Number(body.received ?? 0),
+      payer: typeof body.payer === 'string' ? body.payer : '',
+    };
+  }
+  throw new Error(
+    `The deployment could not find payment ${params.signature} after ${attempts} attempts. ` +
+      'It is confirmed on our node; retry in a minute. The payment is recorded on this ' +
+      'device and is not lost.',
+  );
 }
 
 async function contributeApi(
@@ -407,31 +542,29 @@ async function contributeApi(
 export async function resumeContribution(params: {
   meta: string;
   owner: PublicKey;
+  /**
+   * Signs the claim challenge as the wallet that paid. Needed to confirm a
+   * contribution, or to fall back on its payment; a record that already holds
+   * a claim code, or an exchange (whose proof the worker made), needs none.
+   */
+  signMessage?: SignMessage;
   onProgress?: (step: string) => void;
 }): Promise<IssuedNoteOutcome | null> {
-  const { meta, owner, onProgress } = params;
+  const { meta, owner, signMessage, onProgress } = params;
   const pending = pendingFor(owner.toBase58());
   if (!pending) return null;
 
-  onProgress?.('Finishing a deposit you already paid for...');
+  onProgress?.(
+    pending.kind === 'exchange'
+      ? 'Finishing an exchange you already paid for...'
+      : 'Finishing a deposit you already paid for...',
+  );
   let claimCode = pending.claimCode ?? '';
   if (!claimCode) {
-    // The deposit may have landed after the page stopped watching. `confirm` is
-    // idempotent and refuses unless the treasury's own commitment is really at
-    // that index, so asking costs nothing and proves the leaf.
-    const confirmed = await contributeApi({
-      action: 'confirm',
-      token: pending.token,
-      leafIndex: pending.leafIndex,
-    });
-    claimCode = String(confirmed.claimCode ?? '');
-    if (!claimCode) {
-      throw new Error(
-        `A deposit you paid for (leaf ${pending.leafIndex}) could not be confirmed yet. ` +
-          'Do NOT shield again — that would pay a second time. Retry in a minute; if it ' +
-          'persists the leaf is on chain and one note is owed for it.',
-      );
-    }
+    claimCode =
+      pending.kind === 'exchange'
+        ? await collectExchangeClaim(pending, onProgress)
+        : await collectContributionClaim(pending, signMessage, onProgress);
     attachClaim(owner.toBase58(), pending.leafIndex, claimCode);
   }
 
@@ -473,8 +606,105 @@ export async function resumeContribution(params: {
  */
 const CONTRIBUTION_IS_ALWAYS_RELAYED = true;
 
+/**
+ * The claim an exchange is owed, from the receipt the worker signed.
+ *
+ * Nothing to confirm: no leaf of the treasury's was deposited. The withdrawal
+ * IS the payment, and `/api/claim-for-payment` is idempotent on it, so a
+ * resume after a lost response gets the same code the first call minted.
+ */
+async function collectExchangeClaim(
+  pending: PendingContribution,
+  onProgress?: (step: string) => void,
+): Promise<string> {
+  if (!pending.paymentSignature || !pending.claimProof) {
+    throw new Error(
+      `An exchange you paid for (withdrawal ${pending.txSig ?? 'unknown'}) has no proof of ` +
+        'payment recorded on this device, so its note cannot be collected from here. The ' +
+        'withdrawal is on chain and one note is owed for it; keep the signature for support.',
+    );
+  }
+  const claimed = await claimForPayment({
+    signature: pending.paymentSignature,
+    proof: pending.claimProof,
+    onProgress,
+  });
+  return claimed.claimCode;
+}
+
+/**
+ * Collect a contribution's claim: confirm first, and when that cannot be
+ * done, present the payment to `/api/claim-for-payment` instead.
+ *
+ * ORDER IS THE GUARD. Confirm is what records the leaf as issuable stock, so
+ * it is asked first whenever the deposit may have landed. The fallback is for
+ * a deposit that did not: the route refuses it (409) when the treasury's
+ * commitment is on the tree, pointing back at confirm. Both mint under the
+ * same `p01:note:paid:<sig>` gate, so whichever ran first answers the other.
+ */
+async function collectContributionClaim(
+  pending: Pick<PendingContribution, 'token' | 'leafIndex' | 'paymentSignature'>,
+  signMessage: SignMessage | undefined,
+  onProgress?: (step: string) => void,
+): Promise<string> {
+  const { token, leafIndex, paymentSignature } = pending;
+  if (!paymentSignature) {
+    // A record from before the payment was kept. Confirm now needs the
+    // signature and the payer's proof, so nothing here can present it.
+    throw new Error(
+      `A deposit you paid for (leaf ${leafIndex}) was recorded without its payment ` +
+        'signature, so it cannot be confirmed from this device. Do NOT shield again, that ' +
+        'would pay a second time; the leaf index and your wallet identify the payment for ' +
+        'support.',
+    );
+  }
+  if (!signMessage) {
+    throw new Error(
+      `A deposit you paid for (leaf ${leafIndex}) needs this wallet to sign a message to ` +
+        'collect its note, and this session has no message signer. Nothing was spent; ' +
+        'connect the wallet that paid and try again.',
+    );
+  }
+  const proof = await walletClaimProof(signMessage, paymentSignature);
+  let confirmFailure: string;
+  try {
+    const confirmed = await contributeApi({
+      action: 'confirm',
+      token,
+      leafIndex,
+      paymentSignature,
+      proof,
+    });
+    const code = String(confirmed.claimCode ?? '');
+    if (code) return code;
+    confirmFailure = 'confirm answered without a claim code';
+  } catch (e) {
+    confirmFailure = (e as Error).message || String(e);
+  }
+
+  onProgress?.('The deposit could not be confirmed; asking for the note the payment bought...');
+  try {
+    const claimed = await claimForPayment({
+      signature: paymentSignature,
+      proof,
+      contribution: { token, leafIndex },
+      onProgress,
+    });
+    return claimed.claimCode;
+  } catch (e) {
+    throw new Error(
+      `A deposit you paid for (leaf ${leafIndex}, payment ${paymentSignature}) could not be ` +
+        `collected yet. Confirm said: ${confirmFailure} The fallback said: ` +
+        `${(e as Error).message || String(e)} Do NOT shield again, that would pay a second ` +
+        'time. Retry in a minute; the payment is recorded on this device and one note is ' +
+        'owed for it.',
+    );
+  }
+}
+
 export async function contributeToPool(params: ContributeParams): Promise<ContributeOutcome> {
-  const { meta, token, denomination, owner, connection, signOne, onProgress } = params;
+  const { meta, token, denomination, owner, connection, signOne, signMessage, onProgress } =
+    params;
 
   onProgress?.('Reserving a leaf from the treasury...');
   const reserved = await contributeApi({ action: 'reserve', token });
@@ -523,38 +753,92 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
       denominationAtomic: feePool.denominationAtomic,
       decimals: feePool.decimals,
     },
+    // So the relay binds the payment to THIS leaf once the lamports move: the
+    // confirm and the fallback both check it, and neither can be pointed at
+    // somebody else's reservation.
+    contribution: { token, leafIndex },
   });
 
-  const done = await poolRequest(
-    {
-      kind: 'poolContributeExecute',
-      jobId: prep.jobId,
-      ownerPubkey: owner.toBase58(),
-      sweepTo: funding.sweepTo,
-    },
-    onProgress,
-  );
-
-  onProgress?.('Collecting what the contribution is owed...');
-  const confirmed = await contributeApi({ action: 'confirm', token, leafIndex: done.leafIndex });
-  const claimCode = String(confirmed.claimCode ?? '');
-  if (claimCode) attachClaim(owner.toBase58(), done.leafIndex, claimCode);
-  if (!claimCode) {
-    // The deposit landed and the claim did not: say so precisely, because the
-    // money moved and a vague error would send the buyer to do it again.
-    throw new Error(
-      `The contribution landed at leaf ${done.leafIndex} (${done.txSig}) but no claim came back. ` +
-        'Do NOT contribute again — confirm that leaf instead; the deposit is on chain and one ' +
-        'claim is owed for it.',
-    );
+  // THE SECOND WRITE, the moment the money has moved. The first one (above,
+  // before anything was paid) says "this buyer may have paid"; this one says
+  // which transaction did, which is what every route from here on needs.
+  if (funding.paymentSignature) {
+    attachPayment(owner.toBase58(), leafIndex, funding.paymentSignature);
   }
 
+  let done: { txSig: string; leafIndex: number; commitment: string } | null = null;
+  let claimCode = '';
+  try {
+    done = await poolRequest(
+      {
+        kind: 'poolContributeExecute',
+        jobId: prep.jobId,
+        ownerPubkey: owner.toBase58(),
+        sweepTo: funding.sweepTo,
+      },
+      onProgress,
+    );
+
+    onProgress?.('Collecting what the contribution is owed...');
+    if (!funding.paymentSignature) {
+      throw new Error(
+        `The contribution landed at leaf ${done.leafIndex} (${done.txSig}) but no payment ` +
+          'signature was recorded, so the confirm cannot prove who paid.',
+      );
+    }
+    const confirmed = await contributeApi({
+      action: 'confirm',
+      token,
+      leafIndex: done.leafIndex,
+      paymentSignature: funding.paymentSignature,
+      proof: await walletClaimProof(signMessage, funding.paymentSignature),
+    });
+    claimCode = String(confirmed.claimCode ?? '');
+    if (!claimCode) {
+      // The deposit landed and the claim did not: say so precisely, because
+      // the money moved and a vague error would send the buyer to do it again.
+      throw new Error(
+        `The contribution landed at leaf ${done.leafIndex} (${done.txSig}) but no claim came back. ` +
+          'Do NOT contribute again: confirm that leaf instead; the deposit is on chain and one ' +
+          'claim is owed for it.',
+      );
+    }
+  } catch (err) {
+    // ⛔ THE FAILURE THIS CLOSES. The till was paid at `fundEphemeralForJob`;
+    // a throw after it used to leave the buyer paid with no claim and no
+    // record of the payment. With the signature in hand, the payment itself
+    // buys the note: `/api/claim-for-payment` hands over what it bought when
+    // the deposit never landed, and points back at confirm (409) when it did.
+    // Only a funder-paid job has such a payment; a wallet-paid one funded the
+    // ephemeral directly and bought nothing from the till.
+    if (funding.fundedBy !== 'funder' || !funding.paymentSignature) throw err;
+    const reason = (err as Error).message || String(err);
+    onProgress?.('The deposit did not complete; asking for the note the payment bought...');
+    try {
+      const claimed = await claimForPayment({
+        signature: funding.paymentSignature,
+        proof: await walletClaimProof(signMessage, funding.paymentSignature),
+        contribution: { token, leafIndex },
+        onProgress,
+      });
+      claimCode = claimed.claimCode;
+    } catch (fallbackErr) {
+      throw new Error(
+        `${reason} The payment (${funding.paymentSignature}) is recorded on this device and ` +
+          'the next Shield click resumes collecting the note; do NOT contribute again. The ' +
+          `fallback claim was refused: ${(fallbackErr as Error).message || String(fallbackErr)}`,
+      );
+    }
+  }
+  attachClaim(owner.toBase58(), leafIndex, claimCode);
+
   return {
-    txSig: done.txSig,
-    leafIndex: done.leafIndex,
-    commitment: done.commitment,
+    txSig: done?.txSig ?? '',
+    leafIndex: done?.leafIndex ?? leafIndex,
+    commitment: done?.commitment ?? commitment,
     claimCode,
     fundedBy: funding.fundedBy,
+    depositLanded: done !== null,
   };
 }
 
@@ -618,6 +902,20 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
   // direct path; it simply does not apply when somebody else pays, and sending
   // it would put a transfer from this wallet on chain — the exact edge this
   // route exists to remove.
+  // ⛔ AN EXCHANGE ONLY EXISTS ON CIRCUIT 7, and this is where it is refused
+  // when the worker could not prove the note there: BEFORE the pre-fund, so
+  // nothing has moved. The C1 + C3 pair republishes the note's commitment,
+  // which would hand the issuer's chain reader the very deposit the exchange
+  // exists to leave behind. The worker refuses the same request at execute as
+  // a backstop, but by then the float is on the ephemeral.
+  if (params.signClaim && prep.version !== 'v4') {
+    throw new Error(
+      'This note can only be spent on the C1 + C3 pair, which publishes its commitment, so it ' +
+        'cannot be exchanged: the exchange exists to leave that deposit behind. Nothing was ' +
+        'funded and nothing was spent. Withdraw it instead.',
+    );
+  }
+
   const funding = params.relayerUrl
     ? { sweepTo: undefined, fundedBy: 'wallet' as const, operatorFeeLamports: 0, funderFallbackReason: undefined }
     : await fundEphemeralForJob({
@@ -664,6 +962,9 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
       ownerPubkey: owner.toBase58(),
       sweepTo: funding.sweepTo,
       relayerUrl: params.relayerUrl,
+      // Only ever present, never `false`: an older worker ignores an unknown
+      // field, and a page must not depend on it being read.
+      ...(params.signClaim ? { signClaim: true } : {}),
     },
     onProgress,
   );
@@ -674,6 +975,245 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
     version: prep.version,
     fundedBy: funding.fundedBy,
     funderFallbackReason: funding.funderFallbackReason,
+    ...(done.feePayer !== undefined ? { feePayer: done.feePayer } : {}),
+    ...(done.claimProof !== undefined ? { claimProof: done.claimProof } : {}),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The note-in exchange
+// ---------------------------------------------------------------------------
+
+export interface ExchangeParams {
+  meta: string;
+  token: PoolToken;
+  denomination: number;
+  /** Which note to give up, by the leaf index it occupies. */
+  leafIndex: number;
+  /** The note's pool, base58, so the spend is recorded under the key the
+   *  pickers filter on. Falls back to the pool table when absent. */
+  pool?: string;
+  /** The user's wallet. Identity only: it funds nothing on this path. */
+  owner: PublicKey;
+  encryptedNotes?: string[];
+  connection: Connection;
+  signOne: SignOne;
+  onProgress?: (step: string) => void;
+  /**
+   * The 404 retry budget for `/api/claim-for-payment`, when the deployment's
+   * node lags ours. Defaults to the live test's ten attempts, three seconds
+   * apart; a test passes zero delay.
+   */
+  claimRetry?: { attempts?: number; delayMs?: number };
+}
+
+export interface ExchangeOutcome {
+  /** The circuit-7 withdrawal that paid the till. Public; names the ephemeral. */
+  spendSig: string;
+  /** The claim the withdrawal bought, already redeemed below. */
+  claimCode: string;
+  /** The note received: deposited by the treasury before the buyer arrived. */
+  issued: IssuedNoteOutcome;
+  /** The withdrawal's fee payer, when the worker reported it. */
+  feePayer?: string;
+}
+
+/**
+ * Thrown when an exchange fails AFTER its withdrawal landed. The note is
+ * spent and the till is paid; what remains is collecting. The receipt (the
+ * signature and the ephemeral's proof) is on this device, and
+ * `resumeContribution` presents it again.
+ */
+export class ExchangeAfterSpendError extends Error {
+  readonly spendSig: string;
+  constructor(message: string, spendSig: string) {
+    super(message);
+    this.name = 'ExchangeAfterSpendError';
+    this.spendSig = spendSig;
+  }
+}
+
+async function fetchExchangeTerms(): Promise<{
+  configured: boolean;
+  till: string | null;
+  priceLamports: number;
+  reasons: string[];
+}> {
+  const res = await fetch('/api/claim-for-payment', { method: 'GET' });
+  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok || body.ok !== true) {
+    throw new Error(`The deployment could not say where an exchange pays (${res.status}).`);
+  }
+  return {
+    configured: body.configured === true,
+    till: typeof body.till === 'string' ? body.till : null,
+    priceLamports: Number(body.priceLamports ?? 0),
+    reasons: Array.isArray(body.reasons) ? body.reasons.map(String) : [],
+  };
+}
+
+/**
+ * Give up one note and receive an OLDER one the treasury deposited.
+ *
+ * WHAT IT IS FOR. A note the buyer deposited themselves keeps everything spent
+ * from it walkable back to their wallet through the deposit, whoever pays for
+ * the spend. The cure is a note somebody else deposited, and the treasury has
+ * those in stock. This buys one with the note in hand instead of with a
+ * wallet transfer that would name the buyer:
+ *
+ *   1. `GET /api/claim-for-payment`   where the deployment collects (the till).
+ *   2. `GET /api/issue-note`          refuse BEFORE spending if it stocks
+ *                                     nothing, or a different denomination.
+ *   3. `unshieldFromPool`             circuit 7, recipient = the till,
+ *                                     `neverExposeWallet`, no relayer, and the
+ *                                     worker signs the claim as the ephemeral.
+ *   4. `POST /api/claim-for-payment`  the withdrawal is the payment; the proof
+ *                                     is the ephemeral's, whose secret only
+ *                                     the worker held.
+ *   5. `requestIssuedNote`            redeem the claim for the older note.
+ *
+ * `neverExposeWallet` IS NOT OPTIONAL HERE. A wallet-funded ephemeral puts the
+ * wallet one hop from the transaction that pays the till, which is the join
+ * the exchange exists to remove. And no relayer: the relayer's key would be
+ * the fee payer, and no key of the buyer's could sign the claim.
+ *
+ * WHAT IT COSTS. The pool's withdrawal fee, `UNSHIELD_FEE_BPS` = 0.5 percent
+ * of the note (5,000,000 lamports on 1 SOL): the till receives the
+ * denomination minus that, and `/api/claim-for-payment` lowers its floor by
+ * exactly that for a withdrawal. The float fronts the proof rent and gets it
+ * back on the sweep; the nullifier rent is permanent and the float's.
+ *
+ * WHAT REMAINS. The ephemeral's funding edge from the float, the nullifier,
+ * the clock between the withdrawal and the issue, and an anonymity set of one
+ * against the issuer, which can regenerate every value the issued note will
+ * ever publish. Nothing here may be rendered as "private".
+ *
+ * The receipt (signature and proof) is written to the pending store the
+ * moment the withdrawal lands and cleared once the note is in hand, so a lost
+ * response, a closed tab or a maturity-gate refusal at step 5 costs a resume,
+ * not the note. The old note is recorded spent as soon as it is, whatever the
+ * claim does next: a picker that kept offering it would cost a second float.
+ */
+export async function exchangeNoteForIssued(params: ExchangeParams): Promise<ExchangeOutcome> {
+  const { meta, token, denomination, leafIndex, owner, connection, signOne, onProgress } = params;
+
+  onProgress?.('Asking the deployment where an exchange pays...');
+  const terms = await fetchExchangeTerms();
+  if (!terms.configured || !terms.till) {
+    throw new Error(
+      'This deployment cannot take a note in exchange: ' +
+        (terms.reasons.join(' ') || 'it is not configured to sell notes.') +
+        ' Nothing was spent.',
+    );
+  }
+  let till: PublicKey;
+  try {
+    till = new PublicKey(terms.till);
+  } catch {
+    throw new Error('The deployment named a till that is not a public key. Nothing was spent.');
+  }
+
+  // Stock, BEFORE the spend. An exchange against an empty inventory leaves the
+  // buyer having paid the till and holding a claim nothing can redeem.
+  const issuable = await fetchIssuableNote();
+  if (!issuable) {
+    throw new Error(
+      'This deployment issues no notes right now, so there is nothing to exchange yours for. ' +
+        'Nothing was spent.',
+    );
+  }
+  if (issuable.token !== token || issuable.denomination !== denomination) {
+    throw new Error(
+      `This deployment issues ${issuable.denomination} ${issuable.token} notes and yours is ` +
+        `${denomination} ${token}; an exchange is like for like. Nothing was spent.`,
+    );
+  }
+
+  const spent = await unshieldFromPool({
+    meta,
+    token,
+    denomination,
+    leafIndex,
+    recipient: till,
+    owner,
+    encryptedNotes: params.encryptedNotes,
+    connection,
+    signOne,
+    onProgress,
+    neverExposeWallet: true,
+    relayerUrl: undefined,
+    signClaim: true,
+  });
+
+  // Spent on chain from here, whatever happens next.
+  const ownerKey = owner.toBase58();
+  const pool = params.pool ?? findPoolV3(token, denomination)?.poolPDA.toBase58();
+  if (pool) await recordSpentNote(meta, ownerKey, `${pool}:${leafIndex}`);
+
+  if (!spent.claimProof) {
+    throw new ExchangeAfterSpendError(
+      `The withdrawal ${spent.txSig} paid the till, but the worker returned no proof of ` +
+        'payment (a worker from before the exchange existed?). The payment is on chain and ' +
+        'one note is owed for it; keep the signature for support.',
+      spent.txSig,
+    );
+  }
+  rememberContribution({
+    kind: 'exchange',
+    leafIndex,
+    owner: ownerKey,
+    token,
+    denomination,
+    txSig: spent.txSig,
+    paymentSignature: spent.txSig,
+    claimProof: spent.claimProof,
+    at: Date.now(),
+  });
+
+  let claimCode: string;
+  try {
+    claimCode = (
+      await claimForPayment({
+        signature: spent.txSig,
+        proof: spent.claimProof,
+        onProgress,
+        ...(params.claimRetry ?? {}),
+      })
+    ).claimCode;
+  } catch (e) {
+    throw new ExchangeAfterSpendError(
+      `${(e as Error).message || String(e)} The withdrawal ${spent.txSig} paid the till and ` +
+        'its receipt is kept on this device; the next Shield click resumes collecting the note.',
+      spent.txSig,
+    );
+  }
+  attachClaim(ownerKey, leafIndex, claimCode);
+
+  let issued: IssuedNoteOutcome;
+  try {
+    issued = await requestIssuedNote({
+      meta,
+      walletPubkey: ownerKey,
+      token: issuable.token,
+      denomination: issuable.denomination,
+      claimCode,
+      onProgress,
+    });
+  } catch (e) {
+    throw new ExchangeAfterSpendError(
+      `${(e as Error).message || String(e)} Your claim is kept on this device and does not ` +
+        'expire; the next Shield click redeems it.',
+      spent.txSig,
+    );
+  }
+  // Only once the note is in hand: the record is the proof a note is owed.
+  clearContribution(ownerKey, leafIndex);
+
+  return {
+    spendSig: spent.txSig,
+    claimCode,
+    issued,
+    ...(spent.feePayer !== undefined ? { feePayer: spent.feePayer } : {}),
   };
 }
 
@@ -789,6 +1329,12 @@ export interface SubscribeOutcome {
   licenseKey: string;
   /** The string the key is scoped to; a merchant needs it to verify. */
   serviceTag: string;
+  /**
+   * The derivation the key was minted under: 'v2' from a current worker
+   * (docs/LICENSE_KEY_V2-2026-09-02.md), 'v1' from one that predates it.
+   * Stored on the local record so a later Reveal starts from the right hint.
+   */
+  licenseScheme: LicenseScheme;
   denomination: number;
   fundedLamports: number;
   /**
@@ -1130,6 +1676,8 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     vaultPDA: done.vaultPDA,
     licenseKey: done.licenseKey,
     serviceTag: done.serviceTag,
+    // A worker from before v2 sends no scheme and minted v1.
+    licenseScheme: done.licenseScheme ?? 'v1',
     denomination: done.denomination,
     fundedLamports: prep.requiredLamports,
     fundedBy,
@@ -2356,7 +2904,12 @@ export async function deriveSubscriptionLicenseKey(params: {
   candidateTags?: string[];
   /** The vault's `license_commitment`, lowercase hex; null when it stores none. */
   licenseCommitment?: string | null;
-}): Promise<{ licenseKey: string; serviceTag: string }> {
+  /**
+   * The scheme the local record names. Only read by the worker when there is
+   * no `licenseCommitment` to verify against; absent means v1.
+   */
+  licenseScheme?: LicenseScheme;
+}): Promise<{ licenseKey: string; serviceTag: string; licenseScheme?: LicenseScheme }> {
   const res = await poolRequest({
     kind: 'poolLicenseKey',
     meta: params.meta,
@@ -2368,6 +2921,11 @@ export async function deriveSubscriptionLicenseKey(params: {
     ...(params.licenseCommitment !== undefined
       ? { licenseCommitment: params.licenseCommitment }
       : {}),
+    ...(params.licenseScheme !== undefined ? { licenseScheme: params.licenseScheme } : {}),
   });
-  return { licenseKey: res.licenseKey, serviceTag: res.serviceTag };
+  return {
+    licenseKey: res.licenseKey,
+    serviceTag: res.serviceTag,
+    ...(res.licenseScheme !== undefined ? { licenseScheme: res.licenseScheme } : {}),
+  };
 }

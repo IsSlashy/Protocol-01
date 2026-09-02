@@ -4,8 +4,9 @@
  * 🚨 THIS MODULE EXISTS BECAUSE THE SAME PARSER LIVED IN FOUR FILES AND MOVED IN
  * ONE. `P01_TREASURY_POOL_SEED` grew from a single hex seed to a comma-separated
  * list on 2026-08-31 — the change that recovered 47 issuable notes — and
- * `issue-note` learned to read it while `contribute-note`, `swap-note` and
- * `checkInventory` kept testing `/^[0-9a-fA-F]{64}$/` against a 129-character
+ * `issue-note` learned to read it while `contribute-note`, the note-in route
+ * of the day (retired since) and `checkInventory` kept testing
+ * `/^[0-9a-fA-F]{64}$/` against a 129-character
  * value. Every one of them decided the deployment held no treasury at all.
  *
  * MEASURED, in production, within minutes: "this deployment holds no treasury

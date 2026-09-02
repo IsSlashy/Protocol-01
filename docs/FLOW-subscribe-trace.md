@@ -154,7 +154,7 @@ Term (c) is effectively dead for notes this client deposits — a deposit is sig
 **29. Panel catch: swap once** — `SubscribePanel.tsx:731-756`
 - emits `This note traces back to you — fetching one that does not...` → **unmatched, bar and label freeze**.
 - If `issuedThisClick`: throws `The deployment issued you a note, and then refused it — it could not establish who deposited it, and an unknown depositor is treated as you. Your note is safe and is in your notes list; your claim code is spent and was not wasted on a second copy. This is a fault in the deposit lookup, not in your note.` (:737-744).
-- Else `swapForIssuedNote()` **once** (:746, def :656-671, re-sends `claimCode.trim()`), retry at :758; if nothing issuable, the `The only note you hold was deposited by your own wallet … Nothing was spent. ` message (:747-754).
+- Else `swapForIssuedNote()` **once** (:746): the note-in exchange (`exchangeNoteForIssued` in `shieldClient.ts`: withdraw the held note to the till by circuit 7 with `neverExposeWallet`, claim at `/api/claim-for-payment` as `pool-withdrawal`, redeem at `/api/issue-note`; the retired `/api/swap-note` answers 410), retry at :758; if nothing issuable, the `The only note you hold was deposited by your own wallet … Nothing was spent. ` message (:747-754).
 
 ### Stage F — prepare (`pool/subscribeEphemeral.ts:106`); still nothing signed
 

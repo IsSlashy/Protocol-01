@@ -85,7 +85,7 @@ export const SHIELD_PHASES: FlowPhase[] = [
   // `collecting what the contribution is owed` closes the contribution: the
   // leaf is on chain and the claim is being minted against it. Last phase,
   // because until it returns the buyer has funded a leaf and holds nothing.
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed|collecting what the contribution/i },
+  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed|collecting what the contribution|has not seen the payment yet|asking for the note the payment bought/i },
 ];
 
 // ⚠️ THE FIFTH MISS, AND THE ONE THAT WOULD HAVE GONE ON STAGE.
@@ -106,7 +106,7 @@ export const SHIELD_PHASES: FlowPhase[] = [
 // The three v3 spellings stay. v3 remains registered on-chain and notes whose
 // blinding is unknown can only be spent there, so both vocabularies are live.
 export const WITHDRAW_PHASES: FlowPhase[] = [
-  { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|matching notes|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
+  { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|matching notes|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring|where an exchange pays/i },
   // ⚠️ THE SIXTH MISS, caught by the sweep rather than on stage — and it is the
   // one place the bar must NOT move forward. `handlePoolUnshieldPrepare` now
   // falls back to the C1 + C3 pair when the circuit-7 rebuild cannot place the

@@ -71,6 +71,44 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # WHERE THE RESTOCK'S MONEY COMES FROM
+      # ────────────────────────────────────
+      # Buyers pay the till; settle-till moves the till into the float F and
+      # nowhere else. The restock below spends a THIRD wallet down to its floor,
+      # and until 2026-09-02 nothing moved F to that wallet: the takings reached
+      # F and stopped, this job logged FLOOR every tick, and issue-note answered
+      # 503 with the SOL one hop away. This step is the hop. It moves the
+      # smaller of (F above its own floor) and (the restock wallet below its
+      # target), only after F has been quiet for the settlement's quiet period,
+      # after a random delay, and refuses when F's history cannot be read.
+      # Arithmetic and clock: apps/web/lib/privacy/pool/restockTopUp.ts.
+      #
+      # BEFORE the restock, so the deposits have something to spend. Secrets
+      # are referenced by name and read from the environment by the script,
+      # which prints public keys and amounts only.
+      #
+      # continue-on-error, deliberately: a missing float key or a failed
+      # transfer must show as a red step with an ::error:: annotation, but it
+      # must not stop the restock from running on whatever the wallet holds.
+      - name: Top up the restock wallet from the float
+        working-directory: apps/web
+        continue-on-error: true
+        env:
+          P01_FUNDER_SECRET_KEY: ${{ secrets.P01_FUNDER_SECRET_KEY }}
+          P01_TREASURY_KEYPAIR_JSON: ${{ secrets.P01_TREASURY_KEYPAIR_JSON }}
+          P01_LIVE_RPC: ${{ secrets.P01_FUNDER_RPC }}
+          # The same four numbers the restock step reads, so both agree on the
+          # wallet's target. Kept in lockstep with the Restock step below.
+          P01_TREASURY_TARGET: ${{ github.event.inputs.target || '10' }}
+          P01_TREASURY_LOW_WATER: '7'
+          P01_TREASURY_MAX_PER_RUN: '3'
+          # The settlement policy as the deployment runs it. Repository
+          # variables, optional: unset means the policy's own defaults, which
+          # are also the deployment's unless it overrode them.
+          P01_SETTLE_MIN_PURCHASES: ${{ vars.P01_SETTLE_MIN_PURCHASES }}
+          P01_SETTLE_MIN_QUIET_SECONDS: ${{ vars.P01_SETTLE_MIN_QUIET_SECONDS }}
+        run: npx tsx scripts/topUpRestockWallet.mts
+
       - name: Write the treasury keypair
         # ⚠️ The file, never an env var read by the app: the harness loads a
         # keypair path, and a key that only exists for this step is a key that

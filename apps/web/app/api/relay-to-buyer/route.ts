@@ -32,6 +32,14 @@ import bs58 from 'bs58';
 import { getStore, rateLimitExceeded, rateLimitRemaining } from '@/lib/waitlist/store';
 import { namesBoth } from '@/lib/privacy/coNaming';
 import { P11_FUNDER_WALK_LIMIT, funderHistoryVerdict } from '@/lib/privacy/funderHistory';
+import {
+  contributionBinding,
+  parseContributionRef,
+  relayPaymentBuyerKey,
+  relayPaymentClaimKey,
+  relayPaymentContributionKey,
+  resolveContributionPool,
+} from '@/lib/privacy/paymentBinding';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -608,7 +616,13 @@ export async function POST(request: NextRequest) {
   }
   const { till, feeWallet } = configured.addresses;
 
-  let body: { paymentSignature?: string; buyerPubkey?: string; requiredLamports?: number };
+  let body: {
+    paymentSignature?: string;
+    buyerPubkey?: string;
+    requiredLamports?: number;
+    /** `{ token, leafIndex }` of the contribution this deposit will fill, if it is one. */
+    contribution?: unknown;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -643,10 +657,47 @@ export async function POST(request: NextRequest) {
   const signature = String(body.paymentSignature ?? '');
   if (!signature) return bad(400, 'paymentSignature is required');
 
+  // ── The contribution this payment funds, if it is one ────────────────────
+  //
+  // A deposit made through `/api/contribute-note` names a reserved leaf. The
+  // confirm of that leaf, and the fallback at `/api/claim-for-payment` for a
+  // deposit that never lands, both require this payment to be BOUND to that
+  // leaf, so a payer cannot collect against somebody else's reservation.
+  //
+  // Parsed here, before the claim is taken, so a malformed reference is a
+  // plain 400 with nothing to give back. WRITTEN only after the lamports have
+  // moved (below): every earlier path releases the claim, and a binding left
+  // behind by a refused request would describe a deposit that never happened.
+  let binding: string | null = null;
+  if (body.contribution !== undefined && body.contribution !== null) {
+    const ref = parseContributionRef(body.contribution);
+    if (!ref) return bad(400, 'contribution must be { token, leafIndex } with a non-negative integer leaf');
+    const pool = resolveContributionPool(ref.token);
+    if (!pool) return bad(503, `no ${ref.token} pool is configured for contributions`);
+    binding = contributionBinding(pool.poolPDA.toBase58(), ref.leafIndex);
+  }
+
   // A durable store or nothing. Without it the same payment can be relayed
   // repeatedly, draining the funder with the caller's own receipt.
   const kv = getStore();
   if (!kv) return bad(503, 'no durable store is configured; refusing to relay untracked');
+
+  /**
+   * Record what this payment funded. Called ONLY once a signature exists for
+   * the relay, i.e. once the claim is correctly held whatever happens next.
+   * Best effort: the lamports have moved, and a lost binding costs the buyer
+   * the fallback path, not the money; a throw here would replace an accurate
+   * answer with a misleading one.
+   */
+  const recordFunded = async (): Promise<boolean> => {
+    try {
+      await kv.set(relayPaymentBuyerKey(signature), buyer.toBase58());
+      if (binding) await kv.set(relayPaymentContributionKey(signature), binding);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   const ip =
     request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown';
@@ -677,7 +728,7 @@ export async function POST(request: NextRequest) {
   // ONE RELAY PER PAYMENT, claimed before the chain is read. `incr` returns 1
   // only for the caller that created the key, so two simultaneous requests
   // carrying the same receipt cannot both be served.
-  const claimKey = `p01:relay:payment:${signature}`;
+  const claimKey = relayPaymentClaimKey(signature);
   let claim: number;
   try {
     claim = await kv.incr(claimKey);
@@ -910,6 +961,11 @@ export async function POST(request: NextRequest) {
     // ⛔ NO RELEASE HERE, EVER. The answer is missing; the money is not. The
     // signature is the only way anyone can find out what actually happened, so
     // it is reported rather than swallowed behind a 502.
+    //
+    // And the binding IS written: the lamports are on the wire and the claim
+    // is held, so the deposit this payment funds may land, and its confirm
+    // will need to find the leaf under this signature.
+    const bound = await recordFunded();
     return NextResponse.json(
       {
         ok: true,
@@ -920,6 +976,7 @@ export async function POST(request: NextRequest) {
         buyer: buyer.toBase58(),
         funder: funder.publicKey.toBase58(),
         till,
+        contribution: bound ? binding : null,
         warning:
           `The relay was sent but not confirmed within the window (${(e as Error).message}). The ` +
           'lamports are already on the wire, so this payment stays claimed and will not be ' +
@@ -931,7 +988,8 @@ export async function POST(request: NextRequest) {
 
   // Lamports have moved. From here the claim is CORRECTLY held: a second
   // request carrying this receipt must not be served, and there is nothing to
-  // give back.
+  // give back. This is the moment the payment is bound to what it funded.
+  const bound = await recordFunded();
   return NextResponse.json({
     ok: true,
     sent: true,
@@ -939,6 +997,9 @@ export async function POST(request: NextRequest) {
     signature: sig,
     lamports: forward,
     buyer: buyer.toBase58(),
+    // `<poolKey>:<leaf>` when this deposit fills a reservation, recorded under
+    // the payment so its confirm can find it. `null` when it is a plain deposit.
+    contribution: bound ? binding : null,
     // The client sweeps the ephemeral's residue back to whoever fronted the
     // rent, and it must learn that address from the party that actually sent
     // rather than assume it. The till is echoed so a client can check it paid

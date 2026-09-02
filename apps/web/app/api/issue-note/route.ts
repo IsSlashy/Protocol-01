@@ -303,10 +303,11 @@ async function acquiredInventoryLeaves(poolKey: string): Promise<number[]> {
  * buyer, on a paid request, having already marked the leaf issued.
  *
  * ⛔ A NOTE HANDED IN BY A USER IS THEREFORE NOT INVENTORY, however well it is
- * verified. It becomes inventory only once the treasury has SPENT it and
- * re-shielded the value into a leaf it derives. `swap-note` keeps those
- * submissions in a separate pending queue for exactly this reason; pointing it
- * at this function instead would look correct and break issuance for everyone.
+ * verified. The note-in exchange never records one: the holder SPENDS it (a
+ * circuit-7 withdrawal to the till, claimed at `claim-for-payment`) and is
+ * issued an existing treasury leaf, so nothing of theirs ever enters the
+ * issuable set. Pointing an incoming leaf at this function would look correct
+ * and break issuance for everyone.
  *
  * ⛔ AND THE CALLER MUST STILL HAVE VERIFIED THE NOTE — that the commitment is
  * a leaf of this pool, that its nullifier is unspent, and that its denomination

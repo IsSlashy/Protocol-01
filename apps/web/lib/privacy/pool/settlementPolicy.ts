@@ -29,7 +29,13 @@
  * arithmetic below is the same arithmetic the operator has to trust with real
  * money, and arithmetic that needs a devnet connection to test is arithmetic
  * nobody re-checks.
+ *
+ * The one import below is two CONSTANTS from the pool module (the withdrawal
+ * fee and the 1 SOL pool's denomination), not a connection. The note-in
+ * credit has to move when the fee moves, and a literal here would not.
  */
+
+import { UNSHIELD_FEE_BPS, findPoolV3 } from './denominatedPool';
 
 /**
  * What one purchase pays the till.
@@ -40,11 +46,52 @@
  * ⛔ NOT 1,003,475,300. That figure was recorded in `denominatedPool.ts` and
  * copied outward, and it is the value leg PLUS 475,300 lamports of buffer rent
  * mislabelled as value. It matters here more than anywhere: this constant is
- * the divisor that turns a till balance into a PURCHASE COUNT, so an inflated
+ * the value one deposit costs the float, and until 2026-09-02 it was also the
+ * divisor that turns a till balance into a PURCHASE COUNT (that divisor is now
+ * `MIN_PURCHASE_CREDIT_LAMPORTS`, for the reason given there). An inflated
  * value rounds k down and would let a settlement carrying two buyers read as
  * one — or, worse, let one read as zero and never settle at all.
  */
 export const ONE_PURCHASE_LAMPORTS = 1_003_000_000;
+
+/**
+ * What one NOTE-IN exchange pays the till.
+ *
+ * A buyer can also pay for an issued note by withdrawing one of their own pool
+ * notes straight to the till (circuit 7, `unshield_denominated_stark_v4`, the
+ * direct path). The handler keeps the protocol's withdrawal fee, so the till
+ * is credited the denomination MINUS that fee: 995,000,000 lamports for the
+ * 1 SOL pool, measured as "payee +0.995 SOL" in `denominatedPool.ts`. No 0.3
+ * percent shield fee rides on top, because nothing is deposited.
+ *
+ * Derived from `UNSHIELD_FEE_BPS`, the same constant the client checks before
+ * a withdrawal, so a fee change in the pool module moves this number with it.
+ * The 1 SOL pool is the one every purchase constant in this file is written
+ * for; its absence from the static table is a configuration error, not a case.
+ */
+export const ONE_NOTE_IN_LAMPORTS = ((): number => {
+  const pool = findPoolV3('SOL', 1);
+  if (!pool) throw new Error('settlementPolicy: the 1 SOL pool is missing from the pool table');
+  const value = pool.denominationAtomic;
+  return Number(value - (value * UNSHIELD_FEE_BPS) / 10_000n);
+})();
+
+/**
+ * The smallest credit ONE purchase, of either kind, leaves in the till.
+ *
+ * 🚨 THIS IS THE DIVISOR THAT TURNS A TILL BALANCE INTO A PURCHASE COUNT, and
+ * the balance does not say which kind of purchase it holds. Dividing by the
+ * larger credit (`ONE_PURCHASE_LAMPORTS`) under-reads a till of note-in
+ * proceeds by one purchase per purchase: three note-ins, 2,985,000,000
+ * lamports, read as 2 and sat under a batch floor of 3 indefinitely, so the
+ * money never settled and the float never refilled. Dividing by the smaller
+ * one is the conservative direction for a FLOOR: a till can read as more
+ * purchases than it holds only once about 125 plain purchases are in it (the
+ * 8,000,000-lamport difference per purchase has to add up to one whole
+ * credit), and a settlement carrying 125 buyers is not the case the floor
+ * exists for.
+ */
+export const MIN_PURCHASE_CREDIT_LAMPORTS = Math.min(ONE_PURCHASE_LAMPORTS, ONE_NOTE_IN_LAMPORTS);
 
 /**
  * The most a single deposit needs free in the float while it runs.
@@ -143,9 +190,88 @@ export function floatRequiredForBatch(purchases: number): number {
   return (purchases - 1) * ONE_PURCHASE_LAMPORTS + PREFUND_WORST_CASE_LAMPORTS;
 }
 
-/** How many purchases a till balance represents. */
+/**
+ * How many purchases a till balance represents.
+ *
+ * Counted at the smallest credit a purchase can leave, so a till of note-in
+ * proceeds is never under-counted. See `MIN_PURCHASE_CREDIT_LAMPORTS` for why
+ * the floor direction is the safe one.
+ */
 export function purchasesHeld(tillLamports: number): number {
-  return Math.floor(tillLamports / ONE_PURCHASE_LAMPORTS);
+  return Math.floor(tillLamports / MIN_PURCHASE_CREDIT_LAMPORTS);
+}
+
+/**
+ * How many purchases a settlement of `movedLamports` carried.
+ *
+ * For the detector in `fund-ephemeral`, which only has to tell ONE from more
+ * than one: a settlement carrying one purchase names that buyer, a settlement
+ * carrying several is a set. Generous at the boundary on purpose: anything
+ * under one and a half plain purchases counts as one, so a batch that also
+ * swept dust is not called a violation. Above that it rounds on the smallest
+ * credit a purchase can leave, for the reason `purchasesHeld` gives, so two
+ * note-ins (1,990,000,000) read as two and not as one point nine.
+ */
+export function purchasesCarried(movedLamports: number): number {
+  if (movedLamports < ONE_PURCHASE_LAMPORTS * 1.5) return 1;
+  return Math.round(movedLamports / MIN_PURCHASE_CREDIT_LAMPORTS);
+}
+
+export type QuietTimeVerdict =
+  /** The clock could not be read. Refuse, never assume old. */
+  | 'history-unknown'
+  /** Activity landed less than `minQuietSeconds` ago. */
+  | 'too-soon'
+  /** Quiet long enough, but the stored randomised hold has not expired. */
+  | 'holding-off'
+  /** The clock allows it. */
+  | 'go';
+
+export interface QuietTimeInputs {
+  /**
+   * Seconds since the most recent activity on the address being watched, or
+   * `null` if its history could not be read. The same rule as
+   * `SettlementInputs.secondsSinceLastTillCredit`: `null` is not "long ago".
+   */
+  secondsSinceLastActivity: number | null;
+  /** The stored hold deadline, in unix seconds, or `null` if none is recorded. */
+  holdUntilSeconds: number | null;
+  nowSeconds: number;
+}
+
+export interface QuietTimeDecision {
+  verdict: QuietTimeVerdict;
+  /** Seconds still to wait when `too-soon`, otherwise 0. */
+  waitSeconds: number;
+}
+
+/**
+ * The clock half of the rule, on its own.
+ *
+ * Shared by the settlement (till to float) and the restock top-up (float to
+ * restock wallet, `restockTopUp.ts`). Both move operator money along a public
+ * edge, and both must not sit beside the event they follow on a public clock.
+ * One copy of the arithmetic, so there is one place where an unreadable clock
+ * refuses; a second copy would be a second place for the unknown to read as
+ * old. The callers own the prose, this owns the decision.
+ */
+export function decideQuietTime(
+  input: QuietTimeInputs,
+  cfg: SettlementConfig = DEFAULT_SETTLEMENT_CONFIG,
+): QuietTimeDecision {
+  if (input.secondsSinceLastActivity === null) {
+    return { verdict: 'history-unknown', waitSeconds: 0 };
+  }
+  if (input.secondsSinceLastActivity < cfg.minQuietSeconds) {
+    return {
+      verdict: 'too-soon',
+      waitSeconds: cfg.minQuietSeconds - input.secondsSinceLastActivity,
+    };
+  }
+  if (input.holdUntilSeconds !== null && input.nowSeconds < input.holdUntilSeconds) {
+    return { verdict: 'holding-off', waitSeconds: 0 };
+  }
+  return { verdict: 'go', waitSeconds: 0 };
 }
 
 export type SettlementVerdict =
@@ -268,7 +394,20 @@ export function decideSettlement(input: SettlementInputs): SettlementDecision {
     };
   }
 
-  if (input.secondsSinceLastTillCredit === null) {
+  // The clock half is decided in one place and only worded here, so the
+  // restock top-up cannot drift from it. `since === null` is repeated for the
+  // type narrowing below; the rule itself lives in `decideQuietTime`.
+  const since = input.secondsSinceLastTillCredit;
+  const quiet = decideQuietTime(
+    {
+      secondsSinceLastActivity: since,
+      holdUntilSeconds: input.holdUntilSeconds,
+      nowSeconds: input.nowSeconds,
+    },
+    cfg,
+  );
+
+  if (quiet.verdict === 'history-unknown' || since === null) {
     return {
       ...base,
       verdict: 'till-history-unknown',
@@ -278,19 +417,18 @@ export function decideSettlement(input: SettlementInputs): SettlementDecision {
     };
   }
 
-  if (input.secondsSinceLastTillCredit < cfg.minQuietSeconds) {
-    const wait = cfg.minQuietSeconds - input.secondsSinceLastTillCredit;
+  if (quiet.verdict === 'too-soon') {
     return {
       ...base,
       verdict: 'too-soon-after-purchase',
       reason:
-        `A purchase landed ${Math.round(input.secondsSinceLastTillCredit / 60)} minute(s) ago. ` +
-        `A settlement sent now sits beside it on a public clock. Waiting ${Math.ceil(wait / 60)} ` +
+        `A purchase landed ${Math.round(since / 60)} minute(s) ago. ` +
+        `A settlement sent now sits beside it on a public clock. Waiting ${Math.ceil(quiet.waitSeconds / 60)} ` +
         `more minute(s).`,
     };
   }
 
-  if (input.holdUntilSeconds !== null && input.nowSeconds < input.holdUntilSeconds) {
+  if (quiet.verdict === 'holding-off' && input.holdUntilSeconds !== null) {
     return {
       ...base,
       verdict: 'holding-off',
@@ -312,9 +450,9 @@ export function decideSettlement(input: SettlementInputs): SettlementDecision {
     amountLamports: input.tillLamports,
     reason:
       `Settling ${purchases} purchase(s), ` +
-      `${input.secondsSinceLastTillCredit >= 86400
-        ? `${Math.floor(input.secondsSinceLastTillCredit / 86400)} day(s)`
-        : `${Math.round(input.secondsSinceLastTillCredit / 3600)} hour(s)`} after the last one.`,
+      `${since >= 86400
+        ? `${Math.floor(since / 86400)} day(s)`
+        : `${Math.round(since / 3600)} hour(s)`} after the last one.`,
   };
 }
 
