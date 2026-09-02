@@ -374,14 +374,23 @@ pub const CONSTRAINED_TRACE_WIDTH: usize = 11;
 /// staying degree 1 in the column. Constraint [18] buys exactly that:
 ///
 /// ```text
-///     active(x) * v(x) * state0(x)^6
+///     row0_flag(x) * nba(x) * v(x) * state0(x)^6
 /// ```
 ///
-///   * it VANISHES ON THE TRACE DOMAIN iff `v = 0` wherever `active != 0`,
-///     which the trace builder guarantees by never writing this column
-///     outside the blinding region. So `v` carries no witness, nothing reads
-///     it, and a malicious prover writing anything here proves nothing extra
-///     -- adding a constraint can only restrict a prover, never free one.
+///   * it VANISHES ON THE TRACE DOMAIN iff `v = 0` at row 0, the only row
+///     where `row0_flag * nba` is non-zero, which the trace builder guarantees
+///     by leaving row 0 alone and writing blinding into every other row --
+///     `MASK_ROWS + LIFT_EXTRA_ROWS = 511` of them. So `v` carries no witness,
+///     nothing reads it, and a malicious prover writing anything here proves
+///     nothing extra -- adding a constraint can only restrict a prover, never
+///     free one.
+///
+///     ⚠️ [ZK-LIFT-FULL 2026-09-02] Until this date the gate was `active *
+///     nba`, which pinned `v` to zero on rows 0..=350 as well and left the
+///     column 160 free entries. That is enough for a two-query wire and short
+///     of the 361 a 22-query wire needs -- see `LIFT_EXTRA_ROWS` for the
+///     arithmetic and the measurement. The degree is unchanged: `row0_flag` is
+///     a period-512 column exactly as `active` was.
 ///   * its total degree is `7 + 1` periodic against the Poseidon rounds`
 ///     `7 + 2`, so `deg(C)` does NOT rise: `quotient_segments` stays 8,
 ///     `deg(D) = n - 2` stays, and the FRI rate does not move.
@@ -396,10 +405,10 @@ pub const CONSTRAINED_TRACE_WIDTH: usize = 11;
 /// ⛔ IT IS NOT THE RANDOMIZER COLUMN AND MUST NOT BE MERGED WITH IT. The
 /// randomizer is uniform on ALL `TRACE_LENGTH` rows precisely because it is
 /// unconstrained everywhere; that is what covers channel B (the FRI layers
-/// and the terminal, 247 published felts against 512 random ones). Giving it
-/// constraint [18] would force it to zero on the 352 constrained rows,
-/// dropping its randomness to 160 and putting channel B SHORT. Two columns,
-/// two jobs.
+/// and the terminal) through the DEEP composition. The lift covers the
+/// quotient through constraint [18], and the randomizer never reaches a
+/// quotient value at all. Merging them would make one column carry both
+/// budgets. Two columns, two jobs.
 ///
 /// Measured by `compact::zk_hiding::the_affine_free_claims_are_jointly_uniform`.
 pub const ZK_LIFT_COL: usize = CONSTRAINED_TRACE_WIDTH - 1;
@@ -461,18 +470,36 @@ pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 352
 /// Blinding positions this layout offers per column, against R = 4*22+2 = 90.
 pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 160
 
+/// Rows of the lift column that carry blinding OUTSIDE the row mask: rows
+/// `1..FIRST_FREE_ROW`. Row 0 is the one row constraint [18]'s gate pins to
+/// zero; rows `FIRST_FREE_ROW..` are already covered by the row mask.
+///
+/// 🎯 Why these exist ([ZK-LIFT-FULL 2026-09-02]). The lift column is the
+/// ONLY affine source of randomness the quotient side of the wire has -- the
+/// randomizer never reaches a quotient value -- and a 22-query proof publishes
+/// eight segment values at 44 opened rows plus eight OOD claims. Of those,
+/// `8*44 + 8 - 1 - 44 = 315` must come out independently uniform (one identity
+/// the verifier checks at `z`, one it does not check at each opened row), and
+/// the same entries also supply the lift's own `2 + 44 = 46` published
+/// evaluations: 361 affine dimensions needed, against the 160 the row mask
+/// offered. `compact::zk_hiding::affine_reach_at_the_shipping_query_count`
+/// measured the shortfall; gating [18] by `row0_flag` instead of `active`
+/// frees the column but one row: 511 dimensions.
+pub const LIFT_EXTRA_ROWS: usize = FIRST_FREE_ROW - 1; // 351
+
 /// Field elements `build_spend_trace` requires, in one flat slice:
 ///
 /// ```text
 ///   [ 0 .. MASK_ROWS*CONSTRAINED_TRACE_WIDTH )   the row mask, row-major
 ///   [ that .. that + TRACE_LENGTH )              the randomizer column
+///   [ that .. that + LIFT_EXTRA_ROWS )           the lift column, rows 1..FIRST_FREE_ROW
 /// ```
 ///
-/// 160*11 + 512 = 2272. ⛔ It is ONE argument rather than two because a caller
-/// that forgets the second half must fail to COMPILE, not silently prove with a
-/// zero-filled randomizer — which would look exactly like a working proof and
-/// would blind nothing.
-pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH;
+/// 160*11 + 512 + 351 = 2623. ⛔ It is ONE argument rather than three because a
+/// caller that forgets a part must fail to COMPILE, not silently prove with a
+/// zero-filled randomizer or a zero-filled lift — which would look exactly like
+/// a working proof and would blind nothing.
+pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH + LIFT_EXTRA_ROWS;
 
 /// Number of transition constraints. Indices 0..=17.
 ///   [0]-[10]  Merkle pipeline   (verbatim from `merkle_path.rs:260-283`)
@@ -727,7 +754,7 @@ pub fn spend_constraint_degrees() -> Vec<TransitionConstraintDegree> {
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 16
         TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),                   // 17
         // ── ZK degree lift, col 10 ──
-        // [18] active * nba * v * state0^6. Base degree 7 (one `v`, six
+        // [18] row0_flag * nba * v * state0^6. Base degree 7 (one `v`, six
         // `state0`) and TWO period-512 gates -- the same shape as the Poseidon
         // rounds, which carry base 7 with a 512-cycle and a 32-cycle. The
         // segment count and the FRI rate are unchanged; `segment_quotient_poly`
@@ -1061,11 +1088,15 @@ pub fn evaluate_spend_transition<E: FieldElement>(
     // ────────────────────────────────────────────────────────────────────
     // [18] ZK degree lift, col `ZK_LIFT_COL`. See the constant`s doc.
     //
-    // Zero on the trace domain because `v` is zero wherever `active` is not:
-    // the trace builder writes this column ONLY inside the blinding region,
-    // and `active` is off there. It constrains nothing and proves nothing --
-    // its entire job is to be degree 1 in `v` and degree 7 overall, so the
-    // blinding region reaches quotient blocks 0..6 instead of 0..2.
+    // Zero on the trace domain because `v` is zero at row 0, the only row
+    // where `row0_flag * nba` is non-zero; the trace builder leaves row 0 alone
+    // and writes blinding into every other row. It constrains nothing and
+    // proves nothing -- its entire job is to be degree 1 in `v` and degree 7
+    // overall, so the lift reaches every quotient block.
+    //
+    // [ZK-LIFT-FULL 2026-09-02] The gate was `active * nba`. Same degree,
+    // 351 more zero rows, and a quotient side that a 22-query wire could not
+    // be shown uniform on. The verifier twin changed on the same day.
     // ────────────────────────────────────────────────────────────────────
     let s0 = current[0];
     let s0_2 = s0 * s0;
@@ -1077,7 +1108,7 @@ pub fn evaluate_spend_transition<E: FieldElement>(
     // TWO is also the maximum: the module docs measure that a third pushes
     // `ce_blowup_factor` from 8 to 16.
     let s0_3 = s0_2 * s0;
-    result[18] = active * nba * current[ZK_LIFT_COL] * s0_3 * s0_3;
+    result[18] = row0_flag * nba * current[ZK_LIFT_COL] * s0_3 * s0_3;
 }
 
 // ============================================================================
@@ -1171,7 +1202,7 @@ pub fn build_spend_trace(
     assert_eq!(
         mask.len(),
         MASK_LEN,
-        "C7 needs {MASK_LEN} blinding elements: {MASK_ROWS} rows x          {CONSTRAINED_TRACE_WIDTH} constrained columns, then {TRACE_LENGTH} for the          randomizer column"
+        "C7 needs {MASK_LEN} blinding elements: {MASK_ROWS} rows x {CONSTRAINED_TRACE_WIDTH} constrained columns, then {TRACE_LENGTH} for the randomizer column, then {LIFT_EXTRA_ROWS} for the lift column's rows 1..{FIRST_FREE_ROW}"
     );
     assert_eq!(
         path_elements.len(),
@@ -1315,6 +1346,16 @@ pub fn build_spend_trace(
     let randomizer_base = MASK_ROWS * CONSTRAINED_TRACE_WIDTH;
     for row in 0..TRACE_LENGTH {
         trace[RANDOMIZER_COL][row] = mask[randomizer_base + row];
+    }
+
+    // [ZK-LIFT-FULL 2026-09-02] The lift column's remaining rows. Constraint
+    // [18] is gated by `row0_flag * nba`, so row 0 must stay zero -- it is
+    // never written -- and every other row is free; rows `FIRST_FREE_ROW..`
+    // were filled by the row mask above, these are `1..FIRST_FREE_ROW`. See
+    // `LIFT_EXTRA_ROWS` for why 160 was not enough.
+    let lift_base = randomizer_base + TRACE_LENGTH;
+    for (i, row) in (1..FIRST_FREE_ROW).enumerate() {
+        trace[ZK_LIFT_COL][row] = mask[lift_base + i];
     }
 
     // ── Hold column, col 9 ─────────────────────────────────────────────
@@ -1978,7 +2019,9 @@ mod tests {
         assert_eq!(ZK_LIFT_COL, 10);
         assert_eq!(RANDOMIZER_COL, 11);
         // 160 mask rows x 11 constrained columns, plus 512 for the randomizer.
-        assert_eq!(MASK_LEN, 2272);
+        // 2272 -> 2623 on 2026-09-02, [ZK-LIFT-FULL]: + LIFT_EXTRA_ROWS (351).
+        assert_eq!(LIFT_EXTRA_ROWS, 351);
+        assert_eq!(MASK_LEN, 2623);
         assert_eq!(MASK_ROWS, 160);
         assert_eq!(TRACE_LENGTH, 512);
         // 18 -> 19: constraint [18] is the ZK degree lift on ZK_LIFT_COL

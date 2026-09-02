@@ -9962,10 +9962,10 @@ fn generate_merkle_update_compact_proof_inner(
 ///
 /// # `mask` is required, and it must be fresh
 ///
-/// ⛔ `MASK_LEN` = 1792 elements of FRESH CSPRNG output (1280 for the row mask
-/// plus 512 for the randomizer column, and the figure was 1280 until that column
-/// existed), redrawn
-/// for every proof. It fills rows 384..511 of all ten columns -- the blinding
+/// ⛔ `MASK_LEN` = 2623 elements of FRESH CSPRNG output (1760 for the row mask,
+/// 512 for the randomizer column, 351 for the lift column's rows 1..352; the
+/// figure was 1280, then 1792, then 2272 as those parts arrived), redrawn
+/// for every proof. It fills rows 352..511 of all eleven columns -- the blinding
 /// region, where no constraint of any kind fires. Reusing a mask across two
 /// proofs of the same note, or deriving it from the witness, gives an observer
 /// a relation between two traces that are supposed to be independent. There is

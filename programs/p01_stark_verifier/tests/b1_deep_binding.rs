@@ -1980,14 +1980,19 @@ struct Fixture {
 const FIXTURES: [Fixture; 7] = [
     Fixture { label: "C0", len: 47_641, sha256: Some(FIXTURE_C0_SHA256), build: fixture_c0 },
     // [C1-N256] Length pinned and MOVED; digest deliberately absent.
-    Fixture { label: "C1", len: 94_017, sha256: None, build: fixture_c1 },
+    // [ZK-LIFT 2026-08-31] 94_017 -> 94_897: one more trace column (the lift),
+    // 27 queries x 4 openings + 2 OOD = 110 felts. Re-pinned 2026-09-02; the JS
+    // twin in wireFormat.test.ts had carried 94_897 since the reship.
+    Fixture { label: "C1", len: 94_897, sha256: None, build: fixture_c1 },
     Fixture { label: "C2", len: 69_761, sha256: Some(FIXTURE_C2_SHA256), build: fixture_c2 },
     // [C3-D12] Length pinned, digest deliberately absent. See the note above.
-    Fixture { label: "C3", len: 78_877, sha256: None, build: fixture_c3 },
+    // [ZK-LIFT 2026-08-31] 78_877 -> 79_597: the lift column, 22 x 4 + 2 = 90 felts.
+    Fixture { label: "C3", len: 79_597, sha256: None, build: fixture_c3 },
     Fixture { label: "C4", len: 81_457, sha256: Some(FIXTURE_C4_SHA256), build: fixture_c4 },
     Fixture { label: "C5", len: 89_821, sha256: Some(FIXTURE_C5_SHA256), build: fixture_c5 },
     // [C6-D12] Length pinned, digest deliberately absent. See the note above.
-    Fixture { label: "C6", len: 81_757, sha256: None, build: fixture_c6 },
+    // [ZK-LIFT 2026-08-31] 81_757 -> 82_477: the lift column, 22 x 4 + 2 = 90 felts.
+    Fixture { label: "C6", len: 82_477, sha256: None, build: fixture_c6 },
 ];
 
 /// The prover core is a function of its inputs.

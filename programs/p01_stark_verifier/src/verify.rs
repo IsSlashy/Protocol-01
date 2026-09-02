@@ -3955,9 +3955,13 @@ fn evaluate_transition_at_ood_circuit_6(
     // Poseidon round input `ood_current[0] + rc0`, and using it here would
     // evaluate a different polynomial than the prover and reject every honest
     // proof with `DeepAliFailed`.
+    // [ZK-LIFT-FULL 2026-09-02] `active * nba` -> `hash_start * nba`. Same two
+    // period-512 factors, same degree; the gate now pins the lift column on
+    // the first row of each active hash cycle only, and the prover fills every
+    // other row. A proof made under the old gate fails here, and must.
     let lift_base = ood_current[0];
     let lb3 = lift_base.mul(lift_base).mul(lift_base);
-    cs[19] = active.mul(nba).mul(ood_current[10]).mul(lb3).mul(lb3);
+    cs[19] = hash_start.mul(nba).mul(ood_current[10]).mul(lb3).mul(lb3);
 
     // RLC: Σ α^i · cs[i]. Accumulated as a Horner-style walk keeps α_pow to a
     // single running multiplication per constraint (no array allocation).
@@ -4241,9 +4245,13 @@ fn evaluate_transition_at_ood_circuit_1(
     // Poseidon round input `ood_current[0] + rc0`, and using it here would
     // evaluate a different polynomial than the prover and reject every honest
     // proof with `DeepAliFailed`.
+    // [ZK-LIFT-FULL 2026-09-02] `nba * nba` -> `chain_flag * nba`. Same two
+    // period-512 factors, same degree; the gate now vanishes on every row of
+    // the trace domain and the prover fills the whole lift column. A proof made
+    // under the old gate fails here with `DeepAliFailed`, and must.
     let lift_base = ood_current[0];
     let lb3 = lift_base.mul(lift_base).mul(lift_base);
-    cs[4] = nba.mul(nba).mul(ood_current[3]).mul(lb3).mul(lb3);
+    cs[4] = chain_flag.mul(nba).mul(ood_current[3]).mul(lb3).mul(lb3);
 
     // Horner-style RLC: Σ α^i · cs[i].
     let mut combined = Felt::ZERO;
@@ -4706,9 +4714,13 @@ fn evaluate_transition_at_ood_circuit_3(
     // Poseidon round input `ood_current[0] + rc0`, and using it here would
     // evaluate a different polynomial than the prover and reject every honest
     // proof with `DeepAliFailed`.
+    // [ZK-LIFT-FULL 2026-09-02] `active * nba` -> `hash_start * nba`. Same two
+    // period-512 factors, same degree; the gate now pins the lift column on
+    // the first row of each active hash cycle only, and the prover fills every
+    // other row. A proof made under the old gate fails here, and must.
     let lift_base = ood_current[0];
     let lb3 = lift_base.mul(lift_base).mul(lift_base);
-    cs[11] = active.mul(nba).mul(ood_current[6]).mul(lb3).mul(lb3);
+    cs[11] = hash_start.mul(nba).mul(ood_current[6]).mul(lb3).mul(lb3);
 
     // Horner-style RLC: Σ α^i · cs[i].
     let mut combined = Felt::ZERO;
@@ -5719,10 +5731,17 @@ fn evaluate_transition_at_ood_circuit_7(
     // ── [18] ZK degree lift, col 10 ──
     //
     // The prover twin is `air::spend::evaluate_spend_transition`, result[18].
-    // It is zero on the trace domain because col 10 is zero wherever `active`
-    // is not, so it constrains nothing and proves nothing. Its whole job is to
-    // be degree ONE in col 10 and degree seven overall, which is what carries
-    // the blinding region into quotient blocks 0..7 instead of 0..2.
+    // It is zero on the trace domain because col 10 is zero at row 0, the only
+    // row where `row0_flag * nba` is non-zero, so it constrains nothing and
+    // proves nothing. Its whole job is to be degree ONE in col 10 and degree
+    // seven overall, which is what carries the lift into every quotient block.
+    //
+    // [ZK-LIFT-FULL 2026-09-02] The gate was `active * nba`. That pinned col
+    // 10 to zero on 351 more rows and left the prover 160 free entries, which a
+    // 22-query wire cannot be shown uniform on (`air::spend::LIFT_EXTRA_ROWS`).
+    // `row0_flag` is a period-512 column exactly as `active` is, so the degree
+    // budget, the segment count and the wire are unchanged. A proof made under
+    // the old gate fails here with `DeepAliFailed`, and must.
     //
     // 🚨 THE BASE IS RAW `ood_current[0]`, NOT `s0`. `s0` above is
     // `ood_current[0] + rc0` and is the Poseidon round input; using it here
@@ -5730,7 +5749,7 @@ fn evaluate_transition_at_ood_circuit_7(
     // honest proof with `DeepAliFailed`.
     let lift_base = ood_current[0];
     let lb3 = lift_base.mul(lift_base).mul(lift_base);
-    cs[18] = active.mul(nba).mul(ood_current[10]).mul(lb3).mul(lb3);
+    cs[18] = row0_flag.mul(nba).mul(ood_current[10]).mul(lb3).mul(lb3);
 
     let mut acc = Felt::ZERO;
     let mut alpha_power = Felt::ONE;

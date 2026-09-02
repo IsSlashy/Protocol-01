@@ -76,6 +76,7 @@
 
 use super::*;
 use crate::air::spend::{
+    FIRST_FREE_ROW, LIFT_EXTRA_ROWS,
     build_spend_trace, CANONICAL_DEPTH, CONSTRAINED_TRACE_WIDTH, MASK_LEN, MASK_ROWS,
     RANDOMIZER_COL, TRACE_LENGTH, TRACE_WIDTH, ZK_LIFT_COL,
 };
@@ -409,10 +410,18 @@ fn base_mask(seed: u64) -> Vec<u64> {
 
 /// Flat index of the mask element at (blinding row `r`, constrained column `c`).
 /// `[0 .. MASK_ROWS*CONSTRAINED_TRACE_WIDTH)` is row-major; the randomizer
-/// column's own `TRACE_LENGTH` elements follow.
+/// column's own `TRACE_LENGTH` elements follow, then the lift column's extra
+/// rows (`lift_extra_index`).
 fn mask_index(row: usize, col: usize) -> usize {
     assert!(row < MASK_ROWS && col < CONSTRAINED_TRACE_WIDTH);
     row * CONSTRAINED_TRACE_WIDTH + col
+}
+
+/// Flat index of the `i`-th lift entry outside the row mask: trace row `i + 1`
+/// of `ZK_LIFT_COL`, for `i < LIFT_EXTRA_ROWS` ([ZK-LIFT-FULL 2026-09-02]).
+fn lift_extra_index(i: usize) -> usize {
+    assert!(i < LIFT_EXTRA_ROWS);
+    MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH + i
 }
 
 /// The DEEP batching coefficient, held fixed. See `c7_internals`.
@@ -2017,7 +2026,13 @@ fn a_simulator_with_no_witness_produces_the_verifier_s_own_law() {
     );
 
     // ── step 2: conditional on block + frames ───────────────────────────────
-    let lift_slots: Vec<usize> = (0..70).map(|k| mask_index((k * 2 + 1) % MASK_ROWS, ZK_LIFT_COL)).collect();
+    // Half from the row mask, half from the rows [ZK-LIFT-FULL] freed: the
+    // lift's reach is a property of the whole column, and sampling one region
+    // alone measured four dimensions short on 2026-09-02.
+    let lift_slots: Vec<usize> = (0..35)
+        .map(|k| mask_index((k * 4 + 1) % MASK_ROWS, ZK_LIFT_COL))
+        .chain((0..35).map(|k| lift_extra_index((k * 10 + 3) % LIFT_EXTRA_ROWS)))
+        .collect();
     let rand_slots: Vec<usize> = (0..12)
         .map(|k| MASK_ROWS * CONSTRAINED_TRACE_WIDTH + (k * 37 + 3) % TRACE_LENGTH)
         .collect();
@@ -2255,6 +2270,454 @@ fn a_simulator_with_no_witness_produces_the_verifier_s_own_law() {
     println!("     Programmed oracle, fixed challenges, {S1_BASELINES} witnesses, one query set: still");
     println!("     the random-oracle model, and still nothing about the grinding nonce or the");
     println!("     derivation of query positions.");
+}
+
+// ===========================================================================
+// S2 -- the affine reach at the shipping query count
+// ===========================================================================
+//
+// S1 closes at two queries. The shipping C7 proof opens twenty-two, and the
+// quotient side of the wire grows with them: eight segment values per opened
+// row. The only source of AFFINE randomness the quotient has is the lift column
+// -- the randomizer never reaches it -- and the lift has `MASK_ROWS` free
+// entries. So there is a query count past which the affine argument cannot
+// close, and this measures where the shipping proof stands relative to it.
+//
+// Not in CI: it costs several minutes. Run it by hand:
+//   cargo test -p p01-stark --release --lib affine_reach -- --ignored --nocapture
+
+/// `q` opened positions, spread over the LDE domain, no two in one pair. Past
+/// the eleventh they land in the upper half, which is the branch S1 never took.
+fn spread_queries(q: usize) -> Vec<usize> {
+    let half = LDE_SIZE / 2;
+    let mut out: Vec<usize> = Vec::new();
+    let mut i = 0usize;
+    while out.len() < q {
+        let pos = (137 + i * 367) % LDE_SIZE;
+        if !out.iter().any(|&p| (p & (half - 1)) == (pos & (half - 1))) {
+            out.push(pos);
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The quotient side of the wire: the OOD claims and every opened segment value.
+fn quotient_coords(w: &Wire) -> Vec<usize> {
+    let mut v: Vec<usize> = (0..K).map(|j| w.q_ood(j)).collect();
+    for q in 0..w.queries.len() {
+        for j in 0..K {
+            for mirror in [false, true] {
+                v.push(w.quot_at(q, j, mirror));
+            }
+        }
+    }
+    v
+}
+
+/// `L_row(pt)`: the Lagrange basis polynomial of trace row `row` over the trace
+/// domain, at an arbitrary point. `T_c(pt) = SUM_row T_c[row] . L_row(pt)`, so
+/// this is the slope of every published evaluation of a column in that
+/// column's mask entry at `row` -- analytically, with no prover run.
+fn lagrange_at(row: usize, pt: BaseElement) -> BaseElement {
+    let g = get_domain_generator_generic(TRACE_LENGTH);
+    let gr = g.exp(row as u64);
+    let n = BaseElement::new(TRACE_LENGTH as u64);
+    (pt.exp(TRACE_LENGTH as u64) - BaseElement::ONE) * gr * (n * (pt - gr)).inv()
+}
+
+/// The points at which a trace column is published: `z`, `z.g`, and both
+/// members of every opened pair.
+fn block_points(w: &Wire, p: &Public) -> Vec<BaseElement> {
+    let lde_g = get_domain_generator_generic(LDE_SIZE);
+    let trace_g = get_domain_generator_generic(TRACE_LENGTH);
+    let mut pts = vec![p.z, p.z * trace_g];
+    for &pos in w.queries.iter() {
+        for mirror in [false, true] {
+            let q = pos ^ if mirror { LDE_SIZE / 2 } else { 0 };
+            pts.push(lde_coset_shift() * lde_g.exp(q as u64));
+        }
+    }
+    pts
+}
+
+/// Mask moves inside constrained column `c` that leave EVERY published
+/// evaluation of that column unchanged: a basis of the kernel of the
+/// `points x MASK_ROWS` Lagrange matrix, as flat mask deltas. These are the
+/// hidden directions -- what moves a column's unpublished values, the next-row
+/// frames among them, without touching the wire's trace block.
+fn hidden_directions(c: usize, w: &Wire, p: &Public) -> Vec<Vec<(usize, u64)>> {
+    let pts = block_points(w, p);
+    let mat: Vec<Vec<u64>> = pts
+        .iter()
+        .map(|&pt| (0..MASK_ROWS).map(|r| lagrange_at(FIRST_FREE_ROW + r, pt).as_int()).collect())
+        .collect();
+    nullspace(&mat, MASK_ROWS)
+        .into_iter()
+        .map(|k| {
+            k.iter()
+                .enumerate()
+                .filter(|(_, &x)| x != 0)
+                .map(|(r, &x)| (mask_index(r, c), x))
+                .collect()
+        })
+        .collect()
+}
+
+/// **FRI's own structure, which the verifier does not check and the honest
+/// prover cannot escape.** `D` has degree at most `n - 2`, so layer `l` of FRI
+/// is a polynomial of degree at most `(n - 2) / 2^l`, and once a layer is
+/// opened at more points than that polynomial has coefficients, the opened
+/// values satisfy linear relations that hold on EVERY honest transcript and
+/// carry no information about the witness. The verifier checks folds and the
+/// terminal, never the degree of an intermediate layer -- soundness comes from
+/// the terminal bound -- so these relations are not among its equations. A
+/// simulator that samples the verifier's solution set uniformly violates them
+/// and is caught by anyone who interpolates layer 5; the correct simulator
+/// builds its layers from a random low-degree `D`. This returns those
+/// relations as functionals on the rest coordinates: the left null space of
+/// each layer's evaluation matrix at the opened points.
+///
+/// At two queries every layer has more coefficients than opened points and
+/// this is empty, which is why S1 never met it.
+fn low_degree_relations(w: &Wire, rest: &[usize]) -> Vec<Vec<u64>> {
+    let lde_g = get_domain_generator_generic(LDE_SIZE);
+    let half = LDE_SIZE / 2;
+    let max_deg = TRACE_LENGTH - 2;
+    let mut out: Vec<Vec<u64>> = Vec::new();
+    for l in 0..w.layers {
+        // chain layer l+1: size n_l, coset shift h^(2^(l+1)), generator g^(2^(l+1))
+        let n_l = LDE_SIZE >> (l + 1);
+        let mut shift = lde_coset_shift();
+        let mut gen = lde_g;
+        for _ in 0..=l {
+            shift = shift * shift;
+            gen = gen * gen;
+        }
+        let dim = (max_deg >> (l + 1)) + 1;
+        let pts_and_coords: Vec<(BaseElement, usize)> = w
+            .queries
+            .iter()
+            .flat_map(|&pos| {
+                let j = pos % (n_l / 2);
+                let y = shift * gen.exp(j as u64);
+                [(y, w.fri_at(w.queries.iter().position(|&q| q == pos).unwrap(), l, false)),
+                 (-y, w.fri_at(w.queries.iter().position(|&q| q == pos).unwrap(), l, true))]
+            })
+            .collect();
+        if pts_and_coords.len() <= dim {
+            continue;
+        }
+        // E^T: dim x points. Its null space gives u with SUM_i u_i * val_i = 0.
+        let et: Vec<Vec<u64>> = (0..dim)
+            .map(|k| pts_and_coords.iter().map(|&(y, _)| y.exp(k as u64).as_int()).collect())
+            .collect();
+        for u in nullspace(&et, pts_and_coords.len()) {
+            let mut row = vec![0u64; rest.len()];
+            for (i, &(_, coord)) in pts_and_coords.iter().enumerate() {
+                let c = rest.iter().position(|&r| r == coord).expect("FRI coordinate is in the rest block");
+                row[c] = u[i];
+            }
+            out.push(row);
+        }
+    }
+    out
+}
+
+/// How many affine dimensions the quotient side needs, given `q` opened
+/// positions and `k` segments: every opened segment value and every OOD claim,
+/// minus the one identity the verifier checks at `z` and the one it does not
+/// check at each opened row. Plus the lift column's own published evaluations,
+/// which the same entries have to supply.
+fn affine_need(q: usize, k: usize) -> (usize, usize) {
+    let positions = 2 * q;
+    let quotient = k * positions + k - 1 - positions;
+    let lift_trace = 2 + positions;
+    (quotient, lift_trace)
+}
+
+#[test]
+#[ignore = "several minutes; run by hand, see the section comment"]
+fn affine_reach_at_the_shipping_query_count() {
+    let queries = spread_queries(SPEND_NUM_QUERIES);
+    let base = base_mask(0x5EED_0052);
+    let f0 = run(&base);
+    let v0 = published_vector(&f0, &queries);
+    let h0 = hidden_next_vector(&f0, &queries);
+    let w = Wire { queries: queries.clone(), layers: f0.fri_layers.len() };
+    let p = public_for(&f0.public_inputs);
+    let m = w.len();
+    let n_pos = 2 * queries.len();
+
+    // The equations, including the upper-half branch, on honest data first.
+    let r_honest = verifier_residuals(&v0, &w, &p);
+    let n_eq = r_honest.len();
+    assert!(r_honest.iter().all(|&r| r == 0), "honest transcript fails the verifier as written at {} queries", queries.len());
+    for q in 0..queries.len() {
+        for mirror in [false, true] {
+            assert_eq!(local_identity(&v0, &h0, &w, &p, q, mirror), BaseElement::ZERO);
+        }
+    }
+
+    let trace_block: Vec<usize> = (0..m).filter(|&i| w.is_trace_block(i)).collect();
+    let rest: Vec<usize> = (0..m).filter(|&i| !w.is_trace_block(i)).collect();
+    let qc = quotient_coords(&w);
+    let (need_q, need_lift_trace) = affine_need(queries.len(), K);
+
+    println!();
+    println!("S2 / affine reach -- C7 at its shipping query count:");
+    println!("  queries                : {} (positions {:?}...)", queries.len(), &queries[..4]);
+    println!("  published values       : {m} = trace block {} + rest {}", trace_block.len(), rest.len());
+    println!("  quotient side          : {} coordinates, {need_q} of them must be affine-reached", qc.len());
+    println!("  lift trace coordinates : {need_lift_trace}, from the same {MASK_ROWS} lift entries");
+    println!("  verifier equations     : {n_eq}");
+
+    // ── which constrained columns are affine directions at all? ────────────
+    // Two rows of one column, together against apart, on every coordinate.
+    let mut affine_cols: Vec<usize> = Vec::new();
+    for c in 0..=ZK_LIFT_COL {
+        let sa = mask_index(0, c);
+        let sb = mask_index(19, c);
+        let (ra, _) = slope_pair(&base, sa, &v0, &h0, &queries, 0);
+        let (rb, _) = slope_pair(&base, sb, &v0, &h0, &queries, 0);
+        let mut both = base.clone();
+        both[sa] = fadd(both[sa], 1);
+        both[sb] = fadd(both[sb], 1);
+        let vb = published_vector(&run(&both), &queries);
+        let bad = (0..m).filter(|&i| fsub(vb[i], v0[i]) != fadd(ra[i], rb[i])).count();
+        let reach_q = qc.iter().filter(|&&i| ra[i] != 0).count();
+        println!("  column {c:>2}: {} on {bad} coordinates; one entry reaches {reach_q} quotient coordinates", if bad == 0 { "additive" } else { "NON-additive" });
+        if bad == 0 {
+            affine_cols.push(c);
+        }
+    }
+
+    // ── the affine reach on the quotient side ───────────────────────────────
+    let mut lift_rows: Vec<Vec<u64>> = Vec::new();
+    let mut all_rows: Vec<Vec<u64>> = Vec::new();
+    let mut all_rest_rows: Vec<Vec<u64>> = Vec::new();
+    for &c in affine_cols.iter() {
+        // Every lift entry, row mask and extra rows alike; every other entry of
+        // any other affine column, which is a lower bound on its reach and
+        // enough to see whether it closes.
+        let mut slots: Vec<usize> =
+            (0..MASK_ROWS).step_by(if c == ZK_LIFT_COL { 1 } else { 2 }).map(|r| mask_index(r, c)).collect();
+        if c == ZK_LIFT_COL {
+            slots.extend((0..LIFT_EXTRA_ROWS).map(lift_extra_index));
+        }
+        for s in slots {
+            let (row, _) = slope_pair(&base, s, &v0, &h0, &queries, 0);
+            let on_q: Vec<u64> = qc.iter().map(|&i| row[i]).collect();
+            if c == ZK_LIFT_COL {
+                lift_rows.push(on_q.clone());
+            }
+            all_rows.push(on_q);
+            // The rest accounting conditions on the trace block, as S1 does, so
+            // it may only use directions that leave the block alone: the lift
+            // and the randomizer. Columns 3, 5 and 9 are affine too, but every
+            // entry of theirs moves their own published evaluations, and the
+            // DEEP-ALI identity is not linear in those.
+            if c == ZK_LIFT_COL {
+                all_rest_rows.push(rest.iter().map(|&i| row[i]).collect());
+            }
+        }
+    }
+    let r_lift_q = rank(lift_rows);
+    let r_all_q = rank(all_rows);
+    println!("  affine columns         : {affine_cols:?}");
+    println!("  lift alone on quotient : rank {r_lift_q} of {} needed", need_q);
+    println!("  all affine on quotient : rank {r_all_q} of {} needed", need_q);
+
+    // ── the full accounting on the rest, as S1 does it ─────────────────────
+    let rand_slots: Vec<usize> = (0..240)
+        .map(|k| MASK_ROWS * CONSTRAINED_TRACE_WIDTH + (k * 37 + 3) % TRACE_LENGTH)
+        .collect();
+    for &s in rand_slots.iter() {
+        let (row, _) = slope_pair(&base, s, &v0, &h0, &queries, 0);
+        all_rest_rows.push(rest.iter().map(|&i| row[i]).collect());
+    }
+    let r_cond = rank(all_rest_rows.clone());
+    let (vmat, _rhs) = verifier_matrix(&v0, &rest, &w, &p);
+    let r_v = rank(vmat.clone());
+    let (v_rref, v_piv) = rref(&vmat, rest.len());
+    let mut fresh: Vec<Vec<u64>> = Vec::new();
+    for phi in nullspace(&all_rest_rows, rest.len()).iter() {
+        let red = reduce_against(phi, &v_rref, &v_piv);
+        if red.iter().any(|&x| x != 0) {
+            fresh.push(red);
+        }
+    }
+    let (unchecked, _) = rref(&fresh, rest.len());
+    let mut grads: Vec<Vec<u64>> = Vec::new();
+    for q in 0..queries.len() {
+        for mirror in [false, true] {
+            let mut g = vec![0u64; rest.len()];
+            for (c, &i) in rest.iter().enumerate() {
+                let mut t = v0.clone();
+                t[i] = fadd(t[i], 1);
+                g[c] = local_identity(&t, &h0, &w, &p, q, mirror).as_int();
+            }
+            grads.push(g);
+        }
+    }
+    let r_grads = rank(grads.clone());
+    let mut span = unchecked.clone();
+    span.extend(grads.iter().cloned());
+    let r_span = rank(span);
+    let n_unchecked = unchecked.len();
+    println!("  rest accounting        : affine {r_cond} + verifier {r_v} + unchecked {n_unchecked} = {} of {}", r_cond + r_v + n_unchecked, rest.len());
+    println!("  local identities       : {n_pos}, gradient rank {r_grads}; joint rank with the unchecked {r_span}");
+
+    // ── the hidden directions cover the unchecked ones, affinely and in full ──
+    // Kernel moves inside each constrained column, analytic (Lagrange), so the
+    // block is untouched by construction and the run only has to confirm it.
+    let dot = |phi: &[u64], v: &[u64]| -> u64 {
+        let mut acc = 0u64;
+        for (c, &i) in rest.iter().enumerate() {
+            if phi[c] != 0 {
+                acc = fadd(acc, fmul(phi[c], v[i]));
+            }
+        }
+        acc
+    };
+    let phi_base: Vec<u64> = unchecked.iter().map(|phi| dot(phi, &v0)).collect();
+    let per_col = n_unchecked / ZK_LIFT_COL + 3;
+    let mut shifts: Vec<Vec<u64>> = Vec::new();
+    let mut first_moves: Vec<Vec<u64>> = Vec::new();
+    for c in 0..ZK_LIFT_COL {
+        let dirs = hidden_directions(c, &w, &p);
+        assert!(dirs.len() >= per_col, "column {c} has only {} hidden directions", dirs.len());
+        for (d, dir) in dirs.iter().enumerate().take(per_col) {
+            let mut kmask = base.clone();
+            for &(slot, x) in dir.iter() {
+                kmask[slot] = fadd(kmask[slot], x);
+            }
+            let vk = published_vector(&run(&kmask), &queries);
+            for &i in trace_block.iter() {
+                assert_eq!(vk[i], v0[i], "an analytic kernel move in column {c} changed {}", coord_name(&w, i));
+            }
+            shifts.push(unchecked.iter().enumerate().map(|(k, phi)| fsub(dot(phi, &vk), phi_base[k])).collect());
+            if d == 0 {
+                first_moves.push(kmask);
+            }
+        }
+    }
+    let r_shift = rank(shifts.clone());
+    // Affine in the hidden directions: two moves together equal their sum, and
+    // a doubled move doubles.
+    {
+        let mut both = base.clone();
+        for c in [0usize, 4usize] {
+            for i in 0..both.len() {
+                both[i] = fadd(both[i], fsub(first_moves[c][i], base[i]));
+            }
+        }
+        let vb = published_vector(&run(&both), &queries);
+        let mut twice = base.clone();
+        for i in 0..twice.len() {
+            twice[i] = fadd(twice[i], fmul(2, fsub(first_moves[0][i], base[i])));
+        }
+        let vt = published_vector(&run(&twice), &queries);
+        let s0: Vec<u64> = shifts[0].clone();
+        let s4: Vec<u64> = shifts[4 * per_col].clone();
+        for (k, phi) in unchecked.iter().enumerate() {
+            assert_eq!(fsub(dot(phi, &vb), phi_base[k]), fadd(s0[k], s4[k]), "unchecked direction {k} is not additive in the hidden directions");
+            assert_eq!(fsub(dot(phi, &vt), phi_base[k]), fmul(2, s0[k]), "unchecked direction {k} does not scale with a hidden move");
+        }
+    }
+    println!("  hidden directions      : {} analytic kernel moves ({per_col} per column) move the unchecked with rank {r_shift}", shifts.len());
+
+    // ── FRI's low-degree structure ──────────────────────────────────────────
+    let ld = low_degree_relations(&w, &rest);
+    for (k, row) in ld.iter().enumerate() {
+        assert_eq!(dot(row, &v0), 0, "honest transcript violates low-degree relation {k}");
+    }
+    {
+        let mut t = v0.clone();
+        let i = w.fri_at(3, w.layers - 1, true);
+        t[i] = fadd(t[i], 1);
+        assert!(ld.iter().any(|row| dot(row, &t) != 0), "a deep FRI sibling moved and no low-degree relation noticed");
+    }
+    let mut all_eq: Vec<Vec<u64>> = vmat.clone();
+    all_eq.extend(ld.iter().cloned());
+    let r_all = rank(all_eq.clone());
+    let r_ld_new = r_all - r_v;
+    println!("  low-degree relations   : {} rows over layers whose opened points exceed their coefficients; {r_ld_new} independent of the verifier", ld.len());
+    println!("  => affine {r_cond} + hidden {r_shift} + verifier {r_v} + low-degree {r_ld_new} = {} of {}", r_cond + r_shift + r_all, rest.len());
+
+    // ── the simulator at this query count: the verifier's equations AND the
+    //    low-degree relations, from public data ──────────────────────────────
+    {
+        let mut rng = 0x51D0_0000_0000_0016u64;
+        let mut t = vec![0u64; m];
+        for &i in trace_block.iter() {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            t[i] = rng % GOLDILOCKS_PRIME;
+        }
+        let (vm, rhs_v) = verifier_matrix(&t, &rest, &w, &p);
+        let mut sys_rows = vm;
+        let mut sys_rhs = rhs_v;
+        for row in ld.iter() {
+            sys_rows.push(row.clone());
+            sys_rhs.push(0);
+        }
+        let x = sample_solution(&sys_rows, &sys_rhs, &mut rng);
+        for (c, &i) in rest.iter().enumerate() {
+            t[i] = x[c];
+        }
+        let r = verifier_residuals(&t, &w, &p);
+        assert!(r.iter().all(|&x| x == 0), "the simulated {}-query transcript fails the verifier: {r:?}", queries.len());
+        for (k, row) in ld.iter().enumerate() {
+            assert_eq!(dot(row, &t), 0, "the simulated transcript violates low-degree relation {k}");
+        }
+        println!("  simulator              : one {}-query transcript from public data, passing all {n_eq} verifier equations and every low-degree relation", queries.len());
+    }
+    println!();
+    println!("  per circuit, the arithmetic (need = 2qk + k + 1 affine entries, have = lift rows):");
+    for (name, q, k, rows) in [
+        (
+            "C1 pool_commitment",
+            GENERIC_NUM_QUERIES,
+            geom(Circ::C1).k,
+            geom(Circ::C1).mask_rows + crate::air::denominated_pool::LIFT_EXTRA_ROWS,
+        ),
+        (
+            "C3 merkle_path",
+            HEAVY_GENERIC_NUM_QUERIES,
+            geom(Circ::C3).k,
+            geom(Circ::C3).mask_rows
+                + crate::air::merkle_path::lift_extra_rows_for_depth(crate::air::merkle_path::CANONICAL_DEPTH),
+        ),
+        (
+            "C6 merkle_update",
+            MERKLE_UPDATE_NUM_QUERIES,
+            geom(Circ::C6).k,
+            geom(Circ::C6).mask_rows
+                + crate::air::merkle_update::lift_extra_rows_for_depth(crate::air::merkle_update::CANONICAL_DEPTH),
+        ),
+        ("C7 spend", SPEND_NUM_QUERIES, K, MASK_ROWS + LIFT_EXTRA_ROWS),
+    ] {
+        let (nq, nt) = affine_need(q, k);
+        println!("    {name:<20} q={q:>2} k={k} need {} have {rows}  {}", nq + nt, if rows >= nq + nt { "ok" } else { "SHORT" });
+    }
+    println!();
+    println!("  => affine + hidden + verifier + low-degree == rest is S1's statement at the");
+    println!("     shipping query count: the honest transcript is uniform on exactly the set the");
+    println!("     verifier's equations and FRI's own degree structure cut out, and the simulator");
+    println!("     samples that set. Anything short of it is a protocol quantity, not a test one.");
+    assert_eq!(
+        r_cond + r_shift + r_all,
+        rest.len(),
+        "at {} queries the blinding reaches {r_cond}, the hidden directions {r_shift} more, the \
+         verifier cuts {r_v} and FRI's degree structure {r_ld_new}: {} of the {} rest coordinates \
+         are fixed by the witness and checked by nobody. That is the gap a lift column too small \
+         for this wire leaves, and a distinguisher reads it in one query.",
+        queries.len(),
+        rest.len() - r_cond - r_shift - r_all,
+        rest.len()
+    );
 }
 
 // ===========================================================================

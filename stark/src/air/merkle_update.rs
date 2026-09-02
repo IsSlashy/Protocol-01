@@ -140,13 +140,20 @@ pub const CONSTRAINED_TRACE_WIDTH: usize = 11;
 /// The lift constraint fixes the degree budget without touching anything else:
 ///
 /// ```text
-///     active(x) * nba(x) * v(x) * state0(x)^6
+///     hash_start(x) * nba(x) * v(x) * state0(x)^6
 /// ```
 ///
-///   * ZERO ON THE TRACE DOMAIN, because the trace builder writes this column
-///     only inside the blinding region and `active` is off there. It
-///     constrains nothing, carries no witness, and a malicious prover writing
-///     anything here proves nothing extra.
+///   * ZERO ON THE TRACE DOMAIN, because `v` is zero on the `depth` rows where
+///     `hash_start * nba` is 1 -- the first row of each active hash cycle --
+///     which the trace builder guarantees by never writing those rows. Every
+///     other row carries blinding. It constrains nothing, carries no witness,
+///     and a malicious prover writing anything here proves nothing extra.
+///
+///     ⚠️ [ZK-LIFT-FULL 2026-09-02] The gate was `active * nba`, which pinned
+///     `v` on every active row and left 128 free entries: short of the 361 a
+///     22-query wire needs, the lift being the only affine source the quotient
+///     side has (`air::spend::LIFT_EXTRA_ROWS` carries the arithmetic). Now
+///     `lift_extra_rows_for_depth` more rows are free: 469 at depth 11.
 ///   * base degree 7 with TWO period-512 gates, which is exactly the shape the
 ///     Poseidon rounds already carry. `deg(C)` does not rise, so
 ///     `quotient_segments` stays 8, `deg(D) = n - 2` stays and the FRI rate
@@ -234,10 +241,19 @@ pub const MASK_ROWS: usize = CANONICAL_TRACE_LENGTH - FIRST_FREE_ROW; // 128
 /// Mask elements `build_merkle_update_trace` requires at `depth`. Kept
 /// depth-generic so the shallow-depth tests in this file keep compiling.
 pub fn mask_len_for_depth(depth: usize) -> usize {
-    // [ZK-RANDOMIZER] Two regions in one flat slice: the row mask over the
-    // CONSTRAINED columns, then the randomizer column over every row.
+    // [ZK-RANDOMIZER] Three regions in one flat slice: the row mask over the
+    // CONSTRAINED columns, then the randomizer column over every row, then
+    // [ZK-LIFT-FULL] the lift column's free rows inside the active region.
     let n = trace_length_for_depth(depth);
-    (n - depth * HASH_CYCLE_LEN) * CONSTRAINED_TRACE_WIDTH + n
+    (n - depth * HASH_CYCLE_LEN) * CONSTRAINED_TRACE_WIDTH + n + lift_extra_rows_for_depth(depth)
+}
+
+/// Rows of the lift column inside the active region that carry blinding: every
+/// row of the `depth` active hash cycles except the first of each, where the
+/// gate `hash_start * nba` of constraint [19] pins the column to zero.
+/// `depth * 31`; 341 at depth 11. [ZK-LIFT-FULL 2026-09-02]
+pub fn lift_extra_rows_for_depth(depth: usize) -> usize {
+    depth * (HASH_CYCLE_LEN - 1)
 }
 
 // ============================================================================
@@ -609,11 +625,13 @@ pub fn evaluate_merkle_update_transition<E: FieldElement>(
 
     // [19] ZK degree lift, col `ZK_LIFT_COL`. See the constant`s doc.
     //
-    // Zero on the trace domain because `v` is zero wherever `active` is not.
-    // Its whole job is to be degree 1 in `v` and degree 7 overall, so the
-    // blinding region reaches quotient blocks 0..7 instead of 0..2.
+    // Zero on the trace domain because `v` is zero on the first row of every
+    // active hash cycle, the only rows where `hash_start * nba` is not. Its
+    // whole job is to be degree 1 in `v` and degree 7 overall, so the lift
+    // reaches every quotient block. [ZK-LIFT-FULL 2026-09-02] The gate was
+    // `active * nba`; the verifier twin changed the same day.
     let lift = current[0] * current[0] * current[0];
-    result[19] = active * nba * current[ZK_LIFT_COL] * lift * lift;
+    result[19] = hash_start * nba * current[ZK_LIFT_COL] * lift * lift;
 }
 
 // ============================================================================
@@ -801,6 +819,20 @@ pub fn build_merkle_update_trace(
     for row in 0..trace_length {
         trace[RANDOMIZER_COL][row] = mask[randomizer_base + row];
     }
+
+    // [ZK-LIFT-FULL 2026-09-02] The lift column inside the active region:
+    // every row but the first of each hash cycle, where `hash_start * nba` is
+    // 1 and constraint [19] needs the column at zero. Rows `first_free_row..`
+    // were filled by the row mask above.
+    let lift_base = randomizer_base + trace_length;
+    let mut k = 0usize;
+    for row in 0..first_free_row {
+        if row % HASH_CYCLE_LEN != 0 {
+            trace[ZK_LIFT_COL][row] = mask[lift_base + k];
+            k += 1;
+        }
+    }
+    debug_assert_eq!(k, lift_extra_rows_for_depth(depth));
     // `old_carry` / `new_carry` are no longer read after the walk; the blinding
     // region replaces the copy that used to consume them.
     let _ = (old_carry, new_carry);

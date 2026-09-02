@@ -213,10 +213,10 @@
     "programdata_address": "Dmndh5d1SMr54vjGMHVcvsfC1Dy3LXHfAhn58RM1eWJi",
     "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
     "upgrade_authority": "7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU",
-    "last_deployed_slot": 490938635,
-    "elf_sha256": "993d8842c58a3e5fa67bffab7cf1b50c257085bc09bc483888d6825ffff3d170",
-    "elf_bytes": 781985,
-    "elf_sha256_with_loader_padding": "7549e94d14c4c8081785ad859529e0950402daa087c7bf8d0080cf89a15ccdab",
+    "last_deployed_slot": 491973056,
+    "elf_sha256": "75fa927d5a3efcc73dada1e746547be922d294fae2afef92b0400dcb4db9838c",
+    "elf_bytes": 782057,
+    "elf_sha256_with_loader_padding": "c9d3b2c296ad4e9b0fbc39b2aa7df4e6379adbb48a2d8f4af93b98f67f077f04",
     "elf_bytes_with_loader_padding": 840168,
     "programdata_account_space": 840213,
     "proof_format_generation": "b2",
@@ -228,12 +228,12 @@
       "_why_b2_and_not_the_scan_s_b1_plus": "`--measure` prints `b1+` because that is the strongest thing a byte scan of msg! literals can say: B2 added no literal to the verifier, so the scan cannot separate b1 from b2. `b1+` means \"B1 or newer, cannot say which\" and the record is supposed to carry the PRECISE generation -- `generationsAreCompatible` exists exactly to reconcile the two, and accepts b1+ against a b2 claim. ⚠️ Pasting --measure's block in verbatim therefore deadlocks the interlock at line 1655, which compares with `!==`. The claim here is b2 on DIRECT evidence, not on the scan: a b2-generation client's circuit-7 proof was accepted by this program in transaction 4yKg4gGm... All seven pre-C7 circuits in that client are byte-identical to the b2 column pinned in b1_deep_binding.rs and wireFormat.test.ts."
     },
     "measured_at": {
-      "date_utc": "2026-08-31",
-      "observed_slot": 491014686,
+      "date_utc": "2026-09-02",
+      "observed_slot": 491973202,
       "method": "deployed-verifier-check.mjs --measure --cluster devnet",
-      "corroboration": "Independently dumped the same day and byte-compared against the local artifact; and `solana confirm -v` was used to re-read the acceptance transaction rather than trusting the client that sent it."
+      "corroboration": "Independently dumped the same day (`solana program dump`) and byte-compared against the local artifact: the first 782,072 bytes of the programdata equal target/deploy/p01_stark_verifier.so (sha256 63ef838b...), the tail is zero padding. The acceptance below was read back off the chain by the script, not assumed."
     },
-    "accepts_client_blob_sha256": "df02e19c7036eb38830c17af4eac796519c6e3766f8ddcaa72df8e3768dbf5c4",
+    "accepts_client_blob_sha256": "36c1fd4e0fa9f718d4a3ecdbdf06ff91cea9f9e0fbe21a85a20bc9da307e1984",
     "accepts_client_blob_sha256_note": [
       "UNKNOWN, and deliberately left null rather than guessed.",
       "",
@@ -254,12 +254,36 @@
     ],
     "accepts_client_blob_evidence": {
       "_note": "This is the only field in this record that cannot be measured from artifacts alone. It required sending a proof and reading the answer.",
-      "transaction": "2aUofJQZsrBPfScwYenfsPhJS4XsX34LBQW1kZHEUgL85HJ9TEW2QgncPnQ2n145Bqq5NC1te6BMSH3CYfs3Uqaz",
-      "slot": 491033618,
+      "transaction": "5hdDAz6Xajyd6wELvWsauMskpp8S2WwrWgR6FSsQzkrKnaqJRNcoHte6QjXjoJtF383EwVurgRv8WuDubNVP4tAv",
+      "slot": 491973951,
       "cluster": "devnet",
       "circuit_id": 7,
       "proof_bytes": 79405,
-      "_supersedes_2026_08_31": [
+      "phases_verified": "phase 1 (FRI/Merkle) and phase 2 (DEEP-ALI)",
+      "phase2_compute_units": 193200,
+      "cost_sol": 0.000455,
+      "rent": "recovered -- the proof buffer is a PDA of (authority, circuit_id), so close_proof_buffer needs only the authority. NOT true of the 45 orphaned ProofBuffer accounts holding 20.50 SOL on devnet, which predate the PDA scheme and want an ephemeral key nobody kept.",
+      "reproduce": "npx tsx packages/stark-prover/scripts/c7-live-proof.ts",
+      "what_it_does_not_prove": "Nothing about the pool. zk_shielded reads the verified buffer cross-program and applies its own checks; a spend landing end to end is a separate measurement.",
+      "_supersedes_2026_09_02": [
+        "The previous entry was 2aUofJQZ... at slot 491033618, and it described the pair deployed on",
+        "2026-08-31: the 160-entry lift (blob df02e19c) against the verifier at slot 490938635.",
+        "Both halves moved on 2026-09-02 [ZK-LIFT-FULL]: the gate of the lift constraint changed on",
+        "C1/C3/C6/C7 (row0_flag / chain_flag / hash_start times nba instead of active times nba), which",
+        "frees the lift column to 511 / 512 / 501 / 501 entries against the 361 / 441 / 361 / 361 a",
+        "22- or 27-query wire needs (stark/src/air/spend.rs LIFT_EXTRA_ROWS carries the arithmetic and",
+        "compact::zk_hiding::affine_reach_at_the_shipping_query_count the measurement). The verifier was",
+        "redeployed at slot 491973056 (elf 75fa927d...) and the blob reshipped to 36c1fd4e (274,224 B).",
+        "The wire is unchanged: a C7 proof is still 79,405 bytes in 80 chunks. A proof made under the old",
+        "gate is rejected by this deployment with DeepAliFailed, and must be.",
+        "",
+        "This entry is the first acceptance of the new pair: c7-live-proof.ts proved with the shipped blob",
+        "and the deployed program accepted through both phases; phase 2 consumed 193,200 CU (192,462",
+        "before the gate change). It is a bare verify, not a spend: the pool leg is a separate measurement.",
+        "",
+        "The 2026-08-31 entry is kept below for the record."
+      ],
+      "_superseded_2026_08_31_entry": [
         "The previous entry was 4yKg4gGm... at slot 487960436, 77,965 bytes, and it described the",
         "PREVIOUS pair: the pre-lift blob 72a8c700 against the verifier deployed at slot 487886926.",
         "Both halves moved on 2026-08-31 -- the verifier was redeployed at slot 490938635 with the ZK",
@@ -275,16 +299,10 @@
         "`node verify/p01-verify.mjs --spend 2aUofJQZ... --wallet BRop3akx...` reports P3 as proven over",
         "94/94 transactions, 80 proof chunks, 79,405 bytes, and P1/P2/P4 proven with it.",
         "",
-        "\u26a0 What it does NOT establish: P11 is OPEN on that same run. The spend's fee payer is an",
+        "⚠ What it does NOT establish: P11 is OPEN on that same run. The spend's fee payer is an",
         "ephemeral funded by the float, and the float's own history names the buyer's wallet. That is a",
         "linkage question, not a verifier-compatibility one, and this field is only about the latter."
-      ],
-      "phases_verified": "phase 1 (FRI/Merkle) and phase 2 (DEEP-ALI)",
-      "phase2_compute_units": 192462,
-      "cost_sol": 0.00045,
-      "rent": "recovered -- the proof buffer is a PDA of (authority, circuit_id), so close_proof_buffer needs only the authority. NOT true of the 45 orphaned ProofBuffer accounts holding 20.50 SOL on devnet, which predate the PDA scheme and want an ephemeral key nobody kept.",
-      "reproduce": "npx tsx packages/stark-prover/scripts/c7-live-proof.ts",
-      "what_it_does_not_prove": "Nothing about the pool. zk_shielded reads the verified buffer cross-program and applies its own checks; a spend landing end to end is a separate measurement."
+      ]
     }
   },
   "client_blob": {
@@ -323,8 +341,8 @@
       "still RED. Reshipping the client blob does not and must not green anything on the chain side."
     ],
     "path": "packages/stark-prover/wasm/p01_stark_bg.wasm",
-    "sha256": "df02e19c7036eb38830c17af4eac796519c6e3766f8ddcaa72df8e3768dbf5c4",
-    "bytes": 273437,
+    "sha256": "36c1fd4e0fa9f718d4a3ecdbdf06ff91cea9f9e0fbe21a85a20bc9da307e1984",
+    "bytes": 274224,
     "proof_format_generation": "b2",
     "generation_evidence": {
       "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node and generates one proof per shipping circuit on seven fixed witnesses, then sha256s each serialized proof. The generation is the column of its fixture table that ALL SEVEN digests match; a mixture, an unrecognised digest, a blob that will not instantiate and a blob that throws mid-proof all refuse to classify and fail the gate. Nothing about this reads a string out of the artifact or out of any Rust source, so renaming literals anywhere cannot move it. MEASURED cost on the dev box: 14.6 s wall for all seven, no cache.",

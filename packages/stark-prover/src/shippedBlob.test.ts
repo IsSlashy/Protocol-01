@@ -101,8 +101,8 @@ const BLOB = join(here, '..', 'wasm', 'p01_stark_bg.wasm');
  * the redeployed verifier can move it. Until then this pin says "this is the
  * artifact we ship", not "this is the artifact the chain has taken".
  */
-const SHIPPED_SHA256 = 'df02e19c7036';
-const SHIPPED_BYTES = 273_437;
+const SHIPPED_SHA256 = '36c1fd4e0fa9';
+const SHIPPED_BYTES = 274_224;
 
 /**
  * The pre-C7 coset build. NOT "rejected": it was the shipped artifact until

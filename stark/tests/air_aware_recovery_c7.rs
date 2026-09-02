@@ -83,7 +83,7 @@ const COSET_SHIFT: u64 = 7;
 // 🚨 Every constant below the import was a LOCAL COPY until 2026-09-01, and the
 // copies drifted: CANONICAL_DEPTH sat at 12 against the AIR's 11, TRACE_WIDTH at
 // 10 against the AIR's 12, and the mask this file built was 1280 elements long
-// where the prover demands MASK_LEN = 2272. So the ONLY harness that has ever
+// where the prover demanded MASK_LEN = 2272 (2623 since [ZK-LIFT-FULL]). So the ONLY harness that has ever
 // attacked C7 could not build a proof at all. It panicked before measuring
 // anything, while the repository went on citing its result.
 //
@@ -299,7 +299,8 @@ fn spend_proof(mask_seed: u64) -> p01_stark::compact::GenericCompactProofData {
         z % (P as u64)
     };
     // MASK_LEN, not MASK_ROWS * TRACE_WIDTH: the flat slice is the row mask
-    // (MASK_ROWS x CONSTRAINED_TRACE_WIDTH) FOLLOWED BY the randomizer column
+    // (MASK_ROWS x CONSTRAINED_TRACE_WIDTH) FOLLOWED BY the randomizer column,
+    // then the lift column's rows 1..FIRST_FREE_ROW ([ZK-LIFT-FULL 2026-09-02])
     // (TRACE_LENGTH). Computing it here from a width was what made this file
     // unable to prove once the randomizer column landed.
     let mask: Vec<u64> = (0..MASK_LEN).map(|_| next()).collect();

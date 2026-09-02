@@ -58,20 +58,23 @@ pub const CONSTRAINED_TRACE_WIDTH: usize = 4;
 /// The lift constraint fixes the degree budget and touches nothing else:
 ///
 /// ```text
-///     nba(x) * nba(x) * v(x) * state0(x)^6
+///     chain_flag(x) * nba(x) * v(x) * state0(x)^6
 /// ```
 ///
-/// ⚠️ TWICE `nba`, AND THE REPETITION IS DELIBERATE. C1 is the one circuit with
-/// no `active` column -- it has seven periodic columns and the file explains why
-/// an eighth was not added -- so the second period-512 gate has to come from
-/// somewhere. `nba` takes values in {0, 1} on the trace domain, so `nba^2 = nba`
-/// there and the zero set is identical; off the domain it is a genuine degree
-/// `2(n-1)` factor, which is the whole point.
+/// ⚠️ [ZK-LIFT-FULL 2026-09-02] The gate was `nba(x) * nba(x)` -- C1 has no
+/// `active` column, and squaring `nba` bought the second period-512 factor --
+/// which pinned `v` to zero on the 96 rows where `nba` is 1 and left it 416
+/// free entries. A 27-query wire publishes `8 * 54 + 8` quotient values, of
+/// which 441 must come out independently uniform, and the lift is the only
+/// affine source they have (`air::spend::LIFT_EXTRA_ROWS` carries the
+/// arithmetic and the measurement). `chain_flag` is one-hot at row 63, a
+/// boundary row where `nba` is 0, so `chain_flag * nba` vanishes on EVERY row
+/// of the trace domain and pins nothing: all 512 entries are free. Off the
+/// domain it is a genuine degree `2(n-1)` factor, exactly as before.
 ///
-///   * ZERO ON THE TRACE DOMAIN, because the trace builder writes this column
-///     only inside the blinding region and `nba` is off there. It constrains
-///     nothing and carries no witness, and adding a constraint can only
-///     restrict a prover, never free one.
+///   * ZERO ON THE TRACE DOMAIN, because the gate is. It constrains nothing
+///     and carries no witness, and adding a constraint can only restrict a
+///     prover, never free one.
 ///   * base degree 7 with TWO period-512 gates -- the shape C1`s Poseidon
 ///     rounds already carry -- so `deg(C)` does not rise, `quotient_segments`
 ///     stays 8, `deg(D) = n - 2` stays and the FRI rate does not move.
@@ -161,10 +164,15 @@ pub const FIRST_FREE_ROW: usize = NUM_HASH_CYCLES * HASH_CYCLE_LEN; // 96
 /// does on the masked AIR; the file keeps that pre-mask model as its control.
 pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 160
 
+/// Rows of the lift column outside the row mask, `0..FIRST_FREE_ROW`. All of
+/// them are free since [ZK-LIFT-FULL 2026-09-02]: the gate of constraint [4]
+/// vanishes on the whole trace domain. See `ZK_LIFT_COL`.
+pub const LIFT_EXTRA_ROWS: usize = FIRST_FREE_ROW; // 96
+
 /// Mask elements `build_pool_commitment_trace` requires.
 /// Row mask over the CONSTRAINED columns, then the randomizer column over every
-/// row: 416*3 + 512 = 1760.
-pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH;
+/// row, then the lift column's rows `0..FIRST_FREE_ROW`: 416*4 + 512 + 96 = 2272.
+pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH + LIFT_EXTRA_ROWS;
 
 /// Number of transition constraints in the pool-commitment AIR.
 ///
@@ -445,14 +453,15 @@ pub fn evaluate_pool_commitment_transition<E: FieldElement>(
     // At row 63 (end of cycle 1): next[1] at row 64 should = current[0] at row 63 (epoch_hash).
     result[3] = chain_flag * (next[1] - current[0]);
 
-    // [4] ZK degree lift, col `ZK_LIFT_COL`. See the constant`s doc, including
-    // why `nba` appears twice.
+    // [4] ZK degree lift, col `ZK_LIFT_COL`. See the constant`s doc.
     //
-    // Zero on the trace domain because `v` is zero wherever `nba` is not. Its
-    // whole job is to be degree 1 in `v` and degree 7 overall, so the blinding
-    // region reaches quotient blocks 0..7 instead of 0..2.
+    // Zero on the trace domain because the gate is: `chain_flag` is one-hot at
+    // row 63 and `nba` is zero there. Its whole job is to be degree 1 in `v`
+    // and degree 7 overall, so the lift reaches every quotient block.
+    // [ZK-LIFT-FULL 2026-09-02] The gate was `nba * nba`; the verifier twin
+    // changed the same day.
     let lift = current[0] * current[0] * current[0];
-    result[4] = nba * nba * current[ZK_LIFT_COL] * lift * lift;
+    result[4] = chain_flag * nba * current[ZK_LIFT_COL] * lift * lift;
 }
 
 // ============================================================================
@@ -478,7 +487,7 @@ pub fn build_pool_commitment_trace(
     assert_eq!(
         mask.len(),
         MASK_LEN,
-        "C1 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x          {CONSTRAINED_TRACE_WIDTH} constrained columns, then {TRACE_LENGTH} for the          randomizer column), got {}",
+        "C1 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x {CONSTRAINED_TRACE_WIDTH} constrained columns, then {TRACE_LENGTH} for the randomizer column, then {LIFT_EXTRA_ROWS} for the lift column's rows 0..{FIRST_FREE_ROW}), got {}",
         mask.len(),
     );
     let mut trace = vec![vec![BaseElement::ZERO; TRACE_LENGTH]; TRACE_WIDTH];
@@ -570,6 +579,14 @@ pub fn build_pool_commitment_trace(
     let randomizer_base = MASK_ROWS * CONSTRAINED_TRACE_WIDTH;
     for row in 0..TRACE_LENGTH {
         trace[RANDOMIZER_COL][row] = mask[randomizer_base + row];
+    }
+
+    // [ZK-LIFT-FULL 2026-09-02] The lift column's remaining rows. Its gate
+    // vanishes on the whole trace domain, so every row is free; rows
+    // `FIRST_FREE_ROW..` were filled by the row mask above.
+    let lift_base = randomizer_base + TRACE_LENGTH;
+    for row in 0..FIRST_FREE_ROW {
+        trace[ZK_LIFT_COL][row] = mask[lift_base + row];
     }
 
     (trace, nullifier, commitment)
