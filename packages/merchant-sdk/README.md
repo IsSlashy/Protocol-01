@@ -429,12 +429,46 @@ if (!r.valid) return Response.json({ error: r.reason }, { status: 401 });
    the vault, which is public and enumerable anyway, and nothing about the
    customer's wallet, which private-mode vaults never name.
 
+6. **Two things the chain does not tell you, and the two options that cover them.**
+
+   *A key pasted seconds after purchase.* The buyer's client shows the key once
+   the subscribe transaction is confirmed; your RPC node may serve the account a
+   few seconds later. Until it does, the key-only lookup answers
+   `vault_not_found` with `retryable: true`, indistinguishable from a bogus key
+   except for that flag. Set `retry` on a front door that receives fresh keys
+   (the example uses six looks over twelve seconds) and answer a retryable
+   refusal with 503, not 401:
+
+```typescript
+const res = await verifyMerchantLicense(connection, {
+  merchant: retailerPubkey, service, serviceSlug: 'my-saas-pro', key: presentedKey,
+  retry: { attempts: 6, delayMs: 2000 },   // vault_not_found / rpc_error only; a bad key is refused at once
+});
+if (!res.ok) return Response.json({ error: res.reason }, { status: res.retryable ? 503 : 401 });
+```
+
+   *A price you changed.* The vault freezes `rate` and `interval_slots` at
+   subscribe time, and `update_service` rewrites the registry in place, so the
+   day you raise the price every customer sold under the old one would be
+   refused as `service_mismatch` for the rest of the window they paid for. Pass
+   the terms you sold under before, and read `res.terms.current` to know which
+   applied. A prior term never widens the retailer or the mint, only the two
+   numbers:
+
+```typescript
+const res = await verifyMerchantLicense(connection, {
+  merchant: retailerPubkey, service, serviceSlug: 'my-saas-pro', key: presentedKey,
+  priorTerms: [{ priceAtomic: 40_000_000n, intervalSlots: 216_000n }],   // what you charged until last week
+});
+// res.terms → { priceAtomic, intervalSlots, current: false } for a customer on the old price
+```
+
 **What refuses, and why.** `res.reason` is a closed enum; match on it.
 
 | reason | meaning |
 |---|---|
 | `malformed_key` | the string does not decode to a 16-byte secret |
-| `vault_not_found` | no vault naming you carries this key's commitment (or nothing lives at `vault`) |
+| `vault_not_found` | no vault naming you carries this key's commitment (or nothing lives at `vault`). On the key-only path this is **retryable**: an RPC node that lags the buyer's has not served the account yet, and the refusal reads exactly like a bogus key |
 | `wrong_owner` | the account at `vault` is not owned by `zk_shielded`; its bytes are whoever's |
 | `undecodable` | program-owned, but not a `SubscriptionVault` |
 | `retailer_mismatch` | the vault pays another merchant |
@@ -444,7 +478,7 @@ if (!r.valid) return Response.json({ error: r.reason }, { status: 401 });
 | `no_license_commitment` | the vault predates license keys |
 | `commitment_mismatch` | wrong key for this vault |
 | `subscription_paused` / `subscription_ended` / `subscription_not_current` | `subscriptionIsCurrent` said no: paused, ran past its funded periods (with `is_active` still `true`), or never current |
-| `rpc_error` | the lookup failed; nothing was decided |
+| `rpc_error` | the lookup failed; nothing was decided. **Retryable** |
 
 The checks run in that order and every one is mandatory. `service` is a
 required parameter — not a `requireService` flag, not a hook — because it is the

@@ -400,6 +400,14 @@ async function sweepRevenue(
  *
  *   curl -s localhost:8787/license/session -d '{"key":"P01-…"}'
  */
+/**
+ * Price/interval pairs this service was sold under BEFORE its current registry
+ * values, oldest first. Empty until the first `update_service`; append the
+ * previous (priceAtomic, intervalSlots) each time the terms change, and keep
+ * an entry for as long as a subscription sold under it can still be current.
+ */
+const PRIOR_TERMS: Array<{ priceAtomic: bigint; intervalSlots: bigint }> = [];
+
 function startLicenseServer(
   connection: Connection,
   merchant: Keypair,
@@ -416,16 +424,44 @@ function startLicenseServer(
         const body = await readJsonBody(req);
         const key = typeof body.key === 'string' ? body.key : '';
         const vault = typeof body.vault === 'string' ? new PublicKey(body.vault) : undefined;
-        const common = { merchant: retailer, service, serviceSlug: SERVICE_SLUG, key, vault };
+        const common = {
+          merchant: retailer,
+          service,
+          serviceSlug: SERVICE_SLUG,
+          key,
+          vault,
+          // A key pasted seconds after purchase can reach an RPC node that has
+          // not served the vault yet; the refusal would read like a bogus key.
+          // Six looks over twelve seconds before saying no.
+          retry: { attempts: 6, delayMs: 2000 },
+          // Terms this service was sold under before its current registry
+          // values. The vault freezes price and interval at subscribe time,
+          // so after `update_service` every earlier customer would be refused
+          // for the rest of the window they paid for without this list.
+          priorTerms: PRIOR_TERMS,
+        };
+        const refusalStatus = (r: { retryable?: true }) => (r.retryable ? 503 : 401);
 
         if (req.url === '/license/verify') {
           // Dry check: says whether the key would be served, mints nothing.
           const verdict = await verifyMerchantLicense(connection, common);
-          if (!verdict.ok) return json(401, { ok: false, reason: verdict.reason, detail: verdict.detail });
+          if (!verdict.ok) {
+            return json(refusalStatus(verdict), {
+              ok: false,
+              reason: verdict.reason,
+              detail: verdict.detail,
+              retryable: verdict.retryable ?? false,
+            });
+          }
           return json(200, {
             ok: true,
             account: verdict.ephemeralAccountId,
             vault: verdict.vaultPda.toBase58(),
+            terms: {
+              priceAtomic: verdict.terms.priceAtomic.toString(),
+              intervalSlots: verdict.terms.intervalSlots.toString(),
+              current: verdict.terms.current,
+            },
             periodsPaidFor: verdict.periodsPaidFor.toString(),
             periodsElapsed: verdict.periodsElapsed.toString(),
             currentUntilSlot: verdict.currentUntilSlot?.toString() ?? null,
@@ -441,7 +477,12 @@ function startLicenseServer(
         });
         if (!session.ok) {
           logStep(`  – license refused: ${session.reason}`);
-          return json(401, { ok: false, reason: session.reason, detail: session.detail });
+          return json(refusalStatus(session), {
+            ok: false,
+            reason: session.reason,
+            detail: session.detail,
+            retryable: session.retryable ?? false,
+          });
         }
         logStep(
           `  ✓ license verified → session for ${session.ephemeralAccountId.slice(0, 12)}… ` +

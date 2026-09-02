@@ -416,6 +416,13 @@ export interface MerchantLicenseGranted {
    * granted; the chain cannot tell the two products apart.
    */
   ambiguousService?: true;
+  /**
+   * The price and interval the vault was actually sold under. `current` is
+   * false when the grant came through `priorTerms`: the customer subscribed
+   * before the registry entry was updated and is inside the window they paid
+   * for at the old price.
+   */
+  terms: { priceAtomic: bigint; intervalSlots: bigint; current: boolean };
 }
 
 export interface MerchantLicenseRefused {
@@ -427,6 +434,16 @@ export interface MerchantLicenseRefused {
   vaultPda?: PublicKey;
   vault?: SubscriptionVaultAccount;
   currentSlot?: bigint;
+  /**
+   * True for `vault_not_found` on the key-only path and for `rpc_error`: the
+   * chain may simply not have served the account yet. A key presented seconds
+   * after purchase lands here on an RPC node that lags the one the buyer used,
+   * and the refusal reads exactly like a bogus key. Integrations should retry
+   * these (see `retry`) before telling a customer their key is bad.
+   */
+  retryable?: true;
+  /** How many lookups were made before this answer (1 unless `retry` was set). */
+  attempts?: number;
 }
 
 export type MerchantLicenseResult = MerchantLicenseGranted | MerchantLicenseRefused;
@@ -453,6 +470,23 @@ export interface VerifyMerchantLicenseParams {
   currentSlot?: bigint;
   /** Your other services, so an on-chain-indistinguishable pair is reported as `ambiguousService`. */
   otherServices?: ServiceScope[];
+  /**
+   * Price/interval pairs this service was sold under BEFORE its current
+   * registry values. The vault freezes `rate` and `interval_slots` at
+   * subscribe time, and `update_service` rewrites the registry in place, so
+   * without this list every key sold under the old terms is refused as
+   * `service_mismatch` for the rest of the window the customer paid for.
+   * Retailer and mint are never widened by a prior term; only the two numbers
+   * are. A grant through a prior term carries `terms.current === false`.
+   */
+  priorTerms?: Array<{ priceAtomic: bigint; intervalSlots: bigint }>;
+  /**
+   * Re-run the lookup when the answer is retryable (`vault_not_found` on the
+   * key-only path, or `rpc_error`), waiting `delayMs` between attempts. Off by
+   * default so a bogus key is refused at once; a front door that receives keys
+   * seconds after purchase should set it (the example uses 6 x 2000 ms).
+   */
+  retry?: { attempts: number; delayMs: number };
   /** Program ID override. Ignored when `sdkConfig` is supplied. */
   programId?: PublicKey;
   /** SDK-level configuration (cluster + program ID overrides). */
@@ -495,7 +529,8 @@ const REFUSAL_RANK: Record<MerchantLicenseRefusalReason, number> = {
  *  5. `vault.retailer == merchant`                           → `retailer_mismatch`
  *  6. `vault.token_mint == service.tokenMint`                → `mint_mismatch`
  *  7. `rate` and `interval_slots` equal the registered
- *     price and interval ({@link vaultMatchesService})       → `service_mismatch`
+ *     price and interval ({@link vaultMatchesService}), or
+ *     one of `priorTerms`                                    → `service_mismatch`
  *  8. the address is the PDA of the vault's OWN seeds
  *     ({@link deriveSubscriptionVaultPda})                   → `non_canonical_pda`
  *  9. the vault carries a commitment                         → `no_license_commitment`
@@ -562,25 +597,46 @@ export async function verifyMerchantLicense(
   }
   const wantCommitment = licenseCommitment(secret);
 
-  let located: Located[];
-  let currentSlot: bigint;
-  try {
-    [located, currentSlot] = await Promise.all([
-      params.vault
-        ? readOneVault(connection, params.vault, programId, level).then((r) => [r])
-        : findVaultsByCommitment(connection, {
-            merchant: params.merchant,
-            wantCommitment,
-            tokenMint: params.tokenMint ?? params.service.tokenMint,
-            programId,
-            level,
-          }).then((matches) => matches.map((m) => ({ ok: true as const, ...m }))),
-      params.currentSlot !== undefined
-        ? Promise.resolve(params.currentSlot)
-        : connection.getSlot(level).then(BigInt),
-    ]);
-  } catch (e) {
-    return { ok: false, reason: 'rpc_error', detail: `on-chain lookup failed: ${(e as Error).message}` };
+  const maxAttempts = Math.max(1, Math.floor(params.retry?.attempts ?? 1));
+  const delayMs = Math.max(0, params.retry?.delayMs ?? 0);
+
+  let located: Located[] = [];
+  let currentSlot: bigint = params.currentSlot ?? 0n;
+  let attempts = 0;
+  for (;;) {
+    attempts++;
+    try {
+      [located, currentSlot] = await Promise.all([
+        params.vault
+          ? readOneVault(connection, params.vault, programId, level).then((r) => [r])
+          : findVaultsByCommitment(connection, {
+              merchant: params.merchant,
+              wantCommitment,
+              tokenMint: params.tokenMint ?? params.service.tokenMint,
+              programId,
+              level,
+            }).then((matches) => matches.map((m) => ({ ok: true as const, ...m }))),
+        params.currentSlot !== undefined
+          ? Promise.resolve(params.currentSlot)
+          : connection.getSlot(level).then(BigInt),
+      ]);
+    } catch (e) {
+      if (attempts < maxAttempts) {
+        await sleep(delayMs);
+        continue;
+      }
+      return {
+        ok: false,
+        reason: 'rpc_error',
+        detail: `on-chain lookup failed: ${(e as Error).message}`,
+        retryable: true,
+        attempts,
+      };
+    }
+    // The vault fast path answers from one account read; an empty key-only
+    // scan is the one outcome the chain can still change its mind about.
+    if (located.length > 0 || params.vault || attempts >= maxAttempts) break;
+    await sleep(delayMs);
   }
 
   if (located.length === 0) {
@@ -590,8 +646,12 @@ export async function verifyMerchantLicense(
       reason: 'vault_not_found',
       detail:
         `no SubscriptionVault owned by ${programId.toBase58()} names retailer ${params.merchant.toBase58()} ` +
-        `with this key's commitment (searched license_commitment at offsets ${offsets})`,
+        `with this key's commitment (searched license_commitment at offsets ${offsets}` +
+        (attempts > 1 ? `, ${attempts} attempts` : '') +
+        ')',
       currentSlot,
+      retryable: true,
+      attempts,
     };
   }
 
@@ -667,9 +727,27 @@ function judge(
       `vault is denominated in ${vault.tokenMint.toBase58()}, the service in ${params.service.tokenMint.toBase58()}`,
     );
   }
-  const scoped = vaultMatchesService(vault, params.service, { otherServices: params.otherServices });
+  let scoped = vaultMatchesService(vault, params.service, { otherServices: params.otherServices });
+  let termsCurrent = true;
   if (!scoped.matches) {
-    return refuse('service_mismatch', scoped.reason ?? 'vault does not match the registered service');
+    // The registry can be rewritten in place; the vault cannot. A customer
+    // who subscribed under the old price is inside a window they paid for.
+    const prior = (params.priorTerms ?? []).find(
+      (t) => vault.rate === t.priceAtomic && vault.intervalSlots === t.intervalSlots,
+    );
+    if (!prior) {
+      const tried = params.priorTerms?.length ?? 0;
+      return refuse(
+        'service_mismatch',
+        (scoped.reason ?? 'vault does not match the registered service') +
+          (tried > 0 ? ` (nor any of the ${tried} prior term(s) supplied)` : ''),
+      );
+    }
+    scoped = vaultMatchesService(vault, { ...params.service, ...prior }, { otherServices: params.otherServices });
+    if (!scoped.matches) {
+      return refuse('service_mismatch', scoped.reason ?? 'vault does not match the registered service');
+    }
+    termsCurrent = false;
   }
 
   const idBytes = vault.subscriberCommitment ?? vault.subscriberPubkey?.toBytes() ?? null;
@@ -722,9 +800,14 @@ function judge(
     periodsElapsed: periodsElapsed(vault, currentSlot),
     currentUntilSlot: subscriptionEndSlot(vault),
     currentSlot,
+    terms: { priceAtomic: vault.rate, intervalSlots: vault.intervalSlots, current: termsCurrent },
   };
   if (scoped.ambiguous) granted.ambiguousService = true;
   return granted;
+}
+
+function sleep(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve();
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

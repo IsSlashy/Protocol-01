@@ -894,3 +894,158 @@ describe('createEphemeralSession', () => {
     expect(r.claims!.sub).toBe(s.ephemeralAccountId);
   });
 });
+
+// ===========================================================================
+// 9. The registry moves, the vault does not: prior terms
+// ===========================================================================
+
+describe('verifyMerchantLicense - prior terms after update_service', () => {
+  const OLD_PRICE = 40_000_000n;
+  const OLD_INTERVAL = 216_000n;
+  const sold = honestVault({ rate: OLD_PRICE, intervalSlots: OLD_INTERVAL, startSlot: 1_000n, totalDeposited: OLD_PRICE * 10n });
+
+  it('without the list, a customer sold under the old price is refused for the rest of their window', async () => {
+    const { conn } = scene([sold]);
+    const r = await verifyMerchantLicense(conn, baseParams);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('service_mismatch');
+  });
+
+  it('with the old terms listed, the same customer is granted and the grant says the terms are not current', async () => {
+    const { conn } = scene([sold]);
+    const r = await verifyMerchantLicense(conn, {
+      ...baseParams,
+      priorTerms: [{ priceAtomic: OLD_PRICE, intervalSlots: OLD_INTERVAL }],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.terms).toEqual({ priceAtomic: OLD_PRICE, intervalSlots: OLD_INTERVAL, current: false });
+      expect(r.vaultPda.equals(sold.pda)).toBe(true);
+    }
+  });
+
+  it('a grant on the current terms says so', async () => {
+    const v = honestVault();
+    const { conn } = scene([v]);
+    const r = await verifyMerchantLicense(conn, {
+      ...baseParams,
+      priorTerms: [{ priceAtomic: OLD_PRICE, intervalSlots: OLD_INTERVAL }],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.terms.current).toBe(true);
+  });
+
+  it('a prior term must match BOTH numbers: the old price at a new interval is still refused', async () => {
+    const { conn } = scene([sold]);
+    const r = await verifyMerchantLicense(conn, {
+      ...baseParams,
+      priorTerms: [{ priceAtomic: OLD_PRICE, intervalSlots: OLD_INTERVAL * 2n }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('service_mismatch');
+      expect(r.detail).toContain('prior term');
+    }
+  });
+
+  it('a prior term never widens the retailer or the mint: the decoy at rate 1 stays refused', async () => {
+    const decoy = honestVault({ rate: 1n, intervalSlots: 216_000n, totalDeposited: 10n });
+    const { conn } = scene([decoy]);
+    const r = await verifyMerchantLicense(conn, {
+      ...baseParams,
+      priorTerms: [{ priceAtomic: OLD_PRICE, intervalSlots: OLD_INTERVAL }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('service_mismatch');
+  });
+});
+
+// ===========================================================================
+// 10. The chain has not served the vault yet: retryable refusals
+// ===========================================================================
+
+describe('verifyMerchantLicense - a not-found right after purchase is retryable', () => {
+  /** A connection that answers the key-only scan empty for the first `emptyScans` calls. */
+  function lagging(vaults: Parameters<typeof scene>[0], emptyScans: number) {
+    const { conn, calls } = scene(vaults);
+    const real = conn.getProgramAccounts.bind(conn);
+    let scans = 0;
+    (conn as unknown as { getProgramAccounts: unknown }).getProgramAccounts = async (
+      programId: PublicKey,
+      cfg: unknown,
+    ) => {
+      scans++;
+      if (scans <= emptyScans) {
+        calls.push({ method: 'getProgramAccounts', programId: programId.toBase58(), filters: (cfg as { filters?: unknown }).filters as never });
+        return [];
+      }
+      return real(programId, cfg as never);
+    };
+    return { conn, calls };
+  }
+
+  it('by default a not-found is answered at once, and it says it is retryable', async () => {
+    const { conn } = scene([]);
+    const r = await verifyMerchantLicense(conn, baseParams);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('vault_not_found');
+      expect(r.retryable).toBe(true);
+      expect(r.attempts).toBe(1);
+    }
+  });
+
+  it('with retry, the scan is repeated until the vault appears (two shapes per attempt)', async () => {
+    const v = honestVault();
+    const { conn } = lagging([v], 4); // attempts 1 and 2 see nothing at either shape
+    const r = await verifyMerchantLicense(conn, { ...baseParams, retry: { attempts: 5, delayMs: 0 } });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.vaultPda.equals(v.pda)).toBe(true);
+  });
+
+  it('with retry exhausted, the refusal counts its attempts', async () => {
+    const { conn } = scene([]);
+    const r = await verifyMerchantLicense(conn, { ...baseParams, retry: { attempts: 3, delayMs: 0 } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('vault_not_found');
+      expect(r.retryable).toBe(true);
+      expect(r.attempts).toBe(3);
+      expect(r.detail).toContain('3 attempts');
+    }
+  });
+
+  it('a malformed key is never retried', async () => {
+    const { conn, calls } = scene([]);
+    const r = await verifyMerchantLicense(conn, { ...baseParams, key: 'hello', retry: { attempts: 5, delayMs: 0 } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('malformed_key');
+      expect(r.retryable).toBeUndefined();
+    }
+    expect(calls.length).toBe(0);
+  });
+
+  it('a refusal that names a located vault is final, not retryable', async () => {
+    const decoy = honestVault({ rate: 1n, totalDeposited: 10n });
+    const { conn, calls } = scene([decoy]);
+    const r = await verifyMerchantLicense(conn, { ...baseParams, retry: { attempts: 5, delayMs: 0 } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('service_mismatch');
+      expect(r.retryable).toBeUndefined();
+    }
+    expect(calls.filter((c) => c.method === 'getProgramAccounts').length).toBeLessThanOrEqual(2);
+  });
+
+  it('an RPC failure is retried, then reported as retryable', async () => {
+    const { conn } = stubConnection({ failRpc: true });
+    const r = await verifyMerchantLicense(conn, { ...baseParams, retry: { attempts: 2, delayMs: 0 } });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('rpc_error');
+      expect(r.retryable).toBe(true);
+      expect(r.attempts).toBe(2);
+    }
+  });
+});
