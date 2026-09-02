@@ -32,9 +32,9 @@
  *
  * PROVES: the checked-in blob (and every inlined twin) is the exact artifact
  * `deployed-verifier.json` records as compatible with the deployed program, and
- * that its proof-format generation — MEASURED by generating seven proofs with it
- * and hashing them, not read off it — equals the generation that record
- * attributes to the deployment.
+ * that its proof-format generation — MEASURED by generating eight proofs with it,
+ * hashing the three deterministic ones and measuring the five masked ones, not
+ * read off it — equals the generation that record attributes to the deployment.
  *
  * DOES NOT PROVE: that a proof from this blob verifies on chain. Only a real
  * submission proves that. The record's `accepts_client_blob_sha256` is the place
@@ -106,13 +106,21 @@
  *
  * # Generation detection — the CLIENT side is measured, not read
  *
- * The client blob's generation comes from what it DOES: seven fixed witnesses in,
- * seven serialized proofs out, sha256 each, and every one must match the same
- * column of the fixture table in scripts/prover-behaviour.mjs. B1 is
- * length-preserving on all seven circuits, so length alone cannot separate the
- * generations (MEASURED: both blobs emit 45,001 / 65,801 / 66,681 / 75,637 /
- * 78,377 / 76,357 / 78,517 bytes) and the CONTENT digests are the discriminator.
- * A mixture, or a digest in neither column, refuses to classify and fails.
+ * The client blob's generation comes from what it DOES: eight fixed witnesses in,
+ * one per shipping circuit, eight serialized proofs out, and every one must match
+ * the same column of the fixture table in scripts/prover-behaviour.mjs. For the
+ * three deterministic circuits (C0, C2, C4) that is the sha256 of the proof. B1
+ * was length-preserving on every circuit it touched, so length alone cannot
+ * separate those generations (MEASURED: both blobs emit 45,001 / 65,801 / 66,681
+ * / 75,637 / 78,377 / 76,357 / 78,517 bytes) and the CONTENT digests are the
+ * discriminator. For the five MASKED circuits (C1, C3, C5, C6, C7 — a fresh
+ * CSPRNG mask per proof since 2026-08-29/31, so no digest can exist) it is the
+ * proof LENGTH, the same number src/wireFormat.test.ts pins against the Rust
+ * prover; what that can and cannot see is stated in prover-behaviour.mjs [MASK].
+ * A mixture, or a proof matching no column, refuses to classify and fails. The
+ * blob is driven THROUGH the generated wasm-bindgen glue (wasm/p01_stark.js),
+ * the file every client loads, because a masked prover asks the host for
+ * randomness — see prover-behaviour.mjs [GLUE].
  *
  * This replaced a scan for panic-message literals, which was cheated four rounds
  * running and was cheatable by accident. MEASURED 2026-07-31 against the previous
@@ -134,9 +142,9 @@
  * every Rust file and in the artifact does not move the verdict, because none of
  * them is read to reach it.
  *
- * What the digests do NOT prove is that the blob is B1 on every input; they are a
- * seven-witness sample. See the "What this DOES NOT prove" section of
- * scripts/prover-behaviour.mjs.
+ * What the digests do NOT prove is that the blob is B1 on every input; they are an
+ * eight-witness sample, and on the masked rows a length is all there is. See the
+ * "What this DOES NOT prove" section of scripts/prover-behaviour.mjs.
  *
  * The DEPLOYED side is still classified by scanning the ELF for msg! literals,
  * because nothing here can run a BPF program and a proof cannot be submitted to
@@ -1548,13 +1556,17 @@ try {
 }
 const blobSha = sha256(blob);
 
-// THE VERDICT. The blob is driven — seven witnesses in, seven proof digests out
-// — and the generation is whichever column of the fixture table all seven match.
-// Nothing here reads a string out of the artifact or out of any Rust source, so
-// no rename in any file changes what this returns. See prover-behaviour.mjs.
+// THE VERDICT. The blob is driven — eight witnesses in, one per shipping circuit
+// — and the generation is whichever column of the fixture table ALL eight match:
+// C0, C2 and C4 by proof digest; C1, C3, C5, C6 and C7, which draw a fresh
+// CSPRNG mask per proof and so have no digest, by proof LENGTH. Driven THROUGH
+// the generated wasm-bindgen glue since 2026-09-02, because a masked prover asks
+// the host for randomness. Nothing here reads a string out of the artifact or
+// out of any Rust source, so no rename in any file changes what this returns.
+// See prover-behaviour.mjs, sections [MASK] and [GLUE].
 const tableProblem = fixtureTableProblem();
 if (tableProblem !== null) fail(tableProblem.title, tableProblem.lines);
-const blobBehaviour = classifyProverBehaviour(blob);
+const blobBehaviour = await classifyProverBehaviour(blob);
 
 // CORROBORATION ONLY. The panic-literal scan that used to BE the verdict is kept
 // because it still detects things the digests do not — a string-stripped
@@ -1570,11 +1582,26 @@ console.log(`[deployed-verifier] gating   ${TARGET_CLUSTER}${clusterFlag === nul
 console.log(`[deployed-verifier] record   ${RECORD_REL}`);
 console.log(`[deployed-verifier] blob     ${CANONICAL}`);
 console.log(`[deployed-verifier]          ${blob.length.toLocaleString()} bytes, sha256 ${blobSha}`);
-console.log(
-  `[deployed-verifier]          generation ${blobGen ?? 'UNCLASSIFIABLE'} — MEASURED by driving it: ` +
-    `${blobBehaviour.results.filter((r) => r.verdict === blobGen).length}/${blobBehaviour.results.length} ` +
-    `circuits emit the ${blobGen ?? 'expected'} proof digest (${(blobBehaviour.ms / 1000).toFixed(1)} s)`,
-);
+// 🐛 FIXED 2026-09-02. This line used to count `r.verdict === blobGen` over
+// `results.length`. On a refusal `blobGen` is null, which no row's verdict ever
+// equals, so it printed "0/3" under a table whose three rows all read `b2` —
+// and the 3 was the number of rows DRIVEN before the abort, not the number in
+// the table. Now: rows whose proof matched ANY known generation, over the table,
+// with the two kinds of match counted apart so "8/8" cannot be read as eight
+// digests.
+{
+  const recognised = blobBehaviour.results.filter((r) => r.verdict !== 'unknown').length;
+  const byDigest = blobBehaviour.results.filter((r) => r.matchedBy === 'digest').length;
+  const byLength = blobBehaviour.results.filter((r) => r.matchedBy === 'length').length;
+  const measured = blobBehaviour.generation;
+  const shown =
+    blobGen ?? (measured !== null ? `${measured}, REFUSED — the reference table was rejected` : 'UNCLASSIFIABLE');
+  console.log(
+    `[deployed-verifier]          generation ${shown} — MEASURED by driving it: ` +
+      `${recognised}/${blobBehaviour.total} circuits emit ${measured === null ? 'a proof this classifier recognises' : `the ${measured} proof`} ` +
+      `(${byDigest} by digest, ${byLength} masked by length; ${(blobBehaviour.ms / 1000).toFixed(1)} s)`,
+  );
+}
 console.log(
   `[deployed-verifier]          panic-string scan says ${blobStrings.generation ?? 'UNCLASSIFIABLE'} ` +
     `(${blobStrings.hits.length}/${BLOB_ALL_MARKERS.length} era markers) — corroboration, not the verdict`,
@@ -1587,11 +1614,14 @@ if (blobGen === null) {
   fail('the checked-in prover blob could not be classified by what it DOES', [
     `  ${blobBehaviour.problem ?? 'the reference fixture table was rejected; see the failure above'}`,
     ...(blobBehaviour.results.length > 0 ? ['', ...describeBehaviour(blobBehaviour), ''] : ['']),
-    'The generation is decided by driving the blob against seven fixed witnesses and comparing the seven',
-    'proof digests, because B1 is length-preserving on all seven circuits and only the CONTENT moves.',
-    'A blob whose digests match neither the B1 column nor the measured pre-B1 artifact is a prover this',
-    'gate has never seen, and there is no safe default: guessing would guess "pre-b1", which is exactly',
-    'the guess that ships a B1 client at a pre-B1 chain. Refusing instead.',
+    'The generation is decided by driving the blob against eight fixed witnesses, one per shipping circuit.',
+    'C0, C2 and C4 are deterministic and their proof DIGESTS must match one column of the fixture table,',
+    'because B1 was length-preserving and only the CONTENT moved. C1, C3, C5, C6 and C7 draw a fresh',
+    'CSPRNG mask per proof, so no digest can describe them and their proof LENGTHS must equal what the',
+    'current generation emits — the numbers wireFormat.test.ts pins against the Rust prover. A blob that',
+    'matches no column, or mixes columns, is a prover this gate has never seen, and there is no safe',
+    'default: guessing would guess "pre-b1", which is exactly the guess that ships a B1 client at a',
+    'pre-B1 chain. Refusing instead.',
     '',
     'If the wire format changed on purpose, re-measure the fixtures in scripts/prover-behaviour.mjs in',
     'lockstep with src/wireFormat.test.ts and programs/p01_stark_verifier/tests/b1_deep_binding.rs.',
@@ -1629,7 +1659,7 @@ if (blobStrings.generation === null) {
 // B1, and that combination has no innocent explanation.
 if (blobGen !== null && blobStrings.generation !== null && blobGen !== blobStrings.generation) {
   fail('the blob PROVES one generation and its panic strings CLAIM another', [
-    `  driving the blob (seven proof digests)  ${blobGen}`,
+    `  driving the blob (eight witnesses)      ${blobGen}`,
     `  scanning the blob for panic literals    ${blobStrings.generation} (${blobStrings.hits.length}/${BLOB_ALL_MARKERS.length} era markers)`,
     '',
     ...describeBehaviour(blobBehaviour),
@@ -1731,7 +1761,7 @@ if (blobGen !== null && deployedGen !== blobGen) {
     `  client blob  ${blobGen.padEnd(7)} ${blobSha}  (${blob.length.toLocaleString()} B, this tree)`,
     `  deployed     ${String(deployedGen).padEnd(7)} ${deployed.elf_sha256}  (${Number(deployed.elf_bytes ?? 0).toLocaleString()} B, ${deployed.cluster} slot ${deployed.last_deployed_slot})`,
     '',
-    `The client generation was MEASURED by driving the blob, not read off it (${(blobBehaviour.ms / 1000).toFixed(1)} s, all seven circuits):`,
+    `The client generation was MEASURED by driving the blob, not read off it (${(blobBehaviour.ms / 1000).toFixed(1)} s, all eight circuits):`,
     ...describeBehaviour(blobBehaviour),
     '',
     'EVERY PROOF THIS CLIENT GENERATES WILL BE REJECTED WITH FriFoldCheckFailed.',

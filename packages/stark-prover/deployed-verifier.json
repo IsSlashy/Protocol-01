@@ -373,15 +373,16 @@
     "bytes": 274224,
     "proof_format_generation": "b2",
     "generation_evidence": {
-      "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node and generates one proof per shipping circuit on seven fixed witnesses, then sha256s each serialized proof. The generation is the column of its fixture table that ALL SEVEN digests match; a mixture, an unrecognised digest, a blob that will not instantiate and a blob that throws mid-proof all refuse to classify and fail the gate. Nothing about this reads a string out of the artifact or out of any Rust source, so renaming literals anywhere cannot move it. MEASURED cost on the dev box: 14.6 s wall for all seven, no cache.",
+      "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node THROUGH THE GENERATED GLUE (initSync) and generates one proof per shipping circuit on eight fixed witnesses. The three unmasked circuits (C0, C2, C4) are judged by proof sha256; the five masked circuits (C1, C3, C5, C6, C7) draw a fresh CSPRNG mask per proof and are judged by exact proof LENGTH, pinned in src/wireFormat.test.ts. The generation is the column that ALL EIGHT rows match; a mixture, an unrecognised digest, a refusal or a wrong length is UNCLASSIFIABLE and fails the gate.",
       "measured_digests": {
-        "C0 subscriber_ownership": "47641 B  5ea292acb52a3f352fbe9280c3b59291b77e92a066a6fbce743dbf8db456c09b",
-        "C1 pool_commitment": "68881 B  09e9476db988eef4950ed2ef64c57d0ab9569f7eeb40e27bb2ab2cf1e204a83d",
-        "C2 balance_proof": "69761 B  d21c888724a773f1e37598ac1f8a9ce9f784d5390b0314aa8d57503e64d25a7c",
-        "C3 merkle_path": "78157 B  abf0e733d82002ff74c45d2677fc213f893cb45b999578f84324c35f5907c5c0",
-        "C4 confidential_balance": "81457 B  94fe0535645eef6feab54ec6fa72d2370299d27c4522474cf66d601c28002d42",
-        "C5 transfer": "78877 B  28ef7176795111da1df5714dbc11ad3c32892de266242d30dec1cd60e9c252bd",
-        "C6 merkle_update": "81037 B  b8dc81e070487ec827e488809f361fc982e0b9c435270855f1a0b95d658cb0be"
+        "C0 subscriber_ownership": "47641 B  157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e",
+        "C1 pool_commitment": "94897 B  masked, length only",
+        "C2 balance_proof": "69761 B  c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c",
+        "C3 merkle_path": "79597 B  masked, length only",
+        "C4 confidential_balance": "81457 B  6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0",
+        "C5 transfer": "89821 B  masked, length only",
+        "C6 merkle_update": "82477 B  masked, length only",
+        "C7 spend": "79405 B  masked, length only"
       },
       "_previous_b1_digests": "The seven above are the B2 column. The B1 column this block used to carry, for whoever needs to recognise the older artifact: C0 45001 B e4aad105..., C1 65801 B 935d918c..., C2 66681 B 063d86a1..., C3 75637 B 2d97f56f..., C4 78377 B f8778367..., C5 76357 B 78afe9bb..., C6 78517 B 8e1166f5.... All seven are still pinned as the `b1` column of the fixture table in scripts/prover-behaviour.mjs, so the gate can still name a B1 blob rather than merely refusing to classify it.",
       "why_not_length": "B1 changed WHAT FRI FOLDS without adding or removing a byte. MEASURED 2026-07-31 by driving both blobs: the pre-B1 blob 5fe610c9 and the B1 blob emit the SAME SEVEN LENGTHS, to the byte (45,001 / 65,801 / 66,681 / 75,637 / 78,377 / 76,357 / 78,517), and SEVEN DIFFERENT DIGESTS. Between those two generations content is the only discriminator there is. B2 is different — it widens three wire fields, so the seven lengths DID move (to the numbers above) — but that is not licence to classify on length: a blob can be given any length and only content is expensive to fake, so the verdict stays on the digest and the length stays an observation.",
@@ -405,7 +406,18 @@
         ],
         "_controls_shrunk_2026_08_03": "bnd-c5 and bnd-c6 were in the list above and were REMOVED, because a CORRECT build of this tree no longer emits them and the remedy the gate printed ('reship the blob') could never have cleared it. That is the second time a byte scan here fired on an honest artifact -- see _era_split_2026_08_02 for the first. MEASURED over both blobs, raw byte occurrences of all six boundary tags: old (2a962ca9) had bnd-c1 1, bnd-c3 1, bnd-c5 1, bnd-c6 1 and bnd-c2 0, bnd-c4 0 -- exactly the four circuits that HAD a boundary fold; new (2613ffed) has all six at 0, while rlc-c1/c2/c3/c5 and proof_hex are untouched, so nothing was stripped. CAUSE: commit 109a4aa6, the C2/C4 binding fix, routed all six tags through one match returning *b\"bnd-cN\\0\\0\" BY VALUE as [u8;8]; a value needs no address, so LLVM emits immediates instead of a data-segment constant, and the only surviving by-reference use is inside #[cfg(test)] mod tests, which no wasm-pack build sees. PROOF THE BEHAVIOUR DID NOT MOVE WITH THE STRINGS: C5 and C6 emit proofs byte-identical to the pre-fold blob (28ef7176, b8dc81e0), impossible if their tag had stopped being absorbed, and C2/C4 match the digests the Rust prover pins independently. The presence of a tag STRING is a codegen artifact, not a semantic invariant; what remains in the list is a stripped-artifact canary and nothing more."
       },
-      "_resynced_2026_08_25": "The seven measured_digests below were re-measured after the reship. The b2 column in prover-behaviour.mjs was ALSO corrected the same day: it had been recovered from b7-drop-aligned-checks and matched neither b1_deep_binding.rs nor wireFormat.test.ts, which agree with each other on all seven."
+      "_resynced_2026_08_25": "The seven measured_digests below were re-measured after the reship. The b2 column in prover-behaviour.mjs was ALSO corrected the same day: it had been recovered from b7-drop-aligned-checks and matched neither b1_deep_binding.rs nor wireFormat.test.ts, which agree with each other on all seven.",
+      "_resynced_2026_09_02": [
+        "Re-measured off the blob 36c1fd4e (274,224 B) reshipped with [ZK-LIFT-FULL]. Until today this block still",
+        "listed digests and lengths of a blob three generations back (C0 5ea292ac..., C1 68,881 B); the gate does not",
+        "read this block, which is how it stayed wrong. The classifier itself could not drive any masked circuit",
+        "from 2026-08-25 (it stubbed the CSPRNG import) and reported 0/3 on a table of three matches; both fixed",
+        "today, see the [MASK] and [GLUE] sections of prover-behaviour.mjs.",
+        "",
+        "DOCUMENTED LIMIT: the 2026-08-31 blob df02e19c (160-entry lift) emits the same three digests and the same",
+        "five lengths as this one, so the behavioural classifier reads it as b2 too although the verifier deployed",
+        "at slot 491973056 rejects its C1/C3/C6/C7 proofs. Only deployed.accepts_client_blob_sha256 separates them."
+      ]
     },
     "_circuit_7": "This blob adds generate_spend_stark_proof (circuit 7) and 24 wasm-bindgen imports, from 1 to 25: the spend prover draws a 1,280-element CSPRNG mask, which pulls getrandom -> crypto -> the whole shim surface. The eight circuits the previous blob carried all still produce BYTE-IDENTICAL proofs under this one, which is why the generation label is unchanged. C7 itself has no digest and cannot have one -- its mask is fresh per proof."
   },
