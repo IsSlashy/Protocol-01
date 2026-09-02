@@ -276,12 +276,30 @@ describe('🚨 reserve hands back a commitment and never an opening', () => {
    * reclaim never actually cleared anything: green for the wrong reason. The
    * store now deletes, as the real ones do.
    */
-  it.fails('never hands the same leaf to two contributors', async () => {
+  it('never hands the same leaf to two live contributors', async () => {
     const a = await (await POST(req({ action: 'reserve' }))).json();
     const b = await (await POST(req({ action: 'reserve' }))).json();
     expect(a.leafIndex).toBe(6);
     expect(b.leafIndex, 'two contributors were given the same leaf').toBe(7);
     expect(b.commitment).toBe(treasuryCommitmentAt(7).toString());
+  });
+
+  it('reclaims the edge leaf only once its reservation is older than the proving window', async () => {
+    const a = await (await POST(req({ action: 'reserve' }))).json();
+    expect(a.leafIndex).toBe(6);
+    // Age the marker past the window: the holder's attempt must be dead.
+    values.set(`p01:note:contrib-reserved:${POOL_KEY}:6:at`, String(Date.now() - 21 * 60 * 1000));
+    const b = await (await POST(req({ action: 'reserve' }))).json();
+    expect(b.leafIndex, 'a dead reservation at the tree edge was not reclaimed').toBe(6);
+    // And a third, live, contributor walks past it again.
+    const c = await (await POST(req({ action: 'reserve' }))).json();
+    expect(c.leafIndex).toBe(7);
+  });
+
+  it('a marker without a recorded age (written before ages existed) is reclaimable', async () => {
+    counters.set(`p01:note:contrib-reserved:${POOL_KEY}:6`, 1);
+    const a = await (await POST(req({ action: 'reserve' }))).json();
+    expect(a.leafIndex).toBe(6);
   });
 });
 

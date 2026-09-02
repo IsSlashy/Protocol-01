@@ -113,6 +113,17 @@ const CONTRIBUTIONS_PER_IP_PER_HOUR = (() => {
  */
 const MAX_RESERVATION_LOOKAHEAD = 64;
 
+/**
+ * How long a reservation at the tree's edge is treated as LIVE before it can
+ * be reclaimed. A contribution proves, uploads and confirms well inside this
+ * window (measured 2026-09-02: 4 to 13 minutes end to end under devnet rate
+ * limits). Before this gate existed, the reclaim below fired on every second
+ * reservation inside the hour, because `start` is one past the tree by
+ * definition and so "the tree has not reached it" was always true: two live
+ * contributors were handed the same leaf (pinned 2026-09-02).
+ */
+const RECLAIM_AFTER_MS = 20 * 60 * 1000;
+
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
 }
@@ -284,18 +295,28 @@ export async function POST(request: NextRequest) {
     const start = maxLeafOnTree + 1;
     for (let leafIndex = start; leafIndex < start + MAX_RESERVATION_LOOKAHEAD; leafIndex += 1) {
       let taken: number;
+      const markerKey = contribReservedKey(poolKey, leafIndex);
+      const reservedAtKey = markerKey + ':at';
       try {
-        taken = await kv.incr(contribReservedKey(poolKey, leafIndex));
+        taken = await kv.incr(markerKey);
         if (taken !== 1 && leafIndex === start) {
-          // The tree has not reached this index, so whatever reserved it never
-          // deposited. Reclaim it rather than walking past and drifting further.
-          await kv.del(contribReservedKey(poolKey, leafIndex));
-          taken = await kv.incr(contribReservedKey(poolKey, leafIndex));
+          // The tree has not reached this index. Either the holder is still
+          // proving and uploading (a LIVE attempt, which must keep its leaf), or
+          // the attempt died. Only the marker's age tells the two apart: a
+          // marker older than the proving window, or one written before ages
+          // were recorded, is reclaimed; a fresh one is walked past.
+          const at = Number((await kv.get(reservedAtKey)) ?? 0);
+          if (!at || Date.now() - at > RECLAIM_AFTER_MS) {
+            await kv.del(markerKey);
+            await kv.del(reservedAtKey);
+            taken = await kv.incr(markerKey);
+          }
         }
         // Self-healing: an abandoned marker stops mattering after an hour even
         // if the branch above never runs.
         if (taken === 1) {
-          await kv.expire?.(contribReservedKey(poolKey, leafIndex), 3600);
+          await kv.set(reservedAtKey, Date.now(), { ex: 3600 });
+          await kv.expire?.(markerKey, 3600);
         }
       } catch (e) {
         return bad(503, `the reservation could not be written: ${(e as Error).message}`);
