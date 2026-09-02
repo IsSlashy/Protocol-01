@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, ActivityIndicator, StyleSheet,
 } from 'react-native';
@@ -14,7 +14,12 @@ import { useStreamStore } from '../../../stores/streamStore';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
-import { StreamFrequency, updateStream as updateStreamRecord } from '../../../services/solana/streams';
+import {
+  type Stream,
+  StreamFrequency,
+  loadStreams,
+  updateStream as updateStreamRecord,
+} from '../../../services/solana/streams';
 import { getConnection } from '../../../services/solana/connection';
 import { getKeypair } from '../../../services/solana/wallet';
 import { sendSolPrivate } from '../../../services/solana/transactions';
@@ -33,7 +38,13 @@ import {
   C3_SUBTREE_DEPTH,
 } from '../../../services/denominatedPool';
 import { vaultDecrypt } from '../../../utils/crypto/noteVault';
-import { iconKeyToIonicons, formatPriceSOL, formatInterval } from '../../../services/solana/serviceRegistry';
+import {
+  iconKeyToIonicons,
+  formatPriceSOL,
+  formatInterval,
+  useRegistryService,
+} from '../../../services/solana/serviceRegistry';
+import { resolveSubscribeTerms } from '../../../services/solana/subscribeTerms';
 import {
   Colors,
   FontFamily,
@@ -73,6 +84,11 @@ function SubscribeContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
+    /**
+     * Registry entry PDA. Discover pushes this and nothing else; the entry
+     * behind it carries the retailer, price and interval the vault copies.
+     */
+    service?: string;
     serviceId: string;
     serviceName: string;
     servicePda?: string;
@@ -120,30 +136,42 @@ function SubscribeContent() {
   // mature note ≥ rate (legacy behaviour).
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
 
-  // Resolve service metadata — prefer on-chain fields passed via router
-  // params; fall back to legacy `price`/`frequency` strings.
-  const serviceName = params.serviceName || 'Service';
-  const serviceId = params.serviceId || '';
+  // Resolve service metadata: the registry entry when the route names one
+  // (`service`), else the fields older callers spell out on the route. The
+  // entry's rate and interval reach the vault verbatim; a merchant's registry
+  // check refuses anything else.
+  const registry = useRegistryService(params.service);
+  const terms = resolveSubscribeTerms(params, registry.entry);
+  const serviceName = terms.serviceName;
+  const serviceId = terms.serviceId;
   const retailerPubkey = useMemo<PublicKey | null>(() => {
-    if (!params.retailer) return null;
+    if (!terms.retailer) return null;
     try {
-      return new PublicKey(params.retailer);
+      return new PublicKey(terms.retailer);
     } catch {
       return null;
     }
-  }, [params.retailer]);
-  const priceLamports: bigint = params.priceLamports
-    ? BigInt(params.priceLamports)
-    : BigInt(Math.round(parseFloat(params.price || '0') * 1e9));
-  const intervalSlotsBig: bigint = params.intervalSlots
-    ? BigInt(params.intervalSlots)
-    : 6_480_000n; // monthly default
-  const supportsOneshot = params.supportsOneshot !== '0';
-  const supportsVault = params.supportsVault === '1';
-  const verified = params.verified === '1';
+  }, [terms.retailer]);
+  const priceLamports: bigint = terms.priceLamports;
+  const intervalSlotsBig: bigint = terms.intervalSlots;
+  const supportsOneshot = terms.supportsOneshot;
+  const supportsVault = terms.supportsVault;
+  const verified = terms.verified;
   const price = Number(priceLamports) / 1e9;
-  const frequency = (params.frequency || formatInterval(intervalSlotsBig)) as StreamFrequency;
-  const icon = iconKeyToIonicons(params.iconKey || serviceId);
+  const frequency = (terms.frequency || formatInterval(intervalSlotsBig)) as StreamFrequency;
+  const icon = iconKeyToIonicons(terms.iconKey);
+  // Nothing is bought until the entry Discover named has been read from the
+  // chain. A cached copy may paint the page; only a fresh read sets the terms.
+  const registryGate: string | null = !params.service
+    ? null
+    : registry.status === 'found'
+      ? null
+      : registry.status === 'missing'
+        ? 'This merchant is no longer listed in the registry. Re-open Discover.'
+        : registry.status === 'error'
+          ? `The registry entry could not be read: ${registry.error ?? 'unknown error'}`
+          : 'Reading the merchant registry entry';
+  const registryBlocked = registryGate !== null;
 
   // 2-mode UX: "classique" (wallet) vs "privé" (ZK). The internal paymentMode
   // is auto-derived — privé picks the best ZK path the merchant supports
@@ -156,6 +184,11 @@ function SubscribeContent() {
   const paymentMode: PaymentMode = uiMode === 'private' ? privatePaymentMode : 'wallet';
   const useZkPool = paymentMode === 'zk-oneshot';
   const useZkVault = paymentMode === 'zk-vault';
+  // The registry entry arrives after first render; if it turns out to support
+  // no private path, the hidden option must not stay selected.
+  useEffect(() => {
+    if (!supportsPrivate && uiMode === 'private') setUiMode('classic');
+  }, [supportsPrivate, uiMode]);
 
   // Duration grey-out: disable months the user can't actually fund. For
   // classic, gate on visible wallet SOL; for privé vault (locks total
@@ -180,6 +213,9 @@ function SubscribeContent() {
 
   const handleSubscribe = async () => {
     if (!publicKey) return p01Alert(t('alerts.walletRequired'), t('alerts.walletRequiredDesc'), undefined, 'warning');
+    if (registryBlocked) {
+      return p01Alert(t('common.error'), registryGate ?? '', undefined, 'error');
+    }
     if (!retailerPubkey) {
       return p01Alert(
         t('common.error'),
@@ -646,26 +682,46 @@ function SubscribeContent() {
 
       setProgress('Recording subscription…');
       setStepInfo(null);
-      const stream = await createNewStream({
-        id: streamId,
-        name: serviceName, recipientAddress: retailerAddr, totalAmount: totalPrice,
-        frequency, endDate, serviceId, serviceName,
-        // Record the exact tag the vault path hashed into license_commitment,
-        // so the detail screen never has to guess it back.
-        licenseServiceTag: useZkVault ? licenseServiceTag(serviceId, retailerAddr) : undefined,
-        amountNoise: enablePrivacy ? 10 : 0, timingNoise: enablePrivacy ? 4 : 0,
-        useStealthAddress: enablePrivacy, useZkPool: useZkPool || useZkVault, useZkVault,
-      });
-      await updateStreamRecord(stream.id, {
-        amountStreamed: paid,
-        // Prepay settles every period now → mark them all complete, flag the
-        // stream prepaid (scheduler skips billing), and push the next charge out
-        // to the end date as a belt-and-braces guard.
-        paymentsCompleted: isPrepay ? duration : 1,
-        ...(isPrepay ? { prepaid: true, nextPaymentDate: endDate } : {}),
-        paymentHistory: [{ id: `pay-${stream.id}-0`, amount: paid, actualAmount: paid, signature: sig, timestamp: now, status: 'success' }],
-        ...(vaultAddress ? { vaultAddress } : {}),
-      });
+      // On the vault path the store has already written a row for this vault
+      // from the terms it sent (subscriptionVaultStore, provisionalVaultInfo).
+      // Complete that row rather than writing a second one for the same vault.
+      const provisional: Stream | null = vaultAddress
+        ? (await loadStreams()).find(s => s.vaultAddress === vaultAddress) ?? null
+        : null;
+      let stream: Stream;
+      if (provisional) {
+        stream = (await updateStreamRecord(provisional.id, {
+          name: serviceName,
+          serviceId,
+          serviceName,
+          // Record the exact tag the vault path hashed into license_commitment,
+          // so the detail screen never has to guess it back.
+          licenseServiceTag: licenseServiceTag(serviceId, retailerAddr),
+          paymentHistory: [{ id: `pay-${provisional.id}-0`, amount: paid, actualAmount: paid, signature: sig, timestamp: now, status: 'success' }],
+        })) ?? provisional;
+        await refresh();
+      } else {
+        stream = await createNewStream({
+          id: streamId,
+          name: serviceName, recipientAddress: retailerAddr, totalAmount: totalPrice,
+          frequency, endDate, serviceId, serviceName,
+          // Record the exact tag the vault path hashed into license_commitment,
+          // so the detail screen never has to guess it back.
+          licenseServiceTag: useZkVault ? licenseServiceTag(serviceId, retailerAddr) : undefined,
+          amountNoise: enablePrivacy ? 10 : 0, timingNoise: enablePrivacy ? 4 : 0,
+          useStealthAddress: enablePrivacy, useZkPool: useZkPool || useZkVault, useZkVault,
+        });
+        await updateStreamRecord(stream.id, {
+          amountStreamed: paid,
+          // Prepay settles every period now → mark them all complete, flag the
+          // stream prepaid (scheduler skips billing), and push the next charge out
+          // to the end date as a belt-and-braces guard.
+          paymentsCompleted: isPrepay ? duration : 1,
+          ...(isPrepay ? { prepaid: true, nextPaymentDate: endDate } : {}),
+          paymentHistory: [{ id: `pay-${stream.id}-0`, amount: paid, actualAmount: paid, signature: sig, timestamp: now, status: 'success' }],
+          ...(vaultAddress ? { vaultAddress } : {}),
+        });
+      }
       refresh(publicKey || undefined).catch(() => {});
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       const successTitle = useZkVault
@@ -743,6 +799,26 @@ function SubscribeContent() {
             </View>
           </View>
         </Animated.View>
+
+        {/* The registry entry is what the merchant will compare the vault
+            against, so the page waits for it and says so. */}
+        {registryGate && (
+          <View style={st.registryGate} accessibilityRole="alert">
+            {registry.status === 'loading' && (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            )}
+            <Text style={st.registryGateText}>{registryGate}</Text>
+            {registry.status === 'error' && (
+              <TouchableOpacity
+                onPress={registry.retry}
+                accessibilityRole="button"
+                style={st.registryRetry}
+              >
+                <Text style={st.registryRetryText}>Try again</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
         {/* ── Duration (hidden in vault mode — a vault is open-ended) ── */}
         {!useZkVault && (
@@ -1053,16 +1129,16 @@ function SubscribeContent() {
       <View style={[st.cta, { paddingBottom: insets.bottom + Layout.tabBarTotalHeight }]}>
         <TouchableOpacity
           onPress={handleSubscribe}
-          disabled={isSubscribing || ((useZkPool || useZkVault) && privateBalance < price)}
+          disabled={isSubscribing || registryBlocked || ((useZkPool || useZkVault) && privateBalance < price)}
           style={[
             st.ctaBtn,
             isSubscribing && st.ctaBtnBusy,
-            ((useZkPool || useZkVault) && privateBalance < price) && st.ctaBtnDisabled,
+            (registryBlocked || ((useZkPool || useZkVault) && privateBalance < price)) && st.ctaBtnDisabled,
           ]}
           activeOpacity={0.85}
           accessibilityRole="button"
           accessibilityState={{
-            disabled: isSubscribing || ((useZkPool || useZkVault) && privateBalance < price),
+            disabled: isSubscribing || registryBlocked || ((useZkPool || useZkVault) && privateBalance < price),
             busy: isSubscribing,
           }}
         >
@@ -1168,6 +1244,42 @@ const st = StyleSheet.create({
     fontFamily: FontFamily.regular,
     fontSize: FontSize.sm,
     color: Colors.textSecondary,
+  },
+
+  // Registry gate, under the hero: what the merchant will compare against.
+  registryGate: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.lg,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surfaceSecondary,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.borderSoft,
+  },
+  registryGateText: {
+    flex: 1,
+    minWidth: 160,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+  },
+  registryRetry: {
+    minHeight: 44,
+    paddingHorizontal: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: BorderRadius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  registryRetryText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.text,
   },
 
   // Sections

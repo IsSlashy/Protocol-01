@@ -9,9 +9,12 @@
  */
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js';
+import { LAMPORTS_PER_SOL, PublicKey, SystemProgram } from '@solana/web3.js';
 import { useEffect, useState } from 'react';
-import { fetchAllServices as sdkFetchAllServices } from '@protocol-01/specter-sdk';
+import {
+  fetchAllServices as sdkFetchAllServices,
+  fetchServiceByPda as sdkFetchServiceByPda,
+} from '@protocol-01/specter-sdk';
 import { getConnection } from './connection';
 
 /**
@@ -282,6 +285,113 @@ export function useServiceRegistry(
     error,
     refresh: () => load(true),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Single-entry lookup
+//
+// A subscription is only recognised by a merchant's registry check
+// (`verifyMerchantLicense` in packages/merchant-sdk) when the vault's retailer,
+// mint, rate and interval equal the registry entry EXACTLY. So a screen that
+// opens a vault for a registered service must read that entry and copy its
+// terms verbatim; the helpers below are how it gets the entry.
+// ---------------------------------------------------------------------------
+
+/** Find a registry entry by its PDA in an already-loaded list. */
+export function findServiceByPda(services: ServiceEntry[], pda: string): ServiceEntry | null {
+  return services.find(s => s.pda.toBase58() === pda) ?? null;
+}
+
+/**
+ * The active entries whose payment recipient is `retailer`. With
+ * `nativeSolOnly` (the default) entries priced in an SPL mint are dropped,
+ * because every mobile pool pays in native SOL and a SOL vault can never
+ * satisfy an SPL-priced entry.
+ */
+export function findServicesByRetailer(
+  services: ServiceEntry[],
+  retailer: string,
+  opts: { nativeSolOnly?: boolean } = {},
+): ServiceEntry[] {
+  if (!retailer) return [];
+  const nativeSolOnly = opts.nativeSolOnly ?? true;
+  return services.filter(
+    s =>
+      s.active &&
+      s.retailer.toBase58() === retailer &&
+      (!nativeSolOnly || s.tokenMint.equals(SystemProgram.programId)),
+  );
+}
+
+/** Read one registry entry straight from the chain by its PDA. */
+export async function fetchServiceByPda(pda: PublicKey | string): Promise<ServiceEntry | null> {
+  const key = typeof pda === 'string' ? new PublicKey(pda) : pda;
+  const entry = await sdkFetchServiceByPda(getConnection(), key);
+  return entry ? (entry as unknown as ServiceEntry) : null;
+}
+
+export type RegistryLookupStatus = 'idle' | 'loading' | 'found' | 'missing' | 'error';
+
+export interface RegistryLookup {
+  /**
+   * `found` is only ever set from a fresh chain read. A cached entry paints
+   * `entry` while `status` is still `loading`, so a screen can show the name
+   * and price at once but must not write a vault until the chain has answered:
+   * the terms it copies are what the merchant compares against.
+   */
+  status: RegistryLookupStatus;
+  entry: ServiceEntry | null;
+  error: string | null;
+  retry: () => void;
+}
+
+/**
+ * Resolve the registry entry behind a `service` route param (its PDA).
+ * `idle` when no PDA is given; `missing` when the account does not exist.
+ */
+export function useRegistryService(pda: string | null | undefined): RegistryLookup {
+  const [state, setState] = useState<Omit<RegistryLookup, 'retry'>>({
+    status: pda ? 'loading' : 'idle',
+    entry: null,
+    error: null,
+  });
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    if (!pda) {
+      setState({ status: 'idle', entry: null, error: null });
+      return;
+    }
+    let cancelled = false;
+    setState({ status: 'loading', entry: null, error: null });
+    (async () => {
+      try {
+        const cached = findServiceByPda(await readCachedServices(), pda);
+        if (cached && !cancelled) setState({ status: 'loading', entry: cached, error: null });
+      } catch {
+        // The cache is a convenience; the chain read below is the answer.
+      }
+      let fresh: ServiceEntry | null = null;
+      try {
+        fresh = await fetchServiceByPda(pda);
+      } catch (err) {
+        if (cancelled) return;
+        setState(prev => ({ status: 'error', entry: prev.entry, error: (err as Error).message }));
+        return;
+      }
+      if (cancelled) return;
+      setState(
+        fresh
+          ? { status: 'found', entry: fresh, error: null }
+          : { status: 'missing', entry: null, error: null },
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pda, nonce]);
+
+  return { ...state, retry: () => setNonce(n => n + 1) };
 }
 
 // ---------------------------------------------------------------------------

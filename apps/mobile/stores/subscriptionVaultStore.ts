@@ -250,6 +250,106 @@ function notifySubscriptionEvent(title: string, body: string, extra?: Record<str
   }).catch(() => {});
 }
 
+// ---------------------------------------------------------------------------
+// The Stream row a subscribe leaves behind
+//
+// The Streams tab lists Stream rows, and the detail screen hands a row's
+// `vaultAddress` to LicenseKeyCard. So a vault with no row is a subscription
+// the customer cannot see and a license key they cannot read. The row used to
+// be written only if `fetchVault` returned the account on its single try right
+// after the send; an RPC that had not served the account yet, or one 429 after
+// a ~150-tx proof upload, left no row, and nothing rebuilt it: the vault was
+// already in `vaults`, so `recoverOrphanedVaults` skipped it for ever. The row
+// is now written from the terms this client SENT, and the chain fills in the
+// rest when it can.
+// ---------------------------------------------------------------------------
+
+/**
+ * How long `fillStreamRowFromChain` keeps asking the RPC for a vault this
+ * client just sent. Exported so a test can shorten it.
+ */
+export const CHAIN_FILL_POLICY = { attempts: 5, delayMs: 1500 };
+
+/**
+ * The vault account as this client knows it the moment the subscribe has
+ * confirmed, before any read-back. Every field was on the instruction it just
+ * sent, except `startSlot`, which is the slot read at confirmation (0 when the
+ * RPC would not say; the status maths treat that as "do not judge the clock").
+ */
+export function provisionalVaultInfo(args: {
+  vaultAddress: string;
+  vaultConfig: SubscribePrivateConfig;
+  poolConfig: PoolConfig;
+  subscriberOwnershipCommitment: bigint;
+  startSlot: number | null;
+}): VaultInfo {
+  return {
+    address: args.vaultAddress,
+    subscriberPubkey: null,
+    subscriberCommitment: args.subscriberOwnershipCommitment,
+    retailer: args.vaultConfig.retailer.toBase58(),
+    tokenMint: args.poolConfig.tokenMint.toBase58(),
+    // subscribe_private_stark moves the whole note into the vault.
+    totalDeposited: args.poolConfig.denominationAtomic,
+    rate: args.vaultConfig.rate,
+    intervalSlots: args.vaultConfig.intervalSlots,
+    startSlot: BigInt(args.startSlot ?? 0),
+    claimedPeriods: 0n,
+    isActive: true,
+    isPaused: false,
+    pauseSlot: null,
+    totalPausedSlots: 0n,
+    sourcePool: args.poolConfig.poolPDA.toBase58(),
+    isNormalMode: false,
+    isPrivateMode: true,
+    clientStealthMeta: null,
+  };
+}
+
+async function readConfirmedSlot(): Promise<number | null> {
+  try {
+    return await getConnection().getSlot('confirmed');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the vault back a few times, with a short pause between tries, and
+ * bring its Stream row in line with what only the chain knows (the exact
+ * start slot, the status the program computes). Creates the row if the
+ * provisional write failed. Resolves to the account once read, or `null` when
+ * every attempt came back empty; never throws.
+ */
+export async function fillStreamRowFromChain(
+  vaultPDA: PublicKey,
+  opts: { attempts?: number; delayMs?: number; licenseServiceTag?: string } = {},
+): Promise<VaultInfo | null> {
+  const attempts = Math.max(1, opts.attempts ?? CHAIN_FILL_POLICY.attempts);
+  const delayMs = opts.delayMs ?? CHAIN_FILL_POLICY.delayMs;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    if (attempt > 1 && delayMs > 0) await new Promise(r => setTimeout(r, delayMs));
+    let info: VaultInfo | null = null;
+    try {
+      info = await fetchVault(vaultPDA);
+    } catch (err) {
+      console.warn(`[SubscriptionVault] vault read ${attempt}/${attempts} failed:`, (err as Error).message);
+    }
+    if (!info) continue;
+    try {
+      const { refreshStreamFromVault } = await import('../services/solana/streams');
+      await refreshStreamFromVault(info, { licenseServiceTag: opts.licenseServiceTag });
+    } catch (err) {
+      console.warn('[SubscriptionVault] stream row refresh from chain failed (non-fatal):', err);
+    }
+    return info;
+  }
+  console.warn(
+    `[SubscriptionVault] vault ${vaultPDA.toBase58()} not readable after ${attempts} attempts; the row keeps the terms sent`,
+  );
+  return null;
+}
+
 // NOTE(Privy-removal, spec §3 Phase 1): `getWalletSignerIfPrivy()` is gone. Every
 // wallet is a local Ed25519 keypair, so the service helpers below fall back to
 // `getKeypair()` internally whenever the optional `WalletSigner` arg is undefined.
@@ -424,26 +524,49 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
           }));
 
-          // Sync the new vault as a Stream record so the Streams tab reflects
-          // the subscription immediately. Best-effort, non-fatal.
+          // Write the Stream row NOW, from the terms just sent, so the Streams
+          // tab and the license key card have a row whether or not the RPC is
+          // already serving the account (see the note above
+          // `provisionalVaultInfo`). Best-effort, non-fatal: the subscription
+          // is on chain either way.
+          const confirmedSlot = await readConfirmedSlot();
           try {
-            const { fetchVault } = await import('../services/subscriptionVault');
             const { upsertStreamFromVault } = await import('../services/solana/streams');
-            const vaultInfo = await fetchVault(vaultPDA);
+            const row = await upsertStreamFromVault(
+              provisionalVaultInfo({
+                vaultAddress: vaultPDA.toBase58(),
+                vaultConfig,
+                poolConfig,
+                subscriberOwnershipCommitment,
+                startSlot: confirmedSlot,
+              }),
+              {
+                // Record the tag that was hashed into license_commitment above.
+                // Without it this row can only re-derive the retailer fallback,
+                // and a subscription made under a registry slug shows a key the
+                // merchant is bound to reject.
+                licenseServiceTag: serviceId,
+                // The same slot as `startSlot`: the status is judged at the
+                // moment the vault opened, not against a slot the RPC may
+                // refuse to answer a second time.
+                currentSlot: confirmedSlot ?? 0,
+              },
+            );
             if (__DEV__) {
-              console.log('[Sub:Create:Store] stream sync', {
-                vaultFetched: !!vaultInfo,
+              console.log('[Sub:Create:Store] stream row written from sent terms', {
                 vaultPDA: vaultPDA.toBase58(),
+                streamId: row?.id ?? '(already existed)',
+                startSlot: confirmedSlot,
               });
             }
-            // Record the tag that was hashed into license_commitment above.
-            // Without it this row can only re-derive the retailer fallback, and
-            // a subscription made under a registry slug shows a key the
-            // merchant is bound to reject.
-            if (vaultInfo) await upsertStreamFromVault(vaultInfo, { licenseServiceTag: serviceId });
           } catch (e) {
-            console.warn('[SubscriptionVault] stream sync after subscribePrivateStark failed (non-fatal):', e);
+            console.warn('[SubscriptionVault] stream row after subscribePrivateStark failed (non-fatal):', e);
           }
+
+          // What only the chain knows is filled in once the account is
+          // readable, retrying a few times. Not awaited: the caller has a
+          // spinner up and the vault is already theirs.
+          void fillStreamRowFromChain(vaultPDA, { licenseServiceTag: serviceId });
 
           notifySubscriptionEvent(
             'Subscription Active',

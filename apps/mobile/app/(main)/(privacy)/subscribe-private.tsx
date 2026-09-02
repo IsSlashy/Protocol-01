@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
+import { useStreamStore } from '@/stores/streamStore';
 import {
   receiptFromJSON,
   findPoolByPDA,
@@ -26,6 +27,15 @@ import {
   C3_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
 import { getConnection } from '@/services/solana/connection';
+import { loadStreams } from '@/services/solana/streams';
+import {
+  useServiceRegistry,
+  useRegistryService,
+  findServicesByRetailer,
+  formatPriceSOL,
+  formatInterval,
+  type ServiceEntry,
+} from '@/services/solana/serviceRegistry';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { licenseServiceTag } from '@/services/license/derive';
 import { useStarkProver } from '@/providers/StarkProverProvider';
@@ -63,6 +73,8 @@ export default function SubscribePrivateScreen() {
     rate?: string;
     intervalSlots?: string;
     mode?: 'merchant' | 'stream-p2p';
+    /** Registry entry PDA: the screen is being opened for a registered service. */
+    service?: string;
   }>();
   const isP2PMode = params.mode === 'stream-p2p';
 
@@ -86,6 +98,54 @@ export default function SubscribePrivateScreen() {
     setProgress(s);
   }, [setProgress]);
 
+  // The registry decides the terms for a registered retailer. A merchant
+  // checks a key with `verifyMerchantLicense`, which refuses any vault whose
+  // rate or interval differs from the merchant's registry entry, so the values
+  // typed on this screen may only reach the vault for a retailer the registry
+  // does not know. Unverified entries count: the merchant's check does not
+  // look at the badge.
+  const registry = useServiceRegistry({ verifiedOnly: false });
+  const pdaLookup = useRegistryService(params.service);
+  const [pickedServicePda, setPickedServicePda] = useState<string | null>(null);
+
+  // Opened for a registry entry: the retailer is the entry's, not typed.
+  const routedEntry = pdaLookup.status === 'found' ? pdaLookup.entry : null;
+  useEffect(() => {
+    if (routedEntry) setRetailer(routedEntry.retailer.toBase58());
+  }, [routedEntry]);
+
+  const trimmedRetailer = retailer.trim();
+  const registryMatches = useMemo<ServiceEntry[]>(
+    () => (routedEntry ? [routedEntry] : findServicesByRetailer(registry.services, trimmedRetailer)),
+    [routedEntry, registry.services, trimmedRetailer],
+  );
+  const otherMintMatches = useMemo(
+    () =>
+      routedEntry
+        ? 0
+        : findServicesByRetailer(registry.services, trimmedRetailer, { nativeSolOnly: false }).length -
+          registryMatches.length,
+    [routedEntry, registry.services, trimmedRetailer, registryMatches.length],
+  );
+  // One match locks the terms; several need a pick; none is free-form.
+  const lockedEntry: ServiceEntry | null =
+    registryMatches.length === 1
+      ? registryMatches[0]
+      : registryMatches.find(s => s.pda.toBase58() === pickedServicePda) ?? null;
+  const needsPick = registryMatches.length > 1 && !lockedEntry;
+  // Nothing is written until the registry has answered: it is the only way to
+  // know whether the typed values are allowed to reach the vault.
+  const registryPending = params.service ? pdaLookup.status === 'loading' : registry.loading;
+  const registryGate: string | null = params.service
+    ? pdaLookup.status === 'missing'
+      ? 'This merchant is no longer listed in the registry.'
+      : pdaLookup.status === 'error'
+        ? `The registry entry could not be read: ${pdaLookup.error ?? 'unknown error'}`
+        : null
+    : registry.error && !lockedEntry
+      ? `The registry could not be read: ${registry.error}`
+      : null;
+
   const matureNotes = notes.filter(n => n.status === 'mature');
 
   const handleSubmit = async () => {
@@ -107,23 +167,52 @@ export default function SubscribePrivateScreen() {
       return;
     }
 
-    const rateFloat = parseFloat(rate || '0');
-    if (!Number.isFinite(rateFloat) || rateFloat <= 0) {
-      p01Alert('Invalid Rate', 'Please enter a positive payment rate in SOL.');
+    if (registryPending) {
+      p01Alert('Registry not read yet', 'Wait for the registry to answer before opening the vault.');
       return;
     }
-    const rateLamports = BigInt(Math.floor(rateFloat * 1e9));
-    if (rateLamports <= 0n) {
-      p01Alert('Invalid Rate', 'Rate must be greater than zero after lamport conversion.');
+    if (registryGate) {
+      p01Alert('Registry unavailable', registryGate);
+      return;
+    }
+    if (needsPick) {
+      p01Alert('Choose a plan', 'This retailer has several registry entries. Pick the one you are subscribing to.');
       return;
     }
 
-    const intervalSlotsInt = parseInt(intervalSlots, 10);
-    if (!Number.isFinite(intervalSlotsInt) || intervalSlotsInt <= 0) {
-      p01Alert('Invalid Interval', 'Interval must be a positive number of slots.');
-      return;
+    let rateLamports: bigint;
+    let intervalSlotsNum: bigint;
+    if (lockedEntry) {
+      // Verbatim from the entry, bigint for bigint: that is what the merchant
+      // compares the vault against. No float on this path.
+      retailerKey = lockedEntry.retailer;
+      rateLamports = lockedEntry.priceAtomic;
+      intervalSlotsNum = lockedEntry.intervalSlots;
+      if (rateLamports <= 0n || intervalSlotsNum <= 0n) {
+        p01Alert('Invalid registry entry', 'This registry entry has a zero price or interval and cannot be subscribed to.');
+        return;
+      }
+    } else {
+      const rateFloat = parseFloat(rate || '0');
+      if (!Number.isFinite(rateFloat) || rateFloat <= 0) {
+        p01Alert('Invalid Rate', 'Please enter a positive payment rate in SOL.');
+        return;
+      }
+      // round, not floor: floor(2.01 * 1e9) is 2009999999.
+      rateLamports = BigInt(Math.round(rateFloat * 1e9));
+      if (rateLamports <= 0n) {
+        p01Alert('Invalid Rate', 'Rate must be greater than zero after lamport conversion.');
+        return;
+      }
+
+      const intervalSlotsInt = parseInt(intervalSlots, 10);
+      if (!Number.isFinite(intervalSlotsInt) || intervalSlotsInt <= 0) {
+        p01Alert('Invalid Interval', 'Interval must be a positive number of slots.');
+        return;
+      }
+      intervalSlotsNum = BigInt(intervalSlotsInt);
     }
-    const intervalSlotsNum = BigInt(intervalSlotsInt);
+    const rateSOL = Number(rateLamports) / 1e9;
 
     const note = notes.find(n => n.id === selectedNoteId);
     if (!note) {
@@ -152,16 +241,17 @@ export default function SubscribePrivateScreen() {
         notePoolVersion: (note as any).poolVersion ?? 'unknown',
         poolPDA: poolConfig.poolPDA.toBase58(),
         poolVersion: poolConfig.version ?? 'v2',
-        retailer: trimmedRetailer.slice(0, 8) + '…',
+        retailer: retailerKey.toBase58().slice(0, 8) + '…',
         rateLamports: rateLamports.toString(),
-        intervalSlots: intervalSlotsInt,
+        intervalSlots: intervalSlotsNum.toString(),
+        registrySlug: lockedEntry?.slug ?? null,
         matureNotesAvailable: matureNotes.length,
       });
     }
     if (rateLamports > poolConfig.denominationAtomic) {
       p01Alert(
         'Rate Exceeds Note',
-        `Per-period rate (${rateFloat} ${note.token}) cannot be larger than the note denomination (${note.denomination} ${note.token}).`,
+        `Per-period rate (${rateSOL} ${note.token}) cannot be larger than the note denomination (${note.denomination} ${note.token}).`,
       );
       return;
     }
@@ -283,7 +373,7 @@ export default function SubscribePrivateScreen() {
       }
 
       setStarkStatus('Submitting STARK subscription...');
-      const { signature: sig } = await subscribePrivateStarkAction(
+      const { signature: sig, vaultAddress } = await subscribePrivateStarkAction(
         receipt,
         poolConfig,
         vaultConfig,
@@ -301,10 +391,10 @@ export default function SubscribePrivateScreen() {
           proofSize: c3Result.proofSize,
         },
         c3Walk,
-        // Service tag for the license-key commitment. This screen has no
-        // Service Registry slug (free-form retailer), so the rule resolves to
-        // the retailer address — the same value LicenseKeyCard now uses.
-        licenseServiceTag(undefined, retailerKey.toBase58()),
+        // Service tag for the license-key commitment: the registry slug for a
+        // registered service, else the retailer address. One rule, shared with
+        // LicenseKeyCard (licenseServiceTag).
+        licenseServiceTag(lockedEntry?.slug, retailerKey.toBase58()),
       );
 
       if (__DEV__) {
@@ -316,8 +406,21 @@ export default function SubscribePrivateScreen() {
         });
       }
       setStarkStatus(null);
-      p01Alert('Success', `Private subscription created!\nTx: ${sig.slice(0, 16)}...`);
-      router.back();
+      // The store wrote the Stream row from the terms it sent; the license
+      // key is shown on that row's detail screen.
+      await useStreamStore.getState().refresh().catch(() => {});
+      const row = (await loadStreams().catch(() => [])).find(s => s.vaultAddress === vaultAddress);
+      p01Alert(
+        'Success',
+        `Private subscription created!\nTx: ${sig.slice(0, 16)}...`,
+        row
+          ? [
+              { text: 'View subscription', onPress: () => router.replace(`/(main)/(streams)/${row.id}` as any) },
+              { text: 'Done', style: 'cancel', onPress: () => router.back() },
+            ]
+          : undefined,
+      );
+      if (!row) router.back();
       });
     } catch (err) {
       if (__DEV__) {
@@ -435,32 +538,146 @@ export default function SubscribePrivateScreen() {
         <Animated.View entering={FadeInUp.delay(160)}>
           <Text style={styles.sectionTitle}>Retailer address</Text>
           <TextInput
-            style={styles.input}
+            style={[styles.input, !!routedEntry && styles.inputLocked]}
             value={retailer}
             onChangeText={setRetailer}
+            editable={!routedEntry}
             placeholder="Solana public key"
             placeholderTextColor={Colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
             accessibilityLabel="Retailer address"
           />
+          {registryGate && (
+            <View style={styles.registryGate} accessibilityRole="alert">
+              <Text style={styles.registryGateText}>{registryGate}</Text>
+              <TouchableOpacity
+                onPress={() => (params.service ? pdaLookup.retry() : void registry.refresh())}
+                accessibilityRole="button"
+                style={styles.registryRetry}
+              >
+                <Text style={styles.registryRetryText}>Try again</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </Animated.View>
 
-        {/* ── 3. How much, per period ── */}
+        {/* ── 3. How much, per period ──
+            For a registered retailer the terms are the registry's and cannot
+            be edited here: a merchant's registry check refuses a vault whose
+            rate or interval differs from its entry by a single lamport or
+            slot. Typing is for retailers the registry does not know. */}
         <Animated.View entering={FadeInUp.delay(200)}>
           <Text style={styles.sectionTitle}>Rate per period</Text>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.inputFlex}
-              value={rate}
-              onChangeText={setRate}
-              placeholder="1"
-              placeholderTextColor={Colors.textTertiary}
-              keyboardType="decimal-pad"
-              accessibilityLabel="Rate per period in SOL"
-            />
-            <Text style={styles.inputSuffix}>SOL</Text>
-          </View>
+
+          {needsPick && (
+            <View style={styles.pickList}>
+              <Text style={styles.registryHint}>
+                This retailer has several registry entries. Pick the one you are subscribing to.
+              </Text>
+              {registryMatches.map(s => (
+                <TouchableOpacity
+                  key={s.pda.toBase58()}
+                  style={styles.pickRow}
+                  onPress={() => setPickedServicePda(s.pda.toBase58())}
+                  activeOpacity={0.7}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: false }}
+                  accessibilityLabel={`${s.name || s.slug}, ${formatPriceSOL(s.priceAtomic)} SOL ${formatInterval(s.intervalSlots)}`}
+                >
+                  <View style={styles.radio} />
+                  <View style={styles.noteBody}>
+                    <Text style={styles.pickName}>{s.name || s.slug}</Text>
+                    <Text style={styles.pickTerms}>
+                      {formatPriceSOL(s.priceAtomic)} SOL {formatInterval(s.intervalSlots)}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
+          {lockedEntry ? (
+            <Panel>
+              <View style={styles.lockedHeader}>
+                <Text style={styles.lockedName} numberOfLines={1}>
+                  {lockedEntry.name || lockedEntry.slug}
+                </Text>
+                <Badge variant={lockedEntry.verified ? 'good' : 'neutral'} size="sm">
+                  {lockedEntry.verified ? 'Verified' : 'Registered'}
+                </Badge>
+              </View>
+              <Text style={styles.lockedTerms}>
+                {formatPriceSOL(lockedEntry.priceAtomic)} SOL {formatInterval(lockedEntry.intervalSlots)}
+                {' '}({lockedEntry.intervalSlots.toString()} slots)
+              </Text>
+              <Text style={styles.lockedNote}>
+                Rate and interval are copied from this merchant&apos;s registry entry and cannot be
+                edited here. That is what makes the license key pass the merchant&apos;s registry
+                check. The key is tagged with the entry&apos;s id, {lockedEntry.slug}.
+              </Text>
+              {registryMatches.length > 1 && (
+                <TouchableOpacity
+                  onPress={() => setPickedServicePda(null)}
+                  accessibilityRole="button"
+                  style={styles.lockedChange}
+                >
+                  <Text style={styles.lockedChangeText}>Choose another plan</Text>
+                </TouchableOpacity>
+              )}
+            </Panel>
+          ) : (
+            <>
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.inputFlex}
+                  value={rate}
+                  onChangeText={setRate}
+                  placeholder="1"
+                  placeholderTextColor={Colors.textTertiary}
+                  keyboardType="decimal-pad"
+                  accessibilityLabel="Rate per period in SOL"
+                />
+                <Text style={styles.inputSuffix}>SOL</Text>
+              </View>
+              <Text style={[styles.sectionTitle, styles.sectionTitleTight]}>Interval</Text>
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.inputFlex}
+                  value={intervalSlots}
+                  onChangeText={setIntervalSlots}
+                  placeholder="7200"
+                  placeholderTextColor={Colors.textTertiary}
+                  keyboardType="number-pad"
+                  accessibilityLabel="Interval in slots"
+                />
+                <Text style={styles.inputSuffix}>
+                  slots{Number.isFinite(parseInt(intervalSlots, 10)) && parseInt(intervalSlots, 10) > 0
+                    ? `, ${formatInterval(BigInt(parseInt(intervalSlots, 10)))}`
+                    : ''}
+                </Text>
+              </View>
+              {registryPending ? (
+                <Text style={styles.registryHint}>Checking the registry for this retailer.</Text>
+              ) : trimmedRetailer.length > 0 && !registryGate ? (
+                <View style={styles.freeFormCard} accessibilityRole="alert">
+                  <Text style={styles.freeFormTitle}>Not in the registry</Text>
+                  <Text style={styles.freeFormBody}>
+                    A free-form subscription is not recognised by a merchant&apos;s registry check.
+                    The vault carries the rate and interval typed here, and only a merchant who
+                    accepts this exact address, rate and interval by hand can verify its key.
+                    {otherMintMatches > 0
+                      ? ' This retailer is registered for another token; this app pays in SOL only.'
+                      : ''}
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.registryHint}>
+                  If the retailer is in the registry, its rate and interval are filled in here.
+                </Text>
+              )}
+            </>
+          )}
         </Animated.View>
 
         {/* Progress, in place, once something is running. */}
@@ -603,6 +820,128 @@ const styles = StyleSheet.create({
     marginTop: Spacing['3xl'],
     marginBottom: Spacing.md,
   },
+  sectionTitleTight: { marginTop: Spacing.lg },
+
+  // Registry: the terms a merchant will compare the vault against.
+  registryGate: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.warningDim,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.yellow,
+  },
+  registryGateText: {
+    flex: 1,
+    minWidth: 160,
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.sm,
+    lineHeight: 19,
+    color: Colors.textSecondary,
+  },
+  registryRetry: {
+    minHeight: 44,
+    paddingHorizontal: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: BorderRadius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  registryRetryText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+  },
+  registryHint: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    lineHeight: 17,
+    color: Colors.textTertiary,
+    marginTop: Spacing.sm,
+  },
+  pickList: { gap: Spacing.sm, marginBottom: Spacing.md },
+  pickRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    minHeight: 56,
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.border,
+  },
+  pickName: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  pickTerms: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.xs,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  lockedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.sm,
+  },
+  lockedName: {
+    flexShrink: 1,
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.md,
+    color: Colors.text,
+  },
+  lockedTerms: {
+    fontFamily: FontFamily.mono,
+    fontSize: FontSize.sm,
+    color: Colors.text,
+    marginTop: Spacing.sm,
+  },
+  lockedNote: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    lineHeight: 17,
+    color: Colors.textSecondary,
+    marginTop: Spacing.sm,
+  },
+  lockedChange: {
+    minHeight: 44,
+    justifyContent: 'center',
+    marginTop: Spacing.xs,
+  },
+  lockedChangeText: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.primary,
+  },
+  freeFormCard: {
+    marginTop: Spacing.md,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    backgroundColor: Colors.warningDim,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Colors.yellow,
+    gap: Spacing.xs,
+  },
+  freeFormTitle: {
+    fontFamily: FontFamily.medium,
+    fontSize: FontSize.sm,
+    color: Colors.yellow,
+  },
+  freeFormBody: {
+    fontFamily: FontFamily.regular,
+    fontSize: FontSize.xs,
+    lineHeight: 17,
+    color: Colors.textSecondary,
+  },
 
   // Empty
   emptyTitle: {
@@ -676,6 +1015,7 @@ const styles = StyleSheet.create({
     fontFamily: FontFamily.mono,
     fontSize: FontSize.sm,
   },
+  inputLocked: { color: Colors.textSecondary },
   inputRow: {
     flexDirection: 'row',
     alignItems: 'center',

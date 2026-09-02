@@ -578,49 +578,18 @@ export async function upsertStreamFromVault(
   const streams = await loadStreams();
   if (streams.some(s => s.vaultAddress === vault.address)) return null;
 
-  const intervalSlotsNum = Number(vault.intervalSlots);
-  const { frequency, customIntervalDays } = inferFrequencyFromSlots(intervalSlotsNum);
-
-  // Resolve the slot ONCE. It is needed twice — for the "started N days ago"
-  // display and, more importantly, to decide whether this subscription still
-  // has any of its funded periods left. Callers rarely pass one, so fetching it
-  // here is what makes the status honest at every call site.
-  let resolvedSlot: number | null = null;
-  try {
-    resolvedSlot = opts?.currentSlot ?? (await getConnection().getSlot('confirmed'));
-  } catch {
-    // No RPC. Both consumers below fall back to something safe.
-  }
-
-  // Approximate start timestamp from start_slot. Solana slot ≈ 400ms — good enough
-  // for the "started N days ago" display in the Streams list.
-  let startDate = Date.now();
-  if (resolvedSlot !== null) {
-    const slotsElapsed = resolvedSlot - Number(vault.startSlot);
-    if (slotsElapsed > 0) startDate = Date.now() - slotsElapsed * 400;
-  }
-
-  const rateSOL = Number(vault.rate) / LAMPORTS_PER_SOL;
-  const depositedSOL = Number(vault.totalDeposited) / LAMPORTS_PER_SOL;
-  const claimedPeriods = Number(vault.claimedPeriods);
-  const intervalMs = getIntervalMs(frequency, customIntervalDays);
+  const resolvedSlot = await resolveSlot(opts?.currentSlot);
+  const fields = streamFieldsFromVault(vault, resolvedSlot);
+  const intervalMs = getIntervalMs(fields.frequency, fields.customIntervalDays);
   const now = Date.now();
-  const status: StreamStatus = mapVaultStatusToStream(vault, resolvedSlot);
 
   const stream: Stream = {
     id: generateId(),
     name: opts?.retailerName ?? `Subscription ${vault.address.slice(0, 6)}`,
     recipientAddress: vault.retailer,
     recipientName: opts?.retailerName,
-    totalAmount: depositedSOL,
-    amountPerPayment: rateSOL,
-    frequency,
-    customIntervalDays,
-    startDate,
+    ...fields,
     nextPaymentDate: now + intervalMs,
-    amountStreamed: rateSOL * claimedPeriods,
-    paymentsCompleted: claimedPeriods,
-    status,
     direction: 'outgoing',
     amountNoise: 0,
     timingNoise: 0,
@@ -637,6 +606,96 @@ export async function upsertStreamFromVault(
   streams.push(stream);
   await saveStreams(streams);
   return stream;
+}
+
+/**
+ * Bring the row for `vault.address` in line with the account as the chain
+ * reports it, or create it when none exists.
+ *
+ * The subscribe path writes its row from the terms it SENT, before the RPC
+ * necessarily serves the new account (see `subscriptionVaultStore`). What only
+ * the chain knows, the exact start slot, the claimed periods and the status,
+ * arrives here once a read succeeds. Fields the client set and the chain does
+ * not carry (name, service id, license tag, payment history) are left alone;
+ * the tag is filled in only when the row has none.
+ */
+export async function refreshStreamFromVault(
+  vault: import('../subscriptionVault').VaultInfo,
+  opts?: {
+    retailerName?: string;
+    currentSlot?: number;
+    licenseServiceTag?: string;
+  },
+): Promise<Stream | null> {
+  const streams = await loadStreams();
+  const existing = streams.find(s => s.vaultAddress === vault.address);
+  if (!existing) return upsertStreamFromVault(vault, opts);
+
+  const resolvedSlot = await resolveSlot(opts?.currentSlot);
+  const fields = streamFieldsFromVault(vault, resolvedSlot);
+  return updateStream(existing.id, {
+    ...fields,
+    ...(opts?.licenseServiceTag && !existing.licenseServiceTag
+      ? { licenseServiceTag: opts.licenseServiceTag }
+      : {}),
+  });
+}
+
+/**
+ * Resolve the slot ONCE. It is needed twice, for the "started N days ago"
+ * display and, more importantly, to decide whether this subscription still
+ * has any of its funded periods left. Callers rarely pass one, so fetching it
+ * here is what makes the status honest at every call site. `null` when there
+ * is no RPC; both consumers fall back to something safe.
+ */
+async function resolveSlot(currentSlot: number | undefined): Promise<number | null> {
+  try {
+    return currentSlot ?? (await getConnection().getSlot('confirmed'));
+  } catch {
+    return null;
+  }
+}
+
+/** The row fields that are a pure function of the vault account and the clock. */
+function streamFieldsFromVault(
+  vault: import('../subscriptionVault').VaultInfo,
+  resolvedSlot: number | null,
+): Pick<
+  Stream,
+  | 'frequency'
+  | 'customIntervalDays'
+  | 'startDate'
+  | 'totalAmount'
+  | 'amountPerPayment'
+  | 'amountStreamed'
+  | 'paymentsCompleted'
+  | 'status'
+> {
+  const { frequency, customIntervalDays } = inferFrequencyFromSlots(Number(vault.intervalSlots));
+
+  // Approximate start timestamp from start_slot. Solana slot is about 400 ms,
+  // good enough for the "started N days ago" display in the Streams list.
+  let startDate = Date.now();
+  if (resolvedSlot !== null) {
+    const slotsElapsed = resolvedSlot - Number(vault.startSlot);
+    if (slotsElapsed > 0) startDate = Date.now() - slotsElapsed * 400;
+  }
+
+  const rateSOL = Number(vault.rate) / LAMPORTS_PER_SOL;
+  const depositedSOL = Number(vault.totalDeposited) / LAMPORTS_PER_SOL;
+  const claimedPeriods = Number(vault.claimedPeriods);
+  const status: StreamStatus = mapVaultStatusToStream(vault, resolvedSlot);
+
+  return {
+    frequency,
+    customIntervalDays,
+    startDate,
+    totalAmount: depositedSOL,
+    amountPerPayment: rateSOL,
+    amountStreamed: rateSOL * claimedPeriods,
+    paymentsCompleted: claimedPeriods,
+    status,
+  };
 }
 
 function inferFrequencyFromSlots(
