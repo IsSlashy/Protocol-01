@@ -243,3 +243,51 @@ export const EXPECTED_SCHEME_DIGEST_BLAKE3 =
 export function schemeDigestPreimage(fingerprint: readonly string[]): string {
   return fingerprint.join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// v2 derivation (additive, 2026-09-02): docs/LICENSE_KEY_V2-2026-09-02.md
+//
+// Kept apart from the v1 fixture on purpose: EXPECTED_SCHEME_FINGERPRINT and
+// its digest do not move, because v1 keys already issued must keep verifying.
+// ---------------------------------------------------------------------------
+
+/**
+ * The v2 derivation. Present in every mirror, the merchant SDK included (there
+ * for tests and tooling only; verification is scheme-agnostic).
+ */
+export interface LicenseDerivationV2Impl {
+  deriveLicenseSalt(identitySeed: Uint8Array): Uint8Array;
+  deriveLicenseSecretV2(masterNoteSecret: bigint | string, serviceId: string, identitySeed: Uint8Array): Uint8Array;
+}
+
+/**
+ * The single v2 vector every mirror pins, copied from the spec. Computed with
+ * @noble/hashes (hkdf, sha256, blake3) on 2026-09-02.
+ */
+export const LICENSE_V2_VECTOR = {
+  id: 'v2/spec',
+  identitySeedHex: '0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20',
+  noteSecret: '1234',
+  serviceTag: 'svc',
+  licenseSaltHex: '058f3c959dba16c347e5e291f65e6d7a26824f1006e541d0b4aba79004c90e6a',
+  licenseSecretHex: 'de00e41667d82798b62825793d51be69',
+  key: 'P01-VR0E-85K7-V0KS-HDH8-4NWK-TMDY-D4',
+  commitmentHex: '852e98e702bc79617d20199cf25753264b0da206e2835e476caf4b4e865b8fac',
+} as const;
+
+/** Canonical line for the v2 derivation, measured through an implementation. */
+export function licenseV2Fingerprint(impl: LicenseDerivationV2Impl & LicenseCodecImpl): string[] {
+  const v = LICENSE_V2_VECTOR;
+  const seed = hexToBytes(v.identitySeedHex);
+  const salt = impl.deriveLicenseSalt(seed);
+  const s = impl.deriveLicenseSecretV2(v.noteSecret, v.serviceTag, seed);
+  return [
+    `${v.id}|salt=${bytesToHex(salt)}|secret=${bytesToHex(s)}|key=${impl.encodeLicenseKey(s)}|commit=${bytesToHex(impl.licenseCommitment(s))}`,
+  ];
+}
+
+/** The pinned v2 line, spelled from the spec vector. */
+export const EXPECTED_V2_FINGERPRINT: readonly string[] = [
+  `${LICENSE_V2_VECTOR.id}|salt=${LICENSE_V2_VECTOR.licenseSaltHex}|secret=${LICENSE_V2_VECTOR.licenseSecretHex}` +
+    `|key=${LICENSE_V2_VECTOR.key}|commit=${LICENSE_V2_VECTOR.commitmentHex}`,
+];

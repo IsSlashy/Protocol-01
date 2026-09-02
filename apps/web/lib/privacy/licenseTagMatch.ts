@@ -17,6 +17,16 @@
  * builds the candidate list below and accepts a tag only when the key it yields
  * hashes to the vault's stored commitment. No match, no key.
  *
+ * ## Two schemes, one arbiter
+ *
+ * Since 2026-09-02 a new subscription mints its key under v2
+ * (`deriveLicenseSecretV2`: the note secret plus the identity seed of the
+ * note's identity, so the treasury cannot recompute the key of a note it
+ * issued). Every vault opened before that carries a v1 commitment. The vault
+ * stores no scheme marker, so the matcher tries v2 then v1 for each candidate
+ * tag and reports which one reproduced the commitment: a stored scheme is
+ * treated exactly like a stored tag, a hint the chain is asked to confirm.
+ *
  * ## Candidate order (fixed)
  *
  *   1. the tag the local record stores, if any (right for every record written
@@ -33,7 +43,15 @@
  * that mock `@solana/web3.js` can too.
  */
 
-import { deriveLicenseSecret, licenseCommitment, licenseServiceTag } from './license';
+import {
+  deriveLicenseSecret,
+  deriveLicenseSecretV2,
+  licenseCommitment,
+  licenseServiceTag,
+  type LicenseScheme,
+} from './license';
+
+export type { LicenseScheme } from './license';
 
 /** A registry listing reduced to the three strings the candidate rule reads. */
 export interface LicenseTagListing {
@@ -87,28 +105,84 @@ function toHex(b: Uint8Array): string {
 }
 
 /**
- * The first candidate under which the note secret derives the key the vault's
- * `license_commitment` was computed from, or null when none does.
+ * The 16-byte license secret under one scheme. v2 needs the identity seed;
+ * asking for v2 without one is a caller bug, never a silent fall back to v1.
+ */
+export function deriveLicenseSecretUnder(
+  scheme: LicenseScheme,
+  masterNoteSecret: bigint | string,
+  serviceTag: string,
+  identitySeed?: Uint8Array | null,
+): Uint8Array {
+  if (scheme === 'v1') return deriveLicenseSecret(masterNoteSecret, serviceTag);
+  if (!identitySeed) {
+    throw new Error("a v2 license key needs the identity seed of the note's identity");
+  }
+  return deriveLicenseSecretV2(masterNoteSecret, serviceTag, identitySeed);
+}
+
+/** A verified pair: the key derived under (tag, scheme) hashes to the vault's commitment. */
+export interface LicenseMatch {
+  serviceTag: string;
+  scheme: LicenseScheme;
+  /** The seed the v2 derivation used. Absent for a v1 match. */
+  identitySeed?: Uint8Array;
+}
+
+function seedList(seeds: Uint8Array | Uint8Array[] | null | undefined): Uint8Array[] {
+  if (!seeds) return [];
+  return Array.isArray(seeds) ? seeds : [seeds];
+}
+
+/**
+ * The first (candidate tag, scheme) under which the note secret derives the
+ * key the vault's `license_commitment` was computed from, or null when none
+ * does.
+ *
+ * Trial order: for each candidate tag, v2 under each identity seed given
+ * (pass the identity's active seed first, then its legacy seed, the same
+ * search order the note store uses), then v1. The chain decides between the
+ * schemes exactly as it decides between the tags.
  *
  * `commitment` is the on-chain field, as bytes or lowercase hex; null means the
  * vault stores none, and a vault with no commitment verifies no key at all (a
  * merchant reads it as `no_license_commitment`), so the answer is null.
  *
- * Runs wherever the note secret is: the pool Worker. The secret never enters
- * the return value or any error.
+ * Runs wherever the note secret is: the pool Worker. Neither the secret nor a
+ * seed enters any error; the seed in the result is the caller's own object.
+ */
+export function matchLicense(
+  masterNoteSecret: bigint | string,
+  identitySeeds: Uint8Array | Uint8Array[] | null | undefined,
+  commitment: Uint8Array | string | null | undefined,
+  candidates: string[],
+): LicenseMatch | null {
+  if (commitment === null || commitment === undefined) return null;
+  const want = (typeof commitment === 'string' ? commitment : toHex(commitment)).toLowerCase();
+  if (want.length === 0) return null;
+  const seeds = seedList(identitySeeds);
+  for (const tag of candidates) {
+    if (!tag) continue;
+    for (const seed of seeds) {
+      const got = toHex(licenseCommitment(deriveLicenseSecretV2(masterNoteSecret, tag, seed)));
+      if (got === want) return { serviceTag: tag, scheme: 'v2', identitySeed: seed };
+    }
+    const got = toHex(licenseCommitment(deriveLicenseSecret(masterNoteSecret, tag)));
+    if (got === want) return { serviceTag: tag, scheme: 'v1' };
+  }
+  return null;
+}
+
+/**
+ * The tag half of {@link matchLicense}, for callers that only need the tag.
+ * With no identity seeds only v1 is tried, which is exactly what every caller
+ * from before v2 existed asked for.
  */
 export function matchLicenseServiceTag(
   masterNoteSecret: bigint | string,
   commitment: Uint8Array | string | null | undefined,
   candidates: string[],
+  identitySeeds?: Uint8Array | Uint8Array[] | null,
 ): string | null {
-  if (commitment === null || commitment === undefined) return null;
-  const want = (typeof commitment === 'string' ? commitment : toHex(commitment)).toLowerCase();
-  if (want.length === 0) return null;
-  for (const tag of candidates) {
-    if (!tag) continue;
-    const got = toHex(licenseCommitment(deriveLicenseSecret(masterNoteSecret, tag)));
-    if (got === want) return tag;
-  }
-  return null;
+  return matchLicense(masterNoteSecret, identitySeeds, commitment, candidates)?.serviceTag ?? null;
 }

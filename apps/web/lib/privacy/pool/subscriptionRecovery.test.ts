@@ -47,7 +47,13 @@ import {
   base58Encode,
   bytesToHex,
 } from './subscriptionVaultAccount';
-import { deriveLicenseSecret, encodeLicenseKey, licenseCommitment } from '../license';
+import {
+  deriveLicenseSecret,
+  deriveLicenseSecretV2,
+  encodeLicenseKey,
+  licenseCommitment,
+} from '../license';
+import { deriveLicenseSecretUnder } from '../licenseTagMatch';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -149,8 +155,9 @@ function makeConnection(
 
 /** The full planted-vault scenario: this seed's note at COUNTER paid RETAILER.
  *  With `boughtUnderTag` the vault also carries the license commitment the
- *  subscribe path posts for a purchase scoped to that tag. */
-async function plantVault(boughtUnderTag?: string) {
+ *  subscribe path posts for a purchase scoped to that tag: under v1 (what
+ *  every vault from before 2026-09-02 stores) unless `scheme` says v2. */
+async function plantVault(boughtUnderTag?: string, scheme: 'v1' | 'v2' = 'v1') {
   const { secret } = deriveNoteMaterial(SEED, POOL.poolPDA, COUNTER);
   const commitment = BigInt(await stubCommitment(secret.toString()));
   const commitment32 = goldilocksU64To32(commitment);
@@ -162,7 +169,9 @@ async function plantVault(boughtUnderTag?: string) {
     licenseCommitment:
       boughtUnderTag === undefined
         ? undefined
-        : licenseCommitment(deriveLicenseSecret(secret, boughtUnderTag)),
+        : scheme === 'v2'
+          ? licenseCommitment(deriveLicenseSecretV2(secret, boughtUnderTag, SEED))
+          : licenseCommitment(deriveLicenseSecret(secret, boughtUnderTag)),
   });
   return { secret, commitment, commitment32, retailer, vaultPDA, data };
 }
@@ -196,10 +205,11 @@ describe('recoverSubscriptionVaults — the record comes back', () => {
       {
         ...subscribeTimeRecord,
         tokenMint: NATIVE_SOL_MINT_BASE58,
-        // This fixture vault stores no license commitment, so no tag can be
-        // verified for it: null on both, never a retailer-address guess.
+        // This fixture vault stores no license commitment, so no tag and no
+        // scheme can be verified for it: null on all three, never a guess.
         licenseCommitment: null,
         serviceTag: null,
+        licenseScheme: null,
       },
     ]);
   });
@@ -222,6 +232,7 @@ describe('recoverSubscriptionVaults — the record comes back', () => {
       expect(res.recovered).toHaveLength(1);
       const rec = res.recovered[0]!;
       expect(rec.serviceTag).toBe('acme-pro');
+      expect(rec.licenseScheme).toBe('v1');
       expect(rec.licenseCommitment).toBe(
         bytesToHex(licenseCommitment(deriveLicenseSecret(planted.secret, 'acme-pro'))),
       );
@@ -240,6 +251,7 @@ describe('recoverSubscriptionVaults — the record comes back', () => {
         services: [roster(planted.retailer)[0]!],
       });
       expect(res.recovered[0]!.serviceTag).toBeNull();
+      expect(res.recovered[0]!.licenseScheme).toBeNull();
       expect(res.recovered[0]!.licenseCommitment).toHaveLength(64);
 
       const empty = await recoverSubscriptionVaults(conn, [SEED], {
@@ -264,6 +276,122 @@ describe('recoverSubscriptionVaults — the record comes back', () => {
         services: roster(planted.retailer),
       });
       expect(res.recovered[0]!.serviceTag).toBe(retailer58);
+    });
+  });
+
+  describe('the license scheme is verified against the vault commitment, v2 then v1', () => {
+    const roster = (retailer: PublicKey) => [
+      { slug: 'acme-basic', retailer: retailer.toBase58(), tokenMint: NATIVE_SOL_MINT_BASE58 },
+      { slug: 'acme-pro', retailer: retailer.toBase58(), tokenMint: NATIVE_SOL_MINT_BASE58 },
+    ];
+
+    it('a vault written under v1, from before v2 existed, still yields its key and says v1', async () => {
+      // Exactly the vault a purchase made on 2026-09-01 left on chain: the
+      // commitment is blake3 of the v1 secret and nothing marks it as such.
+      const planted = await plantVault('acme-pro', 'v1');
+      const { conn } = makeConnection([{ pubkey: planted.vaultPDA, data: planted.data }]);
+      const keyAtPurchase = encodeLicenseKey(deriveLicenseSecret(planted.secret, 'acme-pro'));
+
+      const res = await recoverSubscriptionVaults(conn, [SEED], {
+        computeSubscriberCommitment: stubCommitment,
+        services: roster(planted.retailer),
+      });
+      const rec = res.recovered[0]!;
+      expect(rec.serviceTag).toBe('acme-pro');
+      expect(rec.licenseScheme).toBe('v1');
+      // The key under the recovered (tag, scheme) IS the key the merchant
+      // accepted, re-derived the way the Reveal path does it.
+      const rederived = deriveNoteMaterial(SEED, new PublicKey(rec.pool), rec.leafIndex).secret;
+      expect(
+        encodeLicenseKey(
+          deriveLicenseSecretUnder(rec.licenseScheme!, rederived, rec.serviceTag!, SEED),
+        ),
+      ).toBe(keyAtPurchase);
+    });
+
+    it('a vault written under v2 yields its key and says v2', async () => {
+      const planted = await plantVault('acme-pro', 'v2');
+      const { conn } = makeConnection([{ pubkey: planted.vaultPDA, data: planted.data }]);
+      const keyAtPurchase = encodeLicenseKey(
+        deriveLicenseSecretV2(planted.secret, 'acme-pro', SEED),
+      );
+
+      const res = await recoverSubscriptionVaults(conn, [SEED], {
+        computeSubscriberCommitment: stubCommitment,
+        services: roster(planted.retailer), // the join would take acme-basic
+      });
+      const rec = res.recovered[0]!;
+      expect(rec.serviceTag).toBe('acme-pro');
+      expect(rec.licenseScheme).toBe('v2');
+      expect(
+        encodeLicenseKey(
+          deriveLicenseSecretUnder(rec.licenseScheme!, planted.secret, rec.serviceTag!, SEED),
+        ),
+      ).toBe(keyAtPurchase);
+      // Not the v1 key: the two schemes never collide on one commitment.
+      expect(keyAtPurchase).not.toBe(
+        encodeLicenseKey(deriveLicenseSecret(planted.secret, 'acme-pro')),
+      );
+    });
+
+    it('a v2 vault minted under a seed this scan does not hold matches nothing, never a v1 guess', async () => {
+      const planted = await plantVault('acme-pro', 'v2'); // minted under SEED
+      const { conn } = makeConnection([{ pubkey: planted.vaultPDA, data: planted.data }]);
+      // The note itself is handed in as a blob candidate (so the vault IS
+      // found) but under a stranger's identity seed.
+      const stranger = new Uint8Array(32).fill(9);
+      const res = await recoverSubscriptionVaults(conn, [stranger], {
+        blobCandidates: [
+          {
+            pool: POOL.poolPDA.toBase58(),
+            leafIndex: COUNTER,
+            secret: planted.secret,
+            identitySeed: stranger,
+          },
+        ],
+        computeSubscriberCommitment: stubCommitment,
+        services: roster(planted.retailer),
+      });
+      expect(res.recovered).toHaveLength(1);
+      expect(res.recovered[0]!.serviceTag).toBeNull();
+      expect(res.recovered[0]!.licenseScheme).toBeNull();
+    });
+
+    it('a v2 vault paid with a received note is matched through the blob candidate seed', async () => {
+      // The note secret came from the sender; the KEY was minted under our
+      // identity seed, the one that filed the note. Both travel in the blob
+      // candidate, and the scan needs neither from its own derivation walk.
+      const foreignSecret = 987_654_321_123n;
+      const commitment32 = goldilocksU64To32(
+        BigInt(await stubCommitment(foreignSecret.toString())),
+      );
+      const retailer = Keypair.generate().publicKey;
+      const [vaultPDA] = deriveSubscriptionVaultPDA(retailer, commitment32, SystemProgram.programId);
+      const data = writeVault({
+        subscriberCommitment: commitment32,
+        retailer: retailer.toBytes(),
+        licenseCommitment: licenseCommitment(
+          deriveLicenseSecretV2(foreignSecret, 'acme-pro', SEED),
+        ),
+      });
+      const { conn } = makeConnection([{ pubkey: vaultPDA, data }]);
+      const poolB58 = POOL.poolPDA.toBase58();
+
+      const withSeed = await recoverSubscriptionVaults(conn, [SEED], {
+        blobCandidates: [{ pool: poolB58, leafIndex: 3, secret: foreignSecret, identitySeed: SEED }],
+        computeSubscriberCommitment: stubCommitment,
+        services: roster(retailer),
+      });
+      expect(withSeed.recovered[0]).toMatchObject({ serviceTag: 'acme-pro', licenseScheme: 'v2' });
+
+      // A blob candidate that names no seed still matches through the seeds
+      // the scan holds: the identity's seeds are the trial set either way.
+      const withoutSeed = await recoverSubscriptionVaults(conn, [SEED], {
+        blobCandidates: [{ pool: poolB58, leafIndex: 3, secret: foreignSecret }],
+        computeSubscriberCommitment: stubCommitment,
+        services: roster(retailer),
+      });
+      expect(withoutSeed.recovered[0]).toMatchObject({ serviceTag: 'acme-pro', licenseScheme: 'v2' });
     });
   });
 

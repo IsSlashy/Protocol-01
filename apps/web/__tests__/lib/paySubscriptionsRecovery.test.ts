@@ -87,6 +87,7 @@ vi.mock('@/lib/privacy/workerClient', () => ({
 }));
 
 import {
+  licenseSchemeOf,
   loadSubscriptions,
   recordSubscription,
   recoverSubscriptions,
@@ -280,5 +281,65 @@ describe('recoverSubscriptions — records what the scan found', () => {
   it('any other worker failure keeps its own message — skew must not swallow real errors', async () => {
     recoverResponse = new Error('RPC node returned 429');
     await expect(recoverSubscriptions(META, WALLET, {})).rejects.toThrow('RPC node returned 429');
+  });
+});
+
+describe('recoverSubscriptions: the license scheme the worker verified is stored with the tag', () => {
+  const ROSTER = [
+    { slug: 'acme-pro', name: 'Acme Pro', retailer: WIRE.retailer, tokenMint: WIRE.tokenMint },
+  ];
+
+  it('a v2 match lands on the record and survives the sealed round trip', async () => {
+    recoverResponse = {
+      kind: 'poolRecoverSubscriptions',
+      subscriptions: [
+        { ...WIRE, licenseCommitment: 'ab'.repeat(32), serviceTag: 'acme-pro', licenseScheme: 'v2' },
+      ],
+      vaultsScanned: 1,
+    };
+    const res = await recoverSubscriptions(META, WALLET, { services: ROSTER });
+    expect(res.recovered[0].licenseScheme).toBe('v2');
+    expect(licenseSchemeOf(res.recovered[0])).toBe('v2');
+
+    const listed = (await loadSubscriptions(META, WALLET)).records;
+    expect(listed[0]).toMatchObject({ serviceTag: 'acme-pro', licenseScheme: 'v2' });
+  });
+
+  it('a v1 match (a vault from before v2) is stored as v1', async () => {
+    recoverResponse = {
+      kind: 'poolRecoverSubscriptions',
+      subscriptions: [
+        { ...WIRE, licenseCommitment: 'ab'.repeat(32), serviceTag: 'acme-pro', licenseScheme: 'v1' },
+      ],
+      vaultsScanned: 1,
+    };
+    const res = await recoverSubscriptions(META, WALLET, { services: ROSTER });
+    expect(res.recovered[0].licenseScheme).toBe('v1');
+    expect((await loadSubscriptions(META, WALLET)).records[0]).toMatchObject({
+      licenseScheme: 'v1',
+    });
+  });
+
+  it('a worker naming no scheme (older, or nothing matched) leaves the record scheme-less, which reads as v1', async () => {
+    recoverResponse = {
+      kind: 'poolRecoverSubscriptions',
+      subscriptions: [{ ...WIRE, licenseCommitment: null, serviceTag: null }],
+      vaultsScanned: 1,
+    };
+    const res = await recoverSubscriptions(META, WALLET, { services: ROSTER });
+    expect(res.recovered[0].licenseScheme).toBeUndefined();
+    expect(licenseSchemeOf(res.recovered[0])).toBe('v1');
+    expect((await loadSubscriptions(META, WALLET)).records[0].licenseScheme).toBeUndefined();
+  });
+
+  it('a value outside the two schemes never lands on a record', async () => {
+    recoverResponse = {
+      kind: 'poolRecoverSubscriptions',
+      subscriptions: [{ ...WIRE, serviceTag: 'acme-pro', licenseScheme: 'v9' }],
+      vaultsScanned: 1,
+    };
+    const res = await recoverSubscriptions(META, WALLET, { services: ROSTER });
+    expect(res.recovered[0].licenseScheme).toBeUndefined();
+    expect((await loadSubscriptions(META, WALLET)).records[0].licenseScheme).toBeUndefined();
   });
 });

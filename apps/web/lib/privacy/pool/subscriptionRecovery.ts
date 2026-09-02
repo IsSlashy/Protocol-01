@@ -68,7 +68,8 @@ import {
 } from './subscriptionVaultAccount';
 import {
   licenseTagCandidates,
-  matchLicenseServiceTag,
+  matchLicense,
+  type LicenseScheme,
   type LicenseTagListing,
 } from '../licenseTagMatch';
 
@@ -103,6 +104,12 @@ export interface CandidateNoteSecret {
   /** Leaf index the note occupies — also its derivation counter. */
   leafIndex: number;
   secret: bigint;
+  /**
+   * The seed of the identity the note is filed under (the one that derived
+   * it, or decrypted its blob). Offered first to the v2 license trial; the
+   * scan's other seeds are tried after it.
+   */
+  identitySeed?: Uint8Array;
 }
 
 /** A recovered subscription. Public values only — same fields the subscribe
@@ -134,6 +141,12 @@ export interface RecoveredSubscriptionVault {
    * a registry join on the main thread was the defect this closes.
    */
   serviceTag: string | null;
+  /**
+   * The derivation that reproduced `licenseCommitment` alongside `serviceTag`:
+   * 'v2' for a vault opened since 2026-09-02, 'v1' before. Null whenever
+   * `serviceTag` is.
+   */
+  licenseScheme: LicenseScheme | null;
 }
 
 export interface RecoverSubscriptionVaultsOptions {
@@ -250,7 +263,7 @@ export async function recoverSubscriptionVaults(
     for (const seed of seeds) {
       for (let counter = 0; counter < leafCount; counter++) {
         const { secret } = deriveNoteMaterial(seed, pool.poolPDA, counter);
-        candidates.push({ pool: poolB58, leafIndex: counter, secret });
+        candidates.push({ pool: poolB58, leafIndex: counter, secret, identitySeed: seed });
       }
     }
   }
@@ -292,13 +305,20 @@ export async function recoverSubscriptionVaults(
     const poolConfig = poolsByBase58.get(candidate.pool);
     if (!poolConfig) continue; // a blob note from a pool this build does not know
 
-    // The tag, checked against the chain while the secret is in hand. Local
-    // hashing only; nothing here touches the RPC.
+    // The tag and the scheme, checked against the chain while the secret is
+    // in hand. Local hashing only; nothing here touches the RPC. v2 is tried
+    // under the candidate's own seed first and then every other seed of the
+    // scan, then v1: a vault opened before 2026-09-02 carries a v1
+    // commitment and must keep yielding its key.
     const licenseCommitment = vault.decoded.licenseCommitment
       ? bytesToHex(vault.decoded.licenseCommitment)
       : null;
-    const serviceTag = matchLicenseServiceTag(
+    const trialSeeds = candidate.identitySeed
+      ? [candidate.identitySeed, ...seeds.filter((s) => s !== candidate.identitySeed)]
+      : seeds;
+    const match = matchLicense(
       candidate.secret,
+      trialSeeds,
       licenseCommitment,
       licenseTagCandidates({
         services: opts.services,
@@ -318,7 +338,8 @@ export async function recoverSubscriptionVaults(
       pool: candidate.pool,
       leafIndex: candidate.leafIndex,
       licenseCommitment,
-      serviceTag,
+      serviceTag: match?.serviceTag ?? null,
+      licenseScheme: match?.scheme ?? null,
     });
   }
 

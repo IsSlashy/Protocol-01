@@ -69,6 +69,7 @@ import {
   formatAtomic,
   isBase58Address,
   KEY_NOT_RECOVERABLE,
+  licenseSchemeOf,
   licenseTagCandidates,
   loadSubscriptions,
   SUBSCRIPTIONS_CHANGED_EVENT,
@@ -380,12 +381,21 @@ export default function SubscriptionsPanel({
         licenseCommitment: decoded.licenseCommitment
           ? bytesToHex(decoded.licenseCommitment)
           : null,
+        // The scheme the record names, as a hint only: with the fingerprint
+        // above the Worker tries v2 then v1 and answers with the one that
+        // verified. A record from before v2 names none and is v1.
+        ...(rec.licenseScheme !== undefined ? { licenseScheme: rec.licenseScheme } : {}),
       });
       setRevealedKey(res.licenseKey);
-      if (res.serviceTag !== rec.serviceTag) {
-        // The stored tag was a guess and the chain disagreed. Keep the one
-        // that verified, so the row labels itself right from now on.
-        await recordSubscription(meta, walletKey, { ...rec, serviceTag: res.serviceTag });
+      const scheme = res.licenseScheme ?? "v1";
+      if (res.serviceTag !== rec.serviceTag || scheme !== licenseSchemeOf(rec)) {
+        // The stored tag or scheme was a guess and the chain disagreed. Keep
+        // the pair that verified, so the row labels itself right from now on.
+        await recordSubscription(meta, walletKey, {
+          ...rec,
+          serviceTag: res.serviceTag,
+          licenseScheme: scheme,
+        });
         void refresh();
       }
     } catch (e) {

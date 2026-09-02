@@ -29,10 +29,10 @@ import { blake3 } from '@noble/hashes/blake3.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { sha512 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import * as sdk from './license';
-import { LICENSE_SCHEME } from './license';
+import { LICENSE_SCHEME, LICENSE_SCHEME_V2 } from './license';
 import * as mobile from '../../../apps/mobile/services/license/derive';
 import * as extension from '../../../apps/extension/src/shared/services/license';
 import * as web from '../../../apps/web/lib/privacy/license';
@@ -41,6 +41,8 @@ import {
   EXPECTED_DERIVATION_FINGERPRINT,
   EXPECTED_SCHEME_DIGEST_BLAKE3,
   EXPECTED_SCHEME_FINGERPRINT,
+  EXPECTED_V2_FINGERPRINT,
+  LICENSE_V2_VECTOR,
   ZK_DERIVATION_VECTORS,
   CLASSIC_DERIVATION_VECTORS,
   SERVICE_TAG_VECTORS,
@@ -48,6 +50,7 @@ import {
   hexToBytes,
   licenseCodecFingerprint,
   licenseSchemeFingerprint,
+  licenseV2Fingerprint,
   readAlphabet,
   schemeDigestPreimage,
 } from './license-scheme-vectors';
@@ -349,6 +352,117 @@ describe('license parity: service tag', () => {
       const onChain = impl.licenseCommitment(impl.deriveLicenseSecret(noteSecret, retailer));
       const keyFromStreamId = impl.encodeLicenseKey(impl.deriveLicenseSecret(noteSecret, localStreamId));
       expect(sdk.keyMatchesCommitment(keyFromStreamId, onChain), name).toBe(false);
+    }
+  });
+});
+
+// ===========================================================================
+// 5. v2 derivation (additive): the note issuer cannot compute the key.
+//    docs/LICENSE_KEY_V2-2026-09-02.md. The v1 fixture above is untouched.
+// ===========================================================================
+
+/**
+ * Every implementation that carries the v2 derivation. The SDK is in this
+ * table (tests and tooling only); the web client mints v2 but exposes it from
+ * its own module, not from the codec module imported above, so it is not.
+ */
+const V2_IMPLS = [
+  ['merchant-sdk', sdk],
+  ['mobile', mobile],
+  ['extension', extension],
+] as const;
+
+/** The two mirrors that also derive v1, for the v1-vs-v2 comparisons. */
+const V2_CLIENTS = [
+  ['mobile', mobile],
+  ['extension', extension],
+] as const;
+
+describe('license parity: v2 derivation (docs/LICENSE_KEY_V2-2026-09-02.md)', () => {
+  it.each(V2_IMPLS)('%s v2 fingerprint matches the spec vector', (_name, impl) => {
+    expect(licenseV2Fingerprint(impl)).toEqual([...EXPECTED_V2_FINGERPRINT]);
+  });
+
+  it('LICENSE_SCHEME_V2 field by field: salt = hkdf(sha256, seed, none, utf8(salt label), 32); secret = hkdf(sha256, utf8(decimal) || salt, none, utf8(label || serviceId), 16)', () => {
+    // Rebuilt from LICENSE_SCHEME_V2's own declared fields, as section 2 does
+    // for v1. Any change to a hash, label, concatenation order, ikm encoding
+    // or length in any mirror diverges here.
+    const seed = hexToBytes(LICENSE_V2_VECTOR.identitySeedHex);
+    const expectedSalt = hkdf(
+      sha256,
+      seed,
+      LICENSE_SCHEME_V2.hkdfSalt,
+      utf8ToBytes(LICENSE_SCHEME_V2.SALT_INFO_LABEL),
+      LICENSE_SCHEME_V2.SALT_BYTES,
+    );
+    expect(bytesToHex(expectedSalt)).toBe(LICENSE_V2_VECTOR.licenseSaltHex);
+    for (const [name, impl] of V2_IMPLS) {
+      expect(bytesToHex(impl.deriveLicenseSalt(seed)), name).toBe(bytesToHex(expectedSalt));
+      expect(impl.LICENSE_SALT_BYTES, name).toBe(LICENSE_SCHEME_V2.SALT_BYTES);
+      expect(impl.LICENSE_IDENTITY_SEED_BYTES, name).toBe(LICENSE_SCHEME_V2.IDENTITY_SEED_BYTES);
+    }
+    for (const v of ZK_DERIVATION_VECTORS) {
+      const expected = hkdf(
+        sha256,
+        concatBytes(utf8ToBytes(v.ikm), expectedSalt),
+        LICENSE_SCHEME_V2.hkdfSalt,
+        utf8ToBytes(LICENSE_SCHEME_V2.INFO_LABEL + v.serviceId),
+        LICENSE_SCHEME_V2.SECRET_BYTES,
+      );
+      for (const [name, impl] of V2_IMPLS) {
+        expect(bytesToHex(impl.deriveLicenseSecretV2(v.ikm, v.serviceId, seed)), `${name} ${v.id}`).toBe(
+          bytesToHex(expected),
+        );
+      }
+    }
+  });
+
+  it('the identity seed matters: same note and tag, different seed, different key', () => {
+    // This is the property v2 exists for. The issuer holds the note secret and
+    // the public tag; without the seed it cannot land on the commitment.
+    const seedA = hexToBytes(LICENSE_V2_VECTOR.identitySeedHex);
+    const seedB = new Uint8Array(32).fill(0x42);
+    for (const [name, impl] of V2_IMPLS) {
+      const a = impl.deriveLicenseSecretV2(LICENSE_V2_VECTOR.noteSecret, LICENSE_V2_VECTOR.serviceTag, seedA);
+      const b = impl.deriveLicenseSecretV2(LICENSE_V2_VECTOR.noteSecret, LICENSE_V2_VECTOR.serviceTag, seedB);
+      expect(bytesToHex(a), name).not.toBe(bytesToHex(b));
+      expect(sdk.keyMatchesCommitment(impl.encodeLicenseKey(a), impl.licenseCommitment(b)), name).toBe(false);
+    }
+  });
+
+  it('v2 and v1 differ for the same note secret and tag; the SDK verifies a v2 key without knowing the scheme', () => {
+    const seed = hexToBytes(LICENSE_V2_VECTOR.identitySeedHex);
+    for (const [name, impl] of V2_CLIENTS) {
+      const v1 = impl.deriveLicenseSecret(LICENSE_V2_VECTOR.noteSecret, LICENSE_V2_VECTOR.serviceTag);
+      const v2 = impl.deriveLicenseSecretV2(LICENSE_V2_VECTOR.noteSecret, LICENSE_V2_VECTOR.serviceTag, seed);
+      expect(bytesToHex(v1), name).not.toBe(bytesToHex(v2));
+      // Same codec, same commitment rule, same verifier: a v2 key is a 16-byte
+      // secret whose blake3 the vault carries, nothing more.
+      expect(sdk.keyMatchesCommitment(impl.encodeLicenseKey(v2), impl.licenseCommitment(v2)), name).toBe(true);
+      expect(sdk.keyMatchesCommitment(impl.encodeLicenseKey(v2), impl.licenseCommitment(v1)), name).toBe(false);
+      expect(bytesToHex(sdk.decodeLicenseKey(impl.encodeLicenseKey(v2))), name).toBe(bytesToHex(v2));
+    }
+  });
+
+  it('bigint and its decimal string are the same v2 ikm; a seed of the wrong length is refused', () => {
+    const seed = hexToBytes(LICENSE_V2_VECTOR.identitySeedHex);
+    for (const [name, impl] of V2_IMPLS) {
+      expect(bytesToHex(impl.deriveLicenseSecretV2(1234n, 'svc', seed)), name).toBe(LICENSE_V2_VECTOR.licenseSecretHex);
+      expect(() => impl.deriveLicenseSalt(seed.subarray(0, 31)), name).toThrow();
+      expect(() => impl.deriveLicenseSecretV2('1234', 'svc', new Uint8Array(16)), name).toThrow();
+    }
+  });
+
+  it('mobile, extension and the SDK agree byte-for-byte on v2 across the v1 input set', () => {
+    const seed = hexToBytes(LICENSE_V2_VECTOR.identitySeedHex);
+    for (const v of ZK_DERIVATION_VECTORS) {
+      const s = sdk.deriveLicenseSecretV2(v.ikm, v.serviceId, seed);
+      for (const [name, impl] of V2_CLIENTS) {
+        const c = impl.deriveLicenseSecretV2(v.ikm, v.serviceId, seed);
+        expect(bytesToHex(c), `${name} ${v.id}`).toBe(bytesToHex(s));
+        expect(impl.encodeLicenseKey(c), `${name} ${v.id}`).toBe(sdk.encodeLicenseKey(s));
+        expect(bytesToHex(impl.licenseCommitment(c)), `${name} ${v.id}`).toBe(bytesToHex(sdk.licenseCommitment(s)));
+      }
     }
   });
 });

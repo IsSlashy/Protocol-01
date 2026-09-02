@@ -37,18 +37,53 @@
  *   key           = P01-000G-40R4-0M30-E209-185G-R38E-1W
  *   commitment    = a6a492965517a830cb75fdb713465aa465f2f098233896fea44c1d98268bf9e3
  * ====================================================================
+ *
+ * ====================================================================
+ * LICENSE_SCHEME_V2 (additive, 2026-09-02): the note issuer cannot compute
+ * the key. Mirrors the merchant SDK's LICENSE_SCHEME_V2 byte-for-byte.
+ * Spec: docs/LICENSE_KEY_V2-2026-09-02.md.
+ * --------------------------------------------------------------------
+ *   identitySeed   : 32 bytes, the buyer's active pool identity seed (the
+ *                    seed that decrypts the note blob, passphrase-salted
+ *                    variant included). The treasury never holds it.
+ *   licenseSalt    : HKDF-SHA256(ikm = identitySeed, salt = none,
+ *                    info = utf8("p01-license-salt-v2"), 32 bytes)
+ *   licenseSecret  : HKDF-SHA256(ikm = utf8(masterNoteSecret.toString(10)) || licenseSalt,
+ *                    salt = none, info = utf8("p01-license-v2") || utf8(serviceId), 16 bytes)
+ *   commitment, key string, alphabet : unchanged from v1
+ *
+ * v2 test vector (from the spec, pinned in the parity test next to this file):
+ *   identitySeed  = 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+ *   noteSecret    = "1234", serviceTag = "svc"
+ *   licenseSalt   = 058f3c959dba16c347e5e291f65e6d7a26824f1006e541d0b4aba79004c90e6a
+ *   licenseSecret = de00e41667d82798b62825793d51be69
+ *   key           = P01-VR0E-85K7-V0KS-HDH8-4NWK-TMDY-D4
+ *   commitment    = 852e98e702bc79617d20199cf25753264b0da206e2835e476caf4b4e865b8fac
+ *
+ * NOT wired into the mobile subscribe screens: mobile mints v1 for its own
+ * self-shielded notes, which are not treasury-issued, so the v2 motivation
+ * (the issuer recomputing an ISSUED note's secret) does not apply here. v2 is
+ * present so this mirror stays byte-matched with the web client and can be
+ * switched on once mobile carries an identity seed of the same shape.
+ * ====================================================================
  */
 
 import { blake3 } from '@noble/hashes/blake3.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 export const LICENSE_SECRET_BYTES = 16;
 export const LICENSE_COMMITMENT_BYTES = 32;
 const INFO_LABEL = 'p01-license-v1';
 const CLASSIC_SIGN_PREFIX = 'p01-license-v1:';
 const CLASSIC_IDENTITY_DOMAIN = 'p01-license-classic-id-v1';
+
+// v2 (additive): see LICENSE_SCHEME_V2 in the header and in the merchant SDK.
+const INFO_LABEL_V2 = 'p01-license-v2';
+const SALT_INFO_LABEL_V2 = 'p01-license-salt-v2';
+export const LICENSE_IDENTITY_SEED_BYTES = 32;
+export const LICENSE_SALT_BYTES = 32;
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CROCKFORD_INV: Record<string, number> = (() => {
@@ -158,6 +193,55 @@ export function deriveLicenseSecret(
     : masterNoteSecret.trim();
   const ikm = utf8ToBytes(decimal);
   return hkdf(sha256, ikm, undefined, licenseInfo(serviceId), LICENSE_SECRET_BYTES);
+}
+
+/**
+ * HKDF info for v2 = utf8(INFO_LABEL_V2) || utf8(serviceId). The same binding
+ * as v1 under a new label, so a v1 key and a v2 key for the same note and
+ * service are unrelated.
+ */
+function licenseInfoV2(serviceId: string): Uint8Array {
+  return concatBytes(utf8ToBytes(INFO_LABEL_V2), utf8ToBytes(serviceId));
+}
+
+/**
+ * v2 step 1: `licenseSalt = HKDF-SHA256(identitySeed, no salt,
+ * info = "p01-license-salt-v2", 32 bytes)`. The identity seed is the buyer's
+ * active pool seed (the one that decrypts the note blob, passphrase-salted
+ * variant included). The treasury never holds it, which is the whole point of
+ * v2: an ISSUED note's secret is recomputable by the issuer, the salt is not.
+ */
+export function deriveLicenseSalt(identitySeed: Uint8Array): Uint8Array {
+  if (identitySeed.length !== LICENSE_IDENTITY_SEED_BYTES) {
+    throw new Error(`identitySeed must be ${LICENSE_IDENTITY_SEED_BYTES} bytes, got ${identitySeed.length}`);
+  }
+  return hkdf(sha256, identitySeed, undefined, utf8ToBytes(SALT_INFO_LABEL_V2), LICENSE_SALT_BYTES);
+}
+
+/**
+ * v2 step 2: the 16-byte `licenseSecret` from the master note secret, the
+ * service tag and the buyer's identity seed:
+ * `HKDF-SHA256(utf8(masterNoteSecret.toString(10)) || licenseSalt, no salt,
+ * utf8("p01-license-v2") || utf8(serviceId), 16 bytes)`.
+ *
+ * Additive: mobile keeps minting v1 for its own self-shielded notes (see the
+ * header). Present so this mirror stays byte-matched with the web client.
+ *
+ * @param masterNoteSecret the note secret as bigint or its canonical decimal
+ *        string; either form yields the identical ikm, exactly as in v1.
+ * @param identitySeed the 32-byte active pool identity seed of the identity
+ *        the note is filed under.
+ */
+export function deriveLicenseSecretV2(
+  masterNoteSecret: bigint | string,
+  serviceId: string,
+  identitySeed: Uint8Array,
+): Uint8Array {
+  const decimal = typeof masterNoteSecret === 'bigint'
+    ? masterNoteSecret.toString(10)
+    : masterNoteSecret.trim();
+  const ikm = concatBytes(utf8ToBytes(decimal), deriveLicenseSalt(identitySeed));
+  return hkdf(sha256, ikm, undefined, licenseInfoV2(serviceId), LICENSE_SECRET_BYTES);
 }
 
 /**

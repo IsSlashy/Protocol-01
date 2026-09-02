@@ -18,12 +18,15 @@ import { describe, expect, it } from 'vitest';
 import {
   decodeLicenseKey,
   deriveLicenseSecret,
+  deriveLicenseSecretV2,
   encodeLicenseKey,
   licenseCommitment,
 } from './license';
 import {
   KEY_NOT_RECOVERABLE,
+  deriveLicenseSecretUnder,
   licenseTagCandidates,
+  matchLicense,
   matchLicenseServiceTag,
 } from './licenseTagMatch';
 
@@ -130,5 +133,109 @@ describe('matchLicenseServiceTag: the chain decides', () => {
 
   it('the verdict callers show is a fixed phrase', () => {
     expect(KEY_NOT_RECOVERABLE).toBe('key not recoverable for this subscription');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Two schemes. A vault opened before 2026-09-02 stores blake3 of a v1 secret;
+// one opened since stores blake3 of a v2 secret (note secret + identity seed).
+// The vault says nothing about which, so the matcher tries v2 then v1 for each
+// candidate tag and reports the pair that reproduced the commitment.
+// ---------------------------------------------------------------------------
+
+describe('matchLicense: v2 then v1 for each candidate tag, and the scheme comes back', () => {
+  const SEED = new Uint8Array(32).fill(7); // the identity that bought
+  const LEGACY = new Uint8Array(32).fill(8); // its pre-passphrase seed, or a stranger's
+  const candidates = licenseTagCandidates({
+    services: TWO_SLUGS,
+    retailer: RETAILER,
+    tokenMint: SOL,
+  });
+
+  /** What the subscribe path posts on chain since v2 for a purchase under `tag`. */
+  function commitmentV2(tag: string, seed: Uint8Array = SEED): Uint8Array {
+    return licenseCommitment(deriveLicenseSecretV2(SECRET, tag, seed));
+  }
+
+  it('a v1 commitment, the vault of a purchase from before v2, is recovered as v1', () => {
+    const onChain = commitmentFor('acme-pro');
+    const m = matchLicense(SECRET, SEED, onChain, candidates);
+    expect(m).toEqual({ serviceTag: 'acme-pro', scheme: 'v1' });
+    // The key under that pair IS the key the merchant accepted at purchase.
+    const key = encodeLicenseKey(deriveLicenseSecretUnder(m!.scheme, SECRET, m!.serviceTag, SEED));
+    expect(key).toBe(encodeLicenseKey(deriveLicenseSecret(SECRET, 'acme-pro')));
+    expect(hex(licenseCommitment(decodeLicenseKey(key)))).toBe(hex(onChain));
+  });
+
+  it('a v2 commitment is recovered as v2, with the seed that reproduced it', () => {
+    const onChain = commitmentV2('acme-pro');
+    // Both seeds of a passphrase identity are offered, legacy first here to
+    // show the order among seeds does not matter: the commitment decides.
+    const m = matchLicense(SECRET, [LEGACY, SEED], onChain, candidates);
+    expect(m?.serviceTag).toBe('acme-pro');
+    expect(m?.scheme).toBe('v2');
+    expect(m?.identitySeed).toBe(SEED);
+    const key = encodeLicenseKey(
+      deriveLicenseSecretUnder(m!.scheme, SECRET, m!.serviceTag, m!.identitySeed),
+    );
+    expect(key).toBe(encodeLicenseKey(deriveLicenseSecretV2(SECRET, 'acme-pro', SEED)));
+    expect(hex(licenseCommitment(decodeLicenseKey(key)))).toBe(hex(onChain));
+    // A single seed is accepted as well as a list.
+    expect(matchLicense(SECRET, SEED, onChain, candidates)?.scheme).toBe('v2');
+  });
+
+  it('a v2 vault under another seed, or with no seed offered, matches nothing: never a v1 guess', () => {
+    const onChain = commitmentV2('acme-pro');
+    expect(matchLicense(SECRET, LEGACY, onChain, candidates)).toBeNull();
+    expect(matchLicense(SECRET, null, onChain, candidates)).toBeNull();
+    expect(matchLicense(SECRET, [], onChain, candidates)).toBeNull();
+    // And a v1 vault is found whether or not seeds are offered.
+    expect(matchLicense(SECRET, null, commitmentFor('acme-pro'), candidates)?.scheme).toBe('v1');
+  });
+
+  it('a wrong stored tag is rejected under both schemes and the right slug found behind it', () => {
+    const withStored = licenseTagCandidates({
+      storedTag: 'acme-basic',
+      services: TWO_SLUGS,
+      retailer: RETAILER,
+      tokenMint: SOL,
+    });
+    expect(matchLicense(SECRET, SEED, commitmentV2('acme-pro'), withStored)).toMatchObject({
+      serviceTag: 'acme-pro',
+      scheme: 'v2',
+    });
+    expect(matchLicense(SECRET, SEED, commitmentFor('acme-pro'), withStored)).toEqual({
+      serviceTag: 'acme-pro',
+      scheme: 'v1',
+    });
+    // Hex input, either case, and the decimal-string secret, as before.
+    expect(
+      matchLicense(SECRET.toString(), SEED, hex(commitmentV2('acme-pro')).toUpperCase(), withStored)
+        ?.scheme,
+    ).toBe('v2');
+  });
+
+  it('matchLicenseServiceTag keeps its contract: v1 only without seeds, both schemes with', () => {
+    expect(matchLicenseServiceTag(SECRET, commitmentV2('acme-pro'), candidates)).toBeNull();
+    expect(matchLicenseServiceTag(SECRET, commitmentV2('acme-pro'), candidates, SEED)).toBe(
+      'acme-pro',
+    );
+    expect(matchLicenseServiceTag(SECRET, commitmentFor('acme-pro'), candidates, SEED)).toBe(
+      'acme-pro',
+    );
+  });
+
+  it('a vault storing no commitment verifies no key under either scheme', () => {
+    expect(matchLicense(SECRET, SEED, null, candidates)).toBeNull();
+    expect(matchLicense(SECRET, SEED, undefined, candidates)).toBeNull();
+    expect(matchLicense(SECRET, SEED, '', candidates)).toBeNull();
+  });
+
+  it('deriveLicenseSecretUnder refuses v2 without a seed rather than falling back to v1', () => {
+    expect(() => deriveLicenseSecretUnder('v2', SECRET, 'acme-pro')).toThrow(/identity seed/);
+    expect(() => deriveLicenseSecretUnder('v2', SECRET, 'acme-pro', null)).toThrow(/identity seed/);
+    expect(hex(deriveLicenseSecretUnder('v1', SECRET, 'acme-pro', SEED))).toBe(
+      hex(deriveLicenseSecret(SECRET, 'acme-pro')),
+    );
   });
 });

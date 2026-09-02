@@ -33,7 +33,16 @@ import { PublicKey } from '@solana/web3.js';
 import type { RecoveredNote } from '../pool/poolNotes';
 import { buildSubscribePrivateStarkV4Ix } from '../pool/subscribePrivateStarkV4';
 import { goldilocksToLeBytes32, goldilocksU64To32 } from '../pool/denominatedPool';
-import { decodeLicenseKey } from '../license';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { createNoteEncryptionAddress, encryptNote } from '../pool/noteCrypto';
+import { derivePoolSeeds } from '../pool/seedDerivation';
+import {
+  decodeLicenseKey,
+  deriveLicenseSecret,
+  deriveLicenseSecretV2,
+  encodeLicenseKey,
+  licenseCommitment,
+} from '../license';
 
 const SIGNATURE = new Uint8Array(64);
 const META = 'meta-under-test';
@@ -810,5 +819,176 @@ describe('THE LEAK TEST: nothing on the v4 subscribe wire names the note', () =>
         `the sweep missed a commitment planted in ${label}`,
       ).toContain(offset);
     }
+  });
+});
+
+// ===========================================================================
+// LICENSE KEY v2: the key handed over is the one the digest binds, and it is
+// no longer a function of the note secret alone.
+// ===========================================================================
+
+/**
+ * Under v1 the licence secret was HKDF(note secret, tag). For a note the
+ * treasury ISSUED, the treasury holds that secret, so it could mint every
+ * customer's key (limit D8, docs/LICENSE_KEY_V2-2026-09-02.md). v2 mixes in
+ * the identity seed of the note's identity, which never leaves the worker.
+ *
+ * Two things are measured here, on the worker's own output rather than on a
+ * re-derivation that could agree with a broken worker:
+ *   - SINGLE SOURCE: blake3 of the key returned at execute IS the commitment
+ *     the prepare put into the circuit-7 terms (the 33-byte licence slot).
+ *   - v2, NOT v1: the key equals the v2 derivation under the seed the worker
+ *     holds for META, and differs from the v1 key of the same inputs.
+ */
+describe('the licence key is v2, and the key handed over is the one the digest binds', () => {
+  /** What `setPoolSeed(META, SIGNATURE)` holds: no passphrase, so the legacy seed. */
+  const IDENTITY_SEED = derivePoolSeeds(SIGNATURE).active;
+
+  it('circuit 7: blake3 of the returned key IS the commitment the prepare bound', async () => {
+    const prep = await handlePoolRequest(v4PrepareReq());
+    expect(prep.licenseScheme).toBe('v2');
+    const done = await handlePoolRequest(executeReq(prep.jobId));
+    expect(done.licenseScheme).toBe('v2');
+
+    const terms = seen.prepareV4Terms.at(-1)!;
+    expect(terms.licenseCommitment).toHaveLength(32);
+    // The merchant's own check, on the worker's own key.
+    expect(bytesToHex(licenseCommitment(decodeLicenseKey(done.licenseKey)))).toBe(
+      bytesToHex(terms.licenseCommitment!),
+    );
+    // It is the v2 key of (note secret, retailer address as tag, identity seed)...
+    expect(done.licenseKey).toBe(
+      encodeLicenseKey(deriveLicenseSecretV2(NOTE.receipt.secret, RETAILER, IDENTITY_SEED)),
+    );
+    // ...and NOT the v1 key, the one the issuer of the note could recompute.
+    expect(done.licenseKey).not.toBe(
+      encodeLicenseKey(deriveLicenseSecret(NOTE.receipt.secret, RETAILER)),
+    );
+  });
+
+  it('with a registry slug the key is scoped to the slug, still under v2', async () => {
+    const prep = await handlePoolRequest(v4PrepareReq({ serviceId: 'acme-pro' }));
+    const done = await handlePoolRequest(executeReq(prep.jobId, { serviceId: 'acme-pro' }));
+    expect(done.serviceTag).toBe('acme-pro');
+    expect(done.licenseKey).toBe(
+      encodeLicenseKey(deriveLicenseSecretV2(NOTE.receipt.secret, 'acme-pro', IDENTITY_SEED)),
+    );
+    expect(bytesToHex(licenseCommitment(decodeLicenseKey(done.licenseKey)))).toBe(
+      bytesToHex(seen.prepareV4Terms.at(-1)!.licenseCommitment!),
+    );
+  });
+
+  it('the C1 + C3 pair mints v2 too, from the seed the prepare stored', async () => {
+    const prep = await handlePoolRequest(prepareReq());
+    expect(prep.version).toBe('v3');
+    expect(prep.licenseScheme).toBe('v2');
+    const done = await handlePoolRequest(executeReq(prep.jobId));
+    expect(done.licenseScheme).toBe('v2');
+    expect(done.licenseKey).toBe(
+      encodeLicenseKey(deriveLicenseSecretV2(NOTE.receipt.secret, RETAILER, IDENTITY_SEED)),
+    );
+  });
+});
+
+/**
+ * The Reveal path, through the handler: the vault's fingerprint decides the
+ * tag AND the scheme. A vault opened before 2026-09-02 carries a v1
+ * fingerprint and must keep yielding its key; one opened since carries v2.
+ */
+describe('poolLicenseKey: v2 then v1 against the vault fingerprint', () => {
+  const IDENTITY_SEED = derivePoolSeeds(SIGNATURE).active;
+  const SECRET = NOTE.receipt.secret;
+
+  /** The fixture note as its stored blob, sealed to the identity that holds it. */
+  function noteBlob(): string {
+    return encryptNote(
+      createNoteEncryptionAddress(IDENTITY_SEED),
+      utf8ToBytes(
+        JSON.stringify({
+          version: 1,
+          pool: POOL_58,
+          secret: SECRET.toString(),
+          nullifier_preimage: NOTE.receipt.nullifierPreimage.toString(),
+          deposit_epoch: '0',
+          commitment: NOTE.receipt.commitment.toString(),
+          leafIndex: LEAF,
+          token: 'SOL',
+          denominationHuman: DENOM,
+        }),
+      ),
+    );
+  }
+
+  function keyReq(overrides: Record<string, unknown> = {}) {
+    return {
+      kind: 'poolLicenseKey' as const,
+      meta: META,
+      blobs: [noteBlob()],
+      pool: POOL_58,
+      leafIndex: LEAF,
+      serviceTag: RETAILER,
+      ...overrides,
+    };
+  }
+
+  it('a vault from before v2 (v1 fingerprint) still yields its key, and says v1', async () => {
+    const onChain = bytesToHex(licenseCommitment(deriveLicenseSecret(SECRET, 'acme-pro')));
+    const res = await handlePoolRequest(
+      keyReq({
+        serviceTag: 'acme-basic', // a rebuilt record's wrong guess
+        candidateTags: ['acme-basic', 'acme-pro', RETAILER],
+        licenseCommitment: onChain,
+      }),
+    );
+    expect(res.serviceTag).toBe('acme-pro');
+    expect(res.licenseScheme).toBe('v1');
+    expect(res.licenseKey).toBe(encodeLicenseKey(deriveLicenseSecret(SECRET, 'acme-pro')));
+  });
+
+  it('a vault opened since v2 yields the v2 key, and says v2', async () => {
+    const onChain = bytesToHex(
+      licenseCommitment(deriveLicenseSecretV2(SECRET, 'acme-pro', IDENTITY_SEED)),
+    );
+    const res = await handlePoolRequest(
+      keyReq({ serviceTag: 'acme-pro', licenseCommitment: onChain }),
+    );
+    expect(res.serviceTag).toBe('acme-pro');
+    expect(res.licenseScheme).toBe('v2');
+    expect(res.licenseKey).toBe(
+      encodeLicenseKey(deriveLicenseSecretV2(SECRET, 'acme-pro', IDENTITY_SEED)),
+    );
+  });
+
+  it('round trip: the key handed over at purchase is the key Reveal re-derives from the chain value', async () => {
+    const prep = await handlePoolRequest(v4PrepareReq({ serviceId: 'acme-pro' }));
+    const done = await handlePoolRequest(executeReq(prep.jobId, { serviceId: 'acme-pro' }));
+    const onChain = bytesToHex(seen.prepareV4Terms.at(-1)!.licenseCommitment!);
+    const res = await handlePoolRequest(
+      keyReq({ serviceTag: 'acme-pro', licenseCommitment: onChain }),
+    );
+    expect(res.licenseKey).toBe(done.licenseKey);
+    expect(res.licenseScheme).toBe('v2');
+  });
+
+  it('an older caller with no fingerprint derives under the record scheme, v1 by default', async () => {
+    const v1 = await handlePoolRequest(keyReq());
+    expect(v1.licenseScheme).toBe('v1');
+    expect(v1.licenseKey).toBe(encodeLicenseKey(deriveLicenseSecret(SECRET, RETAILER)));
+
+    const v2 = await handlePoolRequest(keyReq({ licenseScheme: 'v2' }));
+    expect(v2.licenseScheme).toBe('v2');
+    expect(v2.licenseKey).toBe(
+      encodeLicenseKey(deriveLicenseSecretV2(SECRET, RETAILER, IDENTITY_SEED)),
+    );
+  });
+
+  it('a fingerprint no (tag, scheme) reproduces is the fixed refusal, never a guess', async () => {
+    // A v2 key minted under some other identity's seed.
+    const onChain = bytesToHex(
+      licenseCommitment(deriveLicenseSecretV2(SECRET, 'acme-pro', new Uint8Array(32).fill(3))),
+    );
+    await expect(
+      handlePoolRequest(keyReq({ serviceTag: 'acme-pro', licenseCommitment: onChain })),
+    ).rejects.toThrow(/key not recoverable for this subscription/);
   });
 });

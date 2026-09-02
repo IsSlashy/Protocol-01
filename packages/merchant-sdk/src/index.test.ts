@@ -25,8 +25,11 @@ import {
   decodeLicenseKey,
   licenseCommitment,
   keyMatchesCommitment,
+  deriveLicenseSalt,
+  deriveLicenseSecretV2,
   LICENSE_SECRET_BYTES,
 } from './license';
+import { hexToBytes } from './license-scheme-vectors';
 import { decodeSubscriptionVault } from './vaults';
 import { blake3 } from '@noble/hashes/blake3.js';
 import { Buffer } from 'buffer';
@@ -314,6 +317,26 @@ describe('license key encode/decode', () => {
       'a6a492965517a830cb75fdb713465aa465f2f098233896fea44c1d98268bf9e3',
     );
     // Sanity: decode reproduces the secret.
+    expect(decodeLicenseKey(key)).toEqual(secret);
+  });
+
+  it('v2 test vector (frozen) from docs/LICENSE_KEY_V2-2026-09-02.md: salt, secret, key, commitment', () => {
+    // identitySeed 01..20, noteSecret "1234", serviceTag "svc". The same vector
+    // is pinned in the mobile and extension parity tests.
+    const identitySeed = hexToBytes('0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20');
+    const salt = deriveLicenseSalt(identitySeed);
+    expect(Buffer.from(salt).toString('hex')).toBe(
+      '058f3c959dba16c347e5e291f65e6d7a26824f1006e541d0b4aba79004c90e6a',
+    );
+    const secret = deriveLicenseSecretV2('1234', 'svc', identitySeed);
+    expect(Buffer.from(secret).toString('hex')).toBe('de00e41667d82798b62825793d51be69');
+    const key = encodeLicenseKey(secret);
+    expect(key).toBe('P01-VR0E-85K7-V0KS-HDH8-4NWK-TMDY-D4');
+    expect(Buffer.from(licenseCommitment(secret)).toString('hex')).toBe(
+      '852e98e702bc79617d20199cf25753264b0da206e2835e476caf4b4e865b8fac',
+    );
+    // Verification is scheme-agnostic: blake3(decode(key)) and nothing else.
+    expect(keyMatchesCommitment(key, licenseCommitment(secret))).toBe(true);
     expect(decodeLicenseKey(key)).toEqual(secret);
   });
 });

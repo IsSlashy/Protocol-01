@@ -21,8 +21,12 @@ import * as mobile from './derive';
 import {
   EXPECTED_SCHEME_DIGEST_BLAKE3,
   EXPECTED_SCHEME_FINGERPRINT,
+  EXPECTED_V2_FINGERPRINT,
+  LICENSE_V2_VECTOR,
   bytesToHex,
+  hexToBytes,
   licenseSchemeFingerprint,
+  licenseV2Fingerprint,
   schemeDigestPreimage,
 } from '../../../../packages/merchant-sdk/src/license-scheme-vectors';
 
@@ -42,6 +46,22 @@ describe('license scheme parity (mobile)', () => {
     expect(mobile.encodeLicenseKey(secret)).toBe('P01-000G-40R4-0M30-E209-185G-R38E-1W');
     expect(bytesToHex(mobile.licenseCommitment(secret))).toBe(
       'a6a492965517a830cb75fdb713465aa465f2f098233896fea44c1d98268bf9e3',
+    );
+  });
+
+  it('the v2 vector from docs/LICENSE_KEY_V2-2026-09-02.md is the real output (additive; v1 fixture untouched)', () => {
+    expect(licenseV2Fingerprint(mobile)).toEqual([...EXPECTED_V2_FINGERPRINT]);
+    const seed = hexToBytes(LICENSE_V2_VECTOR.identitySeedHex);
+    expect(bytesToHex(mobile.deriveLicenseSalt(seed))).toBe(LICENSE_V2_VECTOR.licenseSaltHex);
+    const secret = mobile.deriveLicenseSecretV2(LICENSE_V2_VECTOR.noteSecret, LICENSE_V2_VECTOR.serviceTag, seed);
+    expect(bytesToHex(secret)).toBe(LICENSE_V2_VECTOR.licenseSecretHex);
+    expect(mobile.encodeLicenseKey(secret)).toBe(LICENSE_V2_VECTOR.key);
+    expect(bytesToHex(mobile.licenseCommitment(secret))).toBe(LICENSE_V2_VECTOR.commitmentHex);
+    // bigint and decimal string are the same ikm, as in v1.
+    expect(bytesToHex(mobile.deriveLicenseSecretV2(1234n, 'svc', seed))).toBe(LICENSE_V2_VECTOR.licenseSecretHex);
+    // v2 is a different key from v1 for the same note and tag.
+    expect(bytesToHex(mobile.deriveLicenseSecret(LICENSE_V2_VECTOR.noteSecret, LICENSE_V2_VECTOR.serviceTag))).not.toBe(
+      LICENSE_V2_VECTOR.licenseSecretHex,
     );
   });
 });

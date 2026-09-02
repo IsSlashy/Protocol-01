@@ -1,5 +1,8 @@
 import { Connection, PublicKey } from '@solana/web3.js';
 import { blake3 } from '@noble/hashes/blake3.js';
+import { hkdf } from '@noble/hashes/hkdf.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import {
   fetchVaultByAddress,
   listVaultsForRetailer,
@@ -94,11 +97,65 @@ export const LICENSE_SCHEME = {
   CROCKFORD: '0123456789ABCDEFGHJKMNPQRSTVWXYZ',
 } as const;
 
+/**
+ * License key derivation v2 (additive, 2026-09-02): the note issuer cannot
+ * compute the key.
+ *
+ * Under v1 the only secret in the derivation is the note secret. For a note
+ * the treasury ISSUED (the exchange: pay the till, collect an older note) the
+ * treasury recomputes that secret from its seed at any time, and the service
+ * tag is a public registry slug, so the operator could compute the exact key
+ * of every customer who paid through the exchange. That was the open limit D8,
+ * measured live on 2026-09-02 (`records/live-license-issued-note-2026-09-02.json`).
+ * v2 mixes in the buyer's pool identity seed: the treasury never sees it and
+ * the buyer can always regenerate it from a wallet signature.
+ *
+ * Nothing on the wire changes. The vault still stores 32 commitment bytes and
+ * verification is scheme-agnostic: a v1 key and a v2 key are both 16 bytes
+ * whose blake3 the vault carries, so the SDK never needs to know which scheme
+ * minted a key. `deriveLicenseSecretV2` exists here for tests and tooling only.
+ *
+ * Spec: `docs/LICENSE_KEY_V2-2026-09-02.md` (exact HKDF steps and the shared
+ * test vector). Mirror byte-for-byte in apps/mobile/services/license/derive.ts
+ * and apps/extension's license module; `license-scheme-vectors.ts` pins the
+ * vector for all three.
+ */
+export const LICENSE_SCHEME_V2 = {
+  /** licenseSecret length in bytes (128-bit), unchanged from v1. */
+  SECRET_BYTES: 16,
+  /** identitySeed length in bytes: the buyer's active pool identity seed. */
+  IDENTITY_SEED_BYTES: 32,
+  /** licenseSalt length in bytes (step 1 output). */
+  SALT_BYTES: 32,
+  /** HKDF hash, both steps. */
+  hkdfHash: 'SHA-256',
+  /**
+   * HKDF salt PARAMETER, both steps: none (undefined). The "salt" of the
+   * scheme is the ikm suffix `licenseSalt`, not this parameter.
+   */
+  hkdfSalt: undefined as undefined,
+  /** Step 1: licenseSalt = HKDF-SHA256(ikm = identitySeed, info = utf8(SALT_INFO_LABEL), 32 bytes). */
+  SALT_INFO_LABEL: 'p01-license-salt-v2',
+  /** Step 2 info = utf8(INFO_LABEL) || utf8(serviceId). */
+  INFO_LABEL: 'p01-license-v2',
+  /** Step 2 ikm = utf8(masterNoteSecret.toString(10)) || licenseSalt, 16 bytes out. */
+  ZK_IKM: 'utf8(masterNoteSecret.toString(10)) || licenseSalt',
+  /** Commitment, key string and alphabet are unchanged from v1 (see LICENSE_SCHEME). */
+  commitment: 'blake3(licenseSecret) -> 32 bytes',
+  keyPrefix: 'P01-',
+} as const;
+
 /** licenseSecret byte length (128-bit). */
 export const LICENSE_SECRET_BYTES = LICENSE_SCHEME.SECRET_BYTES;
 
 /** Commitment byte length (blake3 default output). */
 export const LICENSE_COMMITMENT_BYTES = 32;
+
+/** identitySeed byte length for the v2 derivation. */
+export const LICENSE_IDENTITY_SEED_BYTES = LICENSE_SCHEME_V2.IDENTITY_SEED_BYTES;
+
+/** licenseSalt byte length for the v2 derivation. */
+export const LICENSE_SALT_BYTES = LICENSE_SCHEME_V2.SALT_BYTES;
 
 const CROCKFORD = LICENSE_SCHEME.CROCKFORD;
 const CROCKFORD_INV: Record<string, number> = (() => {
@@ -216,6 +273,53 @@ export function licenseCommitment(licenseSecret: Uint8Array): Uint8Array {
     throw new Error(`licenseSecret must be exactly ${LICENSE_SECRET_BYTES} bytes, got ${licenseSecret.length}`);
   }
   return blake3(licenseSecret);
+}
+
+/**
+ * v2 step 1: `licenseSalt = HKDF-SHA256(identitySeed, no salt,
+ * info = "p01-license-salt-v2", 32 bytes)`. The identity seed is the buyer's
+ * active pool seed (the one that decrypts the note blob, passphrase-salted
+ * variant included). The treasury never holds it, which is the whole point of
+ * v2: an ISSUED note's secret is recomputable by the issuer, the salt is not.
+ */
+export function deriveLicenseSalt(identitySeed: Uint8Array): Uint8Array {
+  if (identitySeed.length !== LICENSE_IDENTITY_SEED_BYTES) {
+    throw new Error(`identitySeed must be exactly ${LICENSE_IDENTITY_SEED_BYTES} bytes, got ${identitySeed.length}`);
+  }
+  return hkdf(
+    sha256,
+    identitySeed,
+    LICENSE_SCHEME_V2.hkdfSalt,
+    utf8ToBytes(LICENSE_SCHEME_V2.SALT_INFO_LABEL),
+    LICENSE_SALT_BYTES,
+  );
+}
+
+/**
+ * v2 step 2: the 16-byte `licenseSecret` from the master note secret, the
+ * service tag and the buyer's identity seed:
+ * `HKDF-SHA256(utf8(masterNoteSecret.toString(10)) || licenseSalt, no salt,
+ * utf8("p01-license-v2") || utf8(serviceId), 16 bytes)`.
+ *
+ * Tests and tooling only on the merchant side: verification never derives
+ * anything and cannot tell a v1 key from a v2 key.
+ *
+ * @param masterNoteSecret the note secret as bigint or its canonical decimal
+ *        string; either form yields the identical ikm, exactly as in v1.
+ * @param identitySeed the 32-byte active pool identity seed of the identity
+ *        the note is filed under.
+ */
+export function deriveLicenseSecretV2(
+  masterNoteSecret: bigint | string,
+  serviceId: string,
+  identitySeed: Uint8Array,
+): Uint8Array {
+  const decimal = typeof masterNoteSecret === 'bigint'
+    ? masterNoteSecret.toString(10)
+    : masterNoteSecret.trim();
+  const ikm = concatBytes(utf8ToBytes(decimal), deriveLicenseSalt(identitySeed));
+  const info = concatBytes(utf8ToBytes(LICENSE_SCHEME_V2.INFO_LABEL), utf8ToBytes(serviceId));
+  return hkdf(sha256, ikm, LICENSE_SCHEME_V2.hkdfSalt, info, LICENSE_SECRET_BYTES);
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

@@ -505,13 +505,17 @@ client's receipt: **one `getAccountInfo`**. Plus one `getSlot` unless you pass
 
 **Two honest limits that remain.**
 
-(a) **The note issuer can derive every license secret.** `licenseSecret` is
+(a) **The note issuer can derive every v1 license secret.** `licenseSecret` is
 `HKDF(masterNoteSecret, serviceId)` (see `LICENSE_SCHEME`), and whoever seeded
 the note holds `masterNoteSecret` — so the treasury that issued a note can
 compute the key of every subscription paid with it, with no records
-(`docs/DEMO-untraceable-subscription.md:194-200`). A v2 derivation mixing a
-client-side nonce would close it. It is **not** in this change: the derivation
-is frozen and mirrored byte-for-byte in three clients.
+(`docs/DEMO-untraceable-subscription.md:194-200`). The v2 derivation closes it
+by mixing in the buyer's pool identity seed, which the issuer never holds;
+`deriveLicenseSecretV2` ships in this SDK for tests and tooling only.
+Verification is scheme-agnostic: a v1 key and a v2 key are both 16 bytes whose
+blake3 the vault carries, so the merchant side never needs to know which scheme
+minted a key. The exact HKDF steps and the shared test vector are in
+`docs/LICENSE_KEY_V2-2026-09-02.md`.
 
 (b) **You learn the vault, and the key is a bearer secret.** The vault address
 is public and enumerable from the retailer field by anyone with an RPC, so

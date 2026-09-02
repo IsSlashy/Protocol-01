@@ -5,11 +5,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   deriveLicenseSecret,
+  deriveLicenseSalt,
+  deriveLicenseSecretV2,
   licenseCommitment,
   encodeLicenseKey,
   decodeLicenseKey,
   licenseKeyForPrivate,
   LICENSE_SECRET_BYTES,
+  LICENSE_SALT_BYTES,
 } from './license';
 
 function toHex(bytes: Uint8Array): string {
@@ -84,5 +87,55 @@ describe('license scheme (frozen — must match mobile + merchant-sdk byte-for-b
 
     const merchantRecomputed = licenseCommitment(decodeLicenseKey(displayedKey));
     expect(toHex(merchantRecomputed)).toBe(toHex(postedCommitment));
+  });
+});
+
+describe('license scheme v2 (additive; docs/LICENSE_KEY_V2-2026-09-02.md)', () => {
+  // identitySeed 01..20: the spec vector, also pinned in license-parity.test.ts.
+  const seed = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) seed[i] = i + 1;
+
+  it('FROZEN V2 VECTOR: seed 01..20, note "1234", tag "svc" -> salt, secret, key, commitment', () => {
+    expect(toHex(seed)).toBe('0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20');
+    expect(toHex(deriveLicenseSalt(seed))).toBe(
+      '058f3c959dba16c347e5e291f65e6d7a26824f1006e541d0b4aba79004c90e6a',
+    );
+    const secret = deriveLicenseSecretV2('1234', 'svc', seed);
+    expect(toHex(secret)).toBe('de00e41667d82798b62825793d51be69');
+    expect(encodeLicenseKey(secret)).toBe('P01-VR0E-85K7-V0KS-HDH8-4NWK-TMDY-D4');
+    expect(toHex(licenseCommitment(secret))).toBe(
+      '852e98e702bc79617d20199cf25753264b0da206e2835e476caf4b4e865b8fac',
+    );
+    expect(decodeLicenseKey(encodeLicenseKey(secret))).toEqual(secret);
+  });
+
+  it('salt is 32 bytes, secret is 16 bytes; bigint == decimal-string ikm', () => {
+    expect(deriveLicenseSalt(seed).length).toBe(LICENSE_SALT_BYTES);
+    const a = deriveLicenseSecretV2(1234n, 'svc', seed);
+    const b = deriveLicenseSecretV2('1234', 'svc', seed);
+    expect(a.length).toBe(LICENSE_SECRET_BYTES);
+    expect(toHex(a)).toBe(toHex(b));
+  });
+
+  it('the identity seed matters: same note and tag, different seed, different key', () => {
+    const other = new Uint8Array(32).fill(0x42);
+    expect(toHex(deriveLicenseSecretV2('1234', 'svc', seed))).not.toBe(
+      toHex(deriveLicenseSecretV2('1234', 'svc', other)),
+    );
+  });
+
+  it('serviceId scoping holds under v2', () => {
+    expect(toHex(deriveLicenseSecretV2('1234', 'serviceA', seed))).not.toBe(
+      toHex(deriveLicenseSecretV2('1234', 'serviceB', seed)),
+    );
+  });
+
+  it('v2 is not v1: the same note secret and tag give unrelated secrets', () => {
+    expect(toHex(deriveLicenseSecretV2('1234', 'svc', seed))).not.toBe(toHex(deriveLicenseSecret('1234', 'svc')));
+  });
+
+  it('a seed of the wrong length is refused', () => {
+    expect(() => deriveLicenseSalt(seed.subarray(0, 31))).toThrow();
+    expect(() => deriveLicenseSecretV2('1234', 'svc', new Uint8Array(16))).toThrow();
   });
 });

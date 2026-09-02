@@ -64,7 +64,7 @@ import {
   NATIVE_SOL_MINT_BASE58,
   type DecodedSubscriptionVault,
 } from '../privacy/pool/subscriptionVaultAccount';
-import { licenseServiceTag } from '../privacy/license';
+import { licenseServiceTag, type LicenseScheme } from '../privacy/license';
 import { licenseTagCandidates, KEY_NOT_RECOVERABLE } from '../privacy/licenseTagMatch';
 
 export type { EntitlementStatus, VaultPeriodState };
@@ -74,6 +74,7 @@ export type { EntitlementStatus, VaultPeriodState };
 // `lib/privacy/licenseTagMatch.ts`.
 export { licenseTagCandidates, KEY_NOT_RECOVERABLE };
 export type { LicenseTagListing } from '../privacy/licenseTagMatch';
+export type { LicenseScheme } from '../privacy/license';
 
 // ---------------------------------------------------------------------------
 // Account decoding + base58 — moved to lib/privacy/pool/subscriptionVaultAccount.ts
@@ -288,6 +289,18 @@ export interface StoredSubscription {
   leafIndex?: number;
   /** `Date.now()` when recorded. */
   openedAt: number;
+  /**
+   * The derivation the license key was minted under. Absent on every record
+   * written before 2026-09-02, which are v1 (`licenseSchemeOf`). The Reveal
+   * path verifies both schemes against the chain regardless and rewrites this
+   * when the chain disagrees, exactly as it does for `serviceTag`.
+   */
+  licenseScheme?: LicenseScheme;
+}
+
+/** The scheme a record's key was minted under; a record naming none is v1. */
+export function licenseSchemeOf(rec: Pick<StoredSubscription, 'licenseScheme'>): LicenseScheme {
+  return rec.licenseScheme ?? 'v1';
 }
 
 const SUB_STORE_KEY = 'p01_pay_subscriptions_v2';
@@ -313,6 +326,9 @@ function cleanRecord(rec: StoredSubscription): StoredSubscription {
   if (rec.openTxSig !== undefined) clean.openTxSig = rec.openTxSig;
   if (rec.pool !== undefined) clean.pool = rec.pool;
   if (rec.leafIndex !== undefined) clean.leafIndex = rec.leafIndex;
+  if (rec.licenseScheme === 'v1' || rec.licenseScheme === 'v2') {
+    clean.licenseScheme = rec.licenseScheme;
+  }
   return clean;
 }
 
@@ -740,6 +756,9 @@ export async function recoverSubscriptions(
       openedAt: Date.now(),
     };
     if (svc?.name !== undefined) rec.serviceName = svc.name;
+    // The scheme the worker verified alongside the tag. Absent (older worker,
+    // or nothing matched) leaves the record scheme-less, which reads as v1.
+    if (w.licenseScheme === 'v1' || w.licenseScheme === 'v2') rec.licenseScheme = w.licenseScheme;
     await recordSubscription(meta, walletPubkey, rec);
     known.add(w.vaultPDA);
     recovered.push(rec);
