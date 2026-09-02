@@ -43,7 +43,7 @@
  * shape no user has.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes, concatBytes } from '@noble/hashes/utils.js';
@@ -208,8 +208,32 @@ describe.skipIf(!LIVE)('a v4 subscription that actually opens on devnet', () => 
       serviceId: null,
     });
     const sig = done.txSig;
+    const landedAt = new Date().toISOString();
     log('  V4 SUBSCRIPTION LANDED:', sig);
+    log(`  vault ${done.vaultPDA} | service tag ${done.serviceTag}`);
     expect(sig).toBeTruthy();
+    // The merchant-side half of the measurement lives in the merchant SDK
+    // (`verifyMerchantLicense`): it needs the key the buyer would paste, the
+    // retailer it was sold for and the terms. Both are bearer material for a
+    // throwaway retailer; they are written only where the operator asks.
+    expect(done.licenseKey, 'the v4 subscribe returned no license key').toMatch(/^P01-/);
+    if (process.env.P01_LIVE_RECORD) {
+      writeFileSync(
+        process.env.P01_LIVE_RECORD,
+        JSON.stringify({
+          txSig: sig,
+          vaultPDA: done.vaultPDA,
+          licenseKey: done.licenseKey,
+          serviceTag: done.serviceTag,
+          retailer: retailer.toBase58(),
+          rate: RATE,
+          intervalSlots: INTERVAL_SLOTS,
+          denomination: DENOMINATION,
+          landedAt,
+        }, null, 2),
+      );
+      log(`  record written to ${process.env.P01_LIVE_RECORD}`);
+    }
 
     // ------------------------------------------------------- what landed
     const tx = await connection.getTransaction(sig, {

@@ -1,0 +1,105 @@
+{
+  "record": {
+    "txSig": "mVTjvNzsXxBJ4KgyaFMAA7FqC8Y3yPLhS9zz14YNXRrkVM2TyBF6U6ZeJuXy5637mfiWfYU55YpNLYLSyxXUq2S",
+    "vaultPDA": "6rtrJPRW1pgcrMFAzHZWGLfcHZ2s6xoUwrxfgSZzSbSU",
+    "retailer": "AKWBXpnvAuL3AVZnxJXAkyCwgiFhFdo7oBAEh7pppaeF",
+    "commitment": "8de70383cc0f8e3bd0384ccda4144154ea75f72fbfc3f8e77f1078250c3c4ba6",
+    "landedAt": "2026-09-02T16:43:03.254Z"
+  },
+  "rpc": "https://devnet.helius-rpc.com/?api-key=(redacted)",
+  "steps": [
+    {
+      "name": "key only, first grant",
+      "ok": true,
+      "attempts": 1,
+      "callMs": 709,
+      "secondsAfterLanding": 0.751,
+      "vault": "6rtrJPRW1pgcrMFAzHZWGLfcHZ2s6xoUwrxfgSZzSbSU",
+      "currentSlot": "492068986",
+      "currentUntilSlot": "492083945",
+      "periodsPaidFor": "10"
+    },
+    {
+      "name": "key only, second grant (stable id)",
+      "ok": true,
+      "sameId": true
+    },
+    {
+      "name": "with vault from receipt",
+      "ok": true,
+      "sameId": true
+    },
+    {
+      "name": "another merchant, key only",
+      "ok": false,
+      "reason": "vault_not_found",
+      "detail": "no SubscriptionVault owned by GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c names retailer 6jF7Y8HVFDmNN4icG5Sfs9PvngqE5mZhbn4qdRqeNGMX with this key's commitment (searched license_commitment at offsets 224/232)"
+    },
+    {
+      "name": "another merchant, with the vault address",
+      "ok": false,
+      "reason": "retailer_mismatch",
+      "detail": "vault pays AKWBXpnvAuL3AVZnxJXAkyCwgiFhFdo7oBAEh7pppaeF, not 6jF7Y8HVFDmNN4icG5Sfs9PvngqE5mZhbn4qdRqeNGMX"
+    },
+    {
+      "name": "same merchant, dearer service (price + 1)",
+      "ok": false,
+      "reason": "service_mismatch",
+      "detail": "vault rate 100000000 does not match the service price 100000001"
+    },
+    {
+      "name": "same merchant, other billing period",
+      "ok": false,
+      "reason": "service_mismatch",
+      "detail": "vault interval 1500 does not match the service interval 3000"
+    },
+    {
+      "name": "one character of the key changed",
+      "ok": false,
+      "reason": "vault_not_found",
+      "detail": "no SubscriptionVault owned by GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c names retailer AKWBXpnvAuL3AVZnxJXAkyCwgiFhFdo7oBAEh7pppaeF with this key's commitment (searched license_commitment at offsets 224/232)"
+    },
+    {
+      "name": "a key from thin air",
+      "ok": false,
+      "reason": "vault_not_found",
+      "detail": "no SubscriptionVault owned by GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c names retailer AKWBXpnvAuL3AVZnxJXAkyCwgiFhFdo7oBAEh7pppaeF with this key's commitment (searched license_commitment at offsets 224/232)"
+    },
+    {
+      "name": "a string that is not a key",
+      "ok": false,
+      "reason": "malformed_key",
+      "detail": "license key does not decode: license key decodes to 3 bytes, need 16"
+    },
+    {
+      "name": "ephemeral session + token re-verified",
+      "ok": true,
+      "tokenValid": true,
+      "subject": "EFDuNkXa1YY3HrLrGR6vmdvkq5dCr1ymemwqMucmKxVF",
+      "subjectIsEphemeralId": true,
+      "expiresAtUnix": 1788370985,
+      "tokenBytes": 472
+    }
+  ],
+  "verdict": {
+    "recognised": true,
+    "grants": [
+      "key only, first grant",
+      "key only, second grant (stable id)",
+      "with vault from receipt",
+      "ephemeral session + token re-verified"
+    ],
+    "refusals": [
+      "another merchant, key only -> vault_not_found",
+      "another merchant, with the vault address -> retailer_mismatch",
+      "same merchant, dearer service (price + 1) -> service_mismatch",
+      "same merchant, other billing period -> service_mismatch",
+      "one character of the key changed -> vault_not_found",
+      "a key from thin air -> vault_not_found",
+      "a string that is not a key -> malformed_key"
+    ],
+    "expectedGrants": 4,
+    "expectedRefusals": 7,
+    "pass": true
+  }
+}
