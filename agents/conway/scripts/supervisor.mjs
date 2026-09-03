@@ -156,6 +156,51 @@ function walletAddress(agent) {
   return w.address || null;
 }
 
+/**
+ * Owner-controlled configuration (inference pool, treasury caps, economy) is
+ * read by the runtime only at boot. Push it into a running agent's
+ * automaton.json and restart that agent when it actually changed, so a colony
+ * setting never requires deleting the agent.
+ */
+function pushOwnerConfig(agent) {
+  const cfgPath = path.join(automatonDir(agent), "automaton.json");
+  if (!fs.existsSync(cfgPath)) return false;
+  let cfg;
+  try {
+    cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8"));
+  } catch {
+    return false;
+  }
+  const desired = inferenceGenesisFields();
+  const owner = {
+    freePool: desired.freePool,
+    inferenceModel: desired.inferenceModel ?? cfg.inferenceModel,
+    ollamaBaseUrl: desired.ollamaBaseUrl,
+    openaiBaseUrl: desired.openaiBaseUrl,
+    treasuryPolicy: colony.treasuryPolicy ? { ...cfg.treasuryPolicy, ...colony.treasuryPolicy } : cfg.treasuryPolicy,
+    economy: {
+      ...(cfg.economy ?? {}),
+      ...(colony.economy ?? {}),
+      cause: colony.cause,
+      causeAddress: colony.causeAddress || undefined,
+      solanaRpcUrl: process.env.SOLANA_RPC_URL || colony.solanaRpcUrl,
+    },
+    creatorAddress: colony.ownerAddress,
+  };
+  let changed = false;
+  for (const [k, v] of Object.entries(owner)) {
+    if (v === undefined) continue;
+    if (JSON.stringify(cfg[k]) !== JSON.stringify(v)) {
+      cfg[k] = v;
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  log(`${agent.id}: owner config updated (inference/treasury/economy); restarting to apply`);
+  return true;
+}
+
 async function snapshot(agent) {
   const snap = { name: agent.name, generation: agent.generation, role: agent.role, status: agent.status, pid: agent.pid, alive: pidAlive(agent.pid), address: agent.address || walletAddress(agent) };
   const db = openDb(agent);
@@ -590,6 +635,10 @@ async function tick() {
 
   for (const agent of state.agents.filter((a) => a.status === "alive")) {
     mirrorAgentLog(agent);
+    if (pushOwnerConfig(agent) && pidAlive(agent.pid)) {
+      stopProcess(agent);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
     const snap = await snapshot(agent);
     log(`${agent.id}: proc=${snap.alive ? "up" : "DOWN"} state=${snap.state ?? "?"} turns=${snap.turns ?? 0} usdc=${snap.usdc?.toFixed?.(2) ?? "?"} sol=${snap.sol?.toFixed?.(4) ?? "?"} rev7d=${(snap.revenue7d ?? 0).toFixed(2)} swept30d=${(snap.swept30d ?? 0).toFixed(2)}`);
 
