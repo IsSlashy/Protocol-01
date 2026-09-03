@@ -8,6 +8,7 @@
 //! - Partial rounds R_p = 22 (for t=3), 22 (for t=5)
 
 pub mod constants;
+mod poseidon_provenance;
 
 use winterfell::math::{fields::f64::BaseElement, FieldElement};
 

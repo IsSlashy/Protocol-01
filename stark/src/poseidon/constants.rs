@@ -2,13 +2,40 @@
 //!
 //! Field: p = 2^64 - 2^32 + 1 (Goldilocks)
 //! S-box: x^7 (alpha = 7)
-//! Security level: 128 bits
 //!
-//! Constants generated following the Poseidon specification:
-//! - Round constants from Grain LFSR seeded with (p, t, R_f, R_p, alpha)
-//! - MDS matrices are circulant MDS verified for security
+//! The "Security level: 128 bits" this header used to assert is removed, not
+//! lowered: nothing in this repository measures a security level for this
+//! permutation, and the figure came attached to the provenance below.
 //!
-//! These match the parameter structure used by Polygon Miden / Plonky2.
+//! THE PROVENANCE OF THESE CONSTANTS IS UNVERIFIED. Measured 2026-09-03.
+//!
+//! This header used to say the round constants came from a Grain LFSR seeded
+//! with (p, t, R_f, R_p, alpha), that the MDS matrices were verified, and that
+//! both matched Polygon Miden / Plonky2. Nothing in this repository reproduces
+//! that generator, and the values carry structure a Grain LFSR would not
+//! produce. Measured in the field (differences mod p, not mod 2^64):
+//!
+//!   ROUND_CONSTANTS_T3   10 of 89 successive differences fall in a family of
+//!                        three values within 0x4400 of each other, at
+//!                        positions 44..71, which is rounds 14 to 24
+//!   ROUND_CONSTANTS_T5   4 of 149, all one value, rounds 15 to 19
+//!
+//! For random constants the chance that any two successive differences even
+//! coincide is about one in 10^16. Whatever produced these had an additive
+//! step in it. The values themselves are distinct and all inside the field.
+//!
+//! What that means, exactly: an arithmetic relation between round constants is
+//! the structure invariant-subspace attacks on Poseidon-like permutations look
+//! for, and their usual target is the PARTIAL-round block. This permutation
+//! has no partial rounds (see the note on ROUND_CONSTANTS_T3), so the standard
+//! attack shape does not apply as written. That is not a security argument,
+//! and nobody here has made one.
+//!
+//! DO NOT CHANGE A VALUE IN THIS FILE. Every commitment, nullifier and Merkle
+//! node in the deployed pools runs through these constants; a new value
+//! orphans every note that exists. Regenerating them is a migration, not an
+//! edit. `poseidon_provenance.rs` pins the measurement above so a silent
+//! regeneration is visible.
 //! Reference: https://eprint.iacr.org/2019/458
 
 use winterfell::math::fields::f64::BaseElement;
@@ -17,8 +44,14 @@ use winterfell::math::fields::f64::BaseElement;
 // t = 3 (width 3, rate 2, capacity 1) — for Poseidon(1) and Poseidon(2)
 // ============================================================================
 
-/// Total rounds for t=3: R_f=8 (4+4 full) + R_p=22 partial = 30 rounds
-/// Each round needs 3 constants -> 30 * 3 = 90 constants
+/// 90 constants: 30 rounds x 3 lanes.
+///
+/// THE ROUND LABELS BELOW ARE THE LAYOUT THIS FILE WAS WRITTEN FOR, NOT WHAT
+/// THE CODE DOES. They say R_f=8 (4+4 full) + R_p=22 partial, while
+/// `poseidon/mod.rs::permutation_t3` applies a FULL S-box to every lane on all
+/// 30 rounds. Full rounds throughout is strictly more work than the split
+/// these labels describe, so the divergence is conservative: the labels are
+/// wrong, not the permutation. They stay because they index the array.
 pub const ROUND_CONSTANTS_T3: [BaseElement; 90] = [
     // Round 0 (full)
     BaseElement::new(0xa98e4673f9036e0b), BaseElement::new(0x3db4a488e825c32a), BaseElement::new(0x60de653e0ed43e20),
