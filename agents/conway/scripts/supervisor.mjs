@@ -262,6 +262,9 @@ function pushOwnerConfig(agent) {
     disabledTools: colony.disabledTools,
     contextTurns: colony.contextTurns,
     memoryBudget: colony.memoryBudget,
+    // The mandate is owner-written too: a running agent must not keep the
+    // version it was born with once the owner sharpens it.
+    genesisPrompt: buildGenesisPrompt(agent.name, agent.generation, agent.specialization),
   };
   let changed = false;
   for (const [k, v] of Object.entries(owner)) {
@@ -503,6 +506,22 @@ function inferenceGenesisFields() {
   return out;
 }
 
+/** The full genesis prompt for one agent, rendered from the owner's template. */
+function buildGenesisPrompt(name, generation, specialization) {
+  const budget =
+    colony.inference?.provider === "free-pool"
+      ? "<inference_budget>\nYour inference is a pool of FREE API tiers with small daily quotas (check inference_pool_status). Every turn spends quota: think in fewer, denser turns, batch tool calls, sleep long between cycles (hours, not minutes), and never poll. When the pool reports most providers cooling, sleep until they recover.\n</inference_budget>"
+      : "";
+  const spec = specialization ? `<specialization>\n${specialization}\n</specialization>` : "";
+  return renderGenesis({
+    NAME: name,
+    GENERATION: String(generation),
+    OWNER: colony.ownerAddress,
+    CAUSE: colony.cause,
+    EXTRA: [colony.extraGenesis, budget, spec].filter(Boolean).join("\n\n"),
+  });
+}
+
 function childEnv(home) {
   const env = { ...process.env, HOME: home, USERPROFILE: home, AUTOMATON_HEADLESS: "1" };
   env.SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || colony.solanaRpcUrl;
@@ -584,18 +603,7 @@ async function spawnAgent(state, opts) {
     }
   }
 
-  const genesisPrompt = renderGenesis({
-    NAME: name,
-    GENERATION: String(generation),
-    OWNER: colony.ownerAddress,
-    CAUSE: colony.cause,
-    EXTRA: [
-      colony.extraGenesis,
-      colony.inference?.provider === "free-pool"
-        ? "<inference_budget>\nYour inference is a pool of FREE API tiers with small daily quotas (check inference_pool_status). Every turn spends quota: think in fewer, denser turns, batch tool calls, sleep long between cycles (hours, not minutes), and never poll. When the pool reports most providers cooling, sleep until they recover.\n</inference_budget>"
-        : "",
-      opts.specialization ? `<specialization>\n${opts.specialization}\n</specialization>` : ""].filter(Boolean).join("\n\n"),
-  });
+  const genesisPrompt = buildGenesisPrompt(name, generation, opts.specialization);
   const economy = {
     ...(colony.economy ?? {}),
     cause: colony.cause,
