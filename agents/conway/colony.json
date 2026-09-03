@@ -122,5 +122,6 @@
     "proceduralMemoryTokens": 600,
     "relationshipMemoryTokens": 300
   },
-  "inheritWallet": true
+  "inheritWallet": true,
+  "installDefaultSkills": false
 }

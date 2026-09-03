@@ -196,6 +196,45 @@ function pushPlaybook(agent) {
   }
 }
 
+const CONWAY_DEFAULT_SKILLS = ["conway-compute", "conway-payments", "survival"];
+
+/**
+ * The runtime installs three skills written for a Conway account: check credits
+ * every cycle, stop inference below a dollar, top up by credit transfer. On this
+ * deployment they are simply false, and the agent obeyed them over its playbook.
+ * Remove them from a running agent, on disk and in the skills table.
+ */
+function pruneConwaySkills(agent) {
+  if (colony.installDefaultSkills !== false) return false;
+  const dir = path.join(automatonDir(agent), "skills");
+  let removed = [];
+  for (const name of CONWAY_DEFAULT_SKILLS) {
+    const d = path.join(dir, name);
+    if (fs.existsSync(d)) {
+      try {
+        fs.rmSync(d, { recursive: true, force: true });
+        removed.push(name);
+      } catch (err) {
+        log(`${agent.id}: could not remove skill ${name}: ${err?.message ?? err}`);
+      }
+    }
+  }
+  if (removed.length === 0) return false;
+  const db = openDb(agent);
+  if (db) {
+    try {
+      const stmt = db.prepare("DELETE FROM skills WHERE name = ?");
+      for (const name of removed) stmt.run(name);
+    } catch {
+      /* table shape may differ */
+    } finally {
+      db.close();
+    }
+  }
+  log(`${agent.id}: removed Conway-centric skills (${removed.join(", ")}); restarting to apply`);
+  return true;
+}
+
 function pushOwnerConfig(agent) {
   const cfgPath = path.join(automatonDir(agent), "automaton.json");
   if (!fs.existsSync(cfgPath)) return false;
@@ -577,6 +616,7 @@ async function spawnAgent(state, opts) {
     lineageLessons: opts.lineageLessons || undefined,
     playbook: fs.existsSync(expandHome(colony.playbookFile || "./playbook.md")) ? fs.readFileSync(expandHome(colony.playbookFile || "./playbook.md"), "utf8") : undefined,
     disabledHeartbeatTasks: colony.disabledHeartbeatTasks ?? ["check_for_updates"],
+    installDefaultSkills: colony.installDefaultSkills !== false,
     disabledTools: colony.disabledTools,
     contextTurns: colony.contextTurns,
     memoryBudget: colony.memoryBudget,
@@ -705,7 +745,8 @@ async function tick() {
     mirrorAgentLog(agent);
     const ownerChanged = pushOwnerConfig(agent);
     const playbookChanged = pushPlaybook(agent);
-    if ((ownerChanged || playbookChanged) && pidAlive(agent.pid)) {
+    const skillsChanged = pruneConwaySkills(agent);
+    if ((ownerChanged || playbookChanged || skillsChanged) && pidAlive(agent.pid)) {
       stopProcess(agent);
       await new Promise((r) => setTimeout(r, 2000));
     }

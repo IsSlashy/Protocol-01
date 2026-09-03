@@ -1,7 +1,7 @@
 From f1cad2aa35fe902a3402a73e0eac7683c3423596 Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 17:48:18 +0200
-Subject: [PATCH 09/10] feat(p01): prompt size is configurable, and the pool
+Subject: [PATCH 09/11] feat(p01): prompt size is configurable, and the pool
  respects a provider's request limit
 
 Removing 41 tool schemas left the prompt at 26k tokens: the bulk is conversation

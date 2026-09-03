@@ -1,0 +1,45 @@
+From 90de379504d00fe3f8975deb34c9b3602a1e0e8b Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 18:22:48 +0200
+Subject: [PATCH 11/11] fix(p01): a colony can decline the bundled Conway
+ skills
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The three skills installed at setup are injected into every prompt and say:
+check credits every cycle, stop inference below a dollar, top up by credit
+transfer. With free inference and no Conway account all three are false, and the
+agent obeyed them over its playbook — it kept sending EMERGENCY FUNDING REQUIRED
+while holding enough SOL for eleven thousand transactions.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/setup/headless.ts | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/setup/headless.ts b/src/setup/headless.ts
+index a752abd..42ad114 100644
+--- a/src/setup/headless.ts
++++ b/src/setup/headless.ts
+@@ -162,7 +162,15 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+     try { fs.chmodSync(dst, 0o444); } catch { /* windows */ }
+   }
+   fs.writeFileSync(path.join(dir, "SOUL.md"), generateSoulMd(g.name, chainIdentity.address, g.creatorAddress, g.genesisPrompt), { mode: 0o600 });
+-  installDefaultSkills(config.skillsDir || "~/.automaton/skills");
++  // p01: the bundled skills are written for a Conway account (monitor credits,
++  // stop inference below a dollar, top up by credit transfer). On a deployment
++  // with free inference and no Conway account they are false and they drive the
++  // agent to beg instead of work, so a colony can decline them.
++  if (g.installDefaultSkills !== false) {
++    installDefaultSkills(config.skillsDir || "~/.automaton/skills");
++  } else {
++    logger.info("Default skills not installed (installDefaultSkills=false)");
++  }
+   if (typeof g.lineageLessons === "string" && g.lineageLessons.trim()) {
+     writeLineage(g.lineageLessons);
+   }
+-- 
+2.55.0.windows.3
+
