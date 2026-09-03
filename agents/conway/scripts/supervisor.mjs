@@ -186,6 +186,7 @@ function pushOwnerConfig(agent) {
       solanaRpcUrl: process.env.SOLANA_RPC_URL || colony.solanaRpcUrl,
     },
     creatorAddress: colony.ownerAddress,
+    disabledTools: colony.disabledTools,
   };
   let changed = false;
   for (const [k, v] of Object.entries(owner)) {
@@ -515,6 +516,7 @@ async function spawnAgent(state, opts) {
     lineageLessons: opts.lineageLessons || undefined,
     playbook: fs.existsSync(expandHome(colony.playbookFile || "./playbook.md")) ? fs.readFileSync(expandHome(colony.playbookFile || "./playbook.md"), "utf8") : undefined,
     disabledHeartbeatTasks: colony.disabledHeartbeatTasks ?? ["check_for_updates"],
+    disabledTools: colony.disabledTools,
   };
   writeJson(path.join(dir, "genesis.json"), genesis);
 

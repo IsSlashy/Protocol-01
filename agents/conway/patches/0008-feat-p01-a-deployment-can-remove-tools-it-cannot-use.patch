@@ -1,0 +1,122 @@
+From 84e925e19ae70c5b3c6912b698fbec4489b80b8c Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 17:42:36 +0200
+Subject: [PATCH 8/8] feat(p01): a deployment can remove tools it cannot use
+
+Groq answered 413 Request too large: the prompt reached 25k tokens, most of it
+schemas for tools this deployment has no account for. config.disabledTools
+removes them from the offer and from the prompt, and a 413 now cools a provider
+for 30 minutes instead of 10 (a shorter cooldown just burns the daily budget).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/agent/loop.ts          |  8 +++++++-
+ src/inference/free-pool.ts |  4 ++++
+ src/replication/genesis.ts |  1 +
+ src/replication/spawn.ts   |  1 +
+ src/setup/headless.ts      |  1 +
+ src/types.ts               | 10 ++++++++++
+ 6 files changed, 24 insertions(+), 1 deletion(-)
+
+diff --git a/src/agent/loop.ts b/src/agent/loop.ts
+index 1e726f3..f80f125 100644
+--- a/src/agent/loop.ts
++++ b/src/agent/loop.ts
+@@ -99,7 +99,13 @@ export async function runAgentLoop(
+ 
+   const builtinTools = createBuiltinTools(identity.sandboxId);
+   const installedTools = loadInstalledTools(db);
+-  const tools = [...builtinTools, ...installedTools];
++  const disabledTools = new Set(config.disabledTools ?? []);
++  const tools = [...builtinTools, ...installedTools].filter((t) => !disabledTools.has(t.name));
++  if (disabledTools.size > 0) {
++    logger.info(
++      `Tool policy: ${tools.length} tools offered, ${builtinTools.length + installedTools.length - tools.length} removed by config`,
++    );
++  }
+   const toolContext: ToolContext = {
+     identity,
+     config,
+diff --git a/src/inference/free-pool.ts b/src/inference/free-pool.ts
+index 2123475..5d86104 100644
+--- a/src/inference/free-pool.ts
++++ b/src/inference/free-pool.ts
+@@ -307,6 +307,10 @@ export class FreeInferencePool {
+         ms = daily ? nextUtcMidnight() - Date.now() : Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 60_000;
+       } else if (status === 402 || status === 403 || status === 401) {
+         ms = 6 * 3_600_000; // out of credit / key issue: leave it alone for a while
++      } else if (status === 413 || /request too large|context length|too many tokens/i.test(text)) {
++        // The prompt does not fit this provider. Retrying it soon just burns
++        // the budget; the fix is a smaller prompt, not a shorter cooldown.
++        ms = 30 * 60_000;
+       } else if (status === 400 && /model|not found|does not exist|decommissioned/i.test(text)) {
+         ms = 24 * 3_600_000; // wrong model id: stop wasting calls until someone fixes it
+       } else {
+diff --git a/src/replication/genesis.ts b/src/replication/genesis.ts
+index 8d69b6f..cd3159c 100644
+--- a/src/replication/genesis.ts
++++ b/src/replication/genesis.ts
+@@ -138,6 +138,7 @@ export function generateGenesisConfig(
+     treasuryPolicy: config.treasuryPolicy,
+     freePool: config.freePool,
+     playbook: loadPlaybook() ?? undefined,
++    disabledTools: config.disabledTools,
+   };
+ 
+   return Object.freeze(result) as GenesisConfig;
+diff --git a/src/replication/spawn.ts b/src/replication/spawn.ts
+index b26577d..5fa45c3 100644
+--- a/src/replication/spawn.ts
++++ b/src/replication/spawn.ts
+@@ -155,6 +155,7 @@ export async function spawnChild(
+         treasuryPolicy: genesis.treasuryPolicy,
+         freePool: genesis.freePool,
+         playbook: genesis.playbook,
++        disabledTools: genesis.disabledTools,
+       },
+       null,
+       2,
+diff --git a/src/setup/headless.ts b/src/setup/headless.ts
+index ebcd183..65e8880 100644
+--- a/src/setup/headless.ts
++++ b/src/setup/headless.ts
+@@ -123,6 +123,7 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+     inferenceModel,
+   });
+   if (g.modelStrategy) (config as any).modelStrategy = g.modelStrategy;
++  if (Array.isArray(g.disabledTools)) config.disabledTools = g.disabledTools;
+   if (usePool && freePool) {
+     config.freePool = freePool;
+     (config as any).modelStrategy = {
+diff --git a/src/types.ts b/src/types.ts
+index bb7dd1f..e727746 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -83,6 +83,14 @@ export interface AutomatonConfig {
+   economy?: EconomyConfig;
+   /** p01: lineage generation number (1 = first). */
+   generation?: number;
++  /**
++   * p01: tools removed from this agent entirely — not offered, not callable.
++   * Every tool schema costs prompt tokens on every turn, and free inference
++   * tiers reject oversized requests (Groq answers 413). Removing the tools a
++   * deployment cannot use (no Conway account: sandboxes, domains, credits)
++   * both shrinks the prompt and stops the agent wasting turns on them.
++   */
++  disabledTools?: string[];
+ }
+ 
+ // ─── p01 economy layer ──────────────────────────────────────────
+@@ -958,6 +966,8 @@ export interface GenesisConfig {
+   freePool?: import("./inference/free-pool.js").FreePoolConfig;
+   /** p01: owner playbook inherited by the child */
+   playbook?: string;
++  /** p01: tool policy inherited by the child */
++  disabledTools?: string[];
+ }
+ 
+ export const MAX_CHILDREN = 3;
+-- 
+2.55.0.windows.3
+
