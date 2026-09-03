@@ -1,0 +1,109 @@
+From eaa95e4177e9fefa1b546164e729e27bcfe4ae76 Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 20:01:27 +0200
+Subject: [PATCH 13/13] fix(p01): a stalled delegation no longer freezes the
+ agent forever
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Production livelock: the agent reported 'up' but had not taken a turn in over an
+hour. The orchestrator gate sleeps whenever a delegated task is 'active' and
+nothing moved. With a dead local worker, nothing ever moves, so the agent woke
+every 60s, saw the same stalled task, and slept again — indefinitely.
+
+Two guards: orchestratorEnabled=false skips the whole multi-agent bootstrap for
+an agent that has nobody to delegate to, and the gate now gives up after five
+idle passes and takes the turn itself.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/agent/loop.ts     | 24 +++++++++++++++++++++++-
+ src/setup/headless.ts |  1 +
+ src/types.ts          |  7 +++++++
+ 3 files changed, 31 insertions(+), 1 deletion(-)
+
+diff --git a/src/agent/loop.ts b/src/agent/loop.ts
+index 73a1352..f5b2726 100644
+--- a/src/agent/loop.ts
++++ b/src/agent/loop.ts
+@@ -136,7 +136,9 @@ export async function runAgentLoop(
+   let orchestrator: Orchestrator | undefined;
+   let workerPool: LocalWorkerPool | undefined;
+ 
+-  if (hasTable(db.raw, "goals")) {
++  if (config.orchestratorEnabled === false) {
++    logger.info("Orchestration disabled by config: this agent works alone.");
++  } else if (hasTable(db.raw, "goals")) {
+     try {
+       planModeController = new PlanModeController(db.raw);
+ 
+@@ -555,7 +557,26 @@ export async function runAgentLoop(
+           `SELECT 1 FROM task_graph WHERE assigned_to = ? AND status IN ('assigned', 'running') LIMIT 1`,
+         ).get(identity.address);
+ 
++        // p01: a delegation that never progresses used to put the agent to
++        // sleep on every pass, so it stopped working entirely. Give up waiting
++        // after a few idle passes and take the turn itself.
++        const idleWaits = Number(db.getKV("orchestrator.idle_waits") ?? "0");
++        const MAX_IDLE_WAITS = 5;
+         if (
++          orchestratorTick.phase === "executing" &&
++          orchestratorTick.tasksAssigned === 0 &&
++          orchestratorTick.tasksCompleted === 0 &&
++          orchestratorTick.tasksFailed === 0 &&
++          !hasSelfAssignedParentTask &&
++          (orchestratorTick.agentsActive > 0 || localWorkersActive > 0) &&
++          idleWaits >= MAX_IDLE_WAITS
++        ) {
++          log(
++            config,
++            `[ORCHESTRATOR] Delegated work has not progressed for ${idleWaits} passes. Taking the turn instead of waiting again.`,
++          );
++          db.setKV("orchestrator.idle_waits", "0");
++        } else if (
+           orchestratorTick.phase === "executing" &&
+           orchestratorTick.tasksAssigned === 0 &&
+           orchestratorTick.tasksCompleted === 0 &&
+@@ -563,6 +584,7 @@ export async function runAgentLoop(
+           !hasSelfAssignedParentTask &&
+           (orchestratorTick.agentsActive > 0 || localWorkersActive > 0)
+         ) {
++          db.setKV("orchestrator.idle_waits", String(idleWaits + 1));
+           log(
+             config,
+             "[ORCHESTRATOR] All delegated work is active and no self-assigned parent task remains. Sleeping to avoid idle loop.",
+diff --git a/src/setup/headless.ts b/src/setup/headless.ts
+index 42ad114..d04c06c 100644
+--- a/src/setup/headless.ts
++++ b/src/setup/headless.ts
+@@ -125,6 +125,7 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+   if (g.modelStrategy) (config as any).modelStrategy = g.modelStrategy;
+   if (Array.isArray(g.disabledTools)) config.disabledTools = g.disabledTools;
+   if (typeof g.contextTurns === "number") config.contextTurns = g.contextTurns;
++  if (typeof g.orchestratorEnabled === "boolean") config.orchestratorEnabled = g.orchestratorEnabled;
+   if (g.memoryBudget && typeof g.memoryBudget === "object") config.memoryBudget = g.memoryBudget;
+   if (usePool && freePool) {
+     config.freePool = freePool;
+diff --git a/src/types.ts b/src/types.ts
+index 56061d8..f9a25ab 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -98,6 +98,13 @@ export interface AutomatonConfig {
+   contextTurns?: number;
+   /** p01: override the per-tier memory retrieval budget (tokens). */
+   memoryBudget?: Partial<MemoryBudget>;
++  /**
++   * p01: run the multi-agent orchestrator. A single agent with no sandbox has
++   * nothing to delegate to, and its "all delegated work is active" gate then
++   * livelocks the loop: it sleeps 60s, wakes, sees the same stalled task and
++   * sleeps again, forever, without ever taking a turn. Default false here.
++   */
++  orchestratorEnabled?: boolean;
+ }
+ 
+ // ─── p01 economy layer ──────────────────────────────────────────
+-- 
+2.55.0.windows.3
+

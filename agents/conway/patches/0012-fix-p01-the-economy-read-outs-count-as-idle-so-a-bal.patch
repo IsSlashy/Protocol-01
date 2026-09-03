@@ -1,7 +1,7 @@
 From c87e1f771580db540e1e605cbd6a5cec81ad16ef Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 18:26:38 +0200
-Subject: [PATCH 12/12] fix(p01): the economy read-outs count as idle, so a
+Subject: [PATCH 12/13] fix(p01): the economy read-outs count as idle, so a
  balance-watcher trips the loop detector
 
 Production: after the begging stopped the agent cycled through

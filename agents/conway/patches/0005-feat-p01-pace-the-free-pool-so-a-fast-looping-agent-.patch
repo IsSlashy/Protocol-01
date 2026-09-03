@@ -1,7 +1,7 @@
 From 0578018fb87d5677a508e92662c4bcaecf534b5d Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 15:02:51 +0200
-Subject: [PATCH 05/12] feat(p01): pace the free pool so a fast-looping agent
+Subject: [PATCH 05/13] feat(p01): pace the free pool so a fast-looping agent
  cannot burn a day of quota in an hour
 
 paceMs makes the pool wait between calls instead of failing; maxCallsPerDay is a

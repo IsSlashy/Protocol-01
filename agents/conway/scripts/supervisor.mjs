@@ -262,6 +262,7 @@ function pushOwnerConfig(agent) {
     disabledTools: colony.disabledTools,
     contextTurns: colony.contextTurns,
     memoryBudget: colony.memoryBudget,
+    orchestratorEnabled: colony.orchestratorEnabled,
     // The mandate is owner-written too: a running agent must not keep the
     // version it was born with once the owner sharpens it.
     genesisPrompt: buildGenesisPrompt(agent.name, agent.generation, agent.specialization),
@@ -628,6 +629,7 @@ async function spawnAgent(state, opts) {
     disabledTools: colony.disabledTools,
     contextTurns: colony.contextTurns,
     memoryBudget: colony.memoryBudget,
+    orchestratorEnabled: colony.orchestratorEnabled,
   };
   writeJson(path.join(dir, "genesis.json"), genesis);
 

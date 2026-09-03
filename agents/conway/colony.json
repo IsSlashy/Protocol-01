@@ -123,5 +123,6 @@
     "relationshipMemoryTokens": 300
   },
   "inheritWallet": true,
-  "installDefaultSkills": false
+  "installDefaultSkills": false,
+  "orchestratorEnabled": false
 }

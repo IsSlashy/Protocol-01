@@ -1,7 +1,7 @@
 From 7a0f90b8a1f27c5b21cdf089afc3e8dfc077a5b8 Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 18:15:11 +0200
-Subject: [PATCH 10/12] feat(p01): the agent sees its SOL for fees in every
+Subject: [PATCH 10/13] feat(p01): the agent sees its SOL for fees in every
  prompt
 
 SOL is what gates transacting at all, yet the economy block showed only credits,
