@@ -28,6 +28,9 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import nacl from 'tweetnacl';
+
+import { claimChallenge } from '@/lib/privacy/claimChallenge';
 import bs58 from 'bs58';
 import { getStore, rateLimitExceeded, rateLimitRemaining } from '@/lib/waitlist/store';
 import { namesBoth } from '@/lib/privacy/coNaming';
@@ -35,7 +38,6 @@ import { P11_FUNDER_WALK_LIMIT, funderHistoryVerdict } from '@/lib/privacy/funde
 import {
   contributionBinding,
   parseContributionRef,
-  relayPaymentBuyerKey,
   relayPaymentClaimKey,
   relayPaymentContributionKey,
   resolveContributionPool,
@@ -620,6 +622,8 @@ export async function POST(request: NextRequest) {
     paymentSignature?: string;
     buyerPubkey?: string;
     requiredLamports?: number;
+    /** base64 ed25519 signature by the PAYER over `claimChallenge(paymentSignature)`. */
+    proof?: string;
     /** `{ token, leafIndex }` of the contribution this deposit will fill, if it is one. */
     contribution?: unknown;
   };
@@ -669,12 +673,29 @@ export async function POST(request: NextRequest) {
   // moved (below): every earlier path releases the claim, and a binding left
   // behind by a refused request would describe a deposit that never happened.
   let binding: string | null = null;
+  /**
+   * What a payment must be worth before it may bind itself to a contribution.
+   *
+   * 🚨 WITHOUT THIS, ONE LAMPORT BUYS A NOTE. The binding written below is the
+   * only thing `/api/contribute-note` confirm and the `/api/claim-for-payment`
+   * fallback use to decide whose payment a deposited leaf belongs to. Before
+   * this floor, anyone could read a reserved leaf index off the public tree,
+   * send the till one lamport, bind it to that leaf, and collect the claim code
+   * the honest contributor had paid a full denomination for.
+   */
+  let bindingFloorLamports = 0;
   if (body.contribution !== undefined && body.contribution !== null) {
     const ref = parseContributionRef(body.contribution);
     if (!ref) return bad(400, 'contribution must be { token, leafIndex } with a non-negative integer leaf');
     const pool = resolveContributionPool(ref.token);
     if (!pool) return bad(503, `no ${ref.token} pool is configured for contributions`);
     binding = contributionBinding(pool.poolPDA.toBase58(), ref.leafIndex);
+    bindingFloorLamports = Number(pool.denominationAtomic);
+    // Fails CLOSED. A floor that is not a positive number would disable the
+    // guard silently, which is the shape of every hole this route has had.
+    if (!Number.isFinite(bindingFloorLamports) || bindingFloorLamports <= 0) {
+      return bad(503, `the ${ref.token} pool reports no denomination to price a contribution at`);
+    }
   }
 
   // A durable store or nothing. Without it the same payment can be relayed
@@ -691,7 +712,14 @@ export async function POST(request: NextRequest) {
    */
   const recordFunded = async (): Promise<boolean> => {
     try {
-      await kv.set(relayPaymentBuyerKey(signature), buyer.toBase58());
+      // ⛔ THE BUYER JOIN IS NOT WRITTEN, and it used to be.
+      //
+      // `p01:relay:payment:<sig>:buyer` paired a payment transaction, whose fee
+      // payer is the buyer's own wallet, with the ephemeral that makes the
+      // deposit. That is exactly the edge the R != F topology, the batched
+      // settler and the maturity gate exist to break, kept for ever in a store
+      // shared with the waitlist, and NOTHING in this repository ever read it.
+      // A row no code needs is a row that only an operator dump can use.
       if (binding) await kv.set(relayPaymentContributionKey(signature), binding);
       return true;
     } catch {
@@ -803,6 +831,46 @@ export async function POST(request: NextRequest) {
     const keys = tx.transaction.message
       .getAccountKeys()
       .staticAccountKeys.map((k) => k.toBase58());
+
+    // 🚨 THE PAYER, PROVEN. Until 2026-09-03 this route asked for none.
+    //
+    // A payment to the till is public the moment it lands, so anyone watching
+    // `getSignaturesForAddress(till)` could POST first with somebody else's
+    // signature and a `buyerPubkey` of their own: the float's lamports went to
+    // the stranger, and the real buyer's one-shot claim was consumed, so her
+    // confirm and her fallback both answered 409 for ever. The two sibling
+    // routes were given this proof on 2026-09-02; this one was missed.
+    //
+    // `keys[0]` is the fee payer, which for the till transfer this route exists
+    // to answer is the buyer's own wallet. The proof is checked against it and
+    // nothing else, so naming another `buyerPubkey` proves nothing.
+    //
+    // ⛔ The failure path still goes through `release`, so a stranger's attempt
+    // frees the claim rather than burning it: the honest buyer can still relay.
+    const proofRaw = typeof body.proof === 'string' ? body.proof : '';
+    if (!proofRaw) {
+      return release(
+        bad(401, 'a payer proof is required: sign the claim challenge for this payment', {
+          challenge: claimChallenge(signature),
+        }),
+      );
+    }
+    let proofOk = false;
+    try {
+      proofOk = nacl.sign.detached.verify(
+        new Uint8Array(Buffer.from(claimChallenge(signature), 'utf8')),
+        new Uint8Array(Buffer.from(proofRaw, 'base64')),
+        new PublicKey(keys[0]).toBytes(),
+      );
+    } catch {
+      proofOk = false;
+    }
+    if (!proofOk) {
+      return release(
+        bad(401, 'that proof was not signed by the wallet that paid', { payer: keys[0] }),
+      );
+    }
+
     const idx = keys.indexOf(till);
     if (idx < 0) {
       // Naming the address, because an operator reading a log has to be able to
@@ -832,6 +900,16 @@ export async function POST(request: NextRequest) {
 
   if (received <= 0) {
     return release(bad(400, 'that transaction paid the till nothing', { till, received }));
+  }
+  // A contribution binding is a claim on a note, so the payment behind it has
+  // to be worth one. See `bindingFloorLamports`.
+  if (binding && received < bindingFloorLamports) {
+    return release(
+      bad(402, 'that payment is too small to be bound to a contribution', {
+        received,
+        required: bindingFloorLamports,
+      }),
+    );
   }
   if (received > MAX_RELAY_LAMPORTS) {
     return release(bad(400, 'that payment is larger than this relay forwards in one call', {

@@ -85,6 +85,7 @@ import {
   rememberRelayPayment,
   storageAvailable,
 } from './relayPaymentReceipts';
+import { claimChallenge } from '@/lib/privacy/claimChallenge';
 
 export interface FundingGrant {
   /** Where the residual rent must be swept when the job ends. */
@@ -513,6 +514,14 @@ export async function relayToBuyer(
   paymentSignature: string,
   buyerPubkey: string,
   requiredLamports: number,
+  /**
+   * The PAYER's signature over `claimChallenge(paymentSignature)`, base64.
+   *
+   * The route refuses without it since 2026-09-03: a payment to the till is
+   * public the moment it lands, so before this anyone could relay somebody
+   * else's receipt to a key of their own and burn the real buyer's one shot.
+   */
+  proof: string,
   signal?: AbortSignal,
   /**
    * The treasury reservation this deposit fills, when it is a contribution.
@@ -535,6 +544,7 @@ export async function relayToBuyer(
       paymentSignature,
       buyerPubkey,
       requiredLamports,
+      proof,
       ...(contribution ? { contribution } : {}),
     }),
     signal,
@@ -775,6 +785,13 @@ export interface JobFundingRequest {
    * a float-only job has no leaf to name.
    */
   contribution?: JobContributionRef;
+  /**
+   * Sign a message with the connected wallet. REQUIRED on the relayed path:
+   * `/api/relay-to-buyer` will not move the float without a proof from the key
+   * that paid the till. Checked before the payment is signed, so a session
+   * that cannot produce it never pays.
+   */
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
   onProgress?: (step: string) => void;
 }
 
@@ -1221,10 +1238,20 @@ export async function fundEphemeralForJob(
     }
 
     req.onProgress?.('The deployment is funding the deposit...');
+    if (!req.signMessage) {
+      throw new Error(
+        'This session cannot sign a message, so the deployment cannot be shown who paid. ' +
+          'Reconnect the wallet and try again.',
+      );
+    }
+    const relayProof = Buffer.from(
+      await req.signMessage(new TextEncoder().encode(claimChallenge(paySig))),
+    ).toString('base64');
     const relayed = await relayToBuyer(
       paySig,
       ephemeralPubkey,
       requiredLamports,
+      relayProof,
       undefined,
       req.contribution,
     );

@@ -92,6 +92,9 @@ const job = (over: Record<string, unknown> = {}) =>
     owner: OWNER,
     connection: fakeConnection(),
     signOne,
+    // The relayed path proves who paid: `/api/relay-to-buyer` refuses without a
+    // signature by the key that credited the till (2026-09-03).
+    signMessage: async (m: Uint8Array) => new Uint8Array(64).fill(m.length & 0xff),
     ...over,
   }) as never;
 
@@ -491,6 +494,7 @@ const deposit = (over: Record<string, unknown> = {}) =>
     owner: OWNER,
     connection: recordingConnection(),
     signOne: recordingSignOne,
+    signMessage: async (m: Uint8Array) => new Uint8Array(64).fill(m.length & 0xff),
     relayThroughDeployment: true,
     ...over,
   }) as never;

@@ -47,6 +47,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Keypair } from '@solana/web3.js';
+import nacl from 'tweetnacl';
+
+import { claimChallenge } from '@/lib/privacy/claimChallenge';
 import bs58 from 'bs58';
 
 const mockGetStore = vi.fn();
@@ -168,7 +171,17 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
 vi.mock('@/lib/privacy/pool/denominatedPool', () => ({
   getPoolsForTokenV3: (token: string) =>
     token === 'SOL'
-      ? [{ token: 'SOL', denomination: 1, deposits: 'open', poolPDA: { toBase58: () => FAKE_POOL_KEY } }]
+      ? [
+          {
+            token: 'SOL',
+            denomination: 1,
+            // The floor a contribution binding is priced at. Absent here until
+            // 2026-09-03, which made the dust-payment guard read NaN and pass.
+            denominationAtomic: 1_000_000_000n,
+            deposits: 'open',
+            poolPDA: { toBase58: () => FAKE_POOL_KEY },
+          },
+        ]
       : [],
 }));
 
@@ -187,8 +200,20 @@ const TILL = Keypair.generate().publicKey.toBase58();
 const FEE_WALLET = Keypair.generate().publicKey.toBase58();
 const BUYER = Keypair.generate().publicKey.toBase58();
 /** The wallet that signs the payment. Account index 0: the fee payer, and the
- *  only account DEBITED by a deposit payment. */
-const WALLET = Keypair.generate().publicKey.toBase58();
+ *  only account DEBITED by a deposit payment. Its SECRET is kept because the
+ *  route now requires a proof signed by it: `keys[0]` is the only key that can
+ *  authorise relaying this payment. */
+const walletKeypair = Keypair.generate();
+const WALLET = walletKeypair.publicKey.toBase58();
+/** The proof the real client sends: the payer's signature over the challenge. */
+function payerProof(signature = 'PAYSIG', signer = walletKeypair): string {
+  return Buffer.from(
+    nacl.sign.detached(
+      new Uint8Array(Buffer.from(claimChallenge(signature), 'utf8')),
+      signer.secretKey,
+    ),
+  ).toString('base64');
+}
 const TICKET = 'test-ticket';
 /** The pool a contribution lands in, as the stub above reports it. */
 const FAKE_POOL_KEY = Keypair.generate().publicKey.toBase58();
@@ -220,7 +245,13 @@ function req(body: unknown, ticket: string | null = TICKET) {
 }
 
 const payment = (over: Record<string, unknown> = {}) =>
-  req({ paymentSignature: 'PAYSIG', buyerPubkey: BUYER, requiredLamports: REQUIRED, ...over });
+  req({
+    paymentSignature: 'PAYSIG',
+    buyerPubkey: BUYER,
+    requiredLamports: REQUIRED,
+    proof: payerProof(),
+    ...over,
+  });
 
 function get(url = 'http://localhost:3000/api/relay-to-buyer') {
   return new NextRequest(url, { method: 'GET' } as unknown as ConstructorParameters<
@@ -714,13 +745,15 @@ describe('the payment is bound to the contribution it funded, only once the lamp
   const BINDING = `${FAKE_POOL_KEY}:6`;
   const setOf = (key: string) => mockKvSet.mock.calls.find((c) => c[0] === key)?.[1];
 
-  it('writes the binding and the buyer AFTER the send, and reports the binding', async () => {
+  it('writes the binding AFTER the send, and never the buyer join', async () => {
     const res = await route.POST(payment({ contribution: CONTRIBUTION }));
     const body = await res.json();
     expect(res.status, JSON.stringify(body)).toBe(200);
     expect(body.contribution).toBe(BINDING);
     expect(setOf('p01:relay:payment:PAYSIG:contribution')).toBe(BINDING);
-    expect(setOf('p01:relay:payment:PAYSIG:buyer')).toBe(BUYER);
+    // The payment -> ephemeral join is not written any more: nothing ever read
+    // it, and it paired the buyer's own wallet with the deposit it funds.
+    expect(setOf('p01:relay:payment:PAYSIG:buyer')).toBeUndefined();
     // Nothing had been written when the send left the process.
     expect(setsAtSend).toBe(0);
     expect(mockDel).not.toHaveBeenCalled();
@@ -767,5 +800,68 @@ describe('the payment is bound to the contribution it funded, only once the lamp
     expect(res.status).toBe(200);
     expect(body.contribution).toBeNull();
     expect(setOf('p01:relay:payment:PAYSIG:contribution')).toBeUndefined();
+  });
+});
+
+/**
+ * The two exploits the 2026-09-03 audit confirmed on this route, pinned shut.
+ *
+ * A payment to the till is public the moment it lands. Until this route asked
+ * for a payer proof, anyone reading `getSignaturesForAddress(till)` could POST
+ * first with somebody else's signature.
+ */
+describe('the payer, proven', () => {
+  it('refuses a relay with no proof, and gives the claim back so the real payer can still use it', async () => {
+    const res = await route.POST(payment({ proof: undefined }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(401);
+    expect(body.error).toMatch(/payer proof is required/);
+    // Released: a stranger's attempt must not burn the honest buyer's one shot.
+    expect(mockDel).toHaveBeenCalledTimes(1);
+    expect(mockKvSet).not.toHaveBeenCalled();
+  });
+
+  it('refuses a proof signed by anyone other than the fee payer of that payment', async () => {
+    const stranger = Keypair.generate();
+    const res = await route.POST(payment({ proof: payerProof('PAYSIG', stranger) }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(401);
+    expect(body.payer).toBe(WALLET);
+    expect(mockDel).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a proof over a DIFFERENT payment, so one signature does not authorise another', async () => {
+    const res = await route.POST(payment({ proof: payerProof('SOME-OTHER-PAYMENT') }));
+    expect(res.status).toBe(401);
+    expect(mockDel).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stranger naming their own buyerPubkey proves nothing: the proof is checked against keys[0]', async () => {
+    const mallory = Keypair.generate();
+    const res = await route.POST(
+      payment({ buyerPubkey: mallory.publicKey.toBase58(), proof: payerProof('PAYSIG', mallory) }),
+    );
+    expect(res.status).toBe(401);
+    expect(mockKvSet).not.toHaveBeenCalled();
+  });
+});
+
+describe('a contribution binding costs a contribution', () => {
+  const CONTRIBUTION = { token: 'SOL', leafIndex: 6 };
+
+  it('refuses a dust payment bound to a leaf, so a claim code cannot be bought for one lamport', async () => {
+    paymentTx({ [TILL]: 1, [FEE_WALLET]: FEE });
+    const res = await route.POST(payment({ contribution: CONTRIBUTION }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(402);
+    expect(body.required).toBe(1_000_000_000);
+    expect(mockKvSet).not.toHaveBeenCalled();
+    expect(mockDel).toHaveBeenCalledTimes(1);
+  });
+
+  it('a payment without a contribution is not held to that floor', async () => {
+    paymentTx({ [TILL]: VALUE, [FEE_WALLET]: FEE });
+    const res = await route.POST(payment());
+    expect(res.status).toBe(200);
   });
 });

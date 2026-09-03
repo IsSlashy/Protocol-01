@@ -202,6 +202,35 @@ async function route() {
 }
 
 /**
+ * The OTHER half of the pair. The two routes share `p01:note:paid:<sig>` and
+ * the contribution keys, and the fund-loss they used to cause together was
+ * invisible to either suite alone: the fallback wrote a per-leaf row for a leaf
+ * that held nothing, and the confirm of the buyer who was handed that index
+ * next refused. Both are driven here, against ONE store, so the sequence is the
+ * thing under test rather than two halves nobody joined.
+ *
+ * It is already loaded either way: the route under test imports
+ * `treasuryCommitmentFor` from it.
+ */
+async function contributeRoute() {
+  return import('@/app/api/contribute-note/route');
+}
+
+const CONTRIBUTE_TICKET = 'test-ticket';
+
+function contributePost(body: unknown) {
+  return new NextRequest('http://localhost/api/contribute-note', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: {
+      'content-type': 'application/json',
+      'x-p01-funder-ticket': CONTRIBUTE_TICKET,
+      'x-real-ip': '198.51.100.9',
+    },
+  });
+}
+
+/**
  * The challenge is written out here rather than imported, ON PURPOSE: this is
  * the wire format a wallet has to sign, so a test that derived it from the
  * source would follow the source anywhere it drifted and pin nothing.
@@ -251,6 +280,8 @@ beforeEach(() => {
   vi.stubEnv('P01_TILL_ADDRESS', TILL);
   vi.stubEnv('P01_TREASURY_NOTE_DENOMINATION', '1');
   vi.stubEnv('P01_TREASURY_POOL_SEED', SEED_HEX);
+  // For the cases that drive `/api/contribute-note` confirm on the same store.
+  vi.stubEnv('P01_FUNDER_TICKET', CONTRIBUTE_TICKET);
   delete process.env.P01_NOTE_PRICE_LAMPORTS;
 });
 
@@ -529,7 +560,11 @@ describe('a payment that funded a relayed deposit is a contribution, and this ro
     expect(kv.incr).not.toHaveBeenCalled();
   });
 
-  it('mints for a deposit that never landed, and writes the leaf keys so a late confirm replays it', async () => {
+  it('🚨 mints for a deposit that never landed, and marks the PAYMENT, never the leaf', async () => {
+    // This branch has just PROVEN the treasury's commitment is not on the
+    // tree, so the leaf holds nothing. A `contrib-confirmed` row written for it
+    // has no TTL and no writer that ever clears it, and the reserve loop hands
+    // that same index to the next contributor once the reclaim window passes.
     const kv = relayedStore();
     mockGetStore.mockReturnValue(kv);
     const { POST } = await route();
@@ -539,10 +574,97 @@ describe('a payment that funded a relayed deposit is a contribution, and this ro
     expect(body.claimCode).toMatch(/^[\w-]{43}$/);
     expect(kv.data.get(`p01:note:paid:${SIG}:code`)).toBe(body.claimCode);
     expect(kv.data.get(`p01:note:claim-minted:${body.claimCode}`)).toBe(`payment:${SIG}`);
-    // A confirm that arrives after the deposit lands after all finds the leaf
-    // confirmed with THIS code, rather than minting a second one.
-    expect(kv.data.get(`p01:note:contrib-confirmed:${POOL_KEY}:${LEAF}`)).toBe(1);
-    expect(kv.data.get(`p01:note:contrib-claim:${POOL_KEY}:${LEAF}`)).toBe(body.claimCode);
+    expect(
+      [...kv.data.keys()].filter((k) => k.startsWith('p01:note:contrib-')),
+      'the fallback marked a leaf that holds nothing',
+    ).toHaveLength(0);
+  });
+
+  it('🚨 a late confirm of the deposit that DID land replays the fallback code, never a second one', async () => {
+    // The replay that actually matters, and it runs off the PAYMENT, not the
+    // leaf: the fallback took `p01:note:paid:<sig>` first, so the confirm sees
+    // a counter that is not 1 and hands back the code already sold.
+    const kv = relayedStore();
+    mockGetStore.mockReturnValue(kv);
+    const { POST } = await route();
+    const fallback = await (await POST(claim())).json();
+
+    // The deposit lands after all, and the same buyer confirms it.
+    const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
+    vi.mocked(fetchPoolCommitments).mockResolvedValueOnce(
+      new Map([
+        [
+          treasuryCommitmentAt(LEAF).toString(),
+          { leafIndex: LEAF, commitment: treasuryCommitmentAt(LEAF), depositSlot: 1 },
+        ],
+      ]) as never,
+    );
+    const contribute = await contributeRoute();
+    const res = await contribute.POST(
+      contributePost({
+        action: 'confirm',
+        token: 'SOL',
+        leafIndex: LEAF,
+        paymentSignature: SIG,
+        proof: proofFor(SIG),
+      }),
+    );
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.replayed).toBe(true);
+    expect(body.claimCode, 'one payment sold two notes').toBe(fallback.claimCode);
+    expect(
+      [...kv.data.keys()].filter((k) => k.startsWith('p01:note:claim-minted:')),
+      'one payment minted two codes',
+    ).toHaveLength(1);
+  });
+
+  it('🚨 leaves the reclaimed leaf clean, so the NEXT buyer who is handed it can still confirm', async () => {
+    // THE FUND LOSS THIS PINS. Buyer A pays, the relayed deposit never lands,
+    // the fallback pays them. Twenty minutes later `/api/contribute-note`
+    // reclaims that index and hands it to buyer B, who pays AND deposits
+    // honestly. B's confirm used to answer 409 "already confirmed under a
+    // different payment" and give the payment gate back, and the fallback
+    // answered 409 "collect its code through confirm": each route pointed at
+    // the other and B had paid for nothing.
+    const kv = relayedStore();
+    mockGetStore.mockReturnValue(kv);
+    const { POST } = await route();
+    const first = await (await POST(claim())).json();
+    expect(first.claimCode).toBeTruthy();
+
+    // Buyer B: a different wallet, a different payment, the same leaf index.
+    const nextBuyer = Keypair.generate();
+    const SIG_B = '7'.repeat(87);
+    kv.data.set(`p01:relay:payment:${SIG_B}`, 1);
+    kv.data.set(`p01:relay:payment:${SIG_B}:contribution`, `${POOL_KEY}:${LEAF}`);
+    mockGetTransaction.mockResolvedValue(paidTx(1_003_000_000, nextBuyer.publicKey.toBase58()));
+    const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
+    vi.mocked(fetchPoolCommitments).mockResolvedValueOnce(
+      new Map([
+        [
+          treasuryCommitmentAt(LEAF).toString(),
+          { leafIndex: LEAF, commitment: treasuryCommitmentAt(LEAF), depositSlot: 1 },
+        ],
+      ]) as never,
+    );
+    const contribute = await contributeRoute();
+    const res = await contribute.POST(
+      contributePost({
+        action: 'confirm',
+        token: 'SOL',
+        leafIndex: LEAF,
+        paymentSignature: SIG_B,
+        proof: proofFor(SIG_B, nextBuyer),
+      }),
+    );
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.claimCode).toBeTruthy();
+    expect(body.claimCode, 'B was handed the code A already spent').not.toBe(first.claimCode);
+    expect(body.replayed).toBeFalsy();
+    // A's payment is untouched: it kept the code it bought.
+    expect(kv.data.get(`p01:note:paid:${SIG}:code`)).toBe(first.claimCode);
   });
 
   it('returns the code confirm already minted for this payment, whatever the leaf says now', async () => {

@@ -746,6 +746,7 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     owner,
     connection,
     signOne,
+    signMessage,
     onProgress,
     relayThroughDeployment: CONTRIBUTION_IS_ALWAYS_RELAYED,
     feeBasis: feePool && {

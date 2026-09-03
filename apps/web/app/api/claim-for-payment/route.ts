@@ -15,7 +15,6 @@ import {
   type OnChainCommitment,
 } from '@/lib/privacy/pool/denominatedPool';
 import {
-  contribClaimKey,
   contribConfirmedKey,
   contributionBinding,
   counterValue,
@@ -327,12 +326,28 @@ export async function POST(request: NextRequest) {
       // the founder ruling in mint-claim, a bearer asset somebody bought is not
       // a liability to be timed out.
       await kv.set(`p01:note:claim-minted:${claimCode}`, `payment:${signature}`);
-      if (relayed) {
-        // So a late confirm of a deposit that lands after all REPLAYS this code
-        // through its own per-leaf keys rather than minting a second one.
-        await kv.incr(contribConfirmedKey(relayed.poolKey, relayed.leafIndex));
-        await kv.set(contribClaimKey(relayed.poolKey, relayed.leafIndex), claimCode);
-      }
+      /**
+       * 🚨 THE PAYMENT IS MARKED, NEVER THE LEAF. This branch runs only for a
+       * deposit this route has just PROVEN is not on the tree, so the leaf
+       * holds nothing.
+       *
+       * It used to `incr` `contrib-confirmed:<pool>:<leaf>` and write
+       * `contrib-claim` here, with no TTL and no writer that ever cleared
+       * them, and that poisoned the index for whoever came next. The reserve
+       * loop in `/api/contribute-note` reclaims a leaf the tree never reached
+       * after `RECLAIM_AFTER_MS` and hands it to the next contributor; that
+       * buyer pays, deposits honestly, and is then refused by confirm ("this
+       * contribution was already confirmed under a different payment", which
+       * also gives their payment gate back) and by this route ("already
+       * confirmed; collect its code through confirm"), each pointing at the
+       * other. Money spent, no note, no way out.
+       *
+       * Nothing is lost by dropping the writes. The replay that mattered runs
+       * off the payment: a confirm of a deposit that lands after all takes
+       * `p01:note:paid:<sig>`, sees it is not 1, and hands back
+       * `p01:note:paid:<sig>:code` - this code - rather than minting a second
+       * one. The per-leaf rows were never read by anything.
+       */
     } else {
       const existing = await kv.get<string>(notePaidCodeKey(signature));
       if (!existing) {

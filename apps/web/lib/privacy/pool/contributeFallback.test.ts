@@ -356,11 +356,69 @@ describe('resuming what was already paid for', () => {
     expect(posts('/api/claim-for-payment')).toEqual([]);
   });
 
-  it('says so for a record from before the payment was kept', async () => {
-    seed({});
+  it('says so for a paymentless record whose reservation could still be live', async () => {
+    // Inside the reserve window the deployment still holds this leaf for this
+    // buyer, so the attempt may be in flight: refusing loudly is right, and the
+    // message tells them not to pay again.
+    seed({ at: Date.now() - 60_000 });
     await expect(
       resumeContribution({ meta: 'meta', owner: OWNER, signMessage }),
     ).rejects.toThrow(/without its payment signature/);
     expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+  });
+
+  it('🚨 does not resume a paymentless reservation the deployment has already reclaimed', async () => {
+    /**
+     * THE DOUBLE PAYMENT THIS CLOSES. A buyer who reserved a leaf and then
+     * dismissed the wallet prompt left a record with no `paymentSignature`, and
+     * `pendingFor` returned the OLDEST record of any shape. So that dead record
+     * was picked on every later resume, the throw above fired every time,
+     * `PoolPanel` swallowed it by design ("a resume that throws would BLOCK an
+     * ordinary shield"), and the buyer paid a second full denomination. Worse,
+     * a LATER record that DID carry a payment was never even looked at.
+     *
+     * Past the reserve window (`RECLAIM_AFTER_MS`, 20 minutes) the deployment
+     * has handed that index to somebody else and no payment exists for it, so
+     * there is nothing to collect and nothing to warn about.
+     */
+    // Past the window AND after `attachPayment` landed, so the record's silence
+    // about a payment is evidence rather than an absent field.
+    seed({ at: Date.now() - 3 * 20 * 60 * 1000 });
+    await expect(
+      resumeContribution({ meta: 'meta', owner: OWNER, signMessage }),
+    ).resolves.toBeNull();
+    expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
+    expect(pendingRecords(), 'the dead reservation was kept and will shadow again').toEqual([]);
+  });
+
+  it('🚨 a dead reservation does not shadow the paid record written after it', async () => {
+    // The measured shape of the loss: click one was abandoned, click two paid
+    // and the worker went quiet. The resume must collect for click two.
+    storage.set(
+      PENDING_KEY,
+      JSON.stringify([
+        {
+          owner: OWNER.toBase58(),
+          token: 'SOL',
+          denomination: 1,
+          leafIndex: 99,
+          at: Date.now() - 3 * 20 * 60 * 1000,
+        },
+        {
+          owner: OWNER.toBase58(),
+          token: 'SOL',
+          denomination: 1,
+          leafIndex: LEAF,
+          at: Date.now() - 60_000,
+          paymentSignature: 'PAYSIG',
+        },
+      ]),
+    );
+    const issued = await resumeContribution({ meta: 'meta', owner: OWNER, signMessage });
+
+    const confirms = posts('/api/contribute-note', 'confirm');
+    expect(confirms, 'the paid record was never reached').toHaveLength(1);
+    expect(confirms[0]!.body).toMatchObject({ leafIndex: LEAF, paymentSignature: 'PAYSIG' });
+    expect(issued?.leafIndex).toBe(21);
   });
 });

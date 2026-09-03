@@ -379,6 +379,43 @@ describe('confirm pays only for a contribution that actually landed', () => {
     expect([...(sets.get(`p01:note:inventory:${POOL_KEY}`) ?? [])]).toContain('6');
   });
 
+  it('🚨 confirms for the buyer handed a leaf whose PREVIOUS reservation was paid out by the fallback', async () => {
+    /**
+     * THE FUND LOSS THIS PINS, from confirm's side.
+     *
+     * Buyer A reserved leaf 6, paid, and their relayed deposit never landed;
+     * `/api/claim-for-payment` paid them. That fallback used to `incr`
+     * `contrib-confirmed:<pool>:6` for a leaf holding NOTHING, with no TTL and
+     * no writer that cleared it. Twenty minutes later the reserve loop reclaims
+     * index 6 and hands it to buyer B, who pays and deposits honestly. B's
+     * confirm hit `confirmations !== 1` and answered 409, giving B's payment
+     * gate back; the fallback then answered 409 pointing at confirm. B had paid
+     * a full denomination for nothing.
+     *
+     * So the state left behind is the state asserted here: A's payment carries
+     * its own code and the LEAF carries nothing.
+     */
+    await leafSixLanded();
+    const OTHER_PAYSIG = '9'.repeat(87);
+    counters.set(`p01:note:paid:${OTHER_PAYSIG}`, 1);
+    values.set(`p01:note:paid:${OTHER_PAYSIG}:code`, 'FALLBACK-CODE-FOR-A');
+    values.set('p01:note:claim-minted:FALLBACK-CODE-FOR-A', `payment:${OTHER_PAYSIG}`);
+    expect(
+      counters.get(`p01:note:contrib-confirmed:${POOL_KEY}:6`),
+      'the fallback marks the payment, never the leaf',
+    ).toBeUndefined();
+
+    const res = await POST(req(confirmBody(6)));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.claimCode, 'the honest depositor was refused a claim').toBeTruthy();
+    expect(body.claimCode).not.toBe('FALLBACK-CODE-FOR-A');
+    expect(body.replayed).toBeFalsy();
+    // B's leaf is stock now, and A's payment still holds the code it bought.
+    expect([...(sets.get(`p01:note:inventory:${POOL_KEY}`) ?? [])]).toContain('6');
+    expect(values.get(`p01:note:paid:${OTHER_PAYSIG}:code`)).toBe('FALLBACK-CODE-FOR-A');
+  });
+
   it('⛔ refuses a leaf confirmed under a DIFFERENT payment, and gives that payment back', async () => {
     // The loser of a reservation race: its payment is bound to the same leaf,
     // but the leaf's code belongs to the payment that deposited it.
