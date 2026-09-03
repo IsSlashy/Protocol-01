@@ -10,6 +10,7 @@
 
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
+import type { StateStorage } from 'zustand/middleware';
 import { PublicKey } from '@solana/web3.js';
 
 import {
@@ -36,6 +37,12 @@ import {
   createNoteEncryptionAddress,
   isEncryptedNoteBlob,
 } from '../services/noteCrypto';
+import {
+  encryptForSession,
+  decryptFromSession,
+  isEncryptedBlob,
+  loadSessionPassword,
+} from '../services/sessionCrypto';
 import { noteMaturity } from '../services/maturity';
 
 import { useWalletStore } from './wallet';
@@ -217,6 +224,191 @@ function deserializeReceipt(s: SerializedReceipt): ShieldReceipt {
     source: s.source,
   };
 }
+
+// ---------------------------------------------------------------------------
+// PERSISTENCE: THE NOTE SECRETS ARE ENCRYPTED AT REST
+// ---------------------------------------------------------------------------
+//
+// 🚨 EVERY NOTE'S SPENDING SECRET USED TO SIT IN chrome.storage.local IN THE
+// CLEAR, AND THAT IS SPEND AUTHORITY, NOT METADATA. `serializeReceipt` above
+// writes `secret` and `nullifierPreimage` as decimal strings, and the adapter
+// under `persist` was a bare `chrome.storage.local.get`/`set` with nothing in
+// between. The same record also carries the commitment, the leaf index, the
+// Merkle path and the root, so a single stolen file is a complete, ready to
+// use withdrawal: malware with no extension privilege at all, a synced or
+// backed up profile, or a forensic image of the disk each hand over every note
+// in the wallet. For a note that was IMPORTED or RECEIVED that file is the
+// only copy of the secret in existence, so the loss has no recovery path.
+//
+// The two sibling stores were already doing the right thing: the seed phrase
+// (`store/wallet.ts`) and the subscriber secret (`store/subscriptionVault.ts`)
+// are both AES-256-GCM through `services/sessionCrypto`. The notes were the
+// exception, and apps/mobile has not had this hole since H1 (see
+// `stores/denominatedPoolStore.ts`, `encryptedStorage`). So the whole
+// persisted value now goes through `encryptForSession`, keyed by the session
+// password, exactly like its two neighbours.
+//
+// THREE PROPERTIES, ALL PINNED IN `denominatedPoolStorage.test.ts`:
+//
+//   1. A CLEARTEXT RECORD ALREADY ON DISK STILL OPENS. The old adapter wrote a
+//      plain JSON string; `getItem` accepts one and hands it straight back, and
+//      the next save rewrites it as a blob. One way, no data loss, no user
+//      action, no migration number to bump.
+//   2. A LOCKED READ DOES NOT WIPE ANYTHING. It returns `null`, and zustand
+//      4.5.7 merges an absent value by leaving the store at its defaults
+//      WITHOUT saving (it only re-saves when a version migration ran), so the
+//      ciphertext survives a popup that was opened while locked.
+//   3. A LOCKED WRITE IS REFUSED. It is never downgraded to cleartext, which is
+//      the whole point: a note that fails to persist can be re-derived from the
+//      wallet seed or re-imported, a note whose secret leaked cannot be
+//      un-leaked.
+//
+// ⛔ PROPERTY 3 NEEDS `readBlockedByLock`, OR THIS FIX WOULD ITSELF LOSE NOTES.
+// A popup that hydrates while locked holds an EMPTY note list against a full
+// disk. Nothing stops the user unlocking a second later and shielding, and that
+// first save would then encrypt the empty list straight over every note that
+// was there. So a write is refused until a read has actually SUCCEEDED, and
+// `armUnlockRehydrate` below re-hydrates the moment the password exists. The
+// flag is cleared by any read that saw the true contents, including the read
+// that finds nothing stored at all.
+
+const NOTE_STORE_KEY = 'p01-denominated-pool';
+
+/**
+ * Set when a read could not see what is on disk (locked wallet, wrong
+ * password, unrecognised shape). While it is set the in-memory store is NOT a
+ * faithful view of storage, so writing it back would destroy notes.
+ */
+let readBlockedByLock = false;
+
+/** Live only while a blocked read is waiting for an unlock. */
+let unlockWatcher: (() => void) | null = null;
+
+/**
+ * WHAT GETS THE NOTES BACK ON SCREEN AFTER AN UNLOCK.
+ *
+ * Hydration runs once, at import, and in a popup that is almost always still
+ * locked at that moment, so the store starts empty against a full disk. The
+ * write refusal above keeps that emptiness off the disk; this is what undoes
+ * it. Without it the notes stay readable in storage and invisible in the UI
+ * until the popup is closed and reopened, which reads to the user as "my notes
+ * are gone" and is the exact moment someone re-imports a note they still hold.
+ *
+ * Armed from the blocked read rather than at module load, so a session that
+ * never lost a read never subscribes to anything.
+ */
+function armUnlockRehydrate(): void {
+  if (unlockWatcher) return;
+  // A wallet store with no `subscribe` is a test double, not a wallet: several
+  // popup suites replace `store/wallet` with a bare hook function. There is no
+  // unlock to wait for and nothing to recover, so there is nothing to arm.
+  if (typeof useWalletStore.subscribe !== 'function') return;
+
+  unlockWatcher = useWalletStore.subscribe((state, prevState) => {
+    if (!state.isUnlocked || prevState.isUnlocked) return;
+    unlockWatcher?.();
+    unlockWatcher = null;
+    void useDenominatedPoolStore.persist.rehydrate();
+  });
+}
+
+/**
+ * chrome.storage.local, with the persisted value encrypted at rest.
+ *
+ * Exported for `denominatedPoolStorage.test.ts`, which drives it directly:
+ * going through `persist` would test zustand's hydration timing instead of the
+ * three properties above.
+ */
+export const encryptedNoteStorage: StateStorage = {
+  getItem: async (name: string): Promise<string | null> => {
+    const result = await chrome.storage.local.get(name);
+    const raw: unknown = result?.[name];
+
+    if (raw === undefined || raw === null) {
+      // Nothing stored is a truthful read: there is nothing a later write
+      // could clobber.
+      readBlockedByLock = false;
+      return null;
+    }
+
+    // MIGRATION, ONE WAY. A plain string is what the pre-encryption adapter
+    // wrote. Accept it so no existing wallet loses its notes, and let the next
+    // save (which always encrypts) replace it.
+    if (typeof raw === 'string') {
+      readBlockedByLock = false;
+      console.warn(
+        '[DenomPool/ext] note store found in cleartext on disk; it will be ' +
+          'encrypted on the next save. Treat the notes as compromised if this ' +
+          'profile was ever backed up or synced.',
+      );
+      return raw;
+    }
+
+    if (isEncryptedBlob(raw)) {
+      // `loadSessionPassword`, not `getSessionPassword`: hydration runs in a
+      // freshly opened popup whose heap copy is empty by definition. Reading
+      // the synchronous cache here is the bug `store/wallet.ts:98` documents.
+      const password = await loadSessionPassword();
+      if (!password) {
+        readBlockedByLock = true;
+        armUnlockRehydrate();
+        return null;
+      }
+      try {
+        const plaintext = await decryptFromSession(raw, password);
+        readBlockedByLock = false;
+        return plaintext;
+      } catch (err) {
+        // A wrong or rotated password. Returning null keeps the ciphertext
+        // intact; the flag keeps the empty store from being written over it.
+        readBlockedByLock = true;
+        armUnlockRehydrate();
+        console.warn(
+          '[DenomPool/ext] could not decrypt the note store; leaving it ' +
+            'untouched on disk:',
+          err instanceof Error ? err.message : String(err),
+        );
+        return null;
+      }
+    }
+
+    readBlockedByLock = true;
+    console.warn('[DenomPool/ext] unrecognised note store on disk; leaving it untouched.');
+    return null;
+  },
+
+  setItem: async (name: string, value: string): Promise<void> => {
+    if (readBlockedByLock) {
+      console.warn(
+        '[DenomPool/ext] refusing to save the note store: the last read could ' +
+          'not open it, so what is in memory is not what is on disk and saving ' +
+          'would destroy notes. Unlock the wallet and reopen.',
+      );
+      return;
+    }
+
+    const password = await loadSessionPassword();
+    if (!password) {
+      // Refused, NOT downgraded. `createWalletSigner` already refuses every
+      // shield, unshield and transfer while locked, so nothing that mints a
+      // note reaches this branch; what does reach it is incidental state
+      // (an error string, a loading flag), and none of it is worth a
+      // cleartext secret on disk.
+      console.warn(
+        '[DenomPool/ext] wallet is locked; not writing note secrets in the ' +
+          'clear. The store on disk is unchanged.',
+      );
+      return;
+    }
+
+    const blob = await encryptForSession(value, password);
+    await chrome.storage.local.set({ [name]: blob });
+  },
+
+  removeItem: async (name: string): Promise<void> => {
+    await chrome.storage.local.remove(name);
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Store state / actions
@@ -762,23 +954,48 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       setError: (error) => set({ error }),
     }),
     {
-      name: 'p01-denominated-pool',
-      storage: createJSONStorage(() => ({
-        getItem: async (name: string) => {
-          const result = await chrome.storage.local.get(name);
-          return result[name] || null;
-        },
-        setItem: async (name: string, value: string) => {
-          await chrome.storage.local.set({ [name]: value });
-        },
-        removeItem: async (name: string) => {
-          await chrome.storage.local.remove(name);
-        },
-      })),
+      name: NOTE_STORE_KEY,
+      storage: createJSONStorage(() => encryptedNoteStorage),
       partialize: (state) => ({
         serializedNotes: state.serializedNotes,
         counterByPool: state.counterByPool,
       }),
+      /**
+       * UNION, NOT REPLACE, and it is a safety property rather than a nicety.
+       *
+       * The default merge lets the persisted value win outright. That is fine
+       * on the first hydration, when memory is empty. It is NOT fine on the
+       * re-hydration that follows an unlock (see the subscription below): a
+       * note added in the gap would be dropped by the very read that was
+       * supposed to recover the others. Notes are keyed by commitment, which is
+       * unique per note, so a union is well defined; the stored copy wins a tie
+       * because it is the one the on-chain path last agreed with.
+       *
+       * `counterByPool` takes the HIGHEST of the two. A counter that goes
+       * backwards re-derives a note that already exists, which is a nullifier
+       * collision, so the only safe direction is forward.
+       */
+      merge: (persistedState, currentState) => {
+        const persisted = (persistedState ?? {}) as Partial<
+          Pick<DenominatedPoolState, 'serializedNotes' | 'counterByPool'>
+        >;
+
+        const byCommitment = new Map<string, SerializedReceipt>();
+        for (const n of currentState.serializedNotes) byCommitment.set(n.commitment, n);
+        for (const n of persisted.serializedNotes ?? []) byCommitment.set(n.commitment, n);
+
+        const counterByPool: Record<string, number> = { ...currentState.counterByPool };
+        for (const [pool, next] of Object.entries(persisted.counterByPool ?? {})) {
+          counterByPool[pool] = Math.max(counterByPool[pool] ?? 0, next);
+        }
+
+        return {
+          ...currentState,
+          ...persisted,
+          serializedNotes: [...byCommitment.values()],
+          counterByPool,
+        };
+      },
     },
   ),
 );
