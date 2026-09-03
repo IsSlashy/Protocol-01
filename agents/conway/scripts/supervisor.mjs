@@ -166,6 +166,36 @@ function walletAddress(agent) {
  * automaton.json and restart that agent when it actually changed, so a colony
  * setting never requires deleting the agent.
  */
+/**
+ * The playbook is owner-written and protected read-only, which also meant it was
+ * written once at first boot and never refreshed: a running agent kept reading
+ * the guide it was born with while the owner improved it. Push the current file
+ * whenever it differs.
+ */
+function pushPlaybook(agent) {
+  const src = expandHome(colony.playbookFile || "./playbook.md");
+  if (!fs.existsSync(src)) return false;
+  const dst = path.join(automatonDir(agent), "PLAYBOOK.md");
+  let current = "";
+  try {
+    current = fs.readFileSync(dst, "utf8");
+  } catch {
+    /* absent */
+  }
+  const wanted = fs.readFileSync(src, "utf8");
+  if (current === wanted) return false;
+  try {
+    if (fs.existsSync(dst)) fs.chmodSync(dst, 0o644);
+    fs.writeFileSync(dst, wanted);
+    try { fs.chmodSync(dst, 0o444); } catch { /* windows */ }
+    log(`${agent.id}: playbook refreshed (${wanted.length} chars); restarting to apply`);
+    return true;
+  } catch (err) {
+    log(`${agent.id}: playbook refresh failed: ${err?.message ?? err}`);
+    return false;
+  }
+}
+
 function pushOwnerConfig(agent) {
   const cfgPath = path.join(automatonDir(agent), "automaton.json");
   if (!fs.existsSync(cfgPath)) return false;
@@ -673,7 +703,9 @@ async function tick() {
 
   for (const agent of state.agents.filter((a) => a.status === "alive")) {
     mirrorAgentLog(agent);
-    if (pushOwnerConfig(agent) && pidAlive(agent.pid)) {
+    const ownerChanged = pushOwnerConfig(agent);
+    const playbookChanged = pushPlaybook(agent);
+    if ((ownerChanged || playbookChanged) && pidAlive(agent.pid)) {
       stopProcess(agent);
       await new Promise((r) => setTimeout(r, 2000));
     }
