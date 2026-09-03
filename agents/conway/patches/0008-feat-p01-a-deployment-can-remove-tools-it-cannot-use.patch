@@ -1,7 +1,7 @@
 From 84e925e19ae70c5b3c6912b698fbec4489b80b8c Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 17:42:36 +0200
-Subject: [PATCH 8/8] feat(p01): a deployment can remove tools it cannot use
+Subject: [PATCH 8/9] feat(p01): a deployment can remove tools it cannot use
 
 Groq answered 413 Request too large: the prompt reached 25k tokens, most of it
 schemas for tools this deployment has no account for. config.disabledTools

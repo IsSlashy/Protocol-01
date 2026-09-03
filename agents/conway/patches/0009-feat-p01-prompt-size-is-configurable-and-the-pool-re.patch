@@ -1,0 +1,147 @@
+From f1cad2aa35fe902a3402a73e0eac7683c3423596 Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 17:48:18 +0200
+Subject: [PATCH 9/9] feat(p01): prompt size is configurable, and the pool
+ respects a provider's request limit
+
+Removing 41 tool schemas left the prompt at 26k tokens: the bulk is conversation
+history and the memory block, not the tools. contextTurns and memoryBudget make
+both configurable, and a provider can declare maxPromptChars so the pool skips
+it rather than spending a call to be refused with 413.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/__tests__/free-pool.test.ts | 28 ++++++++++++++++++++++++++++
+ src/agent/loop.ts               |  7 +++++--
+ src/inference/free-pool.ts      | 11 +++++++++++
+ src/setup/headless.ts           |  2 ++
+ src/types.ts                    |  7 +++++++
+ 5 files changed, 53 insertions(+), 2 deletions(-)
+
+diff --git a/src/__tests__/free-pool.test.ts b/src/__tests__/free-pool.test.ts
+index 41aabcb..e894dca 100644
+--- a/src/__tests__/free-pool.test.ts
++++ b/src/__tests__/free-pool.test.ts
+@@ -167,3 +167,31 @@ describe("free inference and survival tier", () => {
+     expect(getEffectiveSurvivalTier(withPool, 0, 100)).toBe("high");
+   });
+ });
++
++describe("prompt size guard", () => {
++  it("skips a provider whose request-size limit the prompt exceeds", async () => {
++    let smallCalls = 0;
++    let bigCalls = 0;
++    handlers.set("/small/v1/chat/completions", (_req, res) => {
++      smallCalls++;
++      ok(res, "small");
++    });
++    handlers.set("/big/v1/chat/completions", (_req, res) => {
++      bigCalls++;
++      ok(res, "big");
++    });
++    const p = pool([
++      { name: "small", baseUrl: `${base}/small`, model: "small", apiKeyEnv: "A_KEY", maxPromptChars: 200 },
++      { name: "big", baseUrl: `${base}/big`, model: "big", apiKeyEnv: "B_KEY" },
++    ]);
++    const long = { messages: [{ role: "user", content: "x".repeat(500) }] };
++    const r1 = await p.chat(long, 10);
++    expect(r1.provider.name).toBe("big");
++    expect(smallCalls).toBe(0);
++    expect(r1.attempts[0].skipped).toMatch(/over its 200 limit/);
++    const r2 = await p.chat({ messages: [{ role: "user", content: "hi" }] }, 10);
++    expect(r2.provider.name).toBe("small");
++    expect(smallCalls).toBe(1);
++    expect(bigCalls).toBe(1);
++  });
++});
+diff --git a/src/agent/loop.ts b/src/agent/loop.ts
+index f80f125..73a1352 100644
+--- a/src/agent/loop.ts
++++ b/src/agent/loop.ts
+@@ -499,7 +499,7 @@ export async function runAgentLoop(
+ 
+       // Build context — filter out purely idle turns (only status checks)
+       // to prevent the model from continuing a status-check pattern
+-      const allTurns = db.getRecentTurns(20);
++      const allTurns = db.getRecentTurns(config.contextTurns ?? 20);
+       const meaningfulTurns = allTurns.filter((t) => {
+         if (t.toolCalls.length === 0) return true; // text-only turns are meaningful
+         return t.toolCalls.some((tc) => !isIdleOnlyTool(tc.name));
+@@ -523,7 +523,10 @@ export async function runAgentLoop(
+       let memoryBlock: string | undefined;
+       try {
+         const sessionId = db.getKV("session_id") || "default";
+-        const retriever = new MemoryRetriever(db.raw, DEFAULT_MEMORY_BUDGET);
++        const retriever = new MemoryRetriever(db.raw, {
++          ...DEFAULT_MEMORY_BUDGET,
++          ...(config.memoryBudget ?? {}),
++        });
+         const memories = retriever.retrieve(sessionId, pendingInput?.content);
+         if (memories.totalTokens > 0) {
+           memoryBlock = formatMemoryBlock(memories);
+diff --git a/src/inference/free-pool.ts b/src/inference/free-pool.ts
+index 5d86104..c9509f7 100644
+--- a/src/inference/free-pool.ts
++++ b/src/inference/free-pool.ts
+@@ -30,6 +30,12 @@ export interface FreeProvider {
+   rpm?: number;
+   rpd?: number;
+   tokenParam?: "max_tokens" | "max_completion_tokens";
++  /**
++   * Largest request this provider accepts, in characters of serialised body.
++   * Groq's free tier answers 413 above roughly 60000 characters. The pool skips
++   * the provider instead of spending a call to be refused.
++   */
++  maxPromptChars?: number;
+   /** Extra headers (OpenRouter likes HTTP-Referer / X-Title). */
+   headers?: Record<string, string>;
+   enabled?: boolean;
+@@ -235,8 +241,13 @@ export class FreeInferencePool {
+     this.savePace();
+ 
+     const now = Date.now();
++    const bodyChars = JSON.stringify(body).length;
+     for (const p of this.providers()) {
+       const s = this.state(p);
++      if (p.maxPromptChars && bodyChars > p.maxPromptChars) {
++        attempts.push({ provider: p.name, skipped: `prompt ${bodyChars} chars over its ${p.maxPromptChars} limit` });
++        continue;
++      }
+       const key = this.keyFor(p);
+       if (!key) {
+         attempts.push({ provider: p.name, skipped: "no api key" });
+diff --git a/src/setup/headless.ts b/src/setup/headless.ts
+index 65e8880..a752abd 100644
+--- a/src/setup/headless.ts
++++ b/src/setup/headless.ts
+@@ -124,6 +124,8 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+   });
+   if (g.modelStrategy) (config as any).modelStrategy = g.modelStrategy;
+   if (Array.isArray(g.disabledTools)) config.disabledTools = g.disabledTools;
++  if (typeof g.contextTurns === "number") config.contextTurns = g.contextTurns;
++  if (g.memoryBudget && typeof g.memoryBudget === "object") config.memoryBudget = g.memoryBudget;
+   if (usePool && freePool) {
+     config.freePool = freePool;
+     (config as any).modelStrategy = {
+diff --git a/src/types.ts b/src/types.ts
+index e727746..56061d8 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -91,6 +91,13 @@ export interface AutomatonConfig {
+    * both shrinks the prompt and stops the agent wasting turns on them.
+    */
+   disabledTools?: string[];
++  /**
++   * p01: how many past turns go into the prompt (default 20). Free inference
++   * tiers cap request size; history is the largest part of the prompt.
++   */
++  contextTurns?: number;
++  /** p01: override the per-tier memory retrieval budget (tokens). */
++  memoryBudget?: Partial<MemoryBudget>;
+ }
+ 
+ // ─── p01 economy layer ──────────────────────────────────────────
+-- 
+2.55.0.windows.3
+

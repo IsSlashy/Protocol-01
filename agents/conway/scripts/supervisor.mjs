@@ -187,6 +187,8 @@ function pushOwnerConfig(agent) {
     },
     creatorAddress: colony.ownerAddress,
     disabledTools: colony.disabledTools,
+    contextTurns: colony.contextTurns,
+    memoryBudget: colony.memoryBudget,
   };
   let changed = false;
   for (const [k, v] of Object.entries(owner)) {
@@ -517,6 +519,8 @@ async function spawnAgent(state, opts) {
     playbook: fs.existsSync(expandHome(colony.playbookFile || "./playbook.md")) ? fs.readFileSync(expandHome(colony.playbookFile || "./playbook.md"), "utf8") : undefined,
     disabledHeartbeatTasks: colony.disabledHeartbeatTasks ?? ["check_for_updates"],
     disabledTools: colony.disabledTools,
+    contextTurns: colony.contextTurns,
+    memoryBudget: colony.memoryBudget,
   };
   writeJson(path.join(dir, "genesis.json"), genesis);
 

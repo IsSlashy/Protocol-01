@@ -113,5 +113,13 @@
     "reflect_on_soul",
     "view_soul_history",
     "request_credits"
-  ]
+  ],
+  "contextTurns": 8,
+  "memoryBudget": {
+    "workingMemoryTokens": 700,
+    "episodicMemoryTokens": 900,
+    "semanticMemoryTokens": 900,
+    "proceduralMemoryTokens": 600,
+    "relationshipMemoryTokens": 300
+  }
 }

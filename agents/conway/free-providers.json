@@ -9,7 +9,8 @@
       "apiKeyEnv": "GROQ_API_KEY",
       "rpm": 25,
       "rpd": 900,
-      "tokenParam": "max_completion_tokens"
+      "tokenParam": "max_completion_tokens",
+      "maxPromptChars": 58000
     },
     {
       "name": "nvidia-nemotron-super",
