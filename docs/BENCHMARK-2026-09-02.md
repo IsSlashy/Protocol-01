@@ -45,21 +45,59 @@ All eight circuits at n = 3 (median ms): C0 1,384; C1 1,777; C2 5,539; C3
 entry, C7 median 2,865 (n = 5). The `c7-live-proof.ts --dry-run` path, which
 is what a real spend runs: 2,739 / 3,793 / 4,353 ms (n = 5).
 
-## 3. On chain, devnet, from the day's live transactions
+## 3. On chain, devnet, read back from the transactions
 
-Verifier program and pool program as deployed on 2026-09-02 (slot
-491,973,056 for the verifier; `deployed-verifier.json` carries the evidence).
+Fetched on 2026-09-03 with `apps/web/scripts/txCostReport.mts`, which reads
+`meta.fee` and the runtime's own `consumed N of M compute units` lines. Raw:
+`bench-io.json`, `bench-io-flows.json`.
 
-| item | figure | source |
-|---|---|---|
-| C7 verify, phase 1 | 878,756 CU | deployed-verifier.json evidence |
-| C7 verify, phase 2 | 193,200 CU (193,026 on the black-box honest run) | same, tx 5hdDAz6X…, 2ZJQt6cy… |
-| tampered public input | rejected at step 1b, 18,110 CU | 2j5H83Fi… |
-| forged Merkle byte | rejected at step 3, 26,423 CU | 2PKrAzsv… |
-| forged FRI byte | rejected at step 3.5, 277,171 CU | 33nRCCYi… |
-| proof upload | 80 chunks (C7), 83 (C6), 95 (C1) | live logs |
-| float per v4 subscribe (one buffer, rent mostly swept back) | 520,000,000 to 550,000,000 lamports | live-subscribe.log, live-issued.log |
-| shield signer funding (1 SOL note) | 1,580,000,000 lamports | live-subscribe.log |
+Programs, from `solana program show`: pool `GbVM5yve…` 1,354,072 bytes of
+program data, last deployed in slot 490,938,987, 9.426 SOL of rent; verifier
+`DGY37k3J…` 840,168 bytes, slot 491,973,056, 5.322 SOL. Both are owned by the
+upgradeable loader and share one upgrade authority, `7gWpzSZA…`, which is a
+single CLI key.
+
+Per transaction, all measured, none quoted:
+
+| transaction | what it is | fee (lamports) | instructions | keys | compute units |
+|---|---|---|---|---|---|
+| `zgNJbiyr…` | shield, circuit 6, leaf 102 | 5,700 | 3 | 8 | 302,672 |
+| `mVTjvNzs…` | subscribe v4, self-shielded note | 5,500 | 3 | 10 | 176,404 |
+| `5FoVus1E…` | subscribe v4, treasury-issued note | 5,500 | 3 | 10 | 173,756 |
+| `4RbeXpo3…` | plain 1 SOL transfer to the till | 5,000 | 1 | 3 | 0 |
+| `5hdDAz6X…` | verify phase 2, deployment evidence | 5,000 | 2 | 4 | 193,200 |
+| `2ZJQt6cy…` | black box, honest proof, ACCEPTED | 5,000 | 2 | 4 | 193,026 |
+| `2j5H83Fi…` | tampered public input, REJECTED (6003) | 5,000 | 2 | 4 | 18,110 |
+| `2PKrAzsv…` | forged Merkle byte, REJECTED (6003) | 5,000 | 2 | 4 | 26,423 |
+| `33nRCCYi…` | forged FRI byte, REJECTED (6003) | 5,000 | 2 | 4 | 277,171 |
+
+Two things the table says that a single quoted figure would not. The
+subscribe instruction that everyone quotes costs about 175,000 CU, but that
+is phase 2 only: phase 1 (878,756 CU, from the deployment evidence) runs in
+its own transaction. And a forged FRI byte costs the verifier MORE than an
+honest proof (277,171 against 193,026) because the forgery is caught at step
+3.5, after the work; only the two cheap rejections short-circuit.
+
+### What a whole circuit-7 flow costs, counted transaction by transaction
+
+Every transaction the two subscribe ephemerals of the day ever signed --
+buffer initialise, resizes, the chunk uploads, both verify phases, the
+subscribe, the sweep -- not just the instruction:
+
+| ephemeral | flow | transactions | fees (lamports) | compute units | slots spanned |
+|---|---|---|---|---|---|
+| `He5gifXH…` | subscribe v4, self-shielded note | 94 | 470,500 | 1,462,646 | 311 |
+| `GY79Rpua…` | subscribe v4, issued note | 94 | 470,500 | 1,455,848 | 324 |
+
+So the transaction fees of a complete private subscription are 0.00047 SOL,
+and the float that carries it (520 to 550 million lamports) is rent that
+comes back on the sweep, minus the nullifier rent. The 94 transactions are
+what makes the flow take minutes rather than seconds: 311 and 324 slots is
+about 2 minutes of chain time, and the wall clock in section 4 is longer
+because the prover runs first and devnet rate-limits the uploads.
+
+Proof upload sizes on the same runs: 80 chunks (C7), 83 (C6), 95 (C1).
+Shield signer funding for a 1 SOL note: 1,580,000,000 lamports.
 
 ## 4. Product, end to end, live on 2026-09-02
 
@@ -91,13 +129,9 @@ soundness pins about 30 minutes, programs cargo check about 60 minutes.
 
 ## What was not measured, and should be next
 
-- The benchmark's I/O pass (compute units per instruction pulled from the RPC
-  for every signature of the day, fee totals per flow, program sizes) did not
-  run: the session stopped before that phase. `deployed-verifier.json` and the
-  live logs carry the figures above; the per-instruction pull is one script
-  away (`scratchpad/bench/txcost.mjs` and `flowcost.mjs` exist, unrun).
-- The verifier's two slow soundness pins were not re-timed locally.
-- A live note-in exchange (withdraw to the till, claim, collect) has not run;
-  its wire is pinned by tests only.
+- The verifier's two slow soundness pins were not re-timed locally (they run
+  in CI, about 30 minutes).
 - Numbers on a phone: the last on-device figure is C3 at 1,482 ms (2026-08-03);
   nothing newer.
+- Nothing here is a mainnet figure. Devnet rate-limits the uploads, and the
+  wall clocks in section 4 include waiting on 429s.
