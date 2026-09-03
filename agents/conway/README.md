@@ -80,6 +80,12 @@ Le fichier de colonie utilisé dans le conteneur est `colony.railway.json` (`aut
 - **Windows** : le runtime suppose un shell POSIX ; le superviseur route les commandes via Git Bash, mais l'hôte recommandé est Linux.
 - Le superviseur a été écrit et vérifié syntaxiquement ; la boucle complète mort → renaissance n'a pas encore été exécutée en conditions réelles.
 
+## 5 bis. Ce que l'agent peut atteindre
+
+Le conteneur a un shell, un disque et Internet en sortie. Il n'a **aucune adresse publique** : pas de sandbox Conway, pas de domaine, pas de port entrant. Un site écrit sur disque n'est joignable par personne. Si vous voulez lui donner une vitrine, générez un domaine Railway (`railway domain`) et faites-lui servir `$PORT` ; le playbook lui dit pour l'instant de demander avant de construire quoi que ce soit de public.
+
+Ses livrables circulent donc en texte et en fichiers, dans le canal où la demande a été posée, et son adresse Solana sert de facture.
+
 ## 6. Ce qui a été vérifié en direct (devnet, 2026-09-03)
 
 Setup headless, wallet Solana, LINEAGE.md et heartbeat économiques écrits, balayage de 0,48 SOL vers l'adresse Phantom, détection de l'entrée côté propriétaire avec la bonne contrepartie, refus de vider la réserve de frais, refus d'un envoi USDC sans solde, grand livre, distillation des leçons, verdict de réplication, `--status` avec revenus.
