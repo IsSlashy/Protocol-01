@@ -1,0 +1,194 @@
+From 670f3a91d6917785a4fa612149e62d6f9355e45f Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 15:09:46 +0200
+Subject: [PATCH 6/6] fix(p01): tool calls survive gpt-oss harmony markers; no
+ Conway key is not a dead agent
+
+Observed on the deployed colony: every tool call failed with 'Unknown tool:
+check_credits<|channel|>commentary'. gpt-oss models leak harmony control markers
+into the function name and arguments, so the agent could not use a single tool.
+
+- sanitizeToolName / sanitizeToolArguments / stripHarmonyMarkers on every
+  OpenAI-compatible and Anthropic completion; arguments always parse
+- getCreditsBalance returns 0 without calling the API when there is no key,
+  instead of a 401 per turn that the loop read as an unreachable balance API
+- with a free inference pool, an empty wallet no longer forces low-compute or
+  dead: thinking is free, so only uselessness kills a lineage
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/__tests__/free-pool.test.ts | 27 +++++++++++++++
+ src/conway/client.ts            |  4 +++
+ src/conway/inference.ts         | 59 ++++++++++++++++++++++++++++++---
+ src/economy/runway.ts           | 12 ++++++-
+ 4 files changed, 96 insertions(+), 6 deletions(-)
+
+diff --git a/src/__tests__/free-pool.test.ts b/src/__tests__/free-pool.test.ts
+index aca207e..41aabcb 100644
+--- a/src/__tests__/free-pool.test.ts
++++ b/src/__tests__/free-pool.test.ts
+@@ -140,3 +140,30 @@ describe("free pool pacing", () => {
+     await expect(p2.chat({ messages: [] }, 10)).rejects.toThrow(/daily ceiling 2/);
+   });
+ });
++
++describe("harmony marker sanitisation", () => {
++  it("recovers tool names and arguments polluted by gpt-oss control markers", async () => {
++    const { sanitizeToolName, sanitizeToolArguments, stripHarmonyMarkers } = await import("../conway/inference.js");
++    expect(sanitizeToolName("check_credits<|channel|>commentary")).toBe("check_credits");
++    expect(sanitizeToolName("orchestrator_status<|channel|>commentary")).toBe("orchestrator_status");
++    expect(sanitizeToolName("  send_usdc \n extra")).toBe("send_usdc");
++    expect(sanitizeToolArguments('{"a":1}<|channel|>commentary')).toBe('{"a":1}');
++    expect(sanitizeToolArguments("garbage")).toBe("{}");
++    expect(sanitizeToolArguments('prefix {"asset":"USDC"} suffix')).toBe('{"asset":"USDC"}');
++    expect(sanitizeToolArguments({ asset: "USDC" })).toBe('{"asset":"USDC"}');
++    expect(sanitizeToolArguments(undefined)).toBe("{}");
++    expect(stripHarmonyMarkers("hello<|channel|>final")).toBe("hello");
++  });
++});
++
++describe("free inference and survival tier", () => {
++  it("keeps the agent at normal tier with an empty wallet when inference is free", async () => {
++    const { getEffectiveSurvivalTier } = await import("../economy/runway.js");
++    const base: any = { chainType: "solana", creatorAddress: "x" };
++    expect(getEffectiveSurvivalTier(base, 0, 0)).toBe("critical");
++    const withPool: any = { ...base, freePool: { providers: [{ name: "p", baseUrl: "u", model: "m" }] } };
++    expect(getEffectiveSurvivalTier(withPool, 0, 0)).toBe("normal");
++    expect(getEffectiveSurvivalTier(withPool, -1, 0)).toBe("normal");
++    expect(getEffectiveSurvivalTier(withPool, 0, 100)).toBe("high");
++  });
++});
+diff --git a/src/conway/client.ts b/src/conway/client.ts
+index 13a8503..cd4c5d0 100644
+--- a/src/conway/client.ts
++++ b/src/conway/client.ts
+@@ -294,6 +294,10 @@ export function createConwayClient(options: ConwayClientOptions): ConwayClient {
+   // ─── Credits ─────────────────────────────────────────────────
+ 
+   const getCreditsBalance = async (): Promise<number> => {
++    // p01: running without a Conway account (free inference pool). The endpoint
++    // would answer 401 on every turn and the loop would read that as an
++    // unreachable API. There are simply no credits: report zero.
++    if (!apiKey) return 0;
+     const result = await request("GET", "/v1/credits/balance");
+     return result.balance_cents ?? result.credits_cents ?? 0;
+   };
+diff --git a/src/conway/inference.ts b/src/conway/inference.ts
+index ad6bc1c..9e6a6a6 100644
+--- a/src/conway/inference.ts
++++ b/src/conway/inference.ts
+@@ -262,6 +262,55 @@ async function chatViaOpenAiCompatible(params: {
+   return parseOpenAiCompletion(data, params.model);
+ }
+ 
++/**
++ * Strip provider control markers from a value.
++ * gpt-oss "harmony" models emit things like `check_credits<|channel|>commentary`.
++ */
++export function stripHarmonyMarkers(raw: string): string {
++  let s = String(raw ?? "");
++  const cut = s.indexOf("<|");
++  if (cut >= 0) s = s.slice(0, cut);
++  return s.replace(/<\|[^|]*\|>/g, "").trim();
++}
++
++/** Clean a tool name: keep the identifier, drop anything a provider appended. */
++export function sanitizeToolName(raw: string): string {
++  const first = stripHarmonyMarkers(raw).split("\n")[0].trim();
++  const m = first.match(/[A-Za-z_][A-Za-z0-9_.-]*/);
++  return m ? m[0] : first;
++}
++
++/** Clean tool arguments and guarantee parseable JSON (falls back to "{}"). */
++export function sanitizeToolArguments(raw: unknown): string {
++  if (raw && typeof raw === "object") {
++    try {
++      return JSON.stringify(raw);
++    } catch {
++      return "{}";
++    }
++  }
++  const s = stripHarmonyMarkers(typeof raw === "string" ? raw : "");
++  if (!s) return "{}";
++  try {
++    JSON.parse(s);
++    return s;
++  } catch {
++    /* try to recover a balanced object below */
++  }
++  const start = s.indexOf("{");
++  const end = s.lastIndexOf("}");
++  if (start >= 0 && end > start) {
++    const candidate = s.slice(start, end + 1);
++    try {
++      JSON.parse(candidate);
++      return candidate;
++    } catch {
++      /* give up */
++    }
++  }
++  return "{}";
++}
++
+ /** Map an OpenAI-style chat completion into the runtime's InferenceResponse. */
+ function parseOpenAiCompletion(data: any, modelLabel: string): InferenceResponse {
+   const choice = data.choices?.[0];
+@@ -282,8 +331,8 @@ function parseOpenAiCompletion(data: any, modelLabel: string): InferenceResponse
+       id: tc.id,
+       type: "function" as const,
+       function: {
+-        name: tc.function.name,
+-        arguments: tc.function.arguments,
++        name: sanitizeToolName(tc.function?.name),
++        arguments: sanitizeToolArguments(tc.function?.arguments),
+       },
+     }));
+ 
+@@ -292,7 +341,7 @@ function parseOpenAiCompletion(data: any, modelLabel: string): InferenceResponse
+     model: data.model || modelLabel,
+     message: {
+       role: message.role,
+-      content: message.content || "",
++      content: stripHarmonyMarkers(message.content || ""),
+       tool_calls: toolCalls,
+     },
+     toolCalls,
+@@ -364,8 +413,8 @@ async function chatViaAnthropic(params: {
+           id: tool.id,
+           type: "function" as const,
+           function: {
+-            name: tool.name,
+-            arguments: JSON.stringify(tool.input || {}),
++            name: sanitizeToolName(tool.name),
++            arguments: sanitizeToolArguments(tool.input || {}),
+           },
+         }))
+       : undefined;
+diff --git a/src/economy/runway.ts b/src/economy/runway.ts
+index 4e0d1ea..195e6d9 100644
+--- a/src/economy/runway.ts
++++ b/src/economy/runway.ts
+@@ -39,8 +39,18 @@ export function getEffectiveSurvivalTier(
+   usdcBalance: number,
+ ): SurvivalTier {
+   const credits = creditsCents < 0 ? 0 : creditsCents;
+-  if (!usdcCountsAsRunway(config)) return getSurvivalTier(creditsCents);
+   const usdcCents = usdcBalance > 0 ? Math.floor(usdcBalance * 100) : 0;
++
++  // p01: with a free inference pool, thinking costs nothing, so an empty
++  // wallet must not put the agent in low-compute or dead. It still dies of
++  // uselessness — the supervisor kills a lineage that earns nothing — but not
++  // of an empty balance it does not need.
++  if (config.freePool?.providers?.length) {
++    const rich = getSurvivalTier(credits + usdcCents);
++    return rich === "high" ? "high" : "normal";
++  }
++
++  if (!usdcCountsAsRunway(config)) return getSurvivalTier(creditsCents);
+   return getSurvivalTier(credits + usdcCents);
+ }
+ 
+-- 
+2.55.0.windows.3
+
