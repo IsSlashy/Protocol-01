@@ -1,17 +1,7 @@
 {
-  "$comment": "Free inference pool: tried in order, rotated on quota. Each entry needs a free API key in agents/conway/.env under apiKeyEnv. Several entries may share one key (same provider, different model). Model ids drift; a provider answering 'model not found' is benched 24h — update the id here. Budgets (rpm/rpd) sit below the published free limits. Live-tested 2026-09-03 with a tool-calling request: every enabled entry answered with a correct tool call.",
+  "$comment": "Free inference pool: tried in order, rotated on quota. Each entry needs a free API key in agents/conway/.env under apiKeyEnv. Several entries may share one key (same provider, different model). Model ids drift; a provider answering 'model not found' is benched 24h — update the id here. Budgets (rpm/rpd) sit below the published free limits. Live-tested 2026-09-03 with a tool-calling request: every enabled entry answered with a correct tool call. Order is strongest-reasoning first: a weak model wastes turns and the quota that goes with them.",
   "cooldownMinutes": 10,
   "providers": [
-    {
-      "name": "groq",
-      "baseUrl": "https://api.groq.com/openai",
-      "model": "openai/gpt-oss-120b",
-      "apiKeyEnv": "GROQ_API_KEY",
-      "rpm": 25,
-      "rpd": 900,
-      "tokenParam": "max_completion_tokens",
-      "maxPromptChars": 58000
-    },
     {
       "name": "nvidia-nemotron-super",
       "baseUrl": "https://integrate.api.nvidia.com",
@@ -20,28 +10,6 @@
       "rpm": 30,
       "rpd": 800,
       "tokenParam": "max_tokens"
-    },
-    {
-      "name": "mistral",
-      "baseUrl": "https://api.mistral.ai",
-      "model": "mistral-small-latest",
-      "apiKeyEnv": "MISTRAL_API_KEY",
-      "rpm": 20,
-      "rpd": 400,
-      "tokenParam": "max_tokens"
-    },
-    {
-      "name": "openrouter-nemotron",
-      "baseUrl": "https://openrouter.ai/api",
-      "model": "nvidia/nemotron-3-super-120b-a12b:free",
-      "apiKeyEnv": "OPENROUTER_API_KEY",
-      "rpm": 10,
-      "rpd": 15,
-      "tokenParam": "max_tokens",
-      "headers": {
-        "HTTP-Referer": "https://styx.protocol01.dev",
-        "X-Title": "Styx automaton"
-      }
     },
     {
       "name": "openrouter-glm",
@@ -70,6 +38,28 @@
       }
     },
     {
+      "name": "openrouter-nemotron",
+      "baseUrl": "https://openrouter.ai/api",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "rpm": 10,
+      "rpd": 15,
+      "tokenParam": "max_tokens",
+      "headers": {
+        "HTTP-Referer": "https://styx.protocol01.dev",
+        "X-Title": "Styx automaton"
+      }
+    },
+    {
+      "name": "mistral",
+      "baseUrl": "https://api.mistral.ai",
+      "model": "mistral-small-latest",
+      "apiKeyEnv": "MISTRAL_API_KEY",
+      "rpm": 20,
+      "rpd": 400,
+      "tokenParam": "max_tokens"
+    },
+    {
       "name": "nvidia-gpt-oss-20b",
       "baseUrl": "https://integrate.api.nvidia.com",
       "model": "openai/gpt-oss-20b",
@@ -78,6 +68,16 @@
       "rpd": 800,
       "tokenParam": "max_tokens",
       "$comment": "slow (~15 s per call) but works; last resort"
+    },
+    {
+      "name": "groq",
+      "baseUrl": "https://api.groq.com/openai",
+      "model": "openai/gpt-oss-120b",
+      "apiKeyEnv": "GROQ_API_KEY",
+      "rpm": 25,
+      "rpd": 900,
+      "tokenParam": "max_completion_tokens",
+      "maxPromptChars": 58000
     },
     {
       "name": "cerebras",
