@@ -1,0 +1,11 @@
+{
+  "flow": "note-in-exchange",
+  "spendSig": "3FnRiSvLzvQyUPUU8qdP4Cm4w9VBBSmQnAqiVdyhDo4kZRcnbYjk5vZ3oVpfRErhJFp4cugQKDpwKATgefzsD1LW",
+  "claimKind": "pool-withdrawal",
+  "gaveUpLeaf": 103,
+  "receivedLeaf": 44,
+  "tillCreditLamports": 995000000,
+  "denomination": 1,
+  "landedAt": "2026-09-03T09:14:41.541Z",
+  "base": "https://protocol-01.dev"
+}

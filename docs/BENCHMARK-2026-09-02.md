@@ -106,6 +106,7 @@ Shield signer funding for a 1 SOL note: 1,580,000,000 lamports.
 | shield 1 SOL (C6) then subscribe circuit 7, self-shielded note | 775 s for both, under devnet rate limits | mVTjvNzs… |
 | pay the till, collect an older note, subscribe circuit 7 | about 4 min from payment to vault | 4RbeXpo3… then 5FoVus1E… |
 | withdraw v4 (earlier the same day) | 630 s under devnet 429s | 2ax5rcoH… |
+| note-in exchange (2026-09-03): shield, withdraw to the till, claim, collect an older note | 522 s for the three chain steps, then 13 s to collect | 27DYPdwM… → 3FnRiSvL… → leaf 44 |
 | merchant SDK, key only, first grant after landing | 0.75 s (self-shielded) and 1.35 s (issued note) | records/live-license-*.json |
 | merchant SDK, one `verifyMerchantLicense` call | 709 ms and 1,078 ms | same |
 
