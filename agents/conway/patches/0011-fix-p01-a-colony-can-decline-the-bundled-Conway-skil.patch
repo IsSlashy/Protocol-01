@@ -1,7 +1,7 @@
 From 90de379504d00fe3f8975deb34c9b3602a1e0e8b Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 18:22:48 +0200
-Subject: [PATCH 11/11] fix(p01): a colony can decline the bundled Conway
+Subject: [PATCH 11/12] fix(p01): a colony can decline the bundled Conway
  skills
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,0 +1,40 @@
+From c87e1f771580db540e1e605cbd6a5cec81ad16ef Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 18:26:38 +0200
+Subject: [PATCH 12/12] fix(p01): the economy read-outs count as idle, so a
+ balance-watcher trips the loop detector
+
+Production: after the begging stopped the agent cycled through
+inference_pool_status, check_sol_balance and friends. Those tools were absent
+from the idle list, so the runtime scored a status-watching turn as productive
+and neither the context filter nor the maintenance-loop detector fired.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/agent/idle-only-tools.ts | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/agent/idle-only-tools.ts b/src/agent/idle-only-tools.ts
+index e9a50a1..89dabd9 100644
+--- a/src/agent/idle-only-tools.ts
++++ b/src/agent/idle-only-tools.ts
+@@ -18,6 +18,15 @@ const IDLE_ONLY_TOOL_NAMES = [
+   "orchestrator_status",
+   "list_goals",
+   "get_plan",
++  // p01: the economy read-outs are status checks too. Without them here the
++  // loop detector counted a balance-watching agent as productive.
++  "check_sol_balance",
++  "inference_pool_status",
++  "revenue_report",
++  "runway_report",
++  "replication_readiness",
++  "lineage_lessons",
++  "view_soul",
+ ] as const;
+ 
+ export const IDLE_ONLY_TOOLS = new Set<string>(IDLE_ONLY_TOOL_NAMES);
+-- 
+2.55.0.windows.3
+
