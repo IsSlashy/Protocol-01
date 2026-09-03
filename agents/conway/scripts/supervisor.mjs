@@ -646,7 +646,7 @@ async function tick() {
       await new Promise((r) => setTimeout(r, 2000));
     }
     const snap = await snapshot(agent);
-    log(`${agent.id}: proc=${snap.alive ? "up" : "DOWN"} state=${snap.state ?? "?"} turns=${snap.turns ?? 0} usdc=${snap.usdc?.toFixed?.(2) ?? "?"} sol=${snap.sol?.toFixed?.(4) ?? "?"} rev7d=${(snap.revenue7d ?? 0).toFixed(2)} swept30d=${(snap.swept30d ?? 0).toFixed(2)}`);
+    log(`${agent.id} (${snap.address}): proc=${snap.alive ? "up" : "DOWN"} state=${snap.state ?? "?"} turns=${snap.turns ?? 0} usdc=${snap.usdc?.toFixed?.(2) ?? "?"} sol=${snap.sol?.toFixed?.(4) ?? "?"} rev7d=${(snap.revenue7d ?? 0).toFixed(2)} swept30d=${(snap.swept30d ?? 0).toFixed(2)}`);
 
     // 1. death?
     const cause = causeOfDeath(agent, snap);
