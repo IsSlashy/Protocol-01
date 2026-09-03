@@ -79,7 +79,7 @@ Manual install (developer mode):
 
 #### 1. Shield a note
 
-Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 10 / 100 / 500 / 1000 SOL; only the first two have ever been used). A STARK shield proof is generated on-device (~4–8 s; the heavier unshield circuits are the ones measured past 180 s, see the mobile section below) and the deposit lands in the pool. Wait ~30 s for the deposit to confirm and for the wallet to re-scan. This is a confirmation wait, not a privacy delay: nothing on chain makes a note age before it can be spent. Every client pins `min_epoch = 0`, the unshield handler discards the field outright, and the subscribe gate compares against the absolute epoch counter — measured 2026-08-17, `1121 >= 2` is always true, so the gate never bites.
+Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 10 / 100 / 500 / 1000 SOL; only the first two have ever been used). A STARK shield proof is generated on-device (no on-device timing is published: the only on-device proving figure ever measured is circuit 3 at 1,482 ms on 2026-08-03, and the ">180 s" once quoted here was a client worker timeout rather than a proving time, see the mobile section below) and the deposit lands in the pool. Wait ~30 s for the deposit to confirm and for the wallet to re-scan. This is a confirmation wait, not a privacy delay: nothing on chain makes a note age before it can be spent. Every client pins `min_epoch = 0`, the unshield handler discards the field outright, and the subscribe gate compares against the absolute epoch counter, measured 2026-08-17, `1121 >= 2` is always true, so the gate never bites.
 
 #### 2. Subscribe to a live service
 
@@ -125,9 +125,12 @@ solana airdrop 2 --url devnet
 ```
 
 **Smart contracts — declared program IDs (devnet).** These are the
-`declare_id!` constants in `programs/`; the shielded pool and the STARK
-verifier (coset LDE) were both redeployed 2026-08-04, and every verifier figure
-in this README is measured against that deployment on the real devnet cluster.
+`declare_id!` constants in `programs/`. The STARK verifier was redeployed on
+devnet 2026-09-02, slot 491,973,056, and carries 840,168 bytes of program data;
+the shielded pool's last deployment is slot 490,938,987, 1,354,072 bytes. Every
+verifier figure in this README is measured against that verifier deployment on
+the real devnet cluster, and the raw numbers are in
+[`docs/BENCHMARK-2026-09-02.md`](docs/BENCHMARK-2026-09-02.md).
 
 | Program | ID |
 |---|---|
@@ -136,7 +139,7 @@ in this README is measured against that deployment on the real devnet cluster.
 | ZK Shielded Pool (V4) | `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c` |
 | zkSPL (confidential balances) | `EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah` |
 | Specter (stealth + streams) | `2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp` |
-| Relayer (trustless, on-chain) | `2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW` |
+| Relayer (deployed, no node operating it since 2026-08-28) | `2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW` |
 | Quantum Vault (WOTS+) | `HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o` |
 | Arcium MPC Bridge | `FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT` |
 | Liquidity Pool (instant unshield) | `6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg` |
@@ -287,8 +290,8 @@ Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony
 | Proving system | STARK (FRI-based) |
 | Field | Goldilocks (`p = 2^64 − 2^32 + 1`) |
 | Hash function | Poseidon (full S-box `x^7`, 30 rounds) |
-| Configured FRI parameters | 27 queries, blowup 16 (Blake3 Merkle) — stated as configuration; no security-bit figure is derived from them |
-| On-chain verification cost | **809,812 CU** measured on devnet 2026-08-04 for an accepted honest proof (C1 `pool_commitment` via `verify_uniform`, tx budget 1,400,000 — sig `2sLVyzPW…jZiBR`) |
+| Configured FRI parameters | 22 queries on `merkle_path`, `transfer`, `merkle_update` and `spend`, 27 on the other four circuits; blowup 16. Stated as configuration; no security-bit figure is derived from them |
+| On-chain verification cost | Two instructions, measured on devnet 2026-09-02/03 against the verifier redeployed in slot 491,973,056: **phase 1 878,756 CU**, **phase 2 193,200 CU** (193,026 on the black-box honest run), against the 1,400,000 transaction budget |
 | Circuits | 6 AIRs — subscriber ownership, pool commitment, balance proof, Merkle path, confidential balance, transfer |
 
 **On soundness, plainly:** an earlier revision of this README advertised
@@ -319,16 +322,16 @@ hash oracle programmed, not a theorem over every witness and challenge**: the wo
 `docs/zk-simulation-argument.md` says exactly what is and is not claimed.
 
 The on-chain verifier is written from scratch (no Winterfell dependency at
-runtime) and fits in a **667,000-byte** SBF binary (sha `90c75a0e…`), upgraded
-in place on devnet 2026-08-04. Its post-deploy verification gate passes exit 0,
-and rejection is attributed, not assumed — measured on devnet, all three
-outcomes: an honest proof accepted at 809,812 CU; a proof forged by one byte
-rejected `InvalidProof` (6003) at 542,150 CU, deep in the DEEP/FRI work; a
-tampered public input rejected at **19,777 CU** on an `OOD z mismatch` right
-after step 1. The 27× gap between the two rejections is the interesting part:
-a forgery consistent with its own transcript costs the full DEEP/FRI pass to
-catch, while a tampered input breaks Fiat-Shamir and dies immediately. Two
-defect classes, two mechanisms, both closed.
+runtime) and carries **840,168 bytes** of program data, upgraded in place on
+devnet 2026-09-02, slot 491,973,056. Rejection is attributed, not assumed:
+measured on devnet 2026-09-02/03, four outcomes read back from the
+transactions. An honest proof accepted at **193,200 CU** in phase 2 (193,026 on
+the black-box run), with phase 1 at 878,756 CU in its own transaction. A forged
+FRI byte rejected `InvalidProof` (6003) at **277,171 CU**. A forged Merkle byte
+rejected at 26,423 CU, and a tampered public input at 18,110 CU. The
+interesting part is that a forged FRI byte costs the verifier MORE than an
+honest proof: the forgery is caught at step 3.5, after the work, and only the
+two cheap rejections short-circuit.
 
 ### Stealth Addresses (Hybrid Post-Quantum)
 
@@ -390,9 +393,23 @@ Application-layer defense if Ed25519 is ever broken by Shor's algorithm.
 
 Ed25519 is still required for Solana transactions, but it's no longer the security boundary — the SHA-256 preimage is.
 
-### On-Chain Trustless Relay
+### On-Chain Relay Program (deployed, not operated)
 
-No backend server. The `p01_relayer` program accepts encrypted relay jobs; an ephemeral keypair posts the job; the relayer executes it. Only `Relayer PDA → stealth address` is visible on-chain. Client middleware optionally bounces the RPC through Tor + a Railway proxy.
+The `p01_relayer` program is deployed on devnet and accepts encrypted relay
+jobs, but **no node operates it**. Both hosted relayer nodes were retired on
+2026-08-28 (`services/relayer/README.md`): between them they picked up 10 relay
+jobs in 45 days and reported `lastPollCount: 0` throughout. The funding shape
+was wrong as well, because the user's own wallet pre-funded the relay-job
+ephemeral, so the fee payer moved one hop instead of disappearing. Nothing in
+this README depends on a relayer being up.
+
+Two paths ship in its place, and both are submitted by the spender:
+
+- the **direct circuit-7 spend** (`unshield_denominated_stark_v4`), which binds
+  the recipient in the proof;
+- the **note-in exchange**, where a buyer withdraws their own note to the till
+  and collects an older issued note in return
+  ([`docs/NOTE-IN-EXCHANGE-2026-09-02.md`](docs/NOTE-IN-EXCHANGE-2026-09-02.md)).
 
 ### Multi-Party Computation (Arcium MPC) — program and SDK only
 
@@ -410,10 +427,14 @@ and nothing in the current privacy claims of this README depends on MPC.
 
 ### Mobile App (primary client)
 
-- STARK prover runs on-device inside a hidden WebView (WASM). Shield proofs
-  complete in seconds; the heavier unshield circuits currently exceed practical
-  on-device time limits (measured >180 s on real hardware, 2026-08-03) and are
-  being optimized — the honest state, not the aspirational one
+- STARK prover runs on-device inside a hidden WebView (WASM). No on-device
+  timing is advertised here. The ">180 s" this list used to quote was never a
+  proving time: it is the client worker timeout in the mobile prover provider,
+  raised from 60 s after two circuits timed out on a test handset, so it bounds
+  the whole flow and not the prover. The only on-device proving figure ever
+  measured is circuit 3 at 1,482 ms (2026-08-03), and nothing newer exists. A
+  full unshield still does not complete on the installed build, whose prover
+  blob predates the deployed verifier
 - All 4 tabs: Wallet, Privacy, Streams, Agent
 - Hybrid stealth addresses + ML-KEM-768
 - Auto-recovery on boot (blocking lazy-load modal)
@@ -643,7 +664,7 @@ anchor test                           # on-chain programs (localnet)
 - [x] **Boot-time auto-recovery** (blocking lazy-load rescan from seed)
 - [x] Instant unshield via `p01_liquidity` prefund pool
 - [x] Arcium MPC bridge program + SDK (9 circuits — client integration later removed, 2026-07)
-- [x] On-chain trustless relayer + Tor-routed RPC middleware
+- [x] On-chain relayer program + Tor-routed RPC middleware (both hosted nodes retired 2026-08-28; the program is deployed, nobody operates it)
 - [x] **Permissionless `claim_period` + close-on-exhaustion** (2026-08-04, proven on devnet by a third-party signer: the program pins where the money goes, not who sends the claim)
 - [x] **MIT license everywhere** (2026-08-04 — root LICENSE, site, and docs now agree with what npm shipped)
 - [x] **Coset-LDE STARK verifier redeployed on devnet** (2026-08-04 — honest proof accepted at 809,812 CU, deployed-verifier gate exit 0, rejection attributed per cause)

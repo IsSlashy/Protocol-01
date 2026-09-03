@@ -46,14 +46,16 @@
   },
   "keywords": [
     "solana",
+    "devnet",
     "protocol-01",
     "privacy",
     "stark",
-    "zk-stark",
+    "fri",
+    "goldilocks",
     "post-quantum",
     "quantum-resistant",
     "wasm",
-    "zero-knowledge",
+    "proof",
     "proof-system"
   ],
   "author": "Protocol 01 Team",

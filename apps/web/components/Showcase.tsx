@@ -40,7 +40,7 @@ const screens = [
       "Deposit tokens into a Merkle tree pool using quantum-resistant STARK proofs. Membership is proven without naming the note. The on-device WASM prover keeps every secret on the device.",
     highlights: [
       "Shield & unshield without a remote prover",
-      "On-device STARK prover (no remote prover, ~9-15KB proofs)",
+      "On-device STARK prover (no remote prover; 79,405 byte spend proof measured 2026-09-02)",
       "32,768 note capacity per pool (depth 15)",
       "Dual verification safety net",
     ],

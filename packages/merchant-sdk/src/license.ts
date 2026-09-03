@@ -343,6 +343,34 @@ export function keyMatchesCommitment(presentedKey: string, commitment: Uint8Arra
   return bytesEqual(licenseCommitment(secret), commitment);
 }
 
+/**
+ * Honour {@link ServiceScopedOptions.requireService} in the two license
+ * verifiers below: refuse to answer at all when the caller asked to fail closed
+ * and then supplied no `service` scope.
+ *
+ * Both verifiers accepted `requireService` and neither read it, found by the
+ * 2026-09-03 self-audit. A merchant that set the documented safety flag got the
+ * weaker, merchant-only check anyway, and got it silently, which is the worst
+ * of the three possible behaviours.
+ *
+ * It throws rather than returning `{ valid: false }` because this is a caller
+ * misconfiguration and not a verdict about the presented key, and because the
+ * two other checks that take the same option already throw on exactly this
+ * condition: `hasActiveVaultAccessForVault` (`vaults.ts`) and
+ * `verifyMerchantLicense` (`merchant-license.ts`).
+ */
+function requireServiceOrThrow(fn: string, serviceId: string, opts: ServiceScopedOptions): void {
+  if (!opts.requireService) return;
+  throw new Error(
+    `${fn}: requireService is set but no service scope was supplied, so "${serviceId}" could ` +
+      `not be enforced. The vault records no service identifier, so without opts.service this ` +
+      `call answers only "a vault naming this merchant exists, is inside a paid-for period, and ` +
+      `this key matches the commitment someone put on it", which a stranger can arrange by ` +
+      `self-minting a vault. Pass opts.service (serviceScopeFromRegistry(entry)), or drop ` +
+      `requireService to accept the weaker answer.`,
+  );
+}
+
 export interface VerifyLicenseKeyResult {
   valid: boolean;
   reason?: string;
@@ -396,7 +424,10 @@ export async function verifyLicenseKey(
   // this argument cannot be honoured, and saying so beats the silent `void`
   // that let a key for one service verify against another. See ServiceScope.
   const scope = opts.service;
-  if (!scope) void serviceId;
+  if (!scope) {
+    requireServiceOrThrow('verifyLicenseKey', serviceId, opts);
+    void serviceId;
+  }
   let secret: Uint8Array;
   try {
     secret = decodeLicenseKey(presentedKey);
@@ -510,7 +541,10 @@ export async function verifyLicenseAgainstVault(
   // this argument cannot be honoured, and saying so beats the silent `void`
   // that let a key for one service verify against another. See ServiceScope.
   const scope = opts.service;
-  if (!scope) void serviceId;
+  if (!scope) {
+    requireServiceOrThrow('verifyLicenseAgainstVault', serviceId, opts);
+    void serviceId;
+  }
   let secret: Uint8Array;
   try {
     secret = decodeLicenseKey(presentedKey);

@@ -61,7 +61,8 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
 // anywhere in the proof system, so Shor has nothing to attack in it.
 const starkProof = await starkProver.generateProof(secret);
 
-// Upload proof buffer -> on-chain FRI verifier -> 809,812 CU measured
+// Upload proof buffer -> on-chain FRI verifier -> 878,756 CU in phase 1
+// and 193,200 CU in phase 2, measured on devnet 2026-09-02
 await submitStarkProof(program, proofBuffer, commitment, circuitId);
 // 7 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
 // point is implemented (programs/p01_stark_verifier/src/verify.rs:670-673).
@@ -143,7 +144,8 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     i18nKey: "solanaIntegration",
     detailCount: 6,
     codeExample: `// v1.0.2: every spend verifies through the custom on-chain
-// FRI verifier (no Winterfell dep, Goldilocks + Blake3, 809,812 CU).
+// FRI verifier (no Winterfell dep, Goldilocks + Blake3; 878,756 CU in
+// phase 1, 193,200 CU in phase 2, measured on devnet 2026-09-02).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
     verify_merkle_path(proof, pos, trace_root)?;
@@ -162,7 +164,7 @@ for pos in positions {
     id: "private-relay",
     i18nKey: "privateRelay",
     detailCount: 6,
-    codeExample: `// Trustless on-chain relay flow (v1.0.2, STARK V3)
+    codeExample: `// On-chain relay flow (v1.0.2, STARK V3). The program is deployed;
 //
 // WHICH CLIENTS ACTUALLY RELAY. Mobile does. The web app relays exactly
 // ONE leg, since 2026-08-21: funding the ephemeral that deposits. The
@@ -186,9 +188,10 @@ const starkProof = await starkProver.generateProof({
   secret, nullifierPreimage, merklePath, pathIndices,
 });
 
-// 2. Upload the proof to a buffer account (~120 KB, ~9-15 KB compact)
-//    then call the on-chain FRI verifier (no Winterfell dep,
-//    custom Goldilocks + Blake3 implementation, 809,812 CU measured)
+// 2. Upload the proof to a buffer account (measured 2026-09-02: 79,405
+//    bytes on the wire for circuit 7, 94,897 for circuit 1) then call
+//    the on-chain FRI verifier (no Winterfell dep, custom Goldilocks +
+//    Blake3 implementation; 878,756 CU phase 1, 193,200 CU phase 2)
 await submitStarkProof(program, proofBuffer, circuitId);
 
 // 3. Instruction reads the verified buffer and releases funds
@@ -503,7 +506,8 @@ await withdraw({ amount, recipient, proofBuffer });
 // AFTER: Winterfell STARKs over Goldilocks (current)
 const proof = await starkProver.generateProof(secret);
 // Hash-based (Blake3 + Poseidon), no trusted setup, custom on-chain
-// FRI verifier, 7 AIRs (one per accepted circuit id), 9-15 KB proofs`,
+// FRI verifier, 7 AIRs (one per accepted circuit id); proofs measured
+// 2026-09-02 at 79,405 bytes (spend) to 94,897 (pool spend)`,
   },
 ];
 

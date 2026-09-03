@@ -528,11 +528,11 @@ const en = {
       },
       instantZk: {
         title: 'Local-Only ZK Proving',
-        desc: 'Proving runs on the device and the spending key never leaves it. No timing is quoted here: on-device proving has been measured past 180 seconds, and a full unshield cannot complete on a phone with the installed build, whose prover is older than the deployed verifier.',
+        desc: 'Proving runs on the device and the spending key never leaves it. The 180 seconds this page used to quote was never a proving time: it is the client worker timeout in the mobile prover provider, raised from 60 seconds after two circuits timed out on a test handset, so it bounds the whole flow and not the prover. The only on-device proving figure that exists is circuit 3 at 1,482 ms, measured 2026-08-03, and nothing newer has been measured. A full unshield still cannot complete on a phone with the installed build, whose prover is older than the deployed verifier.',
       },
       onChainContracts: {
         title: 'On-Chain Smart Contracts',
-        desc: 'Anchor programs deployed to Solana devnet, not audited and not on mainnet. Trustless, permissionless privacy on the core path: anyone can submit the instructions directly, which is what everyone does since the two hosted relayer nodes were retired on 28 August 2026.',
+        desc: 'Anchor programs deployed to Solana devnet, not audited and not on mainnet. Permissionless privacy on the core path: anyone can submit the instructions directly, which is what everyone does since the two hosted relayer nodes were retired on 28 August 2026.',
       },
       advancedPrivacy: {
         title: 'Amount and Timing Noise',
@@ -1066,7 +1066,7 @@ const en = {
     // node stopped rendering on 2026-07-27 when Arcium was removed, but the
     // strings stayed and kept the claim one edit away from coming back.
     nodeOnChainRelayer: 'ON-CHAIN RELAYER',
-    nodeRelayerSub: 'Trustless ZK Relay',
+    nodeRelayerSub: 'On-Chain Relay Program',
     nodeStarkVerifier: 'STARK VERIFIER',
     nodeStarkSub: 'FRI + Goldilocks',
     nodeQuantumVault: 'QUANTUM VAULT',
@@ -1103,9 +1103,9 @@ const en = {
         desc: 'Post-quantum STARK proof system over the Goldilocks field, powered by Winterfell. Hash-based, with no elliptic-curve assumptions, so Shor\'s algorithm does not apply, and the only proof system in use across mobile, extension, and on-chain verifier. Groth16/BN254 was retired in April 2026 (see Legacy / Migration History below). These proofs are not zero-knowledge today: trace values can be recovered from the published proof bytes by Lagrange interpolation. The spend circuit does apply a coset LDE and 128 CSPRNG-drawn mask rows, unlike the other seven, but that buys underdetermination — 90 published evaluations against ~138 unknowns — not secrecy, and underdetermination has a measured counterexample here: four witnesses of another circuit, the spend secret among them, were recovered in 5 ms.',
         detail1: '8 STARK AIRs, one per circuit id the verifier accepts: subscriber_ownership, pool_commitment, balance_proof, merkle_path, confidential_balance, transfer, merkle_update, spend',
         detail2: 'Winterfell prover, Goldilocks field (2^64 - 2^32 + 1), Poseidon AIR (x^7 S-box, 30 rounds)',
-        detail3: 'Compact proofs (9-15KB) with SHA-256 Merkle trees (Blake3 was dropped: sol_blake3 is gated off on devnet and mainnet, so it fell back to software Blake3 and overflowed the CU cap), DEEP-ALI on every circuit, 27 FRI queries (22 on merkle_path, transfer, merkle_update and spend), 16x blowup and 16 bits of grinding',
-        detail4: 'Custom on-chain FRI verifier (no Winterfell dep, fits 4KB stack). Measured on devnet: an honest proof accepted at 809,812 CU against the 1.4M budget',
-        detail5: 'WASM prover, 267,610 bytes, all 8 circuits (C0-C7). Runs in the browser; on a real phone the withdrawal pair (C1 + C3) was measured past the 180s worker timeout, so on-device withdrawal does not complete today',
+        detail3: 'Proofs measured on the wire 2026-09-02: 79,405 bytes for spend (C7), 94,897 for pool spend (C1), 79,597 for merkle_path (C3), 82,477 for merkle_update (C6). The "9-15KB" this line used to claim was never measured. SHA-256 Merkle trees (Blake3 was dropped: sol_blake3 is gated off on devnet and mainnet, so it fell back to software Blake3 and overflowed the CU cap), DEEP-ALI on every circuit, 22 FRI queries on the four circuits that ship (merkle_path, transfer, merkle_update, spend) and 27 on the other four, 16x blowup and 16 bits of grinding',
+        detail4: 'Custom on-chain FRI verifier (no Winterfell dep, fits 4KB stack), 840,168 bytes of program data, redeployed on devnet 2026-09-02 in slot 491,973,056. Measured against that deployment: an honest proof accepted at 878,756 CU in phase 1 and 193,200 CU in phase 2 (193,026 on the black-box run), against the 1.4M per-transaction budget. A forged FRI byte costs MORE than an honest proof, 277,171 CU, because it is caught at step 3.5, after the work',
+        detail5: 'WASM prover, 274,224 bytes (sha256 36c1fd4e…), all 8 circuits (C0-C7), the blob the deployed verifier accepts. Measured 2026-09-02 in Node: circuit 7 median 2,656 ms over 5 runs. The 180s this line used to quote was the client worker timeout, not a proving time; the only on-device proving figure ever taken is circuit 3 at 1,482 ms (2026-08-03) and nothing newer exists. On-device withdrawal still does not complete with the installed build',
         detail6: 'No trusted setup required. STARKs are transparent (unlike Groth16\'s.ptau ceremony)',
         detail7: 'Post-quantum: hash-based construction not affected by Shor\'s algorithm; Grover\'s gives only a quadratic speedup, mitigated by digest size',
         detail8: 'Multi-circuit on-chain verifier with circuit_id routing (subscribe, pause, resume, unshield, split)',
@@ -1153,7 +1153,7 @@ const en = {
       solanaIntegration: {
         title: 'Solana On-Chain Verification',
         desc: 'Protocol 01 leverages Solana\'s native cryptographic syscalls for on-chain STARK proof verification, split across two instructions to fit the compute budget.',
-        detail1: 'Custom FRI verifier for STARK proofs. Goldilocks field, 809,812 CU measured on devnet for an accepted proof',
+        detail1: 'Custom FRI verifier for STARK proofs. Goldilocks field; an accepted proof measured 878,756 CU in phase 1 and 193,200 CU in phase 2 on devnet, 2026-09-02',
         detail2: 'sha256 syscall for Merkle path hashing (post-Groth16 migration)',
         detail3: '13 Anchor programs: zk_shielded, p01_zkspl, specter, subscription, stream, p01_quantum_vault, p01_quantum_wallet, p01_stark_verifier, p01_registry, p01_relayer, p01-fee-splitter, whitelist, p01_liquidity',
         detail4: 'Quantum vault: WOTS+ signatures, hash-timelock, commit-then-reveal (SHA-256 based)',
@@ -1161,7 +1161,7 @@ const en = {
         detail6: '370+ automated tests: stress tests, E2E flows, SDK unit tests, Rust STARK tests',
       },
       privateRelay: {
-        title: 'On-Chain Relayer (Trustless)',
+        title: 'On-Chain Relayer (deployed, not operated)',
         desc: 'On-chain job board and fee escrow (p01_relayer). The user posts an encrypted, already-signed transaction with a fee, and the assigned relayer node decrypts it and submits it. The program itself verifies no proofs: the STARK is checked by the verifier program when the relayed transaction executes. The node is a third party that reads the decrypted transaction and can decline to submit it, in which case the job expires, the fee goes back to the submitter and the node is slashed.',
         detail1: 'Coordination and escrow are on chain. Submitting still depends on a registered relayer node, which is a server an operator runs',
         detail2: 'User generates ZK proof client-side (spending key never leaves device)',
@@ -1319,7 +1319,7 @@ const en = {
         detail1: 'April 2026. Groth16 → STARK migration completed across mobile, extension, on-chain verifier, and all 7 circuits',
         detail2: 'Why retired: Groth16 uses BN254 elliptic-curve pairings; Shor\'s algorithm breaks discrete-log on elliptic curves once a CRQC exists. Also required a multi-party trusted setup ceremony (.ptau) that can never be fully verified',
         detail3: 'What replaced it: Winterfell-based STARKs over the Goldilocks field (2^64 − 2^32 + 1). Hash-based (Blake3 + Poseidon), no elliptic curves, no trusted setup, transparent and quantum-resistant',
-        detail4: 'On-chain verifier: custom FRI implementation (no Winterfell dep, fits the 4KB SBF stack), 7 AIRs, DEEP-ALI on every circuit, 809,812 CU measured on devnet',
+        detail4: 'On-chain verifier: custom FRI implementation (no Winterfell dep, fits the 4KB SBF stack), 7 AIRs, DEEP-ALI on every circuit, an accepted proof measured at 878,756 CU in phase 1 and 193,200 CU in phase 2 on devnet, 2026-09-02',
         detail5: 'Removed dependencies: snarkjs, circomlib, ark-circom, alt_bn128 syscalls, .ptau trusted setup files (~30 MB). Three compiled Groth16 artifacts are deliberately still in the Android assets (transfer, denominated_pool, denominated_transfer) because the legacy WebView prover loads them; nothing on-chain verifies them any more',
         detail6: 'Backwards compatibility: legacy notes (BN254 commitments) auto-detected on load and dropped from active state, users re-shield once to migrate to the STARK note format. No on-chain migration required',
       },

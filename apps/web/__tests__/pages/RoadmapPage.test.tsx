@@ -168,9 +168,9 @@ describe('RoadmapPage -- Styx Protocol development roadmap', () => {
       expect(screen.getByText('On-Chain Smart Contracts')).toBeInTheDocument();
     });
 
-    it('describes the on-chain programs as trustless and permissionless', () => {
+    it('describes the on-chain programs as permissionless, and never as trustless', () => {
       expandAllShippedCategories();
-      expect(screen.getByText(/Trustless, permissionless privacy/)).toBeInTheDocument();
+      expect(screen.getByText(/Permissionless privacy on the core path/)).toBeInTheDocument();
     });
 
     // Was "Advanced Privacy (Decoy Transactions + Noise)". Decoy transactions

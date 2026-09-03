@@ -129,7 +129,7 @@ const itemStem = (titleKey: string): string => titleKey.split(".")[2] ?? "";
  * the PLANNED phase and reads as one; onChainContracts is held on screen by
  * __tests__/pages/RoadmapPage.test.tsx, and its counts and its "no server
  * required" line are going out through a dictionary rewrite instead, because the
- * assertion only needs the phrase "Trustless, permissionless privacy".
+ * assertion only needs the phrase "Permissionless privacy on the core path"
  *
  * Four entries below are withheld pending a dictionary rewrite that has been
  * handed to the i18n pass: zkShieldedPool, starkMigration, instantZk and

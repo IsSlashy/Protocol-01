@@ -402,7 +402,7 @@ THIS PROVES ENTITLEMENT, NOT PRIVACY &nbsp;&middot;&nbsp; DEVNET MOVES: READ THE
 <div class="scroll">
 <table>
   <tr><th>Input</th><th>Answer</th><th>Cost</th><th>What it demonstrates</th></tr>
-  <tr><td class="k">Honest proof</td><td class="seal">ACCEPTED</td><td>809,812 CU</td><td>The deployed verifier accepts what the shipped prover produces.</td></tr>
+  <tr><td class="k">Honest proof</td><td class="seal">ACCEPTED</td><td>878,756 + 193,200 CU</td><td>The deployed verifier accepts what the shipped prover produces. Two instructions: phase 1, then the DEEP-ALI identity in phase 2.</td></tr>
   <tr><td class="k">Forged by one byte</td><td>REJECTED</td><td>542,150 CU</td><td><span class="hash">InvalidProof</span> 6003, caught deep in the DEEP and FRI work. A forgery consistent with its own transcript costs a full pass to catch.</td></tr>
   <tr><td class="k">Public input tampered</td><td>REJECTED</td><td>19,777 CU</td><td>OOD z mismatch, right after step 1. Breaking Fiat-Shamir dies immediately. A 27&times; gap between the two refusal paths.</td></tr>
 </table>

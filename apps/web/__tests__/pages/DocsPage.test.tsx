@@ -122,7 +122,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     it('renders the Verification Layer with the on-chain relayer and STARK verifier', () => {
       expect(screen.getByText('Verification Layer')).toBeInTheDocument();
       expect(screen.getByText('ON-CHAIN RELAYER')).toBeInTheDocument();
-      expect(screen.getByText('Trustless ZK Relay')).toBeInTheDocument();
+      expect(screen.getByText('On-Chain Relay Program')).toBeInTheDocument();
       expect(screen.getByText('STARK VERIFIER')).toBeInTheDocument();
       expect(screen.getByText('FRI + Goldilocks')).toBeInTheDocument();
     });
@@ -200,9 +200,20 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
+    // This assertion is what kept the stale number alive. It pinned "809,812 CU
+    // against the 1.4M budget", measured against the verifier deployed
+    // 2026-08-04, and it went on passing after the verifier was REDEPLOYED on
+    // 2026-09-02 (slot 491,973,056) because a green pin reads as a checked
+    // figure. It is not: a pin only proves the string did not move. The
+    // replacements below come from docs/BENCHMARK-2026-09-02.md, which reads
+    // the compute units back off the transactions.
     it('mentions the custom on-chain FRI verifier and its measured CU cost', () => {
       openTopic('STARK Proofs (Goldilocks)');
-      expect(screen.getByText(/809,812 CU against the 1\.4M budget/)).toBeInTheDocument();
+      expect(
+        screen.getByText(/878,756 CU in phase 1 and 193,200 CU in phase 2/),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/redeployed on devnet 2026-09-02 in slot 491,973,056/)).toBeInTheDocument();
+      expect(screen.queryAllByText(/809,812 CU/)).toHaveLength(0);
     });
 
     // The page published "124-bit soundness with DEEP-ALI" in three places. The
@@ -296,11 +307,15 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
+    // Same trap as the pin in the STARK topic above: this assertion pinned the
+    // 2026-08-04 figure verbatim and kept passing after the verifier was
+    // redeployed on 2026-09-02, which is exactly how the stale number survived
+    // in public copy. Source for the replacement: docs/BENCHMARK-2026-09-02.md.
     it('states the measured on-chain verification cost in compute units', () => {
       openTopic('Solana On-Chain Verification');
       expect(
         screen.getByText(
-          'Custom FRI verifier for STARK proofs. Goldilocks field, 809,812 CU measured on devnet for an accepted proof',
+          'Custom FRI verifier for STARK proofs. Goldilocks field; an accepted proof measured 878,756 CU in phase 1 and 193,200 CU in phase 2 on devnet, 2026-09-02',
         ),
       ).toBeInTheDocument();
     });
@@ -333,10 +348,10 @@ describe('DocsPage -- Privacy technologies documentation', () => {
   });
 
   describe('Core Technologies - On-Chain Relayer', () => {
-    it('documents the trustless on-chain relayer', () => {
-      openTopic('On-Chain Relayer (Trustless)');
+    it('documents the on-chain relayer nobody operates', () => {
+      openTopic('On-Chain Relayer (deployed, not operated)');
       expect(
-        screen.getByRole('heading', { level: 1, name: 'On-Chain Relayer (Trustless)' }),
+        screen.getByRole('heading', { level: 1, name: 'On-Chain Relayer (deployed, not operated)' }),
       ).toBeInTheDocument();
     });
 
@@ -362,7 +377,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
      * rendered, which is the exact opposite of what this slot used to do.
      */
     it('does not claim the relayer removes the on-chain link to the sender', () => {
-      openTopic('On-Chain Relayer (Trustless)');
+      openTopic('On-Chain Relayer (deployed, not operated)');
       expect(
         screen.queryAllByText(/no on-chain link to the original sender/i),
       ).toHaveLength(0);
@@ -563,7 +578,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
        * are self-submitted — and now also pins that the one relayed leg is
        * named rather than glossed.
        */
-      const code = codeOf('On-Chain Relayer (Trustless)', 'private-relay');
+      const code = codeOf('On-Chain Relayer (deployed, not operated)', 'private-relay');
       expect(code).toMatch(/relays exactly/i);
       expect(code).toMatch(/ONE leg/);
       expect(code).toMatch(/self-submitted/);

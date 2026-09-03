@@ -4,10 +4,19 @@
 //! 1. `std` — native Rust for testing and benchmarking
 //! 2. `no_std` — Solana SBF program (future: p01_stark_verifier)
 //!
-//! Verification is based on FRI (Fast Reed-Solomon IOP of Proximity),
-//! which relies only on hash functions — no elliptic curve operations needed.
-//! This makes it quantum-resistant under Grover's theorem (hash-bit security
-//! degrades to sqrt, so 256-bit hashes provide 128-bit post-quantum security).
+//! Verification is based on FRI (Fast Reed-Solomon IOP of Proximity), which
+//! relies only on hash functions, with no elliptic curve operations. Shor's
+//! algorithm therefore has nothing to attack in the construction.
+//!
+//! # No bit-security figure is published here
+//!
+//! This block used to end "256-bit hashes provide 128-bit post-quantum
+//! security". That was the digest size, not the bound: what bounds this system
+//! is FRI query soundness, and it is lower. `prover.rs` retracts the same
+//! arithmetic above `default_proof_options`, and
+//! `programs/p01_stark_verifier/tests/b2_bits_measured.rs` measures the real
+//! per-query contribution. A number returns here when a measurement replaces
+//! the arithmetic, not before.
 
 use winterfell::{
     crypto::{hashers::Blake3_256, DefaultRandomCoin, MerkleTree},

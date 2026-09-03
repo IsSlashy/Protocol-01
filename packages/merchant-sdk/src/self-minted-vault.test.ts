@@ -42,7 +42,13 @@ import {
   fetchVaultByAddress,
 } from './vaults';
 import { subscriptionIsCurrent, periodsPaidFor } from './claim';
-import { verifyLicenseAgainstVault, encodeLicenseKey, licenseCommitment, LICENSE_SECRET_BYTES } from './license';
+import {
+  verifyLicenseAgainstVault,
+  verifyLicenseKey,
+  encodeLicenseKey,
+  licenseCommitment,
+  LICENSE_SECRET_BYTES,
+} from './license';
 import { verifyMerchantLicense } from './merchant-license';
 import { ZK_SHIELDED_PROGRAM_ID_DEVNET } from './config';
 import type { ServiceScope } from './service-scope';
@@ -211,6 +217,42 @@ describe('a vault the merchant never sold — the legacy wallet-keyed shape', ()
     });
     expect(scoped.valid).toBe(false);
     expect(scoped.reason).toMatch(/not scoped to "premium-tier"/);
+  });
+
+  it('BOTH license verifiers refuse to answer when requireService is set and the scope is absent', async () => {
+    // `requireService` is documented as "Refuse to answer at all when service was
+    // not supplied ... Recommended in production" and is accepted by both license
+    // verifiers. Until the 2026-09-03 self-audit NEITHER of them read it: a
+    // merchant that set the safety flag got the unscoped `valid: true` above, and
+    // got it silently. Both now throw, before any RPC call. The stub's
+    // `getProgramAccounts` throws a different message, so the enumerating path
+    // being cut short is asserted here too, not assumed.
+    const secret = new Uint8Array(LICENSE_SECRET_BYTES).fill(0x5a);
+    const withLicense = buildNormalVault({ ...SELF_MINTED, license: licenseCommitment(secret) });
+    const c = stubConnection({ [pda.toBase58()]: { data: withLicense, owner: PROGRAM } }, NOW);
+    const key = encodeLicenseKey(secret);
+
+    await expect(
+      verifyLicenseAgainstVault(c, key, pda, MERCHANT, 'premium-tier', { requireService: true }),
+    ).rejects.toThrow(/requireService is set but no service scope was supplied/);
+
+    await expect(
+      verifyLicenseKey(c, key, MERCHANT, 'premium-tier', { requireService: true }),
+    ).rejects.toThrow(/requireService is set but no service scope was supplied/);
+  });
+
+  it('does NOT refuse when requireService is set and the scope IS supplied', async () => {
+    // Fail-closed must not become fail-always: with the scope present the check
+    // runs and denies this vault on its merits, not on a missing option.
+    const secret = new Uint8Array(LICENSE_SECRET_BYTES).fill(0x5a);
+    const withLicense = buildNormalVault({ ...SELF_MINTED, license: licenseCommitment(secret) });
+    const c = stubConnection({ [pda.toBase58()]: { data: withLicense, owner: PROGRAM } }, NOW);
+    const res = await verifyLicenseAgainstVault(c, encodeLicenseKey(secret), pda, MERCHANT, 'premium-tier', {
+      requireService: true,
+      service: REAL_SERVICE,
+    });
+    expect(res.valid).toBe(false);
+    expect(res.reason).toMatch(/not scoped to "premium-tier"/);
   });
 
   it('verifyLicenseAgainstVault does NOT check the canonical PDA, unlike the access path', async () => {

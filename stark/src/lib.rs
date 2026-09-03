@@ -1,8 +1,16 @@
 //! Protocol 01 STARK Proof System
 //!
-//! Quantum-resistant zero-knowledge proofs using Winterfell STARKs.
-//! No trusted setup required — security based on hash functions (collision-resistant),
-//! not elliptic curve pairings (vulnerable to Shor's algorithm).
+//! Quantum-resistant STARK proofs using Winterfell.
+//! No trusted setup required: security rests on hash functions
+//! (collision-resistant), not elliptic curve pairings (vulnerable to Shor's
+//! algorithm).
+//!
+//! These proofs are NOT zero-knowledge, and this crate does not use the word
+//! about them. Trace values can be recovered from the published proof bytes by
+//! interpolation; see `stark/tests/air_aware_recovery_c7.rs` and
+//! `docs/zk-simulation-argument.md` for what is and is not claimed. No
+//! bit-security figure is published either: `prover.rs` retracts the old
+//! "128-bit" arithmetic above `default_proof_options`.
 //!
 //! # Architecture
 //!

@@ -129,6 +129,13 @@ export interface ServiceScopedOptions {
    * to the merchant. That is the self-minted-vault hole, and the shape of the
    * failure — a boolean that is simply weaker than the caller believes — is why
    * it needs an explicit opt-out rather than a comment.
+   *
+   * Enforced by throwing, in `hasActiveVaultAccessForVault` (`vaults.ts`) and
+   * in both license verifiers, `verifyLicenseKey` and
+   * `verifyLicenseAgainstVault` (`license.ts`). The two license verifiers
+   * accepted this option and ignored it until the 2026-09-03 self-audit;
+   * `src/self-minted-vault.test.ts` now pins all three. `verifyMerchantLicense`
+   * needs no flag: it requires `service` unconditionally.
    */
   requireService?: boolean;
   /**
