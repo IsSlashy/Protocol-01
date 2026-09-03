@@ -121,5 +121,6 @@
     "semanticMemoryTokens": 900,
     "proceduralMemoryTokens": 600,
     "relationshipMemoryTokens": 300
-  }
+  },
+  "inheritWallet": true
 }

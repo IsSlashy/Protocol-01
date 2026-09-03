@@ -7,9 +7,12 @@
  *
  *   - boots generation 1 from genesis.prompt.md + colony.json (headless)
  *   - watches every agent (process + SQLite state + on-chain balances)
- *   - on death: distills the agent's memory into lineage lessons, sweeps the
- *     leftover USDC/SOL to the owner, archives the home, boots generation N+1
- *     with the lessons (and the cause of death) in its LINEAGE.md
+ *   - on death: distills the agent's memory into lineage lessons, archives the
+ *     home, and boots generation N+1 with the lessons (and the cause of death)
+ *     in its LINEAGE.md. The WALLET IS INHERITED: the next generation keeps the
+ *     same Solana address and the funds on it, so an agent dying does not lose
+ *     the money, the address customers know, or the owner's SOL for fees. Only
+ *     when the lineage ends for good are the leftovers swept to the owner.
  *   - on a replica request from a profitable agent: starts a sibling with a
  *     distinct specialization, up to maxReplicas
  *   - on a credit request: buys Conway credits for the agent's Solana address
@@ -25,6 +28,7 @@
  *   node supervisor.mjs spawn [name]       boot generation 1 (or next) manually
  *   node supervisor.mjs distill <agentName>
  *   node supervisor.mjs sweep-dead <agentName>
+ *   node supervisor.mjs export-wallet [agent]   print the wallet secret key
  *   node supervisor.mjs fund-credits <solanaAddress> <usd>
  *   node supervisor.mjs seed <agentName> [usdc] [sol]
  */
@@ -355,10 +359,20 @@ async function distill(agent, cause) {
   }
 }
 
-async function sweepDead(agent) {
+async function sweepDead(agent, state) {
   if (colony.chainType !== "solana") return;
   const walletPath = path.join(automatonDir(agent), "wallet.json");
   if (!fs.existsSync(walletPath)) return;
+  // An inherited wallet belongs to the living heir: never drain it from the
+  // archived copy of the key.
+  const addr = walletAddress(agent);
+  const heir = (state?.agents ?? loadState().agents).find(
+    (x) => x.status === "alive" && x.id !== agent.id && (x.address || null) === addr,
+  );
+  if (heir) {
+    log(`refusing to sweep ${agent.id}: wallet ${addr} is now used by ${heir.id}`);
+    return;
+  }
   const usdc = await repoModule("solana/usdc.js");
   const env = solanaEnv();
   const secretKey = usdc.loadSolanaSecretKey(walletPath);
@@ -486,6 +500,21 @@ async function spawnAgent(state, opts) {
   const dir = path.join(home, ".automaton");
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
 
+  // Wallet inheritance: copy the predecessor's keypair in BEFORE --init, which
+  // then loads it instead of generating a new one. The lineage keeps one
+  // address and one balance across deaths.
+  let inheritedWallet = false;
+  if (opts.inheritWalletFrom && fs.existsSync(opts.inheritWalletFrom)) {
+    try {
+      fs.copyFileSync(opts.inheritWalletFrom, path.join(dir, "wallet.json"));
+      fs.chmodSync(path.join(dir, "wallet.json"), 0o600);
+      inheritedWallet = true;
+      log(`${name}-g${generation}: wallet inherited from ${opts.inheritWalletFrom}`);
+    } catch (err) {
+      log(`wallet inheritance FAILED (${err?.message ?? err}); the new generation will get a fresh address`);
+    }
+  }
+
   const genesisPrompt = renderGenesis({
     NAME: name,
     GENERATION: String(generation),
@@ -543,7 +572,10 @@ async function spawnAgent(state, opts) {
   };
   log(`spawned ${agent.id} at ${home}; address ${agent.address}`);
 
-  if (colony.seed?.enabled) {
+  agent.inheritedWallet = inheritedWallet;
+  if (inheritedWallet) {
+    log(`${agent.id} continues on the lineage wallet ${agent.address} — no new funding needed`);
+  } else if (colony.seed?.enabled) {
     await seedAgent(agent, opts.seedUsdc ?? colony.seed.usdc ?? 0, opts.seedSol ?? colony.seed.sol ?? 0);
   } else {
     log(`FUND THIS AGENT: send USDC (and ~0.03 SOL for fees) to ${agent.address}`);
@@ -654,17 +686,36 @@ async function tick() {
       log(`${agent.id} is dead: ${cause}`);
       stopProcess(agent);
       const lessons = await distill(agent, cause);
-      await sweepDead(agent);
       agent.status = "dead";
       agent.diedAt = nowIso();
       agent.causeOfDeath = cause;
       archive(agent);
       saveState(state);
+
+      const inherit = colony.inheritWallet !== false;
+      const willRespawn =
+        agent.role === "primary" && agent.generation < (colony.maxGenerations ?? 12);
+      const walletPath = path.join(automatonDir(agent), "wallet.json");
+
+      if (!willRespawn || !inherit) {
+        // Nothing will reuse this wallet: return whatever is left to the owner.
+        await sweepDead(agent, state);
+      }
+
       if (agent.role === "primary") {
-        if (agent.generation >= (colony.maxGenerations ?? 12)) {
+        if (!willRespawn) {
           log(`max generations reached (${agent.generation}); not respawning`);
         } else {
-          await spawnAgent(state, { name: colony.baseName || "agent", generation: agent.generation + 1, role: "primary", lineageLessons: lessons, causeOfDeath: cause, parentAddress: agent.address, parentName: agent.name });
+          await spawnAgent(state, {
+            name: colony.baseName || "agent",
+            generation: agent.generation + 1,
+            role: "primary",
+            lineageLessons: lessons,
+            causeOfDeath: cause,
+            parentAddress: agent.address,
+            parentName: agent.name,
+            inheritWalletFrom: inherit ? walletPath : undefined,
+          });
         }
       }
       continue;
@@ -789,7 +840,7 @@ async function main() {
     case "sweep-dead": {
       const a = state.agents.find((x) => x.name === rest[0] || x.id === rest[0]);
       if (!a) throw new Error("agent not found");
-      console.log(await sweepDead(a));
+      console.log(await sweepDead(a, state));
       break;
     }
     case "seed": {
@@ -798,12 +849,30 @@ async function main() {
       await seedAgent(a, Number(rest[1] ?? colony.seed?.usdc ?? 0), Number(rest[2] ?? colony.seed?.sol ?? 0));
       break;
     }
+    case "export-wallet": {
+      const a = state.agents.find((x) => x.name === rest[0] || x.id === rest[0]) ??
+        state.agents.filter((x) => x.status === "alive")[0];
+      if (!a) throw new Error("agent not found");
+      const wp = path.join(automatonDir(a), "wallet.json");
+      if (!fs.existsSync(wp)) throw new Error("no wallet.json at " + wp);
+      const w = readJson(wp, null);
+      console.log(`agent:    ${a.id}`);
+      console.log(`address:  ${walletAddress(a)}`);
+      console.log(`chain:    ${w.chainType}`);
+      console.log("");
+      console.log("SECRET KEY (base58) — import it in Phantom to hold this wallet yourself.");
+      console.log("Anyone with this string owns the funds. Do not paste it anywhere public.");
+      console.log("");
+      console.log(w.secretKey ?? w.privateKey);
+      break;
+    }
+
     case "fund-credits": {
       console.log(await fundCredits(state, rest[0], Number(rest[1])));
       break;
     }
     default:
-      console.log("usage: supervisor.mjs start|once|status|stop|spawn [name]|distill <agent> [cause]|sweep-dead <agent>|seed <agent> [usdc] [sol]|fund-credits <address> <usd>");
+      console.log("usage: supervisor.mjs start|once|status|stop|spawn [name]|distill <agent> [cause]|sweep-dead <agent>|seed <agent> [usdc] [sol]|export-wallet [agent]|fund-credits <address> <usd>");
   }
 }
 
