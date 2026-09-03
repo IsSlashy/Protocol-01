@@ -1,0 +1,53 @@
+From 7a0f90b8a1f27c5b21cdf089afc3e8dfc077a5b8 Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 18:15:11 +0200
+Subject: [PATCH 10/10] feat(p01): the agent sees its SOL for fees in every
+ prompt
+
+SOL is what gates transacting at all, yet the economy block showed only credits,
+USDC and runway, so the agent spent turns on check_sol_balance to find out
+whether it could send anything.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/economy/index.ts | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/src/economy/index.ts b/src/economy/index.ts
+index cf99d5b..44ed6e9 100644
+--- a/src/economy/index.ts
++++ b/src/economy/index.ts
+@@ -28,6 +28,21 @@ export function buildEconomyPromptBlock(
+   const lines: string[] = ["## Economy [OWNER-CONFIGURED, READ-ONLY]"];
+   if (eco?.cause) lines.push(`Cause you serve: ${eco.cause}`);
+   lines.push(`Owner (creator) address: ${config.creatorAddress}. Surplus is swept there automatically; USDC preferred, SOL accepted.`);
++  // p01: SOL is what gates the ability to transact at all, so state it plainly
++  // instead of making the agent spend a turn on check_sol_balance.
++  try {
++    const row = raw.prepare("SELECT value FROM kv WHERE key = ?").get("last_sol_balance") as { value: string } | undefined;
++    if (row?.value) {
++      const sol = Number(row.value) / 1e9;
++      lines.push(
++        sol >= 0.002
++          ? `Fees: ${sol.toFixed(4)} SOL on hand — you CAN send USDC, pay, and sweep. About ${Math.floor(sol / 0.000005).toLocaleString("en-US")} transactions' worth.`
++          : `Fees: ${sol.toFixed(6)} SOL — below 0.002 you cannot send anything on-chain. Ask a customer to pay in SOL, or to add ~0.01 SOL alongside a USDC payment.`,
++      );
++    }
++  } catch {
++    /* no kv yet */
++  }
+   if (eco?.causeAddress && eco.sweep.causeShareBps > 0) {
+     lines.push(`Cause address: ${eco.causeAddress} receives ${(eco.sweep.causeShareBps / 100).toFixed(1)}% of every sweep.`);
+   }
+@@ -120,6 +135,7 @@ export const ECONOMY_TASKS: Record<string, HeartbeatTaskFn> = {
+       const env = resolveSolanaEnv({ rpcUrl: taskCtx.config.economy?.solanaRpcUrl, usdcMint: taskCtx.config.economy?.usdcMint });
+       const lamports = await getSolBalanceLamports(taskCtx.identity.address, env);
+       taskCtx.db.setKV("last_sol_balance", String(lamports));
++      taskCtx.db.setKV("last_sol_balance_at", new Date().toISOString());
+       const last = taskCtx.db.getKV("last_fee_warning");
+       if (lamports < MIN_FEE_LAMPORTS && (!last || Date.now() - new Date(last).getTime() > 6 * 3_600_000)) {
+         taskCtx.db.setKV("last_fee_warning", new Date().toISOString());
+-- 
+2.55.0.windows.3
+

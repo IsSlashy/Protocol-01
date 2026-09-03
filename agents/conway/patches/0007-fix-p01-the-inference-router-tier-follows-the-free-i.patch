@@ -1,7 +1,7 @@
 From 83a6c103e4ae7a927ee059618b24998387d5d41f Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 15:19:26 +0200
-Subject: [PATCH 7/9] fix(p01): the inference router tier follows the
+Subject: [PATCH 07/10] fix(p01): the inference router tier follows the
  free-inference rule too
 
 The loop computed a second, credits-only tier for model routing, so the agent

@@ -1,8 +1,8 @@
 From 670f3a91d6917785a4fa612149e62d6f9355e45f Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 15:09:46 +0200
-Subject: [PATCH 6/9] fix(p01): tool calls survive gpt-oss harmony markers; no
- Conway key is not a dead agent
+Subject: [PATCH 06/10] fix(p01): tool calls survive gpt-oss harmony markers;
+ no Conway key is not a dead agent
 
 Observed on the deployed colony: every tool call failed with 'Unknown tool:
 check_credits<|channel|>commentary'. gpt-oss models leak harmony control markers
