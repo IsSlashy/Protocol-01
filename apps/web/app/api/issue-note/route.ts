@@ -709,6 +709,15 @@ export async function POST(request: NextRequest) {
   let spentLeaves = 0;
   /** Configured leaves whose deposit is too recent to hand out yet. */
   let tooYoung = 0;
+  /**
+   * Configured indices the tree has reached but whose commitment is NOT ours.
+   * The index belongs to somebody else's deposit, so the entry is stale, not a
+   * seed error. MEASURED 2026-09-03: a live buyer paid 995,000,000 lamports to
+   * the till, the exchange handed them a claim, and this route answered 500
+   * because the shuffle drew index 103, which that same buyer had shielded
+   * minutes earlier. One stale entry in a list of 318 refused a paid customer.
+   */
+  let notOurs = 0;
   /** How long the closest of those still has to wait, in slots. */
   let shortestWait = Number.POSITIVE_INFINITY;
   // 🚨 SERVED IN RANDOM ORDER, AND IT WAS SERVED IN LIST ORDER.
@@ -886,19 +895,25 @@ export async function POST(request: NextRequest) {
 
 
     // The note must actually BE on the tree, at the leaf we think it is. A
-    // mismatch means the seed, the pool or the index is wrong, and issuing it
-    // would hand someone a blob that cannot be spent — money that looks
-    // received and is not. Refuse the whole request rather than move on: a
-    // configuration error must not be silently absorbed by trying the next leaf.
-
+    // mismatch means issuing it would hand someone a blob that cannot be spent:
+    // money that looks received and is not. Never issue on a mismatch.
+    //
+    // 🚨 BUT A MISMATCH IS TWO DIFFERENT FAULTS, AND THIS USED TO CONFLATE THEM.
+    //
+    // If the seed or the pool is wrong, EVERY candidate mismatches, and refusing
+    // the request is right: a configuration error must not be absorbed silently.
+    // If ONE configured index is stale -- the tree reached it, but the leaf is
+    // somebody else's deposit -- the rest of the inventory is fine, and refusing
+    // charges a paying customer for a typo in an env var. That is what happened
+    // on 2026-09-03 (see `notOurs`).
+    //
+    // So: skip the stale index, keep it claimed so no later caller draws it
+    // again, and let the loop try the next note. The refusal is decided AFTER
+    // the loop, where "how many were stale" is known: all of them means the
+    // configuration is wrong, some of them means the list needs pruning.
     if (!onChain || onChain.leafIndex !== leafIndex) {
-      return release(bad(500, 'the configured inventory does not match the chain', {
-        leafIndex,
-        found: onChain?.leafIndex ?? null,
-        hint:
-          'P01_TREASURY_POOL_SEED, the pool, or P01_TREASURY_NOTE_LEAVES is wrong. The leaf has ' +
-          'been marked issued to stop a retry loop from consuming the whole inventory.',
-      }));
+      notOurs += 1;
+      continue;
     }
 
     let merkle: Pick<ShareableNote, 'merkle_root' | 'merkle_path_elements' | 'merkle_path_indices'> = {};
@@ -978,6 +993,7 @@ export async function POST(request: NextRequest) {
       configured: leaves.length,
       spentLeaves,
       heldByOthers,
+      notOurs,
       hint:
         'A commitment stays on the tree after its note is spent, so the inventory still looks ' +
         'present on chain. Deposit fresh notes from the treasury wallet and extend ' +
@@ -995,6 +1011,7 @@ export async function POST(request: NextRequest) {
     return release(bad(503, 'the notes in stock are too recently deposited to be issued', {
       configured: leaves.length,
       tooYoung,
+      notOurs,
       minAgeSlots: minAge,
       waitSlots,
       waitMinutesApprox: waitSlots === null ? null : Math.ceil((waitSlots * 0.4) / 60),
@@ -1004,6 +1021,30 @@ export async function POST(request: NextRequest) {
         'crowd dilutes a one-second window. Wait for the stock to age, or deposit a batch well ' +
         'ahead of when it will be sold. P01_TREASURY_NOTE_MIN_AGE_SLOTS sets the threshold; ' +
         'lowering it is a privacy decision, not a tuning knob.',
+    }));
+  }
+
+  // Said before every other exhaustion, because it is the only one that means
+  // the deployment is misconfigured rather than out of stock. `notOurs` counts
+  // configured indices the tree has reached whose commitment is not ours.
+  if (notOurs > 0 && notOurs === leaves.length) {
+    return release(bad(500, 'the configured inventory does not match the chain', {
+      configured: leaves.length,
+      notOurs,
+      hint:
+        'Not one configured leaf derives to a commitment this pool holds at that index, so the ' +
+        'seed or the pool is wrong, not the list. Check P01_TREASURY_POOL_SEED and the pool ' +
+        'address before touching P01_TREASURY_NOTE_LEAVES. Nothing was charged.',
+    }));
+  }
+  if (notOurs > 0 && spentLeaves === 0 && tooYoung === 0 && heldByOthers === 0) {
+    return release(bad(503, 'the configured inventory names leaves this deployment does not own', {
+      configured: leaves.length,
+      notOurs,
+      hint:
+        'These indices are on the tree but hold somebody else\'s deposit, so they were skipped ' +
+        'and marked issued. Prune them from P01_TREASURY_NOTE_LEAVES and deposit fresh notes. ' +
+        'Nothing was charged.',
     }));
   }
 
@@ -1023,6 +1064,7 @@ export async function POST(request: NextRequest) {
 
   return release(bad(503, 'the note inventory is empty', {
     configured: leaves.length,
+    notOurs,
     hint: 'Deposit more notes from the treasury wallet and extend P01_TREASURY_NOTE_LEAVES.',
   }));
 }

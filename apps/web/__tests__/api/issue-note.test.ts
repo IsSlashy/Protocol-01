@@ -397,7 +397,7 @@ describe('inventory whose notes have already been spent', () => {
     vi.mocked(pool.isNullifierSpentInSet).mockReturnValue(false);
   });
 
-  it('skips a spent leaf and serves the next one', async () => {
+  it('walks past a spent leaf to the next candidate instead of stopping there', async () => {
     // An exhausted leaf beside a good one is still a stocked deployment. A
     // caller must not be turned away because the FIRST configured index
     // happens to be used up.
@@ -407,10 +407,61 @@ describe('inventory whose notes have already been spent', () => {
     );
 
     const res = await POST(req(goodBody()));
-    // Reaches the chain check on the SECOND leaf rather than refusing outright.
-    expect(res.status).not.toBe(503);
+    const body = await res.json();
+
+    // The assertion used to be `status !== 503`, which this fixture satisfied
+    // with a 500: the tree is empty here, so leaf 24 could never be served and
+    // the old route refused outright at the mismatch. It passed for the wrong
+    // reason. What the case actually wants to pin is that the loop did not stop
+    // at the spent leaf, and the counters say so directly: one leaf skipped as
+    // spent, one examined after it.
+    expect(body.spentLeaves, JSON.stringify(body)).toBe(1);
+    expect(body.notOurs, 'the loop stopped at the spent leaf').toBe(1);
 
     vi.mocked(pool.isNullifierSpentInSet).mockReturnValue(false);
+  });
+});
+
+/**
+ * A configured index the tree HAS reached, holding somebody else's deposit.
+ *
+ * MEASURED 2026-09-03 on devnet: a buyer paid 995,000,000 lamports to the till
+ * through the note-in exchange, was handed a claim, and this route answered 500
+ * because the shuffle drew leaf 103 -- an index in P01_TREASURY_NOTE_LEAVES
+ * that the same buyer had shielded minutes earlier. One stale entry in a list
+ * of 318 refused a customer who had already paid.
+ */
+describe('a configured index that is somebody else\'s leaf', () => {
+  it('is skipped and reported, not turned into a refusal of the whole request', async () => {
+    const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
+    // Leaf 23 is on the tree, but the commitment there is not the one our seed
+    // derives. Leaf 24 is past the tree's edge, so it is "not deposited yet".
+    vi.mocked(fetchPoolCommitments).mockResolvedValueOnce({
+      get: () => undefined,
+      values: () => [{ leafIndex: 23, commitment: 999n }],
+    } as never);
+
+    const res = await POST(req(goodBody()));
+    const body = await res.json();
+
+    expect(res.status, JSON.stringify(body)).toBe(503);
+    expect(body.error).toMatch(/does not own/);
+    expect(body.notOurs).toBe(1);
+    // 503 and not 500: the list needs pruning, the seed is not wrong.
+    expect(body.hint).toMatch(/Prune them/);
+  });
+
+  it('still refuses with 500 when NOT ONE configured leaf is ours', async () => {
+    // The default fixture's tree is empty, so every candidate mismatches. That
+    // is the configuration error the old code feared, and it must still be a
+    // 500 rather than a quiet "out of stock".
+    const res = await POST(req(goodBody()));
+    const body = await res.json();
+
+    expect(res.status, JSON.stringify(body)).toBe(500);
+    expect(body.error).toMatch(/does not match the chain/);
+    expect(body.notOurs).toBe(body.configured);
+    expect(body.hint).toMatch(/seed or the pool is wrong/);
   });
 });
 
