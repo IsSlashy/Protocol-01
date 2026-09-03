@@ -1,0 +1,33 @@
+From 83a6c103e4ae7a927ee059618b24998387d5d41f Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 15:19:26 +0200
+Subject: [PATCH 7/7] fix(p01): the inference router tier follows the
+ free-inference rule too
+
+The loop computed a second, credits-only tier for model routing, so the agent
+kept routing at tier critical with a free pool. Confirmed in production logs.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/agent/loop.ts | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/agent/loop.ts b/src/agent/loop.ts
+index 5c426fe..1e726f3 100644
+--- a/src/agent/loop.ts
++++ b/src/agent/loop.ts
+@@ -597,7 +597,9 @@ export async function runAgentLoop(
+       pendingInput = undefined;
+ 
+       // ── Inference Call (via router when available) ──
+-      const survivalTier = getSurvivalTier(financial.creditsCents);
++      // p01: the tier that drives model routing must follow the same rule as
++      // the rest of the runtime — free inference is not a reason to throttle.
++      const survivalTier = getEffectiveSurvivalTier(config, financial.creditsCents, financial.usdcBalance);
+       log(config, `[THINK] Routing inference (tier: ${survivalTier}, model: ${inference.getDefaultModel()})...`);
+ 
+       const inferenceTools = toolsToInferenceFormat(tools);
+-- 
+2.55.0.windows.3
+

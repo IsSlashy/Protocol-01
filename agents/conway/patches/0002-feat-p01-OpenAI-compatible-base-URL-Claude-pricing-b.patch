@@ -1,7 +1,7 @@
 From 2547d1b137f9bbf110b7970663e768fd934e047e Mon Sep 17 00:00:00 2001
 From: Slashy <amirramy.chatbi@gmail.com>
 Date: Thu, 3 Sep 2026 13:54:41 +0200
-Subject: [PATCH 2/6] feat(p01): OpenAI-compatible base URL, Claude pricing
+Subject: [PATCH 2/7] feat(p01): OpenAI-compatible base URL, Claude pricing
  baseline, SIWS domain = API host
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
