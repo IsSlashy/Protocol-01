@@ -1,0 +1,107 @@
+{
+  "$comment": "Free inference pool: tried in order, rotated on quota. Each entry needs a free API key in agents/conway/.env under apiKeyEnv. Several entries may share one key (same provider, different model). Model ids drift; a provider answering 'model not found' is benched 24h — update the id here. Budgets (rpm/rpd) sit below the published free limits. Live-tested 2026-09-03 with a tool-calling request: every enabled entry answered with a correct tool call.",
+  "cooldownMinutes": 10,
+  "providers": [
+    {
+      "name": "groq",
+      "baseUrl": "https://api.groq.com/openai",
+      "model": "openai/gpt-oss-120b",
+      "apiKeyEnv": "GROQ_API_KEY",
+      "rpm": 25,
+      "rpd": 900,
+      "tokenParam": "max_completion_tokens"
+    },
+    {
+      "name": "nvidia-nemotron-super",
+      "baseUrl": "https://integrate.api.nvidia.com",
+      "model": "nvidia/nemotron-3-super-120b-a12b",
+      "apiKeyEnv": "NVIDIA_API_KEY",
+      "rpm": 30,
+      "rpd": 800,
+      "tokenParam": "max_tokens"
+    },
+    {
+      "name": "mistral",
+      "baseUrl": "https://api.mistral.ai",
+      "model": "mistral-small-latest",
+      "apiKeyEnv": "MISTRAL_API_KEY",
+      "rpm": 20,
+      "rpd": 400,
+      "tokenParam": "max_tokens"
+    },
+    {
+      "name": "openrouter-nemotron",
+      "baseUrl": "https://openrouter.ai/api",
+      "model": "nvidia/nemotron-3-super-120b-a12b:free",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "rpm": 10,
+      "rpd": 15,
+      "tokenParam": "max_tokens",
+      "headers": {
+        "HTTP-Referer": "https://styx.protocol01.dev",
+        "X-Title": "Styx automaton"
+      }
+    },
+    {
+      "name": "openrouter-glm",
+      "baseUrl": "https://openrouter.ai/api",
+      "model": "z-ai/glm-5.2:free",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "rpm": 10,
+      "rpd": 15,
+      "tokenParam": "max_tokens",
+      "headers": {
+        "HTTP-Referer": "https://styx.protocol01.dev",
+        "X-Title": "Styx automaton"
+      }
+    },
+    {
+      "name": "openrouter-minimax",
+      "baseUrl": "https://openrouter.ai/api",
+      "model": "minimax/minimax-m3:free",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "rpm": 10,
+      "rpd": 15,
+      "tokenParam": "max_tokens",
+      "headers": {
+        "HTTP-Referer": "https://styx.protocol01.dev",
+        "X-Title": "Styx automaton"
+      }
+    },
+    {
+      "name": "nvidia-gpt-oss-20b",
+      "baseUrl": "https://integrate.api.nvidia.com",
+      "model": "openai/gpt-oss-20b",
+      "apiKeyEnv": "NVIDIA_API_KEY",
+      "rpm": 30,
+      "rpd": 800,
+      "tokenParam": "max_tokens",
+      "$comment": "slow (~15 s per call) but works; last resort"
+    },
+    {
+      "name": "cerebras",
+      "baseUrl": "https://api.cerebras.ai",
+      "model": "gpt-oss-120b",
+      "apiKeyEnv": "CEREBRAS_API_KEY",
+      "rpm": 25,
+      "rpd": 600,
+      "tokenParam": "max_completion_tokens",
+      "enabled": false,
+      "$comment": "2026-09-03: 402 'Payment required' on every model — Cerebras no longer has a free tier for this account. Re-enable if that changes."
+    },
+    {
+      "name": "google-ai-studio",
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "chatPath": "/chat/completions",
+      "model": "gemini-flash-lite-latest",
+      "apiKeyEnv": "GEMINI_API_KEY",
+      "rpm": 8,
+      "rpd": 200,
+      "tokenParam": "max_tokens",
+      "enabled": false,
+      "$comment": "2026-09-03: 403 'Your project has been denied access' on every model — check the project in AI Studio (region/billing/abuse flag), then re-enable."
+    }
+  ],
+  "paceMs": 15000,
+  "maxCallsPerDay": 1200
+}

@@ -326,3 +326,6 @@ docs/deck/src/deck-head.html
 
 # Python bytecode from the deck build (docs/deck/src/*.py)
 __pycache__/
+
+# Conway colony secrets
+agents/conway/.env

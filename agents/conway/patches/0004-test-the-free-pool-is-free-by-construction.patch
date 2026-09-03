@@ -1,0 +1,26 @@
+From 571ce14fbb34840adcdf8298a7283cfc6cdf24ac Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 14:08:00 +0200
+Subject: [PATCH 4/5] test: the free pool is free by construction
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/__tests__/inference-router.test.ts | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/__tests__/inference-router.test.ts b/src/__tests__/inference-router.test.ts
+index d6c7721..9ae9dfc 100644
+--- a/src/__tests__/inference-router.test.ts
++++ b/src/__tests__/inference-router.test.ts
+@@ -743,6 +743,7 @@ describe("Static Model Baseline", () => {
+ 
+   it("all models have positive pricing", () => {
+     for (const model of STATIC_MODEL_BASELINE) {
++      if (model.modelId === "free-pool") continue; // p01: the free pool is free by construction
+       expect(model.costPer1kInput).toBeGreaterThan(0);
+       expect(model.costPer1kOutput).toBeGreaterThan(0);
+     }
+-- 
+2.55.0.windows.3
+

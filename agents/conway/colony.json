@@ -1,0 +1,74 @@
+{
+  "$comment": "Owner-side colony configuration for the Conway lineage supervisor. Paths accept ~ and forward slashes on every OS.",
+  "automatonRepo": "~/automaton",
+  "colonyRoot": "~/.p01-conway/colony",
+  "ownerAddress": "BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN",
+  "ownerKeypair": "~/.p01-conway/owner.json",
+  "chainType": "solana",
+  "solanaRpcUrl": "https://api.mainnet-beta.solana.com",
+  "baseName": "styx",
+  "genesisPromptFile": "./genesis.prompt.md",
+  "cause": "Financial privacy as a right on Solana: make private, post-quantum-safe payments usable by ordinary merchants and people (the Styx / Protocol 01 mission).",
+  "causeAddress": null,
+  "extraGenesis": "",
+  "model": "free-pool",
+  "pollSeconds": 60,
+  "maxGenerations": 12,
+  "maxReplicas": 2,
+  "seed": {
+    "enabled": false,
+    "usdc": 10,
+    "sol": 0.03
+  },
+  "death": {
+    "graceHours": 6,
+    "noRevenueDays": 14,
+    "usdcFloor": 1,
+    "crashLoopPerHour": 5
+  },
+  "funder": {
+    "enabled": false,
+    "maxUsdPerDay": 25,
+    "conwayApiUrl": "https://api.conway.tech"
+  },
+  "treasuryPolicy": {
+    "maxUsdcTransferCents": 50000,
+    "maxUsdcDailyCents": 100000,
+    "usdcReserveCents": 500,
+    "usdcAllowedRecipients": [],
+    "allowArbitraryUsdcRecipients": false,
+    "maxInferenceDailyCents": 2000
+  },
+  "economy": {
+    "acceptSol": true,
+    "sweep": {
+      "enabled": true,
+      "keepUsdcCents": 2000,
+      "thresholdUsdcCents": 500,
+      "intervalHours": 6,
+      "causeShareBps": 0,
+      "keepSolLamports": 20000000,
+      "thresholdSolLamports": 50000000
+    },
+    "replication": {
+      "mode": "local",
+      "minNetRevenueCents7d": 2000,
+      "minProfitableDays": 5,
+      "minGrowthPct": 0,
+      "maxLocalReplicas": 2,
+      "cooldownHours": 72,
+      "seedChildUsdcCents": 1000
+    },
+    "runtimeRepoUrl": "https://github.com/Conway-Research/automaton.git",
+    "runtimeRef": "main"
+  },
+  "inference": {
+    "$comment": "provider: free-pool (free tiers with rotation, see free-providers.json) | anthropic (paid) | openai-compatible | ollama",
+    "provider": "free-pool",
+    "providersFile": "./free-providers.json",
+    "model": "free-pool",
+    "baseUrl": "",
+    "apiKeyEnv": ""
+  },
+  "playbookFile": "./playbook.md"
+}

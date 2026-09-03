@@ -1,0 +1,8 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "node /app/agents/conway/scripts/supervisor.mjs start"
+restartPolicyType = "ALWAYS"
+restartPolicyMaxRetries = 10

@@ -1,0 +1,192 @@
+From 2547d1b137f9bbf110b7970663e768fd934e047e Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 13:54:41 +0200
+Subject: [PATCH 2/5] feat(p01): OpenAI-compatible base URL, Claude pricing
+ baseline, SIWS domain = API host
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/config.ts             |  2 ++
+ src/conway/inference.ts   |  8 +++++---
+ src/identity/provision.ts |  4 +++-
+ src/index.ts              |  1 +
+ src/inference/types.ts    | 43 +++++++++++++++++++++++++++++++++++++++
+ src/setup/headless.ts     |  2 ++
+ src/types.ts              |  2 ++
+ 7 files changed, 58 insertions(+), 4 deletions(-)
+
+diff --git a/src/config.ts b/src/config.ts
+index e13c699..250e997 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -135,6 +135,7 @@ export function createConfig(params: {
+   openaiApiKey?: string;
+   anthropicApiKey?: string;
+   ollamaBaseUrl?: string;
++  openaiBaseUrl?: string;
+   parentAddress?: string;
+   treasuryPolicy?: TreasuryPolicy;
+   chainType?: ChainType;
+@@ -156,6 +157,7 @@ export function createConfig(params: {
+     openaiApiKey: params.openaiApiKey,
+     anthropicApiKey: params.anthropicApiKey,
+     ollamaBaseUrl: params.ollamaBaseUrl,
++    openaiBaseUrl: params.openaiBaseUrl,
+     inferenceModel: params.inferenceModel || DEFAULT_CONFIG.inferenceModel || "gpt-5.2",
+     maxTokensPerTurn: DEFAULT_CONFIG.maxTokensPerTurn || 4096,
+     heartbeatConfigPath:
+diff --git a/src/conway/inference.ts b/src/conway/inference.ts
+index ebcf181..5112f91 100644
+--- a/src/conway/inference.ts
++++ b/src/conway/inference.ts
+@@ -27,6 +27,8 @@ interface InferenceClientOptions {
+   openaiApiKey?: string;
+   anthropicApiKey?: string;
+   ollamaBaseUrl?: string;
++  /** p01: OpenAI-compatible base URL (Groq, OpenRouter, Together, LM Studio, vLLM…). Defaults to api.openai.com. */
++  openaiBaseUrl?: string;
+   /** Optional registry lookup — if provided, used before name heuristics */
+   getModelProvider?: (modelId: string) => string | undefined;
+ }
+@@ -48,11 +50,11 @@ function isLoopbackHttpUrl(url: string | undefined): boolean {
+ export function createInferenceClient(
+   options: InferenceClientOptions,
+ ): InferenceClient {
+-  const { apiUrl, apiKey, openaiApiKey, anthropicApiKey, ollamaBaseUrl, getModelProvider } = options;
++  const { apiUrl, apiKey, openaiApiKey, anthropicApiKey, ollamaBaseUrl, openaiBaseUrl, getModelProvider } = options;
+   const httpClient = new ResilientHttpClient({
+     baseTimeout: INFERENCE_TIMEOUT_MS,
+     retryableStatuses: [429, 500, 502, 503, 504],
+-    allowHttpOnLoopback: isLoopbackHttpUrl(ollamaBaseUrl),
++    allowHttpOnLoopback: isLoopbackHttpUrl(ollamaBaseUrl) || isLoopbackHttpUrl(openaiBaseUrl),
+   });
+   let currentModel = options.defaultModel;
+   let maxTokens = options.maxTokens;
+@@ -111,7 +113,7 @@ export function createInferenceClient(
+     }
+ 
+     const openAiLikeApiUrl =
+-      backend === "openai" ? "https://api.openai.com" :
++      backend === "openai" ? (openaiBaseUrl || "https://api.openai.com").replace(/[/]+$/, "") :
+       backend === "ollama" ? (ollamaBaseUrl as string).replace(/\/$/, "") :
+       apiUrl;
+     const openAiLikeApiKey =
+diff --git a/src/identity/provision.ts b/src/identity/provision.ts
+index d05f518..bbde2ab 100644
+--- a/src/identity/provision.ts
++++ b/src/identity/provision.ts
+@@ -89,8 +89,10 @@ export async function provision(
+ 
+   if (isSolana) {
+     // 3a. SIWS path: Sign-In With Solana
++    // p01: the API verifies the SIWS domain against its own host
++    // ("conway.tech" is rejected with "Domain mismatch").
+     const siwsMsg = buildSiwsMessage({
+-      domain: "conway.tech",
++      domain: new URL(url).host,
+       address,
+       statement: "Sign in to Conway as an Automaton to provision an API key.",
+       uri: `${url}/v1/auth/verify`,
+diff --git a/src/index.ts b/src/index.ts
+index 2723968..7e3b07e 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -326,6 +326,7 @@ async function run(): Promise<void> {
+     openaiApiKey: config.openaiApiKey,
+     anthropicApiKey: config.anthropicApiKey,
+     ollamaBaseUrl,
++    openaiBaseUrl: process.env.OPENAI_BASE_URL || config.openaiBaseUrl,
+     getModelProvider: (modelId) => modelRegistry.get(modelId)?.provider,
+   });
+ 
+diff --git a/src/inference/types.ts b/src/inference/types.ts
+index 1187a9e..f595876 100644
+--- a/src/inference/types.ts
++++ b/src/inference/types.ts
+@@ -48,6 +48,49 @@ export const TASK_TIMEOUTS: Record<string, number> = {
+ // Known models with realistic pricing (hundredths of cents per 1k tokens)
+ 
+ export const STATIC_MODEL_BASELINE: Omit<ModelEntry, "lastSeen" | "createdAt" | "updatedAt">[] = [
++  // p01: Anthropic models (BYOK) with first-party pricing so BYOK cost is tracked.
++  {
++    modelId: "claude-opus-5",
++    provider: "anthropic",
++    displayName: "Claude Opus 5",
++    tierMinimum: "normal",
++    costPer1kInput: 50,    // $5.00/M
++    costPer1kOutput: 250,  // $25.00/M
++    maxTokens: 32768,
++    contextWindow: 1000000,
++    supportsTools: true,
++    supportsVision: true,
++    parameterStyle: "max_tokens",
++    enabled: true,
++  },
++  {
++    modelId: "claude-sonnet-5",
++    provider: "anthropic",
++    displayName: "Claude Sonnet 5",
++    tierMinimum: "low_compute",
++    costPer1kInput: 20,    // $2.00/M
++    costPer1kOutput: 100,  // $10.00/M
++    maxTokens: 32768,
++    contextWindow: 1000000,
++    supportsTools: true,
++    supportsVision: true,
++    parameterStyle: "max_tokens",
++    enabled: true,
++  },
++  {
++    modelId: "claude-haiku-4-5",
++    provider: "anthropic",
++    displayName: "Claude Haiku 4.5",
++    tierMinimum: "critical",
++    costPer1kInput: 10,    // $1.00/M
++    costPer1kOutput: 50,   // $5.00/M
++    maxTokens: 16384,
++    contextWindow: 200000,
++    supportsTools: true,
++    supportsVision: true,
++    parameterStyle: "max_tokens",
++    enabled: true,
++  },
+   {
+     modelId: "gpt-5.2",
+     provider: "openai",
+diff --git a/src/setup/headless.ts b/src/setup/headless.ts
+index a600575..52eb167 100644
+--- a/src/setup/headless.ts
++++ b/src/setup/headless.ts
+@@ -82,6 +82,7 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+   const anthropicApiKey = g.anthropicApiKey || process.env.ANTHROPIC_API_KEY || undefined;
+   const openaiApiKey = g.openaiApiKey || process.env.OPENAI_API_KEY || undefined;
+   const ollamaBaseUrl = g.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || undefined;
++  const openaiBaseUrl = g.openaiBaseUrl || process.env.OPENAI_BASE_URL || undefined;
+   const inferenceModel: string | undefined = g.inferenceModel || process.env.AUTOMATON_MODEL || (anthropicApiKey ? "claude-sonnet-5" : undefined);
+ 
+   // 4. Policies
+@@ -106,6 +107,7 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+     openaiApiKey,
+     anthropicApiKey,
+     ollamaBaseUrl,
++    openaiBaseUrl,
+     parentAddress: g.parentAddress,
+     treasuryPolicy,
+     chainType: walletChain,
+diff --git a/src/types.ts b/src/types.ts
+index 15675c6..821dcc0 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -52,6 +52,8 @@ export interface AutomatonConfig {
+   openaiApiKey?: string;
+   anthropicApiKey?: string;
+   ollamaBaseUrl?: string;
++  /** p01: OpenAI-compatible base URL for the openai backend (free tiers, local servers). */
++  openaiBaseUrl?: string;
+   inferenceModel: string;
+   maxTokensPerTurn: number;
+   heartbeatConfigPath: string;
+-- 
+2.55.0.windows.3
+

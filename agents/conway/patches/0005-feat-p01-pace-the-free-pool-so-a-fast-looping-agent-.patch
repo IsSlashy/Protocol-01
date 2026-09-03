@@ -1,0 +1,168 @@
+From 0578018fb87d5677a508e92662c4bcaecf534b5d Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 15:02:51 +0200
+Subject: [PATCH 5/5] feat(p01): pace the free pool so a fast-looping agent
+ cannot burn a day of quota in an hour
+
+paceMs makes the pool wait between calls instead of failing; maxCallsPerDay is a
+hard pool-wide ceiling. Both persist in KV, so a restart keeps the day's count.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/__tests__/free-pool.test.ts | 23 +++++++++++
+ src/inference/free-pool.ts      | 72 ++++++++++++++++++++++++++++++++-
+ 2 files changed, 94 insertions(+), 1 deletion(-)
+
+diff --git a/src/__tests__/free-pool.test.ts b/src/__tests__/free-pool.test.ts
+index 5202b89..aca207e 100644
+--- a/src/__tests__/free-pool.test.ts
++++ b/src/__tests__/free-pool.test.ts
+@@ -117,3 +117,26 @@ describe("free inference pool", () => {
+     expect(mins).toBeGreaterThan(60); // until UTC midnight, not the 1-minute default
+   });
+ });
++
++describe("free pool pacing", () => {
++  it("waits between calls instead of failing, and enforces a daily ceiling", async () => {
++    handlers.set("/p/v1/chat/completions", (_req, res) => ok(res, "model-p"));
++    const store = new Map<string, string>();
++    const httpc = new ResilientHttpClient({ allowHttpOnLoopback: true, maxRetries: 0 } as any);
++    const providers = [{ name: "p", baseUrl: `${base}/p`, model: "model-p", apiKeyEnv: "A_KEY" }];
++    const s = { get: (k: string) => store.get(k), set: (k: string, v: string) => void store.set(k, v) };
++    const p = new FreeInferencePool({ providers, paceMs: 250 }, httpc, s, { A_KEY: "a" } as any);
++
++    const t0 = Date.now();
++    await p.chat({ messages: [] }, 10);
++    await p.chat({ messages: [] }, 10);
++    expect(Date.now() - t0).toBeGreaterThanOrEqual(200);
++    expect(p.callsToday()).toBe(2);
++    expect(p.status()).toMatch(/pace 0s|pace 1s|pool calls today 2/);
++
++    // A fresh pool sharing the store keeps the pace and the day counter.
++    const p2 = new FreeInferencePool({ providers, paceMs: 250, maxCallsPerDay: 2 }, httpc, s, { A_KEY: "a" } as any);
++    expect(p2.callsToday()).toBe(2);
++    await expect(p2.chat({ messages: [] }, 10)).rejects.toThrow(/daily ceiling 2/);
++  });
++});
+diff --git a/src/inference/free-pool.ts b/src/inference/free-pool.ts
+index 81a3e2e..2123475 100644
+--- a/src/inference/free-pool.ts
++++ b/src/inference/free-pool.ts
+@@ -39,6 +39,14 @@ export interface FreePoolConfig {
+   providers: FreeProvider[];
+   /** Cooldown after a non-quota failure (minutes). Default 10. */
+   cooldownMinutes?: number;
++  /**
++   * Minimum delay between two pool calls, in milliseconds. The pool WAITS
++   * instead of failing, which paces a runaway agent inside the free daily
++   * budgets without relying on the model to obey its playbook. 0 disables.
++   */
++  paceMs?: number;
++  /** Hard ceiling of pool calls per UTC day, across all providers. 0 = unlimited. */
++  maxCallsPerDay?: number;
+ }
+ 
+ export interface FreePoolStateStore {
+@@ -74,6 +82,7 @@ export class FreePoolExhaustedError extends Error {
+ }
+ 
+ const KV_PREFIX = "free_pool_state:";
++const KV_PACE = "free_pool_pace";
+ 
+ function todayUtc(): string {
+   return new Date().toISOString().slice(0, 10);
+@@ -85,6 +94,7 @@ function nextUtcMidnight(): number {
+ 
+ export class FreeInferencePool {
+   private states = new Map<string, ProviderState>();
++  private pace: { lastCallAt: number; day: string; dayCount: number } | null = null;
+ 
+   constructor(
+     private config: FreePoolConfig,
+@@ -125,6 +135,37 @@ export class FreeInferencePool {
+     return undefined;
+   }
+ 
++  private paceState(): { lastCallAt: number; day: string; dayCount: number } {
++    if (!this.pace) {
++      const raw = this.store?.get(KV_PACE);
++      this.pace = raw ? JSON.parse(raw) : { lastCallAt: 0, day: todayUtc(), dayCount: 0 };
++    }
++    if (this.pace!.day !== todayUtc()) {
++      this.pace = { lastCallAt: this.pace!.lastCallAt, day: todayUtc(), dayCount: 0 };
++    }
++    return this.pace!;
++  }
++
++  private savePace(): void {
++    try {
++      this.store?.set(KV_PACE, JSON.stringify(this.pace));
++    } catch {
++      /* ignore */
++    }
++  }
++
++  /** Milliseconds the next call must wait for the configured pace. */
++  waitMs(): number {
++    const paceMs = this.config.paceMs ?? 0;
++    if (paceMs <= 0) return 0;
++    const p = this.paceState();
++    return Math.max(0, p.lastCallAt + paceMs - Date.now());
++  }
++
++  callsToday(): number {
++    return this.paceState().dayCount;
++  }
++
+   /** Human-readable status for tools/prompts. */
+   status(): string {
+     const now = Date.now();
+@@ -135,7 +176,18 @@ export class FreeInferencePool {
+         const cool = s.coolingUntil > now ? `cooling ${Math.ceil((s.coolingUntil - now) / 60_000)}m` : "ready";
+         return `${p.name}(${p.model}): ${key}, ${cool}, today ${s.dayCount}${p.rpd ? "/" + p.rpd : ""}, ok ${s.successes} / fail ${s.failures}${s.lastError ? ", last: " + s.lastError.slice(0, 60) : ""}`;
+       })
+-      .join("\n");
++      .join("\n") + this.paceLine();
++  }
++
++  private paceLine(): string {
++    const paceMs = this.config.paceMs ?? 0;
++    const maxDay = this.config.maxCallsPerDay ?? 0;
++    if (!paceMs && !maxDay) return "";
++    const p = this.paceState();
++    const parts: string[] = [];
++    if (paceMs) parts.push(`pace ${Math.round(paceMs / 1000)}s between calls (next in ${Math.ceil(this.waitMs() / 1000)}s)`);
++    if (maxDay) parts.push(`pool calls today ${p.dayCount}/${maxDay}`);
++    return "\n" + parts.join(" | ");
+   }
+ 
+   /** Providers usable right now (has key, not cooling, under budgets). */
+@@ -164,6 +216,24 @@ export class FreeInferencePool {
+    */
+   async chat(body: Record<string, unknown>, tokenLimit: number): Promise<{ data: any; provider: FreeProvider; attempts: FreePoolAttempt[] }> {
+     const attempts: FreePoolAttempt[] = [];
++
++    // Global daily ceiling across the whole pool.
++    const pace = this.paceState();
++    const maxDay = this.config.maxCallsPerDay ?? 0;
++    if (maxDay > 0 && pace.dayCount >= maxDay) {
++      throw new FreePoolExhaustedError([
++        { provider: "pool", skipped: `daily ceiling ${maxDay} reached (${pace.dayCount} calls today)` },
++      ]);
++    }
++
++    // Pace: wait rather than fail, so a fast-looping agent cannot burn the
++    // day's free quota in an hour.
++    const wait = this.waitMs();
++    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
++    pace.lastCallAt = Date.now();
++    pace.dayCount++;
++    this.savePace();
++
+     const now = Date.now();
+     for (const p of this.providers()) {
+       const s = this.state(p);
+-- 
+2.55.0.windows.3
+

@@ -1,0 +1,890 @@
+From 0f4a3ced625ba374e654583aacf5711096ac54a5 Mon Sep 17 00:00:00 2001
+From: Slashy <amirramy.chatbi@gmail.com>
+Date: Thu, 3 Sep 2026 14:06:02 +0200
+Subject: [PATCH 3/5] feat(p01): free inference pool with quota rotation, owner
+ playbook layer, pinned model strategy
+
+- src/inference/free-pool.ts: OpenAI-compatible providers tried in order; 429/402/5xx cooldowns (Retry-After, daily quota until UTC midnight), rpm/rpd budgets persisted in KV; virtual model "free-pool" costs 0 so every tier can use it
+- inference client backend "free-pool"; openai backend accepts a custom base URL
+- ModelStrategyConfig.pinnedModel bypasses the hard-coded routing matrix
+- PLAYBOOK.md: owner-written, protected, injected in full after the constitution; propagated to children
+- headless: freePool from genesis or FREE_POOL_FILE, strategy pinned accordingly
+- tool inference_pool_status; tests for pool rotation/budgets/daily benching
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NptGK4Xppd57AQrT6DuM24
+---
+ src/__tests__/free-pool.test.ts     | 119 +++++++++++++
+ src/agent/policy-rules/authority.ts |   1 +
+ src/agent/system-prompt.ts          |   5 +-
+ src/conway/inference.ts             |  51 +++++-
+ src/economy/index.ts                |  12 +-
+ src/economy/lessons.ts              |  21 +++
+ src/economy/runway.ts               |   2 +-
+ src/economy/tools.ts                |  14 ++
+ src/index.ts                        |   4 +-
+ src/inference/free-pool.ts          | 250 ++++++++++++++++++++++++++++
+ src/inference/router.ts             |   7 +
+ src/inference/types.ts              |  16 ++
+ src/replication/genesis.ts          |   4 +-
+ src/replication/spawn.ts            |   2 +
+ src/self-mod/code.ts                |   1 +
+ src/setup/headless.ts               |  32 +++-
+ src/types.ts                        |   9 +
+ 17 files changed, 533 insertions(+), 17 deletions(-)
+ create mode 100644 src/__tests__/free-pool.test.ts
+ create mode 100644 src/inference/free-pool.ts
+
+diff --git a/src/__tests__/free-pool.test.ts b/src/__tests__/free-pool.test.ts
+new file mode 100644
+index 0000000..5202b89
+--- /dev/null
++++ b/src/__tests__/free-pool.test.ts
+@@ -0,0 +1,119 @@
++import { describe, it, expect, beforeAll, afterAll } from "vitest";
++import http from "node:http";
++import { FreeInferencePool, FreePoolExhaustedError } from "../inference/free-pool.js";
++import { ResilientHttpClient } from "../conway/http-client.js";
++
++type Handler = (req: http.IncomingMessage, res: http.ServerResponse, body: string) => void;
++const handlers = new Map<string, Handler>();
++let server: http.Server;
++let base = "";
++
++function ok(res: http.ServerResponse, model: string) {
++  res.writeHead(200, { "content-type": "application/json" });
++  res.end(JSON.stringify({ id: "x", model, choices: [{ message: { role: "assistant", content: `hello from ${model}` } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
++}
++
++beforeAll(async () => {
++  server = http.createServer((req, res) => {
++    let body = "";
++    req.on("data", (c) => (body += c));
++    req.on("end", () => {
++      const h = handlers.get(req.url ?? "");
++      if (!h) {
++        res.writeHead(404);
++        res.end("nope");
++        return;
++      }
++      h(req, res, body);
++    });
++  });
++  await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
++  const addr = server.address() as { port: number };
++  base = `http://127.0.0.1:${addr.port}`;
++});
++afterAll(() => server.close());
++
++function pool(providers: any[], store?: Map<string, string>) {
++  const http = new ResilientHttpClient({ allowHttpOnLoopback: true, maxRetries: 0 } as any);
++  const s = store
++    ? { get: (k: string) => store.get(k), set: (k: string, v: string) => void store.set(k, v) }
++    : undefined;
++  return new FreeInferencePool({ providers, cooldownMinutes: 1 }, http, s, { A_KEY: "a", B_KEY: "b" } as any);
++}
++
++describe("free inference pool", () => {
++  it("rotates to the next provider on 429 and remembers the cooldown", async () => {
++    let aCalls = 0;
++    handlers.set("/a/v1/chat/completions", (_req, res) => {
++      aCalls++;
++      res.writeHead(429, { "retry-after": "120" });
++      res.end("rate limit");
++    });
++    const bodies: any[] = [];
++    handlers.set("/b/v1/chat/completions", (_req, res, body) => {
++      bodies.push(JSON.parse(body));
++      ok(res, "model-b");
++    });
++    const store = new Map<string, string>();
++    const p = pool(
++      [
++        { name: "a", baseUrl: `${base}/a`, model: "model-a", apiKeyEnv: "A_KEY" },
++        { name: "b", baseUrl: `${base}/b`, model: "model-b", apiKeyEnv: "B_KEY", tokenParam: "max_completion_tokens" },
++      ],
++      store,
++    );
++    const r = await p.chat({ messages: [{ role: "user", content: "hi" }] }, 500);
++    expect(r.provider.name).toBe("b");
++    expect(r.attempts[0]).toMatchObject({ provider: "a", status: 429 });
++    expect(bodies[0].model).toBe("model-b");
++    expect(bodies[0].max_completion_tokens).toBe(500);
++    expect(bodies[0].max_tokens).toBeUndefined();
++    // second call: a is cooling, goes straight to b without calling a
++    await p.chat({ messages: [] }, 10);
++    expect(aCalls).toBe(1);
++    expect(p.available().map((x) => x.name)).toEqual(["b"]);
++    // a fresh pool with the same store inherits the cooldown
++    const p2 = pool(
++      [
++        { name: "a", baseUrl: `${base}/a`, model: "model-a", apiKeyEnv: "A_KEY" },
++        { name: "b", baseUrl: `${base}/b`, model: "model-b", apiKeyEnv: "B_KEY" },
++      ],
++      store,
++    );
++    expect(p2.available().map((x) => x.name)).toEqual(["b"]);
++  });
++
++  it("skips providers without a key and respects daily budgets", async () => {
++    let bCalls = 0;
++    handlers.set("/b2/v1/chat/completions", (_req, res) => {
++      bCalls++;
++      ok(res, "model-b");
++    });
++    const p = pool([
++      { name: "nokey", baseUrl: `${base}/x`, model: "m", apiKeyEnv: "MISSING" },
++      { name: "b", baseUrl: `${base}/b2`, model: "model-b", apiKeyEnv: "B_KEY", rpd: 2 },
++    ]);
++    await p.chat({ messages: [] }, 10);
++    await p.chat({ messages: [] }, 10);
++    await expect(p.chat({ messages: [] }, 10)).rejects.toBeInstanceOf(FreePoolExhaustedError);
++    expect(bCalls).toBe(2);
++    expect(p.status()).toMatch(/nokey.*NO KEY/);
++  });
++
++  it("benches a provider for the day on a daily-quota message and uses a custom chat path", async () => {
++    handlers.set("/g/chat/completions", (_req, res) => {
++      res.writeHead(429);
++      res.end(JSON.stringify({ error: { message: "Quota exceeded for requests per day" } }));
++    });
++    handlers.set("/b3/v1/chat/completions", (_req, res) => ok(res, "model-b"));
++    const p = pool([
++      { name: "gemini", baseUrl: `${base}/g`, chatPath: "/chat/completions", model: "gemini", apiKeyEnv: "A_KEY" },
++      { name: "b", baseUrl: `${base}/b3`, model: "model-b", apiKeyEnv: "B_KEY" },
++    ]);
++    const r = await p.chat({ messages: [] }, 10);
++    expect(r.provider.name).toBe("b");
++    expect(p.status()).toMatch(/gemini.*cooling \d+m/);
++    const mins = Number(p.status().match(/gemini[^\n]*cooling (\d+)m/)![1]);
++    expect(mins).toBeGreaterThan(60); // until UTC midnight, not the 1-minute default
++  });
++});
+diff --git a/src/agent/policy-rules/authority.ts b/src/agent/policy-rules/authority.ts
+index 31ffcc7..49fb3a3 100644
+--- a/src/agent/policy-rules/authority.ts
++++ b/src/agent/policy-rules/authority.ts
+@@ -15,6 +15,7 @@ import type {
+ /** Files protected from external-source self-modification */
+ const PROTECTED_PATHS = [
+   "constitution.md",
++  "PLAYBOOK.md",
+   "SOUL.md",
+   "automaton.json",
+   "heartbeat.yml",
+diff --git a/src/agent/system-prompt.ts b/src/agent/system-prompt.ts
+index cdd86c7..948f848 100644
+--- a/src/agent/system-prompt.ts
++++ b/src/agent/system-prompt.ts
+@@ -25,7 +25,7 @@ import { getActiveSkillInstructions } from "../skills/loader.js";
+ import { getLineageSummary } from "../replication/lineage.js";
+ import { sanitizeInput } from "./injection-defense.js";
+ import { loadCurrentSoul } from "../soul/model.js";
+-import { buildEconomyPromptBlock, buildLineagePromptBlock } from "../economy/index.js";
++import { buildEconomyPromptBlock, buildLineagePromptBlock, buildPlaybookPromptBlock } from "../economy/index.js";
+ 
+ function getCoreRules(chainType?: string): string {
+   const usdcNetwork = chainType === "solana" ? "USDC on Solana" : "USDC on Base";
+@@ -586,6 +586,9 @@ export function buildSystemPrompt(params: {
+   sections.push(getCoreIdentity(chainType));
+   sections.push(AGENTIC_SOCIOLOGY);
+   sections.push(`--- CONSTITUTION (immutable, protected) ---\n${loadConstitution()}\n--- END CONSTITUTION ---`);
++  // p01: owner-written operating playbook, right after the constitution
++  const playbookBlock = buildPlaybookPromptBlock();
++  if (playbookBlock) sections.push(playbookBlock);
+   sections.push(
+     `Your name is ${config.name}.
+ Your ${addressLabel} address is ${identity.address}.
+diff --git a/src/conway/inference.ts b/src/conway/inference.ts
+index 5112f91..ad6bc1c 100644
+--- a/src/conway/inference.ts
++++ b/src/conway/inference.ts
+@@ -29,11 +29,23 @@ interface InferenceClientOptions {
+   ollamaBaseUrl?: string;
+   /** p01: OpenAI-compatible base URL (Groq, OpenRouter, Together, LM Studio, vLLM…). Defaults to api.openai.com. */
+   openaiBaseUrl?: string;
++  /** p01: free inference pool; selected when the model id is "free-pool". */
++  freePool?: FreePoolConfig;
++  freePoolStore?: FreePoolStateStore;
+   /** Optional registry lookup — if provided, used before name heuristics */
+   getModelProvider?: (modelId: string) => string | undefined;
+ }
+ 
+-type InferenceBackend = "conway" | "openai" | "anthropic" | "ollama";
++type InferenceBackend = "conway" | "openai" | "anthropic" | "ollama" | "free-pool";
++
++import { FreeInferencePool, type FreePoolConfig, type FreePoolStateStore } from "../inference/free-pool.js";
++
++let _activeFreePool: FreeInferencePool | null = null;
++/** The pool of the running client, for status tools. */
++export function getActiveFreePool(): FreeInferencePool | null {
++  return _activeFreePool;
++}
++export const FREE_POOL_MODEL_ID = "free-pool";
+ 
+ function isLoopbackHttpUrl(url: string | undefined): boolean {
+   if (!url) return false;
+@@ -58,6 +70,10 @@ export function createInferenceClient(
+   });
+   let currentModel = options.defaultModel;
+   let maxTokens = options.maxTokens;
++  const freePool = options.freePool?.providers?.length
++    ? new FreeInferencePool(options.freePool, httpClient, options.freePoolStore)
++    : null;
++  if (freePool) _activeFreePool = freePool;
+ 
+   const chat = async (
+     messages: ChatMessage[],
+@@ -66,12 +82,15 @@ export function createInferenceClient(
+     const model = opts?.model || currentModel;
+     const tools = opts?.tools;
+ 
+-    const backend = resolveInferenceBackend(model, {
+-      openaiApiKey,
+-      anthropicApiKey,
+-      ollamaBaseUrl,
+-      getModelProvider,
+-    });
++    const backend: InferenceBackend =
++      model === FREE_POOL_MODEL_ID && freePool
++        ? "free-pool"
++        : resolveInferenceBackend(model, {
++            openaiApiKey,
++            anthropicApiKey,
++            ollamaBaseUrl,
++            getModelProvider,
++          });
+ 
+     // Newer models (o-series, gpt-5.x, gpt-4.1) require max_completion_tokens.
+     // Ollama always uses max_tokens.
+@@ -100,6 +119,15 @@ export function createInferenceClient(
+       body.tool_choice = "auto";
+     }
+ 
++    if (backend === "free-pool" && freePool) {
++      const poolBody: Record<string, unknown> = { ...body };
++      delete poolBody.model;
++      delete poolBody.max_tokens;
++      delete poolBody.max_completion_tokens;
++      const { data, provider } = await freePool.chat(poolBody, tokenLimit);
++      return parseOpenAiCompletion(data, `${FREE_POOL_MODEL_ID}/${provider.name}:${provider.model}`);
++    }
++
+     if (backend === "anthropic") {
+       return chatViaAnthropic({
+         model,
+@@ -207,7 +235,7 @@ async function chatViaOpenAiCompatible(params: {
+   body: Record<string, unknown>;
+   apiUrl: string;
+   apiKey: string;
+-  backend: "conway" | "openai" | "ollama";
++  backend: InferenceBackend;
+   httpClient: ResilientHttpClient;
+ }): Promise<InferenceResponse> {
+   const resp = await params.httpClient.request(`${params.apiUrl}/v1/chat/completions`, {
+@@ -231,6 +259,11 @@ async function chatViaOpenAiCompatible(params: {
+   }
+ 
+   const data = await resp.json() as any;
++  return parseOpenAiCompletion(data, params.model);
++}
++
++/** Map an OpenAI-style chat completion into the runtime's InferenceResponse. */
++function parseOpenAiCompletion(data: any, modelLabel: string): InferenceResponse {
+   const choice = data.choices?.[0];
+ 
+   if (!choice) {
+@@ -256,7 +289,7 @@ async function chatViaOpenAiCompatible(params: {
+ 
+   return {
+     id: data.id || "",
+-    model: data.model || params.model,
++    model: data.model || modelLabel,
+     message: {
+       role: message.role,
+       content: message.content || "",
+diff --git a/src/economy/index.ts b/src/economy/index.ts
+index c6e1bfd..cf99d5b 100644
+--- a/src/economy/index.ts
++++ b/src/economy/index.ts
+@@ -7,7 +7,7 @@ import type { AutomatonConfig, FinancialState, HeartbeatTaskFn } from "../types.
+ import { buildRevenueReport, ingestChainInflows, recordEvent } from "./ledger.js";
+ import { buildRunwayReport } from "./runway.js";
+ import { executeSolSweep, executeSweep } from "./sweep.js";
+-import { distillLessons, loadLineage, writeLineage } from "./lessons.js";
++import { distillLessons, loadLineage, writeLineage, loadPlaybook } from "./lessons.js";
+ import { evaluateReplication, readLocalColony, writeCreditRequest } from "./replication.js";
+ import { getSolBalanceLamports, MIN_FEE_LAMPORTS, resolveSolanaEnv } from "../solana/usdc.js";
+ import { createLogger } from "../observability/logger.js";
+@@ -16,7 +16,7 @@ const logger = createLogger("economy");
+ 
+ export { createEconomyTools } from "./tools.js";
+ export { getEffectiveSurvivalTier } from "./runway.js";
+-export { distillLessons, loadLineage, writeLineage } from "./lessons.js";
++export { distillLessons, loadLineage, writeLineage, loadPlaybook, writePlaybook } from "./lessons.js";
+ 
+ /** Prompt block injected each turn: cause, money, runway, replication state. */
+ export function buildEconomyPromptBlock(
+@@ -54,6 +54,14 @@ export function buildEconomyPromptBlock(
+   return lines.join("\n");
+ }
+ 
++export function buildPlaybookPromptBlock(): string | null {
++  const doc = loadPlaybook();
++  if (!doc) return null;
++  return `--- OPERATING PLAYBOOK (owner-written, protected, follow literally) ---
++${doc}
++--- END PLAYBOOK ---`;
++}
++
+ export function buildLineagePromptBlock(): string | null {
+   const doc = loadLineage();
+   if (!doc) return null;
+diff --git a/src/economy/lessons.ts b/src/economy/lessons.ts
+index 06e5e27..2db5136 100644
+--- a/src/economy/lessons.ts
++++ b/src/economy/lessons.ts
+@@ -129,6 +129,27 @@ export function distillLessons(raw: Database.Database, input: LessonsInput): str
+   return doc;
+ }
+ 
++export const PLAYBOOK_FILENAME = "PLAYBOOK.md";
++export const MAX_PLAYBOOK_CHARS = 12000;
++
++/** Owner-written operating playbook: trusted, read-only, injected in full. */
++export function loadPlaybook(dir: string = getAutomatonDir()): string | null {
++  const p = path.join(dir, PLAYBOOK_FILENAME);
++  if (!fs.existsSync(p)) return null;
++  try {
++    return fs.readFileSync(p, "utf-8").slice(0, MAX_PLAYBOOK_CHARS);
++  } catch {
++    return null;
++  }
++}
++
++export function writePlaybook(doc: string, dir: string = getAutomatonDir()): string {
++  const p = path.join(dir, PLAYBOOK_FILENAME);
++  fs.writeFileSync(p, doc.slice(0, MAX_PLAYBOOK_CHARS), { mode: 0o644 });
++  try { fs.chmodSync(p, 0o444); } catch { /* windows */ }
++  return p;
++}
++
+ export function lineagePath(dir: string = getAutomatonDir()): string {
+   return path.join(dir, LINEAGE_FILENAME);
+ }
+diff --git a/src/economy/runway.ts b/src/economy/runway.ts
+index ae299f2..4e0d1ea 100644
+--- a/src/economy/runway.ts
++++ b/src/economy/runway.ts
+@@ -21,7 +21,7 @@ import { getSurvivalTier } from "../conway/credits.js";
+ import { inferenceSpendCentsSince, revenueSince } from "./ledger.js";
+ 
+ export function hasByokInference(config: AutomatonConfig): boolean {
+-  return !!(config.anthropicApiKey || config.openaiApiKey || config.ollamaBaseUrl);
++  return !!(config.anthropicApiKey || config.openaiApiKey || config.ollamaBaseUrl || config.freePool?.providers?.length);
+ }
+ 
+ export function usdcCountsAsRunway(config: AutomatonConfig): boolean {
+diff --git a/src/economy/tools.ts b/src/economy/tools.ts
+index 620f90d..274705e 100644
+--- a/src/economy/tools.ts
++++ b/src/economy/tools.ts
+@@ -285,6 +285,20 @@ export function createEconomyTools(): AutomatonTool[] {
+         return `Credit request for $${amount} written to ${file}. The owner-side funder decides; keep working meanwhile.`;
+       },
+     },
++    {
++      name: "inference_pool_status",
++      description: "Status of the free inference pool: which providers have keys, which are cooling down after a quota, today's request counts. If most providers are cooling, sleep longer and batch your work.",
++      category: "survival",
++      riskLevel: "safe",
++      parameters: { type: "object", properties: {} },
++      execute: async () => {
++        const { getActiveFreePool } = await import("../conway/inference.js");
++        const pool = getActiveFreePool();
++        if (!pool) return "No free inference pool configured (inference is paid or Conway credits).";
++        const avail = pool.available().length;
++        return `Available now: ${avail}/${pool.providers().length}\n` + pool.status();
++      },
++    },
+     {
+       name: "lineage_lessons",
+       description: "Read the distilled lessons of your lineage (what earlier generations tried, what paid, what killed them), or refresh them from your own memory.",
+diff --git a/src/index.ts b/src/index.ts
+index 7e3b07e..c2fbd96 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -224,7 +224,7 @@ async function run(): Promise<void> {
+   const resolvedChainType = config.chainType || walletChainType || "evm";
+   let apiKey = config.conwayApiKey || loadApiKeyFromConfig();
+   if (!apiKey) {
+-    const byok = !!(config.anthropicApiKey || config.openaiApiKey || config.ollamaBaseUrl);
++    const byok = !!(config.anthropicApiKey || config.openaiApiKey || config.ollamaBaseUrl || config.freePool?.providers?.length);
+     if (!byok) {
+       logger.error("No API key found. Run: automaton --provision");
+       process.exit(1);
+@@ -327,6 +327,8 @@ async function run(): Promise<void> {
+     anthropicApiKey: config.anthropicApiKey,
+     ollamaBaseUrl,
+     openaiBaseUrl: process.env.OPENAI_BASE_URL || config.openaiBaseUrl,
++    freePool: config.freePool,
++    freePoolStore: { get: (k) => db.getKV(k), set: (k, v) => db.setKV(k, v) },
+     getModelProvider: (modelId) => modelRegistry.get(modelId)?.provider,
+   });
+ 
+diff --git a/src/inference/free-pool.ts b/src/inference/free-pool.ts
+new file mode 100644
+index 0000000..81a3e2e
+--- /dev/null
++++ b/src/inference/free-pool.ts
+@@ -0,0 +1,250 @@
++/**
++ * Free inference pool
++ *
++ * Free API tiers (Groq, Cerebras, Google AI Studio, OpenRouter :free models,
++ * Mistral, NVIDIA NIM…) are individually too small and too flaky to keep an
++ * always-on agent alive, but together they are plenty. This pool presents them
++ * as ONE OpenAI-compatible backend:
++ *
++ *   - providers are tried in order; each has its own model id, base URL,
++ *     chat path, token-parameter style and soft per-minute / per-day budgets
++ *   - a provider that answers 429 / 402 / 403 / 5xx or a quota message goes
++ *     into cooldown (Retry-After honoured, daily-quota until UTC midnight)
++ *   - budgets and cooldowns persist in the automaton's KV so restarts do not
++ *     hammer a provider that was already exhausted
++ *   - cost is 0 cents by construction; the runway report reflects that
++ */
++
++import type { ResilientHttpClient } from "../conway/http-client.js";
++
++export interface FreeProvider {
++  name: string;
++  baseUrl: string;
++  /** Path appended to baseUrl. Default "/v1/chat/completions". */
++  chatPath?: string;
++  model: string;
++  /** Env var holding the API key (preferred), or the key itself. */
++  apiKeyEnv?: string;
++  apiKey?: string;
++  /** Soft budgets; the pool rotates before the provider says no. */
++  rpm?: number;
++  rpd?: number;
++  tokenParam?: "max_tokens" | "max_completion_tokens";
++  /** Extra headers (OpenRouter likes HTTP-Referer / X-Title). */
++  headers?: Record<string, string>;
++  enabled?: boolean;
++}
++
++export interface FreePoolConfig {
++  providers: FreeProvider[];
++  /** Cooldown after a non-quota failure (minutes). Default 10. */
++  cooldownMinutes?: number;
++}
++
++export interface FreePoolStateStore {
++  get(key: string): string | undefined;
++  set(key: string, value: string): void;
++}
++
++interface ProviderState {
++  coolingUntil: number;
++  minuteStart: number;
++  minuteCount: number;
++  day: string;
++  dayCount: number;
++  lastError?: string;
++  successes: number;
++  failures: number;
++}
++
++export interface FreePoolAttempt {
++  provider: string;
++  status?: number;
++  error?: string;
++  skipped?: string;
++}
++
++export class FreePoolExhaustedError extends Error {
++  constructor(public attempts: FreePoolAttempt[]) {
++    super(
++      "Free inference pool exhausted: " +
++        attempts.map((a) => `${a.provider}: ${a.skipped ?? a.error ?? a.status}`).join("; "),
++    );
++  }
++}
++
++const KV_PREFIX = "free_pool_state:";
++
++function todayUtc(): string {
++  return new Date().toISOString().slice(0, 10);
++}
++function nextUtcMidnight(): number {
++  const d = new Date();
++  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
++}
++
++export class FreeInferencePool {
++  private states = new Map<string, ProviderState>();
++
++  constructor(
++    private config: FreePoolConfig,
++    private http: ResilientHttpClient,
++    private store?: FreePoolStateStore,
++    private env: NodeJS.ProcessEnv = process.env,
++  ) {}
++
++  providers(): FreeProvider[] {
++    return this.config.providers.filter((p) => p.enabled !== false);
++  }
++
++  private state(p: FreeProvider): ProviderState {
++    let s = this.states.get(p.name);
++    if (!s) {
++      const raw = this.store?.get(KV_PREFIX + p.name);
++      s = raw ? (JSON.parse(raw) as ProviderState) : { coolingUntil: 0, minuteStart: 0, minuteCount: 0, day: todayUtc(), dayCount: 0, successes: 0, failures: 0 };
++      this.states.set(p.name, s);
++    }
++    if (s.day !== todayUtc()) {
++      s.day = todayUtc();
++      s.dayCount = 0;
++    }
++    return s;
++  }
++
++  private persist(p: FreeProvider, s: ProviderState): void {
++    try {
++      this.store?.set(KV_PREFIX + p.name, JSON.stringify(s));
++    } catch {
++      /* ignore */
++    }
++  }
++
++  private keyFor(p: FreeProvider): string | undefined {
++    if (p.apiKey) return p.apiKey;
++    if (p.apiKeyEnv) return this.env[p.apiKeyEnv] || undefined;
++    return undefined;
++  }
++
++  /** Human-readable status for tools/prompts. */
++  status(): string {
++    const now = Date.now();
++    return this.providers()
++      .map((p) => {
++        const s = this.state(p);
++        const key = this.keyFor(p) ? "key" : "NO KEY";
++        const cool = s.coolingUntil > now ? `cooling ${Math.ceil((s.coolingUntil - now) / 60_000)}m` : "ready";
++        return `${p.name}(${p.model}): ${key}, ${cool}, today ${s.dayCount}${p.rpd ? "/" + p.rpd : ""}, ok ${s.successes} / fail ${s.failures}${s.lastError ? ", last: " + s.lastError.slice(0, 60) : ""}`;
++      })
++      .join("\n");
++  }
++
++  /** Providers usable right now (has key, not cooling, under budgets). */
++  available(): FreeProvider[] {
++    const now = Date.now();
++    return this.providers().filter((p) => {
++      if (!this.keyFor(p)) return false;
++      const s = this.state(p);
++      if (s.coolingUntil > now) return false;
++      if (p.rpd && s.dayCount >= p.rpd) return false;
++      if (p.rpm && now - s.minuteStart < 60_000 && s.minuteCount >= p.rpm) return false;
++      return true;
++    });
++  }
++
++  private cool(p: FreeProvider, s: ProviderState, ms: number, why: string): void {
++    s.coolingUntil = Math.max(s.coolingUntil, Date.now() + ms);
++    s.failures++;
++    s.lastError = why;
++    this.persist(p, s);
++  }
++
++  /**
++   * Send one chat completion through the first available provider.
++   * `body` is an OpenAI-style request without `model`/token param.
++   */
++  async chat(body: Record<string, unknown>, tokenLimit: number): Promise<{ data: any; provider: FreeProvider; attempts: FreePoolAttempt[] }> {
++    const attempts: FreePoolAttempt[] = [];
++    const now = Date.now();
++    for (const p of this.providers()) {
++      const s = this.state(p);
++      const key = this.keyFor(p);
++      if (!key) {
++        attempts.push({ provider: p.name, skipped: "no api key" });
++        continue;
++      }
++      if (s.coolingUntil > now) {
++        attempts.push({ provider: p.name, skipped: `cooling until ${new Date(s.coolingUntil).toISOString()}` });
++        continue;
++      }
++      if (p.rpd && s.dayCount >= p.rpd) {
++        attempts.push({ provider: p.name, skipped: `daily budget ${p.rpd} used` });
++        continue;
++      }
++      if (now - s.minuteStart >= 60_000) {
++        s.minuteStart = now;
++        s.minuteCount = 0;
++      }
++      if (p.rpm && s.minuteCount >= p.rpm) {
++        attempts.push({ provider: p.name, skipped: `minute budget ${p.rpm} used` });
++        continue;
++      }
++
++      const req: Record<string, unknown> = { ...body, model: p.model };
++      req[p.tokenParam ?? "max_tokens"] = tokenLimit;
++      const url = p.baseUrl.replace(/[/]+$/, "") + (p.chatPath ?? "/v1/chat/completions");
++      s.minuteCount++;
++      s.dayCount++;
++
++      let resp: Response;
++      try {
++        resp = await this.http.request(url, {
++          method: "POST",
++          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, ...(p.headers ?? {}) },
++          body: JSON.stringify(req),
++          retries: 0,
++        });
++      } catch (err: any) {
++        this.cool(p, s, (this.config.cooldownMinutes ?? 10) * 60_000, `network: ${err?.message ?? err}`);
++        attempts.push({ provider: p.name, error: err?.message ?? String(err) });
++        continue;
++      }
++
++      if (resp.ok) {
++        let data: any;
++        try {
++          data = await resp.json();
++        } catch (err: any) {
++          this.cool(p, s, 5 * 60_000, "bad json");
++          attempts.push({ provider: p.name, error: "bad json" });
++          continue;
++        }
++        if (!data?.choices?.[0]?.message) {
++          this.cool(p, s, 5 * 60_000, "no choices");
++          attempts.push({ provider: p.name, error: "no choices" });
++          continue;
++        }
++        s.successes++;
++        this.persist(p, s);
++        return { data, provider: p, attempts };
++      }
++
++      const text = await resp.text().catch(() => "");
++      const status = resp.status;
++      const retryAfter = Number(resp.headers.get("retry-after"));
++      const daily = /per day|daily|quota exceeded|RPD|tokens per day|TPD/i.test(text);
++      let ms: number;
++      if (status === 429) {
++        ms = daily ? nextUtcMidnight() - Date.now() : Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 60_000;
++      } else if (status === 402 || status === 403 || status === 401) {
++        ms = 6 * 3_600_000; // out of credit / key issue: leave it alone for a while
++      } else if (status === 400 && /model|not found|does not exist|decommissioned/i.test(text)) {
++        ms = 24 * 3_600_000; // wrong model id: stop wasting calls until someone fixes it
++      } else {
++        ms = (this.config.cooldownMinutes ?? 10) * 60_000;
++      }
++      this.cool(p, s, ms, `${status}: ${text.slice(0, 120)}`);
++      attempts.push({ provider: p.name, status, error: text.slice(0, 120) });
++    }
++    throw new FreePoolExhaustedError(attempts);
++  }
++}
+diff --git a/src/inference/router.ts b/src/inference/router.ts
+index 962a199..3c336de 100644
+--- a/src/inference/router.ts
++++ b/src/inference/router.ts
+@@ -196,6 +196,13 @@ export class InferenceRouter {
+ 
+     const tierRank = TIER_ORDER[tier] ?? 0;
+ 
++    // 0. p01: pinned model (free pool / local) wins over the routing matrix
++    const pinned = this.budget.config.pinnedModel;
++    if (pinned) {
++      const entry = this.registry.get(pinned);
++      if (entry && entry.enabled) return entry;
++    }
++
+     // 1. Try routing-matrix candidates
+     const preference = this.getPreference(tier, taskType);
+     if (preference && preference.candidates.length > 0) {
+diff --git a/src/inference/types.ts b/src/inference/types.ts
+index f595876..09e833c 100644
+--- a/src/inference/types.ts
++++ b/src/inference/types.ts
+@@ -48,6 +48,22 @@ export const TASK_TIMEOUTS: Record<string, number> = {
+ // Known models with realistic pricing (hundredths of cents per 1k tokens)
+ 
+ export const STATIC_MODEL_BASELINE: Omit<ModelEntry, "lastSeen" | "createdAt" | "updatedAt">[] = [
++  // p01: virtual model backed by the free inference pool (Groq, Cerebras, …).
++  // Cost 0 means the router accepts it at every survival tier.
++  {
++    modelId: "free-pool",
++    provider: "other",
++    displayName: "Free inference pool",
++    tierMinimum: "critical",
++    costPer1kInput: 0,
++    costPer1kOutput: 0,
++    maxTokens: 8192,
++    contextWindow: 128000,
++    supportsTools: true,
++    supportsVision: false,
++    parameterStyle: "max_tokens",
++    enabled: true,
++  },
+   // p01: Anthropic models (BYOK) with first-party pricing so BYOK cost is tracked.
+   {
+     modelId: "claude-opus-5",
+diff --git a/src/replication/genesis.ts b/src/replication/genesis.ts
+index 287d7e0..8d69b6f 100644
+--- a/src/replication/genesis.ts
++++ b/src/replication/genesis.ts
+@@ -13,7 +13,7 @@ import type {
+   AutomatonDatabase,
+ } from "../types.js";
+ import { DEFAULT_GENESIS_LIMITS } from "../types.js";
+-import { distillLessons, loadLineage } from "../economy/lessons.js";
++import { distillLessons, loadLineage, loadPlaybook } from "../economy/lessons.js";
+ 
+ /**
+  * Injection patterns to detect and block in genesis params.
+@@ -136,6 +136,8 @@ export function generateGenesisConfig(
+     openaiApiKey: config.openaiApiKey,
+     inferenceModel: config.inferenceModel,
+     treasuryPolicy: config.treasuryPolicy,
++    freePool: config.freePool,
++    playbook: loadPlaybook() ?? undefined,
+   };
+ 
+   return Object.freeze(result) as GenesisConfig;
+diff --git a/src/replication/spawn.ts b/src/replication/spawn.ts
+index c37ba6a..b26577d 100644
+--- a/src/replication/spawn.ts
++++ b/src/replication/spawn.ts
+@@ -153,6 +153,8 @@ export async function spawnChild(
+         openaiApiKey: genesis.openaiApiKey,
+         inferenceModel: genesis.inferenceModel,
+         treasuryPolicy: genesis.treasuryPolicy,
++        freePool: genesis.freePool,
++        playbook: genesis.playbook,
+       },
+       null,
+       2,
+diff --git a/src/self-mod/code.ts b/src/self-mod/code.ts
+index 7a11b25..2140988 100644
+--- a/src/self-mod/code.ts
++++ b/src/self-mod/code.ts
+@@ -44,6 +44,7 @@ const PROTECTED_FILES: readonly string[] = Object.freeze([
+   "state.db-shm",
+   // Constitution (immutable, propagated to children)
+   "constitution.md",
++  "PLAYBOOK.md",
+   // Defense infrastructure (the agent must not modify its own guardrails)
+   "injection-defense.ts",
+   "injection-defense.js",
+diff --git a/src/setup/headless.ts b/src/setup/headless.ts
+index 52eb167..ebcd183 100644
+--- a/src/setup/headless.ts
++++ b/src/setup/headless.ts
+@@ -28,7 +28,7 @@ import { createConfig, saveConfig } from "../config.js";
+ import { writeDefaultHeartbeatConfig, loadHeartbeatConfig, saveHeartbeatConfig } from "../heartbeat/config.js";
+ import { detectEnvironment } from "./environment.js";
+ import { generateSoulMd, installDefaultSkills } from "./defaults.js";
+-import { writeLineage } from "../economy/lessons.js";
++import { writeLineage, writePlaybook } from "../economy/lessons.js";
+ import { createLogger } from "../observability/logger.js";
+ import type { ChainType } from "../identity/chain.js";
+ 
+@@ -83,7 +83,14 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+   const openaiApiKey = g.openaiApiKey || process.env.OPENAI_API_KEY || undefined;
+   const ollamaBaseUrl = g.ollamaBaseUrl || process.env.OLLAMA_BASE_URL || undefined;
+   const openaiBaseUrl = g.openaiBaseUrl || process.env.OPENAI_BASE_URL || undefined;
+-  const inferenceModel: string | undefined = g.inferenceModel || process.env.AUTOMATON_MODEL || (anthropicApiKey ? "claude-sonnet-5" : undefined);
++  let freePool: import("../inference/free-pool.js").FreePoolConfig | undefined = g.freePool;
++  if (!freePool && process.env.FREE_POOL_FILE && fs.existsSync(process.env.FREE_POOL_FILE)) {
++    freePool = JSON.parse(fs.readFileSync(process.env.FREE_POOL_FILE, "utf-8"));
++  }
++  const usePool = !!freePool?.providers?.length && (g.inferenceModel === "free-pool" || (!anthropicApiKey && !openaiApiKey && !ollamaBaseUrl) || !g.inferenceModel);
++  const inferenceModel: string | undefined = usePool
++    ? "free-pool"
++    : g.inferenceModel || process.env.AUTOMATON_MODEL || (anthropicApiKey ? "claude-opus-5" : undefined);
+ 
+   // 4. Policies
+   const treasuryPolicy: TreasuryPolicy = { ...DEFAULT_TREASURY_POLICY, ...(g.treasuryPolicy ?? {}) };
+@@ -116,6 +123,24 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+     inferenceModel,
+   });
+   if (g.modelStrategy) (config as any).modelStrategy = g.modelStrategy;
++  if (usePool && freePool) {
++    config.freePool = freePool;
++    (config as any).modelStrategy = {
++      ...((config as any).modelStrategy ?? {}),
++      inferenceModel: "free-pool",
++      lowComputeModel: "free-pool",
++      criticalModel: "free-pool",
++      pinnedModel: "free-pool",
++    };
++  } else if (anthropicApiKey && inferenceModel && /^claude/.test(inferenceModel)) {
++    (config as any).modelStrategy = {
++      ...((config as any).modelStrategy ?? {}),
++      inferenceModel,
++      lowComputeModel: "claude-sonnet-5",
++      criticalModel: "claude-haiku-4-5",
++      pinnedModel: inferenceModel,
++    };
++  }
+   if (typeof g.maxChildren === "number") config.maxChildren = g.maxChildren;
+   saveConfig(config);
+   writeDefaultHeartbeatConfig();
+@@ -138,6 +163,9 @@ export async function runHeadlessSetup(): Promise<AutomatonConfig> {
+   if (typeof g.lineageLessons === "string" && g.lineageLessons.trim()) {
+     writeLineage(g.lineageLessons);
+   }
++  if (typeof g.playbook === "string" && g.playbook.trim()) {
++    writePlaybook(g.playbook);
++  }
+   if (typeof g.worklog === "string" && g.worklog.trim()) {
+     fs.writeFileSync(path.join(dir, "WORKLOG.md"), g.worklog, { mode: 0o600 });
+   }
+diff --git a/src/types.ts b/src/types.ts
+index 821dcc0..bb7dd1f 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -54,6 +54,8 @@ export interface AutomatonConfig {
+   ollamaBaseUrl?: string;
+   /** p01: OpenAI-compatible base URL for the openai backend (free tiers, local servers). */
+   openaiBaseUrl?: string;
++  /** p01: free inference pool (model id "free-pool"). */
++  freePool?: import("./inference/free-pool.js").FreePoolConfig;
+   inferenceModel: string;
+   maxTokensPerTurn: number;
+   heartbeatConfigPath: string;
+@@ -952,6 +954,10 @@ export interface GenesisConfig {
+   openaiApiKey?: string;
+   inferenceModel?: string;
+   treasuryPolicy?: TreasuryPolicy;
++  /** p01: free inference pool inherited by the child */
++  freePool?: import("./inference/free-pool.js").FreePoolConfig;
++  /** p01: owner playbook inherited by the child */
++  playbook?: string;
+ }
+ 
+ export const MAX_CHILDREN = 3;
+@@ -1330,6 +1336,8 @@ export interface ModelRegistryRow {
+ }
+ 
+ export interface ModelStrategyConfig {
++  /** p01: when set, the router always uses this registry model (skips the routing matrix). */
++  pinnedModel?: string;
+   inferenceModel: string;
+   lowComputeModel: string;
+   criticalModel: string;
+@@ -1342,6 +1350,7 @@ export interface ModelStrategyConfig {
+ }
+ 
+ export const DEFAULT_MODEL_STRATEGY_CONFIG: ModelStrategyConfig = {
++  pinnedModel: undefined,
+   inferenceModel: "gpt-5.2",
+   lowComputeModel: "gpt-5-mini",
+   criticalModel: "gpt-5-mini",
+-- 
+2.55.0.windows.3
+
