@@ -213,25 +213,33 @@
     "programdata_address": "Dmndh5d1SMr54vjGMHVcvsfC1Dy3LXHfAhn58RM1eWJi",
     "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
     "upgrade_authority": "7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU",
-    "last_deployed_slot": 491973056,
-    "elf_sha256": "75fa927d5a3efcc73dada1e746547be922d294fae2afef92b0400dcb4db9838c",
-    "elf_bytes": 782057,
-    "elf_sha256_with_loader_padding": "c9d3b2c296ad4e9b0fbc39b2aa7df4e6379adbb48a2d8f4af93b98f67f077f04",
+    "last_deployed_slot": 494130741,
+    "elf_sha256": "245176e89bdbac3edbf26b95a1a38f0748a11c98f1cf16842380108492b6a44f",
+    "elf_bytes": 798881,
+    "elf_sha256_with_loader_padding": "843c6155ec75f161de62cc8376177a7b6a491062dd10c6317d96c27d14fdbc47",
     "elf_bytes_with_loader_padding": 840168,
     "programdata_account_space": 840213,
     "proof_format_generation": "b2",
     "generation_evidence": {
       "_supersedes": "The pre-b1 byte-scan evidence recorded here on 2026-08-02 described the deployment at slot 469197514 (elf c1a26c17..., 817,617 B). That program is gone: DGY37k3J... was redeployed on 2026-08-24 at slot 487886926 to add circuit 7. Keeping the old reading next to the new slot would have been the worst of both -- evidence that reads as current and describes a binary nobody is running.",
-      "method": "The deployed ELF was dumped with `solana program dump` and compared BYTE FOR BYTE against target/deploy/p01_stark_verifier.so after stripping trailing zero padding from both. 725,673 bytes each, identical.",
+      "method": "The deployed ELF was dumped with `solana program dump` (D:/Protocol-01-HQ/Archive/deploy-2026-09-06/p01_stark_verifier.after.so) and compared BYTE FOR BYTE against target/deploy/p01_stark_verifier.so: the first 798,896 bytes of the programdata equal the built artifact (sha256 cdd91f30...), the remaining 41,272 bytes are zero padding. 2026-09-06. The previous comparison (2026-09-02, 782,072 bytes) is superseded.",
       "why_a_dump_and_not_a_client_check": "On 2026-08-18 the deployed pool binary was still routing `unshield` after the code had removed it. That was found on a dump, not deduced from a client that reported success. Identity of the artifact is the only thing a dump can settle and the only thing worth settling this way.",
       "circuit_7_is_live": "PROBE_ORDER in lib.rs carries [1, 6, 3, 5, 7] in this artifact, and the submission recorded below exercised verify phase 1 AND phase 2 for circuit 7 on this program.",
-      "_why_b2_and_not_the_scan_s_b1_plus": "`--measure` prints `b1+` because that is the strongest thing a byte scan of msg! literals can say: B2 added no literal to the verifier, so the scan cannot separate b1 from b2. `b1+` means \"B1 or newer, cannot say which\" and the record is supposed to carry the PRECISE generation -- `generationsAreCompatible` exists exactly to reconcile the two, and accepts b1+ against a b2 claim. ⚠️ Pasting --measure's block in verbatim therefore deadlocks the interlock at line 1655, which compares with `!==`. The claim here is b2 on DIRECT evidence, not on the scan: a b2-generation client's circuit-7 proof was accepted by this program in transaction 4yKg4gGm... All seven pre-C7 circuits in that client are byte-identical to the b2 column pinned in b1_deep_binding.rs and wireFormat.test.ts."
+      "_why_b2_and_not_the_scan_s_b1_plus": "`--measure` prints `b1+` because that is the strongest thing a byte scan of msg! literals can say: B2 added no literal to the verifier, so the scan cannot separate b1 from b2. `b1+` means \"B1 or newer, cannot say which\" and the record is supposed to carry the PRECISE generation -- `generationsAreCompatible` exists exactly to reconcile the two, and accepts b1+ against a b2 claim. ⚠️ Pasting --measure's block in verbatim therefore deadlocks the interlock at line 1655, which compares with `!==`. The claim here is b2 on DIRECT evidence, not on the scan: a b2-generation client's circuit-7 proof was accepted by this program in transaction 4yKg4gGm... All seven pre-C7 circuits in that client are byte-identical to the b2 column pinned in b1_deep_binding.rs and wireFormat.test.ts.",
+      "_supersedes_2026_09_06": "The 2026-09-02 evidence below described slot 491973056 (elf 75fa927d..., 782,057 B). DGY37k3J... was redeployed on 2026-09-06 at slot 494130741 (elf 245176e8..., 798,881 B; built artifact 798,896 B sha256 cdd91f30..., the 15-byte difference is trailing zero padding) to add init_proof_buffer_v3 and reset_proof_buffer (error BufferTooSmall 6008 appended last). The proof format, every circuit and every pre-existing instruction are byte-for-byte unchanged in source, and the generation claim b2 stands on DIRECT evidence taken the same day against this slot: c7-live-proof.ts honest proof from the shipped blob 36c1fd4e accepted through both phases in 33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i (slot 494131451, phase 2 193,165 CU)."
     },
     "measured_at": {
-      "date_utc": "2026-09-02",
-      "observed_slot": 491973202,
+      "date_utc": "2026-09-06",
+      "observed_slot": 494132496,
       "method": "deployed-verifier-check.mjs --measure --cluster devnet",
-      "corroboration": "Independently dumped the same day (`solana program dump`) and byte-compared against the local artifact: the first 782,072 bytes of the programdata equal target/deploy/p01_stark_verifier.so (sha256 63ef838b...), the tail is zero padding. The acceptance below was read back off the chain by the script, not assumed."
+      "corroboration": "Independently dumped the same day (`solana program dump`) and byte-compared against the local artifact: the first 798,896 bytes of the programdata equal target/deploy/p01_stark_verifier.so (sha256 cdd91f30...), the tail is zero padding; the padded dump hashes to 843c6155..., the same value --measure printed. The acceptance below was read back off the chain by the script, not assumed.",
+      "_previous": {
+        "date_utc": "2026-09-02",
+        "observed_slot": 491973202,
+        "last_deployed_slot": 491973056,
+        "elf_sha256": "75fa927d5a3efcc73dada1e746547be922d294fae2afef92b0400dcb4db9838c",
+        "elf_bytes": 782057
+      }
     },
     "accepts_client_blob_sha256": "36c1fd4e0fa9f718d4a3ecdbdf06ff91cea9f9e0fbe21a85a20bc9da307e1984",
     "accepts_client_blob_sha256_note": [
@@ -254,13 +262,13 @@
     ],
     "accepts_client_blob_evidence": {
       "_note": "This is the only field in this record that cannot be measured from artifacts alone. It required sending a proof and reading the answer.",
-      "transaction": "5hdDAz6Xajyd6wELvWsauMskpp8S2WwrWgR6FSsQzkrKnaqJRNcoHte6QjXjoJtF383EwVurgRv8WuDubNVP4tAv",
-      "slot": 491973951,
+      "transaction": "33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i",
+      "slot": 494131451,
       "cluster": "devnet",
       "circuit_id": 7,
       "proof_bytes": 79405,
       "phases_verified": "phase 1 (FRI/Merkle) and phase 2 (DEEP-ALI)",
-      "phase2_compute_units": 193200,
+      "phase2_compute_units": 193165,
       "cost_sol": 0.000455,
       "rent": "recovered -- the proof buffer is a PDA of (authority, circuit_id), so close_proof_buffer needs only the authority. NOT true of the 45 orphaned ProofBuffer accounts holding 20.50 SOL on devnet, which predate the PDA scheme and want an ephemeral key nobody kept.",
       "reproduce": "npx tsx packages/stark-prover/scripts/c7-live-proof.ts",
@@ -330,6 +338,71 @@
           "result": "REJECTED at step 3.5 (FRI fold), InvalidProof 6003"
         },
         "what_it_shows": "lib.rs maps every VerifyError to InvalidProof (6003); the failing step is only readable from the last `[verify] stepN ok` log line, which the script reports. Rejections are all phase 1: the DEEP-ALI binding of phase 2 is NOT what these exercise."
+      },
+      "_supersedes_2026_09_06": [
+        "The previous entry was 5hdDAz6X... at slot 491973951 (phase 2 193,200 CU), taken against the verifier at slot",
+        "491973056. Only the VERIFIER half moved on 2026-09-06 (slot 494130741, two additive instructions, see",
+        "generation_evidence._supersedes_2026_09_06); the blob is still 36c1fd4e and the wire is still 79,405 bytes in",
+        "80 chunks. This entry is the first acceptance of the blob by the new deployment: c7-live-proof.ts, both phases,",
+        "buffer closed and read back as absent.",
+        "",
+        "Same day, same blob, same deployment, the two additive instructions were exercised end to end by",
+        "packages/stark-prover/scripts/c7-live-proof-v3.ts (keypair-owned buffer): see presized_buffer_evidence_2026_09_06."
+      ],
+      "presized_buffer_evidence_2026_09_06": {
+        "_note": "init_proof_buffer_v3 + reset_proof_buffer against the DEPLOYED program, keypair buffer AdnyPAUMkgT21SpMgc35YFx41XHN86MLzbWYFFANJgRX, authority 7gWpzS.... Reproduce: npx tsx packages/stark-prover/scripts/c7-live-proof-v3.ts",
+        "create_and_init_one_tx": {
+          "transaction": "3b2p7Y4BJRgaGXFTL6Jpw8xhpvzrvCEUh7tzzXKGQEt6wHhZcCXcaqWt2KR2guYdTqcVQAFbfbFMZDqsVK1NCMp9",
+          "slot": 494132306,
+          "what": "SystemProgram::CreateAccount(83+79405 bytes, owner = verifier) + init_proof_buffer_v3(79405, 7) in ONE transaction; replaces init + 7 resizes"
+        },
+        "upload_a": "80 chunks, waves of 16, confirmed in 7,867 ms, byte-for-byte readback OK (Helius devnet returns 429 above ~40 concurrent sends; retried)",
+        "verify_a_both_phases_one_tx": {
+          "transaction": "4Hf9SheWGVcfNWUirLodfyVTRoG27HZcMxLzZ1soGDnAiXMdE2GHu4bxMPXYRX4tL4LjYZEWoBmBQN3x9RwVh5tq",
+          "slot": 494132363,
+          "phase1_compute_units": 888601,
+          "phase2_compute_units": 193206,
+          "result": "ACCEPTED; verified=1 and deep_ali_verified=1 read back off the account"
+        },
+        "reset": {
+          "transaction": "3s3jXEqVJ9azNLrtfbqGdMyXRnGo1yEvCn43KM4FnuUYaS6sFMJnLSVpCcEhz4WBFuCJ6gLkW93LfKRf19MkYyPh",
+          "slot": 494132372,
+          "result": "bytes_written=0, verified=0, deep_ali_verified=0 read back"
+        },
+        "upload_b": "a second, different 79,405-byte proof (fresh blinding), 80 chunks confirmed in 9,302 ms, readback OK",
+        "verify_b_both_phases_one_tx": {
+          "transaction": "48QUUZ3F8X7WZ3F1jEFBZEqoNmA95VKP6N14wfgPCoQL7Bw5DSArZszwed1DYfWvdFU8poqwwwMUpn4tRtoABkFi",
+          "slot": 494132442,
+          "result": "ACCEPTED"
+        },
+        "close": {
+          "transaction": "3xpsxLK2rup97d826UuLZ6gZZDAaAoJqcn725Lt8dS1LxRJjMtiaw1FcGszkg3Y2Hhp8yFF6jbSVHF7igK17djmp",
+          "slot": 494132450,
+          "result": "account absent afterwards; 0.404 SOL rent returned to the authority"
+        },
+        "wall_clock": "proof A create+init -> verified 10,854 ms; proof B reset -> upload -> verified 11,474 ms, on Helius devnet with 429 retries",
+        "what_it_does_not_prove": "Nothing about the pool consuming a keypair-owned buffer; that is the wave-3 live spend measurement."
+      },
+      "negative_controls_2026_09_06": {
+        "_note": "Gate 8 re-run against the 2026-09-06 deployment (slot 494130741) with the shipped blob: `c7-live-proof.ts --tamper` / `--forge`, every buffer closed and read back as absent.",
+        "honest": {
+          "transaction": "33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i",
+          "slot": 494131451,
+          "phase2_compute_units": 193165,
+          "result": "ACCEPTED"
+        },
+        "tampered_public_input": {
+          "transaction": "iNQ3uL7c3tBhHveuAofxyvv6TTDubphqZ6VrfMk4Dq6K5593a8KtHC3uvZprjyXy9dXPkjj2t8ckbKk4bZVzTjz",
+          "slot": 494131868,
+          "compute_units": 18141,
+          "result": "REJECTED at step 1b: `[verify] OOD z mismatch`, InvalidProof 6003"
+        },
+        "forged_merkle_byte": {
+          "transaction": "5WjgxnD7eiapoc5WqLeyp5MDcBE9bDLczogNFR8i11EDG9dVQX8d1Gp97yQkGLtryvYf4Gj7rmucjMmprcMY1Z9E",
+          "slot": 494132350,
+          "compute_units": 26843,
+          "result": "REJECTED at step 3 (Merkle), InvalidProof 6003, after step2 ok"
+        }
       }
     }
   },
