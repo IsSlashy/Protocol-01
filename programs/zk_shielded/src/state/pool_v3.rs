@@ -149,7 +149,7 @@ impl DenominatedPoolV3 {
         + 8   // total_shielded
         + 8   // note_count
         + 1   // is_active
-        + 4 + (100 * 32)  // historical_roots (Vec with max 100 items)
+        + 4 + (Self::MAX_HISTORICAL_ROOTS as usize * 32)  // historical_roots ring
         + 1   // max_historical_roots
         + 8   // created_at
         + 8   // last_tx_at
@@ -191,8 +191,96 @@ impl DenominatedPoolV3 {
     /// 2048 notes instead of 32,768.
     pub const DEFAULT_TREE_DEPTH: u8 = 15;
 
-    /// Maximum historical roots to store (default 100)
-    pub const MAX_HISTORICAL_ROOTS: u8 = 100;
+    /// Maximum historical roots to store.
+    ///
+    /// [RING-255 2026-09-06] 100 -> 255. A spend proves membership under a root
+    /// the pool has PUBLISHED, and the pool forgets a root once
+    /// `MAX_HISTORICAL_ROOTS` newer ones have replaced it, so this number is
+    /// the count of deposits that may land between a client preparing its
+    /// proof and its transaction being executed. At 100 that window was a
+    /// hundred deposits; era pools are meant to absorb traffic at which that
+    /// is minutes.
+    ///
+    /// WHY 255 AND NOT MORE. The field that carries the capacity,
+    /// `max_historical_roots`, is a `u8` in the serialized layout that every
+    /// client parses at fixed offsets (`parsePoolV3Account`), so 255 is the
+    /// most the layout can name without a breaking change. Space is not the
+    /// limit: `LEN` at 255 is 8,720 bytes, under the 10,240-byte cap a PDA can
+    /// be allocated to in one transaction (`LEN_FITS_ONE_TX_INIT`), and the
+    /// same cap is what `open_next_era` needs to create an era pool in one
+    /// call.
+    ///
+    /// Pools created before this constant changed were allocated at
+    /// `LEGACY_LEN` with `max_historical_roots = 100`; `migrate_pool_capacity`
+    /// reallocates them and raises the field. Nothing reads `MAX_HISTORICAL_ROOTS`
+    /// as the ring size of a LIVE pool -- `update_root` reads the field.
+    pub const MAX_HISTORICAL_ROOTS: u8 = 255;
+
+    /// The `LEN` every pool on devnet was allocated at (ring of 100). Kept so
+    /// `migrate_pool_capacity` and its test can name the size they start from.
+    pub const LEGACY_LEN: usize = Self::LEN - (Self::MAX_HISTORICAL_ROOTS as usize - 100) * 32;
+
+    /// A PDA can only be allocated up to this many bytes by the program that
+    /// creates it, per transaction. `open_next_era` creates an era pool in one
+    /// instruction, so `LEN` must stay under it. Pinned by a test.
+    pub const MAX_SINGLE_TX_PDA_ALLOC: usize = 10_240;
+
+    /// [DEPTH-19 2026-09-06] The depth era pools are born at, and the depth
+    /// `migrate_tree_depth` lifts era-0 pools to: `MerkleTreeStateV3::MAX_DEPTH`
+    /// = 19, 524,288 leaves, sixteen times the original 32,768.
+    pub const ERA_TREE_DEPTH: u8 = super::merkle_tree_v3::MerkleTreeStateV3::MAX_DEPTH;
+
+    /// [ERAS 2026-09-06] The pool PDA for `(token_mint, denomination, era)`.
+    ///
+    /// Era 0 is seeded on the three seeds the live pools were created with, so
+    /// their addresses do not move. Era `n >= 1` appends `n.to_le_bytes()` as a
+    /// fourth seed; four seeds can never collide with three, so an era pool can
+    /// never be mistaken for the era-0 pool of the same denomination.
+    pub fn pool_pda(token_mint: &Pubkey, denomination: u64, era: u16, program_id: &Pubkey) -> (Pubkey, u8) {
+        let denom = denomination.to_le_bytes();
+        if era == 0 {
+            Pubkey::find_program_address(&[Self::SEED_PREFIX, token_mint.as_ref(), &denom], program_id)
+        } else {
+            let era_bytes = era.to_le_bytes();
+            Pubkey::find_program_address(
+                &[Self::SEED_PREFIX, token_mint.as_ref(), &denom, &era_bytes],
+                program_id,
+            )
+        }
+    }
+
+    /// [ERAS 2026-09-06] Require that `pool_key` is the PDA this pool's own
+    /// `(token_mint, denomination, bump)` and `era` derive. Replaces the
+    /// `seeds = [...]` constraint the spending and deposit instructions used to
+    /// carry: Anchor cannot express "three seeds or four depending on a field",
+    /// so the check moved into the handlers, right after account resolution and
+    /// before any state is touched. `era` comes from the tree account, which is
+    /// itself seeded on the pool key, so the two accounts vouch for each other.
+    ///
+    /// Uses the STORED bump with `create_program_address` (one syscall), not a
+    /// `find_program_address` loop.
+    pub fn require_pool_pda(&self, pool_key: &Pubkey, era: u16, program_id: &Pubkey) -> Result<()> {
+        let denom = self.denomination.to_le_bytes();
+        let bump = [self.bump];
+        let derived = if era == 0 {
+            Pubkey::create_program_address(
+                &[Self::SEED_PREFIX, self.token_mint.as_ref(), &denom, &bump],
+                program_id,
+            )
+        } else {
+            let era_bytes = era.to_le_bytes();
+            Pubkey::create_program_address(
+                &[Self::SEED_PREFIX, self.token_mint.as_ref(), &denom, &era_bytes, &bump],
+                program_id,
+            )
+        }
+        .map_err(|_| error!(crate::errors::ZkShieldedError::PoolPdaMismatch))?;
+        require!(
+            derived == *pool_key,
+            crate::errors::ZkShieldedError::PoolPdaMismatch
+        );
+        Ok(())
+    }
 
     /// VK update cooldown period in seconds (24 hours)
     pub const VK_UPDATE_COOLDOWN: i64 = 86400;
@@ -315,5 +403,79 @@ impl DenominatedPoolV3 {
             let idx = offset as usize;
             self.epoch_note_counts[idx] = self.epoch_note_counts[idx].saturating_add(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    /// [RING-255] The pool account must still be allocatable in ONE
+    /// transaction: `open_next_era` creates it with a single CPI, and a PDA
+    /// cannot grow past 10,240 bytes in one transaction. This is the number
+    /// that bounds the ring, together with the `u8` field that names it.
+    #[test]
+    fn the_pool_len_fits_a_single_transaction_allocation() {
+        assert_eq!(DenominatedPoolV3::MAX_HISTORICAL_ROOTS, 255);
+        assert_eq!(DenominatedPoolV3::LEN, 8_720, "LEN moved; re-derive LEGACY_LEN and the client offsets");
+        assert!(DenominatedPoolV3::LEN <= DenominatedPoolV3::MAX_SINGLE_TX_PDA_ALLOC);
+        assert_eq!(DenominatedPoolV3::LEGACY_LEN, 3_760, "the size every live pool was allocated at");
+    }
+
+    /// The ring really holds 255 before it wraps, and `update_root` reads the
+    /// per-pool FIELD, not the constant, so a legacy pool keeps wrapping at 100
+    /// until it is migrated.
+    #[test]
+    fn the_ring_wraps_at_the_field_not_the_constant() {
+        let mut p = DenominatedPoolV3::default();
+        p.max_historical_roots = 100;
+        for i in 0..300u64 {
+            let mut r = [0u8; 32];
+            r[..8].copy_from_slice(&(i + 1).to_le_bytes());
+            p.update_root(r);
+        }
+        assert_eq!(p.historical_roots.len(), 100);
+
+        let mut q = DenominatedPoolV3::default();
+        q.max_historical_roots = DenominatedPoolV3::MAX_HISTORICAL_ROOTS;
+        for i in 0..300u64 {
+            let mut r = [0u8; 32];
+            r[..8].copy_from_slice(&(i + 1).to_le_bytes());
+            q.update_root(r);
+        }
+        assert_eq!(q.historical_roots.len(), 255);
+        // 300 pushes (the pre-update roots 0, 1, ..., 299) into 255 slots:
+        // the first 45 (0..=44) are gone, 45 onwards remain.
+        let mut probe = [0u8; 32];
+        probe[..8].copy_from_slice(&45u64.to_le_bytes());
+        assert!(q.is_valid_root(&probe));
+        probe[..8].copy_from_slice(&44u64.to_le_bytes());
+        assert!(!q.is_valid_root(&probe));
+    }
+
+    /// Era 0 keeps the three-seed address; era n >= 1 is a different PDA and
+    /// two different eras never share one.
+    #[test]
+    fn era_pdas_are_distinct_and_era_zero_is_the_legacy_address() {
+        let pid = crate::ID;
+        let mint = Pubkey::new_unique();
+        let (legacy, _) = Pubkey::find_program_address(
+            &[DenominatedPoolV3::SEED_PREFIX, mint.as_ref(), &1_000_000_000u64.to_le_bytes()],
+            &pid,
+        );
+        let (e0, b0) = DenominatedPoolV3::pool_pda(&mint, 1_000_000_000, 0, &pid);
+        assert_eq!(e0, legacy);
+        let (e1, _) = DenominatedPoolV3::pool_pda(&mint, 1_000_000_000, 1, &pid);
+        let (e2, _) = DenominatedPoolV3::pool_pda(&mint, 1_000_000_000, 2, &pid);
+        assert_ne!(e0, e1);
+        assert_ne!(e1, e2);
+
+        let mut p = DenominatedPoolV3::default();
+        p.token_mint = mint;
+        p.denomination = 1_000_000_000;
+        p.bump = b0;
+        assert!(p.require_pool_pda(&e0, 0, &pid).is_ok());
+        assert!(p.require_pool_pda(&e0, 1, &pid).is_err(), "the era is bound into the check");
+        assert!(p.require_pool_pda(&e1, 0, &pid).is_err());
     }
 }

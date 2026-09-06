@@ -84,6 +84,21 @@
 use super::merkle_tree_v3::MerkleTreeStateV3;
 use super::poseidon_gl::{hash2, MODULUS};
 
+// MEASURED 2026-09-06 by `eras_and_depth::the_walk_costs_one_poseidon_per_level_on_deposit_twice_and_on_spend_once`
+// on the real `shield_denominated_v3` handler in litesvm, honest C6 public
+// inputs, one honest deposit per depth after `migrate_tree_depth`:
+//
+//   tree_depth 15 (4 levels): 293,511 CU
+//   tree_depth 16 (5 levels): 361,165 CU
+//   tree_depth 17 (6 levels): 428,737 CU
+//   tree_depth 18 (7 levels): 496,445 CU
+//   tree_depth 19 (8 levels): 563,987 CU
+//   => one level of the deposit fold (two `hash2`): ~67,619 CU
+//
+// So the whole deposit instruction at depth 19 is under 600,000 CU; the
+// client budget of 1,000,000 covers it with room, and the 700,000 the web app
+// sends today would too.
+
 /// The depth circuit 6 proves, after the 2026-08-29 cut.
 ///
 /// 🚨 DELIBERATELY NOT NAMED `CANONICAL_DEPTH`. That name means 15 in

@@ -622,6 +622,283 @@
       ]
     },
     {
+      "name": "init_pool_directory",
+      "docs": [
+        "Create the `PoolDirectory` of an existing era-0 pool. `margin_leaves`",
+        "of 0 selects the default. Authority-only, once per denomination."
+      ],
+      "discriminator": [
+        191,
+        250,
+        111,
+        245,
+        187,
+        207,
+        223,
+        45
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "denominated_pool"
+          ]
+        },
+        {
+          "name": "denominated_pool"
+        },
+        {
+          "name": "merkle_tree",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "directory",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  100,
+                  105,
+                  114,
+                  101,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.token_mint",
+                "account": "DenominatedPoolV3"
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool.denomination",
+                "account": "DenominatedPoolV3"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "margin_leaves",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "init_pool_era",
+      "docs": [
+        "Create era `n >= 1` of a denomination by hand (directory authority).",
+        "PDA seeds: [b\"denominated_pool_v4\", token_mint, denomination_le, era_le]."
+      ],
+      "discriminator": [
+        154,
+        229,
+        34,
+        53,
+        221,
+        23,
+        57,
+        123
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "directory"
+          ]
+        },
+        {
+          "name": "directory",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  100,
+                  105,
+                  114,
+                  101,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              },
+              {
+                "kind": "arg",
+                "path": "denomination"
+              }
+            ]
+          }
+        },
+        {
+          "name": "denominated_pool",
+          "docs": [
+            "Era `n >= 1`: FOUR seeds. Three-seed era-0 addresses cannot collide."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  100,
+                  101,
+                  110,
+                  111,
+                  109,
+                  105,
+                  110,
+                  97,
+                  116,
+                  101,
+                  100,
+                  95,
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "token_mint"
+              },
+              {
+                "kind": "arg",
+                "path": "denomination"
+              },
+              {
+                "kind": "arg",
+                "path": "era"
+              }
+            ]
+          }
+        },
+        {
+          "name": "merkle_tree",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "vk_hash",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "token_mint",
+          "type": "pubkey"
+        },
+        {
+          "name": "denomination",
+          "type": "u64"
+        },
+        {
+          "name": "epoch_delay",
+          "type": "u64"
+        },
+        {
+          "name": "era",
+          "type": "u16"
+        }
+      ]
+    },
+    {
       "name": "initialize_pool",
       "docs": [
         "Initialize a new shielded pool for a specific token",
@@ -773,6 +1050,228 @@
           "type": "pubkey"
         }
       ]
+    },
+    {
+      "name": "migrate_pool_capacity",
+      "docs": [
+        "Grow a legacy pool account to the current `LEN` and raise its root ring",
+        "from 100 to `MAX_HISTORICAL_ROOTS`. Idempotent. Authority-only."
+      ],
+      "discriminator": [
+        223,
+        165,
+        150,
+        216,
+        40,
+        125,
+        88,
+        130
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "denominated_pool"
+          ]
+        },
+        {
+          "name": "denominated_pool",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "migrate_tree_depth",
+      "docs": [
+        "Deepen a live V3 tree in place (15 -> up to 19), lifting the current",
+        "root and the newest `keep_roots` historical roots through the new empty",
+        "levels (~138,000 CU per root at four levels; the rest are dropped).",
+        "Authority-only. Clients send `new_depth - 11` siblings afterwards."
+      ],
+      "discriminator": [
+        130,
+        248,
+        167,
+        134,
+        230,
+        136,
+        96,
+        222
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "denominated_pool"
+          ]
+        },
+        {
+          "name": "denominated_pool",
+          "writable": true
+        },
+        {
+          "name": "merkle_tree",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "denominated_pool"
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "new_depth",
+          "type": "u8"
+        },
+        {
+          "name": "keep_roots",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "open_next_era",
+      "docs": [
+        "Open era n+1 once era n is within `margin_leaves` of full. Anyone may",
+        "call it; the caller pays the rent. Re-points the directory."
+      ],
+      "discriminator": [
+        225,
+        167,
+        222,
+        34,
+        19,
+        47,
+        226,
+        150
+      ],
+      "accounts": [
+        {
+          "name": "payer",
+          "docs": [
+            "Pays the rent of the new era's accounts when they do not exist yet."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "directory",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  111,
+                  108,
+                  95,
+                  100,
+                  105,
+                  114,
+                  101,
+                  99,
+                  116,
+                  111,
+                  114,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "directory.token_mint",
+                "account": "PoolDirectory"
+              },
+              {
+                "kind": "account",
+                "path": "directory.denomination",
+                "account": "PoolDirectory"
+              }
+            ]
+          }
+        },
+        {
+          "name": "active_pool"
+        },
+        {
+          "name": "active_tree",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  114,
+                  107,
+                  108,
+                  101,
+                  95,
+                  116,
+                  114,
+                  101,
+                  101,
+                  95,
+                  118,
+                  52
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "active_pool"
+              }
+            ]
+          }
+        },
+        {
+          "name": "next_pool",
+          "docs": [
+            "handler and created there by CPI when empty."
+          ],
+          "writable": true
+        },
+        {
+          "name": "next_tree",
+          "writable": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
     },
     {
       "name": "pause_normal",
@@ -1260,45 +1759,7 @@
           "docs": [
             "Denominated pool V3"
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  52
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPoolV3"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPoolV3"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "merkle_tree",
@@ -1898,45 +2359,7 @@
           "docs": [
             "Source denominated pool"
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  52
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPoolV3"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPoolV3"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "merkle_tree",
@@ -2289,45 +2712,7 @@
             "Source denominated pool, pinned to its own seeds so a foreign account",
             "cannot pose as it."
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  52
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPoolV3"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPoolV3"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "merkle_tree",
@@ -2683,45 +3068,7 @@
           "docs": [
             "Denominated pool V3"
           ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  52
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPoolV3"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPoolV3"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "merkle_tree",
@@ -2924,45 +3271,7 @@
         },
         {
           "name": "denominated_pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  52
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPoolV3"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPoolV3"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "merkle_tree",
@@ -3193,45 +3502,7 @@
         },
         {
           "name": "denominated_pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  52
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPoolV3"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPoolV3"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "merkle_tree",
@@ -3447,45 +3718,7 @@
         },
         {
           "name": "denominated_pool",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  100,
-                  101,
-                  110,
-                  111,
-                  109,
-                  105,
-                  110,
-                  97,
-                  116,
-                  101,
-                  100,
-                  95,
-                  112,
-                  111,
-                  111,
-                  108,
-                  95,
-                  118,
-                  52
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.token_mint",
-                "account": "DenominatedPoolV3"
-              },
-              {
-                "kind": "account",
-                "path": "denominated_pool.denomination",
-                "account": "DenominatedPoolV3"
-              }
-            ]
-          }
+          "writable": true
         },
         {
           "name": "merkle_tree",
@@ -3895,6 +4128,19 @@
       ]
     },
     {
+      "name": "PoolDirectory",
+      "discriminator": [
+        187,
+        123,
+        148,
+        224,
+        41,
+        39,
+        105,
+        202
+      ]
+    },
+    {
       "name": "ShieldedPool",
       "discriminator": [
         104,
@@ -4014,6 +4260,19 @@
       ]
     },
     {
+      "name": "EraOpened",
+      "discriminator": [
+        106,
+        118,
+        137,
+        92,
+        251,
+        92,
+        222,
+        26
+      ]
+    },
+    {
       "name": "LeafInserted",
       "discriminator": [
         89,
@@ -4063,6 +4322,19 @@
         46,
         35,
         110
+      ]
+    },
+    {
+      "name": "PoolCapacityMigrated",
+      "discriminator": [
+        86,
+        117,
+        119,
+        183,
+        133,
+        112,
+        135,
+        159
       ]
     },
     {
@@ -4154,6 +4426,19 @@
         106,
         178,
         6
+      ]
+    },
+    {
+      "name": "TreeDepthMigrated",
+      "discriminator": [
+        125,
+        177,
+        2,
+        233,
+        215,
+        98,
+        34,
+        24
       ]
     },
     {
@@ -4485,6 +4770,26 @@
       "code": 6062,
       "name": "RelayerRewardExceedsNote",
       "msg": "This pool's protocol fee is smaller than the relayer reward"
+    },
+    {
+      "code": 6063,
+      "name": "PoolPdaMismatch",
+      "msg": "Pool account is not the PDA its (mint, denomination, era, bump) derive"
+    },
+    {
+      "code": 6064,
+      "name": "InvalidTreeDepth",
+      "msg": "Requested tree depth must exceed the current depth and be at most 19"
+    },
+    {
+      "code": 6065,
+      "name": "EraMarginNotReached",
+      "msg": "The active pool has not reached the era margin; nothing to open"
+    },
+    {
+      "code": 6066,
+      "name": "DirectoryMismatch",
+      "msg": "Pool directory does not describe this pool"
     }
   ],
   "types": [
@@ -5251,6 +5556,50 @@
       }
     },
     {
+      "name": "EraOpened",
+      "docs": [
+        "Emitted by `open_next_era` when a new era's pool and tree exist and the",
+        "directory points at them. `opened_by` is the rent payer."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "token_mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "denomination",
+            "type": "u64"
+          },
+          {
+            "name": "era",
+            "type": "u16"
+          },
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "merkle_tree",
+            "type": "pubkey"
+          },
+          {
+            "name": "opened_by",
+            "type": "pubkey"
+          },
+          {
+            "name": "created",
+            "docs": [
+              "True when this call created the accounts; false when it only pointed",
+              "the directory at an era somebody had already created by hand."
+            ],
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
       "name": "LeafInserted",
       "docs": [
         "Universal leaf-insertion event for V3. Emitted only by",
@@ -5488,6 +5837,24 @@
               "Bump seed for PDA"
             ],
             "type": "u8"
+          },
+          {
+            "name": "era",
+            "docs": [
+              "[ERAS 2026-09-06] Which era of its (mint, denomination) this tree",
+              "belongs to. Era 0 is the pool seeded on three seeds (the pools live on",
+              "devnet today); era `n >= 1` is a pool seeded on four, the fourth being",
+              "`n.to_le_bytes()`. See `pool_v3::pool_pda`.",
+              "",
+              "TRAILING ON PURPOSE. Existing tree accounts were allocated at `LEN` with",
+              "zero padding after the serialized struct, so Borsh reads this field as",
+              "`0` on every tree that predates it: era 0, which is exactly what they",
+              "are. It could NOT have gone on the pool account: a pool whose root ring",
+              "is full serializes to exactly its old `LEN`, so a trailing field there",
+              "reads past the buffer and every instruction on that pool fails until a",
+              "migration lands."
+            ],
+            "type": "u16"
           }
         ]
       }
@@ -5624,6 +5991,88 @@
           {
             "name": "paused_at_slot",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolCapacityMigrated",
+      "docs": [
+        "Emitted by `migrate_pool_capacity`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_len",
+            "type": "u64"
+          },
+          {
+            "name": "new_len",
+            "type": "u64"
+          },
+          {
+            "name": "max_historical_roots",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "PoolDirectory",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Copied from the era-0 pool at `init_pool_directory`; gates",
+              "`init_pool_era` (the manual path). `open_next_era` needs no authority."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "token_mint",
+            "docs": [
+              "The denomination this directory serves."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "denomination",
+            "type": "u64"
+          },
+          {
+            "name": "active_era",
+            "docs": [
+              "The era whose pool takes deposits now."
+            ],
+            "type": "u16"
+          },
+          {
+            "name": "active_pool",
+            "docs": [
+              "That era's pool PDA, so a client needs one read, not a derivation."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "margin_leaves",
+            "docs": [
+              "`open_next_era` succeeds once `leaf_count + margin_leaves >= 2^depth`",
+              "on the active tree. Large enough that a keeper on an hourly schedule",
+              "opens the next era before anyone hits `MerkleTreeFull`; small enough",
+              "that rent is not spent on a pool nobody needs for a year."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }
@@ -6405,6 +6854,52 @@
           {
             "name": "timestamp",
             "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TreeDepthMigrated",
+      "docs": [
+        "Emitted by `migrate_tree_depth`. `old_root` and `new_root` are the same",
+        "tree seen at two depths; every root in the ring was lifted the same way."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "old_depth",
+            "type": "u8"
+          },
+          {
+            "name": "new_depth",
+            "type": "u8"
+          },
+          {
+            "name": "old_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "new_root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "leaf_count",
+            "type": "u64"
           }
         ]
       }

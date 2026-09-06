@@ -93,12 +93,11 @@ pub struct TransferDenominatedStarkV3<'info> {
     /// Denominated pool V3
     #[account(
         mut,
-        seeds = [
-            DenominatedPoolV3::SEED_PREFIX,
-            denominated_pool.token_mint.as_ref(),
-            &denominated_pool.denomination.to_le_bytes()
-        ],
-        bump = denominated_pool.bump,
+        // [ERAS 2026-09-06] The PDA is no longer pinned here. Era 0 has three
+        // seeds and era n >= 1 has four, and one `seeds = [...]` cannot say
+        // both, so the handler re-derives the address from the pool's own
+        // fields and the tree's `era` (`require_pool_pda`) before touching
+        // any state. Owner and discriminator are still checked by `Account`.
         constraint = denominated_pool.is_active @ ZkShieldedError::PoolNotActive,
         // ⛔ NO `is_valid_root` CONSTRAINT HERE ANY MORE, AND ITS ABSENCE IS
         // DELIBERATE. Since the C3 depth cut, `merkle_root` is the OUTPUT of the
@@ -176,6 +175,13 @@ pub fn handler(
     siblings: Vec<u64>,
     directions: Vec<u8>,
 ) -> Result<()> {
+    // [ERAS 2026-09-06] Replaces the `seeds = [...]` constraint on the pool.
+    let pool_era = ctx.accounts.merkle_tree.era;
+    ctx.accounts.denominated_pool.require_pool_pda(
+        &ctx.accounts.denominated_pool.key(),
+        pool_era,
+        ctx.program_id,
+    )?;
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.denominated_pool;
     let merkle_tree = &mut ctx.accounts.merkle_tree;

@@ -58,6 +58,21 @@
 
 use super::poseidon_gl::hash2;
 
+// MEASURED 2026-09-06 by `eras_and_depth::the_walk_costs_one_poseidon_per_level_on_deposit_twice_and_on_spend_once`
+// on the real `unshield_denominated_stark_v4` handler in litesvm, one honest
+// spend per depth after `migrate_tree_depth`:
+//
+//   tree_depth 15 (4 levels): 162,167 CU
+//   tree_depth 16 (5 levels): 189,683 CU
+//   tree_depth 17 (6 levels): 223,473 CU
+//   tree_depth 18 (7 levels): 261,765 CU
+//   tree_depth 19 (8 levels): 290,919 CU
+//   => one walked level (one `hash2`): ~32,188 CU
+//
+// A depth-19 spend is under 300,000 CU on its own; with the two verifier
+// phases in the same transaction (878,756 + 192,715) the whole thing is
+// ~1.36M, still under the 1.4M cap, but with 3% of headroom rather than 11%.
+
 /// The depth circuit 7 proves. Mirrors `CANONICAL_DEPTH` in
 /// `stark/src/air/spend.rs`.
 ///

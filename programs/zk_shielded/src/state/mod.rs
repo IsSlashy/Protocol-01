@@ -17,6 +17,9 @@ pub mod spend_root;
 /// the program must fold the remaining levels itself -- against the pool
 /// account's own `filled_subtrees`, never the caller's `new_subtrees`.
 pub mod insert_root;
+/// [ERAS 2026-09-06] One directory per (mint, denomination) naming the era
+/// that takes deposits, so a full tree is a hop, not a wall.
+pub mod pool_directory;
 pub mod nullifier_set;
 pub mod subscription_vault;
 pub mod route;
@@ -24,6 +27,7 @@ pub mod auction_escrow;
 
 pub use pool::{ShieldedPool, PoolStats, DenominatedPool, SLOTS_PER_EPOCH};
 pub use pool_v3::DenominatedPoolV3;
+pub use pool_directory::{PoolDirectory, EraOpened, TreeDepthMigrated, PoolCapacityMigrated};
 pub use merkle_tree::*;
 pub use merkle_tree_v3::{MerkleTreeStateV3, LeafInserted};
 pub use nullifier_set::{NullifierSet, NullifierBatch, NullifierRecord};

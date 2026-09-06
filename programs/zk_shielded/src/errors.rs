@@ -225,4 +225,23 @@ pub enum ZkShieldedError {
     // pool charges 500,000 and does not.
     #[msg("This pool's protocol fee is smaller than the relayer reward")]
     RelayerRewardExceedsNote,
+
+    // [ERAS / DEPTH-19 2026-09-06] Appended, so every code above keeps its
+    // number. The pool PDA is no longer pinned by an Anchor `seeds` constraint
+    // (three seeds for era 0, four for era n >= 1 cannot be expressed as one
+    // constraint); the handlers re-derive it from the pool's own fields and
+    // the tree's era, and report THIS rather than a generic seeds error.
+    #[msg("Pool account is not the PDA its (mint, denomination, era, bump) derive")]
+    PoolPdaMismatch,
+
+    #[msg("Requested tree depth must exceed the current depth and be at most 19")]
+    InvalidTreeDepth,
+
+    // `open_next_era` refuses to spend a caller's rent on a pool nobody needs
+    // yet: the active tree must be within `margin_leaves` of full.
+    #[msg("The active pool has not reached the era margin; nothing to open")]
+    EraMarginNotReached,
+
+    #[msg("Pool directory does not describe this pool")]
+    DirectoryMismatch,
 }

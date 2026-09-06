@@ -334,6 +334,53 @@ pub mod zk_shielded {
     }
 
     // -----------------------------------------------------------------------
+    // [ERAS / DEPTH-19 / RING-255 2026-09-06] A pool that never fills.
+    // -----------------------------------------------------------------------
+
+    /// Deepen a live V3 tree in place (15 -> up to 19), lifting the current
+    /// root and the newest `keep_roots` historical roots through the new empty
+    /// levels (~138,000 CU per root at four levels; the rest are dropped).
+    /// Authority-only. Clients send `new_depth - 11` siblings afterwards.
+    pub fn migrate_tree_depth(
+        ctx: Context<MigrateTreeDepth>,
+        new_depth: u8,
+        keep_roots: u8,
+    ) -> Result<()> {
+        instructions::migrate_tree_depth::handler(ctx, new_depth, keep_roots)
+    }
+
+    /// Grow a legacy pool account to the current `LEN` and raise its root ring
+    /// from 100 to `MAX_HISTORICAL_ROOTS`. Idempotent. Authority-only.
+    pub fn migrate_pool_capacity(ctx: Context<MigratePoolCapacity>) -> Result<()> {
+        instructions::migrate_pool_capacity::handler(ctx)
+    }
+
+    /// Create the `PoolDirectory` of an existing era-0 pool. `margin_leaves`
+    /// of 0 selects the default. Authority-only, once per denomination.
+    pub fn init_pool_directory(ctx: Context<InitPoolDirectory>, margin_leaves: u64) -> Result<()> {
+        instructions::init_pool_directory::handler(ctx, margin_leaves)
+    }
+
+    /// Create era `n >= 1` of a denomination by hand (directory authority).
+    /// PDA seeds: [b"denominated_pool_v4", token_mint, denomination_le, era_le].
+    pub fn init_pool_era(
+        ctx: Context<InitPoolEra>,
+        vk_hash: [u8; 32],
+        token_mint: Pubkey,
+        denomination: u64,
+        epoch_delay: u64,
+        era: u16,
+    ) -> Result<()> {
+        instructions::init_pool_era::handler(ctx, vk_hash, token_mint, denomination, epoch_delay, era)
+    }
+
+    /// Open era n+1 once era n is within `margin_leaves` of full. Anyone may
+    /// call it; the caller pays the rent. Re-points the directory.
+    pub fn open_next_era(ctx: Context<OpenNextEra>) -> Result<()> {
+        instructions::open_next_era::handler(ctx)
+    }
+
+    // -----------------------------------------------------------------------
     // V3 Denominated Pool instructions (Goldilocks Poseidon, end-to-end PQ).
     // v2 instructions stay live for the 30-day deprecation window.
     // -----------------------------------------------------------------------

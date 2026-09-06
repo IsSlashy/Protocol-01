@@ -187,12 +187,11 @@ pub struct UnshieldDenominatedStarkV4<'info> {
     // recipient's sha256 is inside the proof transcript.
     #[account(
         mut,
-        seeds = [
-            DenominatedPoolV3::SEED_PREFIX,
-            denominated_pool.token_mint.as_ref(),
-            &denominated_pool.denomination.to_le_bytes()
-        ],
-        bump = denominated_pool.bump,
+        // [ERAS 2026-09-06] The PDA is no longer pinned here. Era 0 has three
+        // seeds and era n >= 1 has four, and one `seeds = [...]` cannot say
+        // both, so the handler re-derives the address from the pool's own
+        // fields and the tree's `era` (`require_pool_pda`) before touching
+        // any state. Owner and discriminator are still checked by `Account`.
         constraint = denominated_pool.is_active @ ZkShieldedError::PoolNotActive,
         // 🚨 NO `is_valid_root` constraint here, unlike v3. The root does not
         // exist yet at this point — it is the OUTPUT of the Poseidon walk. See
@@ -262,6 +261,13 @@ pub fn handler(
     // than by a test that could rot.
     relayed: bool,
 ) -> Result<()> {
+    // [ERAS 2026-09-06] Replaces the `seeds = [...]` constraint on the pool.
+    let pool_era = ctx.accounts.merkle_tree.era;
+    ctx.accounts.denominated_pool.require_pool_pda(
+        &ctx.accounts.denominated_pool.key(),
+        pool_era,
+        ctx.program_id,
+    )?;
     let recipient_account = ctx
         .remaining_accounts
         .first()
@@ -443,13 +449,29 @@ pub fn handler(
     let token_mint = pool.token_mint;
     let denomination_bytes = pool.denomination.to_le_bytes();
     let bump = pool.bump;
-    let seeds = &[
+    // [ERAS 2026-09-06] Era n >= 1 pools sign with a fourth seed. Both seed
+    // lists are built up front so their borrows outlive the CPI; only the one
+    // matching this pool's era is handed to it.
+    let bump_bytes = [bump];
+    let era_bytes = pool_era.to_le_bytes();
+    let seeds_era0: [&[u8]; 4] = [
         DenominatedPoolV3::SEED_PREFIX,
         token_mint.as_ref(),
         denomination_bytes.as_ref(),
-        &[bump],
+        &bump_bytes,
     ];
-    let signer_seeds = &[&seeds[..]];
+    let seeds_era_n: [&[u8]; 5] = [
+        DenominatedPoolV3::SEED_PREFIX,
+        token_mint.as_ref(),
+        denomination_bytes.as_ref(),
+        &era_bytes,
+        &bump_bytes,
+    ];
+    let signer_seeds: &[&[&[u8]]] = if pool_era == 0 {
+        &[&seeds_era0[..]]
+    } else {
+        &[&seeds_era_n[..]]
+    };
 
     if is_native_sol {
         let pool_lamports = pool.to_account_info().lamports();

@@ -129,8 +129,13 @@ impl Rig {
         // A root the pool "published", derived through the SAME walk the handler
         // runs, so the honest path is reachable at all.
         let subtree_root: u64 = 0x0123_4567_89ab_cdef;
-        let siblings: Vec<u64> = vec![11, 22, 33];
-        let directions: Vec<u8> = vec![0, 1, 0];
+        // [ZK-DEPTH-11] Four walked levels on a depth-15 pool, not three. This
+        // rig was written against the depth-12 circuit and kept passing only
+        // because `target/deploy/zk_shielded.so` had not been rebuilt since
+        // 2026-08-19; the first rebuild (2026-09-06) failed every test here at
+        // `resolve_pool_root` with `WrongSiblingCount`.
+        let siblings: Vec<u64> = vec![11, 22, 33, 44];
+        let directions: Vec<u8> = vec![0, 1, 0, 1];
         let derived =
             spend_root::resolve_pool_root(subtree_root, &siblings, &directions, TREE_DEPTH).unwrap();
         let mut root32 = [0u8; 32];
@@ -185,6 +190,8 @@ impl Rig {
             depth: TREE_DEPTH,
             filled_subtrees: vec![[0u8; 32]; (TREE_DEPTH as usize) + 1],
             bump: tree_bump,
+            // [ERAS 2026-09-06] Era 0: the three-seed pool this rig derives.
+            era: 0,
         };
         let mut td = MerkleTreeStateV3::DISCRIMINATOR.to_vec();
         tree_state.serialize(&mut td).unwrap();
@@ -591,8 +598,8 @@ fn a_self_built_subtree_that_reaches_no_published_root_pays_nothing() {
     nullifier[..8].copy_from_slice(&4u64.to_le_bytes());
 
     let forged_subtree: u64 = 0xdead_beef_0000_0001;
-    let sib: Vec<u64> = vec![1, 2, 3];
-    let dir: Vec<u8> = vec![0, 0, 0];
+    let sib: Vec<u64> = vec![1, 2, 3, 4]; // [ZK-DEPTH-11] four levels
+    let dir: Vec<u8> = vec![0, 0, 0, 0];
     let derived = spend_root::resolve_pool_root(forged_subtree, &sib, &dir, TREE_DEPTH).unwrap();
     let mut forged_root = [0u8; 32];
     forged_root[..8].copy_from_slice(&derived.to_le_bytes());
@@ -622,7 +629,7 @@ fn a_published_root_cannot_be_named_over_a_path_that_does_not_reach_it() {
     let digest = subscribe_digest(&vault, DENOM / 4, 100, &[0u8; 32], &None);
     let buf = rig.plant_buffer(&rig.payer.pubkey(), 7, digest, 5, rig.subtree_root, true, true);
 
-    let bad_sib: Vec<u64> = vec![99, 22, 33];
+    let bad_sib: Vec<u64> = vec![99, 22, 33, 44]; // [ZK-DEPTH-11] four levels
     let (sr, dir) = (rig.subtree_root, rig.directions.clone());
     let ix = subscribe_ix(
         &rig, &retailer, &vault, nullifier, rig.root32, sr, &bad_sib, &dir, commitment, DENOM / 4,
@@ -907,8 +914,11 @@ fn the_wire_length_is_one_hundred_ninety_six_or_two_hundred_twenty_eight() {
         [0u8; 32], Some([0u8; 32]), &buf,
     );
     eprintln!("MEASURED wire length: None = {}, Some = {}", none.data.len(), some.data.len());
-    assert_eq!(none.data.len(), 196);
-    assert_eq!(some.data.len(), 228);
+    // [ZK-DEPTH-11] 196/228 were the three-sibling lengths; a depth-15 pool
+    // over the depth-11 circuit carries four siblings (+8) and four
+    // directions (+1). The web and mobile encoders pin the same 205/237.
+    assert_eq!(none.data.len(), 205);
+    assert_eq!(some.data.len(), 237);
 }
 
 // ---------------------------------------------------------------------------
@@ -947,6 +957,15 @@ fn v3_subscribe_ix(
     data.extend_from_slice(&[0u8; 32]); // vk_hash_subscriber
     data.extend_from_slice(&V3_STARK_COMMITMENT.to_le_bytes());
     data.push(0); // license_commitment: None
+    // [C3-D12 / ZK-DEPTH-11] The v3 handler walks the top levels too since
+    // 2026-08-30: subtree_root, siblings, directions trail the arguments.
+    data.extend_from_slice(&rig.subtree_root.to_le_bytes());
+    data.extend_from_slice(&(rig.siblings.len() as u32).to_le_bytes());
+    for s in &rig.siblings {
+        data.extend_from_slice(&s.to_le_bytes());
+    }
+    data.extend_from_slice(&(rig.directions.len() as u32).to_le_bytes());
+    data.extend_from_slice(&rig.directions);
 
     Instruction {
         program_id: rig.program,
@@ -1011,10 +1030,12 @@ fn what_the_single_proof_subscribe_costs_against_v3_in_one_vm() {
     c1_buf[8..].copy_from_slice(&V3_STARK_COMMITMENT.to_le_bytes());
     let c1_hash = solana_sha256_hasher::hashv(&[&c1_buf]).to_bytes();
 
+    // [C3-D12 / ZK-DEPTH-11] C3 attests the depth-11 SUBTREE root, not the
+    // pool root, and the depth it names is the circuit's.
     let mut c3_buf = [0u8; 24];
     c3_buf[..8].copy_from_slice(&V3_STARK_COMMITMENT.to_le_bytes());
-    c3_buf[8..16].copy_from_slice(&rig.root32[..8]);
-    c3_buf[16..24].copy_from_slice(&(TREE_DEPTH as u64).to_le_bytes());
+    c3_buf[8..16].copy_from_slice(&rig.subtree_root.to_le_bytes());
+    c3_buf[16..24].copy_from_slice(&(spend_root::SPEND_SUBTREE_DEPTH as u64).to_le_bytes());
     let c3_hash = solana_sha256_hasher::hashv(&[&c3_buf]).to_bytes();
 
     let pk = rig.payer.pubkey();
@@ -1066,7 +1087,7 @@ fn the_walk_is_what_the_new_instruction_pays_for() {
     let mut costs: Vec<(u8, u64)> = Vec::new();
     for depth in [13u8, 14, 15] {
         let mut rig = Rig::new();
-        let levels = (depth - 12) as usize;
+        let levels = (depth - spend_root::SPEND_SUBTREE_DEPTH) as usize;
         let sib: Vec<u64> = (1..=levels as u64).collect();
         let dir: Vec<u8> = vec![0; levels];
         let derived = spend_root::resolve_pool_root(rig.subtree_root, &sib, &dir, depth).unwrap();

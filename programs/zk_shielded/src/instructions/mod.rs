@@ -32,6 +32,14 @@ pub mod unshield_denominated_stark_v4;
 // The _stark variants below read a pre-verified proof buffer from
 // p01_stark_verifier and are the canonical denominated-pool entrypoints.
 pub mod resize_denominated_pool;
+// [ERAS / DEPTH-19 / RING-255 2026-09-06] A pool that never fills: deepen the
+// live trees in place, grow the root ring, and open era n+1 of a denomination
+// permissionlessly once era n is nearly full.
+pub mod migrate_tree_depth;
+pub mod migrate_pool_capacity;
+pub mod init_pool_directory;
+pub mod init_pool_era;
+pub mod open_next_era;
 // === REMOVED: subscribe_normal — its vault PDA was seeded with the subscriber's
 // wallet pubkey, so anyone could answer "does wallet W subscribe to merchant M?"
 // by re-deriving the address off-chain. A deterministic membership oracle with no
@@ -113,6 +121,11 @@ pub use shield_denominated_v3::*;
 pub use unshield_denominated_stark_v3::*;
 pub use unshield_denominated_stark_v4::*;
 pub use resize_denominated_pool::*;
+pub use migrate_tree_depth::*;
+pub use migrate_pool_capacity::*;
+pub use init_pool_directory::*;
+pub use init_pool_era::*;
+pub use open_next_era::*;
 // === REMOVED: subscribe_normal (see the module block above). ===
 // === REMOVED: cancel_normal (see the module block above). ===
 pub use claim_period::*;

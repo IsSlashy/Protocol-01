@@ -195,12 +195,11 @@ pub struct ShieldDenominatedV3<'info> {
     /// Denominated pool V3
     #[account(
         mut,
-        seeds = [
-            DenominatedPoolV3::SEED_PREFIX,
-            denominated_pool.token_mint.as_ref(),
-            &denominated_pool.denomination.to_le_bytes()
-        ],
-        bump = denominated_pool.bump,
+        // [ERAS 2026-09-06] The PDA is no longer pinned here. Era 0 has three
+        // seeds and era n >= 1 has four, and one `seeds = [...]` cannot say
+        // both, so the handler re-derives the address from the pool's own
+        // fields and the tree's `era` (`require_pool_pda`) before touching
+        // any state. Owner and discriminator are still checked by `Account`.
         constraint = denominated_pool.is_active @ ZkShieldedError::PoolNotActive
     )]
     pub denominated_pool: Account<'info, DenominatedPoolV3>,
@@ -259,10 +258,35 @@ pub fn handler(
     new_subtree_root: [u8; 32],
     new_subtrees: Vec<[u8; 32]>,
 ) -> Result<()> {
+    // [ERAS 2026-09-06] Replaces the `seeds = [...]` constraint on the pool.
+    let pool_era = ctx.accounts.merkle_tree.era;
+    ctx.accounts.denominated_pool.require_pool_pda(
+        &ctx.accounts.denominated_pool.key(),
+        pool_era,
+        ctx.program_id,
+    )?;
     let clock = Clock::get()?;
     let pool = &mut ctx.accounts.denominated_pool;
     let merkle_tree = &mut ctx.accounts.merkle_tree;
     let amount = pool.denomination;
+
+    // [ERAS 2026-09-06] Refuse a full tree BEFORE any lamport moves, and say
+    // where the next deposit goes: the directory for this denomination names
+    // the active era, and `open_next_era` opens one if it has not happened yet.
+    if merkle_tree.is_full() {
+        let (directory, _) = crate::state::pool_directory::PoolDirectory::pda(
+            &pool.token_mint,
+            pool.denomination,
+            ctx.program_id,
+        );
+        msg!(
+            "tree full ({} leaves at depth {}): read PoolDirectory {} for the active era, or call open_next_era",
+            merkle_tree.leaf_count,
+            merkle_tree.depth,
+            directory
+        );
+        return err!(ZkShieldedError::MerkleTreeFull);
+    }
 
     // Calculate protocol fee (0.3% of denomination) — fees from wallet, not
     // from note (memory: feedback_fee_not_from_note).
@@ -441,9 +465,12 @@ pub fn handler(
     )?;
 
     // The top-level subtree entries are DERIVED from the fold that just
-    // reproduced the pool root, so they overwrite whatever `new_subtrees` said
-    // there. Levels below 12 remain the client's hint: unchanged, and still
-    // unbound -- a pre-existing hole this change narrows but does not close.
+    // reproduced the pool root. [DENIAL 2026-09-06] `insert_with_root_v3` no
+    // longer writes the caller's `new_subtrees` at these levels at all, so a
+    // right-turning level keeps its completed left sibling and the next
+    // deposit on that branch folds through the truth. Levels below
+    // `INSERT_SUBTREE_DEPTH` remain the client's hint: the program neither
+    // derives nor reads them.
     for (level, value) in folded.updated_subtrees() {
         let l = *level as usize;
         if l < merkle_tree.filled_subtrees.len() {
