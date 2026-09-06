@@ -29,6 +29,12 @@ import {
   shieldV3,
   unshieldStark,
   unshieldDenominatedStarkV3,
+  prepareUnshieldV4,
+  unshieldDenominatedStarkV4,
+  whyCircuit7Cannot,
+  V4Unprovable,
+  type PrepareUnshieldV4Result,
+  type SpendProver,
   transferNoteStark as serviceTransferNoteStark,
   transferDenominatedStarkV3 as serviceTransferDenominatedStarkV3,
   splitNoteStark as serviceSplitNoteStark,
@@ -119,6 +125,21 @@ import {
 // ---------------------------------------------------------------------------
 
 export type NoteStatus = 'pending' | 'mature' | 'spent' | 'transferred' | 'imported' | 'locked';
+
+/**
+ * What `prepareUnshieldNoteV4` hands back and `unshieldNoteStarkV4` consumes:
+ * the circuit-7 proof, and the stealth material for the recipient that proof
+ * is bound to. Opaque to the screens on purpose — the only thing they do with
+ * it is pass it from one action to the other.
+ */
+export interface PreparedNoteSpendV4 {
+  noteId: string;
+  prepared: PrepareUnshieldV4Result;
+  /** Sender-side stealth material; persisted as the sweep claim before upload. */
+  stealth: ReturnType<typeof genStealth>;
+  /** `stealth.address`, base58 — the payee inside the proof transcript. */
+  stealthRecipient: string;
+}
 export type NoteSource = 'shielded' | 'received' | 'imported_backup';
 
 export interface StoredNote {
@@ -281,6 +302,41 @@ interface DenominatedPoolState {
      */
     walk: { merkleRoot: bigint; siblings: bigint[]; directions: number[] },
     emergency?: boolean,
+  ) => Promise<string>;
+  /**
+   * V4 (circuit 7) withdrawal, step 1 of 2: derive the ECDH stealth recipient
+   * and generate the ONE spend proof bound to it. Nothing is funded and nothing
+   * is uploaded; a `V4Unprovable` from here reaches the screen untouched so
+   * `routeUnshieldSpend` can fall back to the C1 + C3 pair.
+   *
+   * Two actions rather than one because circuit 7 binds sha256(recipient) into
+   * its transcript and the recipient on this surface is a stealth address the
+   * STORE derives — so the store must derive first and prove second, and the
+   * screen must be able to see the prepare fail before any lamport moves.
+   *
+   * `prove` is `generateSpendProof` from `useStarkProver()`; the hook cannot be
+   * reached from here.
+   */
+  prepareUnshieldNoteV4: (
+    noteId: string,
+    prove: SpendProver,
+    onProgress?: (step: string) => void,
+  ) => Promise<PreparedNoteSpendV4>;
+  /**
+   * V4 (circuit 7) withdrawal, step 2 of 2: stealth signer, pre-fund, jitter,
+   * persisted sweep claim, upload + `unshield_denominated_stark_v4`, mark spent,
+   * delayed sweep, crash-sweep on error — the v3 action's flow with ONE proof
+   * buffer instead of two and no `stark_commitment` on the wire.
+   *
+   * ⛔ MAY NOT FALL BACK. By the time this throws, a proof may be uploaded and
+   * the nullifier PDA initialised; a v3 retry would pay rent twice and die on
+   * the double-spend guard with the note already spent. `emergency` is not
+   * taken: v4 has no min_epoch field.
+   */
+  unshieldNoteStarkV4: (
+    noteId: string,
+    recipient: string,
+    spend: PreparedNoteSpendV4,
   ) => Promise<string>;
   /** Quantum-resistant STARK peer-to-peer transfer */
   transferNoteStark: (
@@ -2001,6 +2057,355 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
                 if (a === SWEEP_ATTEMPTS - 1) {
                   console.error(
                     `[DenomStore/V3] ❌ crash-sweep FAILED after ${SWEEP_ATTEMPTS} attempts — funds at ${stealthKp.publicKey.toBase58()} (re-run this note's unshield to recover; ephemeral is deterministically derived):`,
+                    sweepErr.message,
+                  );
+                }
+              }
+            }
+          }
+
+          set({ isLoading: false, isProving: false, progress: null, error: (err as Error).message });
+
+          scheduleLocalNotification(
+            'Unshield Failed',
+            `Failed to withdraw ${note.denomination} ${note.token}: ${(err as Error).message}`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          throw err;
+        } finally {
+          _starkOpInFlight = false;
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // V4 STARK Unshield (circuit 7 — ONE proof, no commitment on the wire)
+      // ------------------------------------------------------------------
+      //
+      // Two actions. `prepareUnshieldNoteV4` derives the stealth recipient and
+      // proves; `unshieldNoteStarkV4` funds, uploads, spends, sweeps. The split
+      // is what lets `routeUnshieldSpend` (services/denominatedPool/spendRouting.ts)
+      // fall back to the C1 + C3 pair on a `V4Unprovable` from the prepare
+      // step while nothing after it can ever fall back.
+      //
+      // Stealth signer + ECDH stealth recipient + auto-sweep + crash-sweep are
+      // the v3 action's, byte for byte. The differences:
+      //   - Pre-fund covers ONE proof buffer (non-uniform: the circuit-7 proof's
+      //     own size, ~79 KB — see `unshieldDenominatedStarkV4` for why the
+      //     uniform pipeline cannot verify circuit 7)
+      //   - 78 upload chunks instead of the pair's 148
+      //   - No `emergency` flag: v4 has no min_epoch field
+      // ------------------------------------------------------------------
+      prepareUnshieldNoteV4: async (noteId, prove, onProgress) => {
+        if (_starkOpInFlight || get().isLoading) {
+          console.warn('[DenomStore] prepareUnshieldNoteV4 ignored — another STARK op in progress');
+          throw new Error('Another shield/unshield is already in progress. Please wait.');
+        }
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+        if (note.poolVersion !== 'v3') {
+          throw new Error('prepareUnshieldNoteV4 called with non-v3 note — circuit 7 spends v3-pool notes only');
+        }
+
+        const receipt = readReceipt(note.receiptJSON);
+        const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('V3 pool config not found for this note');
+
+        // Defence in depth. The router asks this synchronously BEFORE calling
+        // here, so on the routed path this never fires; a caller that skips the
+        // router must still not prove a pre-blinding note on circuit 7.
+        const refusal = whyCircuit7Cannot(receipt);
+        if (refusal !== null) throw new V4Unprovable(refusal);
+
+        const report = (step: string) => {
+          onProgress?.(step);
+          set({ progress: step });
+        };
+
+        set({ isProving: true, error: null, progress: 'Generating stealth recipient...' });
+        try {
+          // Derive the ECDH stealth recipient FIRST: circuit 7 binds
+          // sha256(recipient) into its transcript, so the proof cannot exist
+          // before the payee does. Same derivation as the v3 action.
+          const metaAddr = await getMetaAddress();
+          const parsed = parseMetaAddress(metaAddr);
+          const stealthResult = genStealth(parsed.spendingPubKey, parsed.viewingPubKey, parsed.kemPubKey);
+          const stealthRecipient = new PublicKey(stealthResult.address);
+          console.log(`[DenomStore/V4] Stealth recipient: ${stealthRecipient.toBase58().slice(0, 12)}... (wallet hidden)`);
+
+          const connection = getConnection();
+          const prepared = await prepareUnshieldV4(receipt, stealthRecipient, pool, connection, prove, report);
+          return {
+            noteId,
+            prepared,
+            stealth: stealthResult,
+            stealthRecipient: stealthRecipient.toBase58(),
+          };
+        } finally {
+          set({ isProving: false, progress: null });
+        }
+      },
+
+      unshieldNoteStarkV4: async (noteId, recipientAddress, spend) => {
+        if (_starkOpInFlight || get().isLoading) {
+          console.warn('[DenomStore] unshieldNoteStarkV4 ignored — another STARK op in progress');
+          throw new Error('Another shield/unshield is already in progress. Please wait.');
+        }
+        if (spend.noteId !== noteId) {
+          throw new Error(
+            `unshieldNoteStarkV4: this proof was prepared for note ${spend.noteId}, not ${noteId}.`,
+          );
+        }
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+        if (note.poolVersion !== 'v3') {
+          throw new Error('unshieldNoteStarkV4 called with non-v3 note — circuit 7 spends v3-pool notes only');
+        }
+
+        const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('V3 pool config not found for this note');
+
+        // Pre-flight: STARK PDA already on-chain → already spent. The nullifier
+        // is the proof's first public input, exactly as on the pair.
+        try {
+          const preStarkNull = spend.prepared.nullifierGoldilocks;
+          if (preStarkNull !== 0n) {
+            const [prePda] = deriveNullifierPDA(
+              pool.poolPDA,
+              goldilocksNullifierToBytes(preStarkNull),
+            );
+            const preConn = getConnection();
+            const preAcct = await preConn.getAccountInfo(prePda);
+            if (preAcct !== null) {
+              set(state => ({
+                notes: state.notes.map(n =>
+                  n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n,
+                ),
+              }));
+              throw new Error('Note already spent on-chain');
+            }
+          }
+        } catch (e) {
+          if ((e as Error).message === 'Note already spent on-chain') throw e;
+          // Network glitch — fall through; the on-chain `init` constraint is
+          // still the authoritative double-spend guard.
+        }
+
+        _starkOpInFlight = true;
+        console.log(
+          `[P01_UI] ${JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'unshieldStarkV4-flow-begin',
+            noteId,
+          })}`,
+        );
+        set({ isLoading: true, isProving: false, error: null, progress: 'Preparing V4 STARK unshield...' });
+
+        let stealthKp: SolKeypair | null = null;
+        // Pre-fix address for the same operation. Held so the crash-sweep can
+        // recover an attempt that was funded before the derivation was fixed.
+        let legacyStealthKp: SolKeypair | null = null;
+
+        try {
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
+          const PK = PublicKey;
+
+          // The recipient the proof is bound to. Derived in `prepareUnshieldNoteV4`;
+          // `unshieldDenominatedStarkV4` re-checks it against the proof.
+          const stealthRecipient = new PK(spend.stealthRecipient);
+
+          // Deterministic per-note ephemeral signer (resumable on crash), keyed
+          // on the wallet's SECRET seed — see `services/privacy/ephemeralSigner.ts`.
+          const walletAddr = walletSigner?.publicKey.toBase58() || recipientAddress;
+          const unshieldV4Signers = await deriveStealthSigners(`stealth_unshield_v4_${noteId}`, walletAddr);
+          stealthKp = unshieldV4Signers.current;
+          legacyStealthKp = unshieldV4Signers.legacy;
+
+          // V4 = ONE proof buffer. Non-uniform upload, so the rent is for the
+          // proof's own size (+ the 83-byte header), not UNIFORM_PROOF_SIZE.
+          set({ progress: 'Funding ephemeral signer (V4)...' });
+          const connection = getConnection();
+          const PROOF_DATA_OFFSET_LOCAL = 83;
+          const c7Rent = await connection.getMinimumBalanceForRentExemption(
+            PROOF_DATA_OFFSET_LOCAL + spend.prepared.c7ProofResult.proofSize,
+          );
+          // 0.015 SOL margin — covers the confirmable txs + nullifier PDA rent +
+          // slippage. Relayer top-up mirrors the v3 action: the wrapper transfers
+          // FROM the stealth signer to the relayer ephemeral.
+          const settings = await import('./settingsStore').then(m => m.useSettingsStore.getState());
+          const RELAYER_TOPUP = settings.relayerV3Enabled ? 40_000_000 : 0;
+          const FEE_FUND = c7Rent + 15_000_000 + RELAYER_TOPUP;
+          console.log(
+            `[Unshield/V4] step1 pre-fund: ${(FEE_FUND / 1e9).toFixed(4)} SOL ` +
+            `(c7Rent=${(c7Rent / 1e9).toFixed(4)} for ${spend.prepared.c7ProofResult.proofSize}B proof ` +
+            `margin=0.0150 relayerTopup=${(RELAYER_TOPUP / 1e9).toFixed(3)} v3Relayer=${settings.relayerV3Enabled})`,
+          );
+
+          const fundSourcePubkey = walletSigner?.publicKey ?? (await getKeypair())?.publicKey;
+          if (fundSourcePubkey) {
+            const sourceBal = await connection.getBalance(fundSourcePubkey);
+            console.log(`[Unshield/V4] step1 source ${fundSourcePubkey.toBase58().slice(0, 8)}… bal=${(sourceBal / 1e9).toFixed(6)} SOL (need ${(FEE_FUND / 1e9).toFixed(6)})`);
+            if (sourceBal < FEE_FUND) {
+              console.error(`[Unshield/V4] step1 INSUFFICIENT BALANCE — short ${((FEE_FUND - sourceBal) / 1e9).toFixed(6)} SOL`);
+            }
+          }
+
+          if (walletSigner) {
+            const fundTx = new Transaction().add(
+              SystemProgram.transfer({ fromPubkey: walletSigner.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND }),
+            );
+            const { blockhash } = await connection.getLatestBlockhash();
+            fundTx.recentBlockhash = blockhash;
+            fundTx.feePayer = walletSigner.publicKey;
+            const signedFund = await walletSigner.signTransaction(fundTx);
+            const fundSig = await connection.sendRawTransaction(signedFund.serialize());
+            await connection.confirmTransaction(fundSig, 'confirmed');
+            console.log(`[Unshield/V4] step1 fundTx confirmed: ${fundSig.slice(0, 16)}…`);
+          } else {
+            const kp = await getKeypair();
+            if (kp) {
+              const fundTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: kp.publicKey, toPubkey: stealthKp.publicKey, lamports: FEE_FUND }),
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              fundTx.recentBlockhash = blockhash;
+              fundTx.feePayer = kp.publicKey;
+              fundTx.sign(kp);
+              const fundSig = await connection.sendRawTransaction(fundTx.serialize());
+              await connection.confirmTransaction(fundSig, 'confirmed');
+              console.log(`[Unshield/V4] step1 fundTx confirmed: ${fundSig.slice(0, 16)}…`);
+            }
+          }
+          const stealthBalAfterFund = await connection.getBalance(stealthKp.publicKey);
+          console.log(`[Unshield/V4] step1 stealth ${stealthKp.publicKey.toBase58().slice(0, 8)}… funded bal=${(stealthBalAfterFund / 1e9).toFixed(6)} SOL`);
+
+          // Timing jitter
+          const jitter = 1000 + Math.floor(Math.random() * 2000);
+          set({ progress: 'Waiting (timing privacy)...' });
+          await new Promise(r => setTimeout(r, jitter));
+
+          // Persist the sender-side stealth material BEFORE submitting — same
+          // reason as the v3 path: the ephemeral inside it appears in no
+          // instruction, so this record is the only thing standing between a
+          // process death and a lost denomination.
+          {
+            const rec = buildPendingStealthSweep({
+              noteId,
+              poolPDA: pool.poolPDA.toBase58(),
+              destination: recipientAddress,
+              stealth: spend.stealth,
+            });
+            set(state => ({
+              pendingStealthSweeps: [
+                ...state.pendingStealthSweeps.filter(r => r.noteId !== noteId),
+                rec,
+              ],
+            }));
+          }
+
+          // V4 unshield — service handles upload + verify + ix + buffer close.
+          // ⛔ NOTHING FROM HERE ON MAY FALL BACK TO THE PAIR.
+          const sig = await unshieldDenominatedStarkV4(
+            pool, stealthRecipient, spend.prepared,
+            (step) => {
+              const proving = step.includes('proof') || step.includes('Proof') || step.includes('STARK') || step.includes('circuit-7');
+              set({ progress: step, isProving: proving });
+            },
+            undefined,
+            stealthKp,
+          );
+
+          // Mark spent immediately so background sweep can't re-trigger
+          set(state => ({
+            isProving: false,
+            progress: 'Sweeping to wallet...',
+            notes: state.notes.map(n =>
+              n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: sig } : n
+            ),
+          }));
+
+          // Sweep the stealth recipient. Same delay as the v3 action, for the
+          // same reason: the claim is persisted, so a failure here keeps a
+          // retryable record, and `sweepStealthRecipient(noteId, elsewhere)`
+          // can send the funds somewhere other than the depositing wallet.
+          try {
+            const sweepDelay = 3000 + Math.floor(Math.random() * 4000);
+            set({ progress: 'Sweeping to wallet (delayed)...' });
+            await new Promise(r => setTimeout(r, sweepDelay));
+
+            await get().sweepStealthRecipient(noteId);
+
+            // Drain leftover from signer back to wallet
+            const signerBal = await connection.getBalance(stealthKp.publicKey);
+            if (signerBal > 5000) {
+              const drainTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: stealthKp.publicKey, toPubkey: new PK(recipientAddress), lamports: signerBal - 5000 }),
+              );
+              const { blockhash } = await connection.getLatestBlockhash();
+              drainTx.recentBlockhash = blockhash;
+              drainTx.feePayer = stealthKp.publicKey;
+              drainTx.sign(stealthKp);
+              await connection.sendRawTransaction(drainTx.serialize()).then(s => connection.confirmTransaction(s, 'confirmed'));
+            }
+          } catch (sweepErr: any) {
+            // Only the signer drain can throw now; the recipient sweep records
+            // its failure and keeps the claim.
+            console.error('[DenomStore/V4] signer drain failed (claim persisted):', sweepErr.message);
+          }
+
+          set({ isLoading: false, isProving: false, progress: null });
+
+          useWalletStore.getState().refreshBalance();
+          setTimeout(() => useWalletStore.getState().refreshTransactions(), 5000);
+
+          scheduleLocalNotification(
+            'Unshield Confirmed',
+            `${note.denomination} ${note.token} withdrawn from privacy pool`,
+            { category: 'transaction', token: note.token, amount: String(note.denomination), channelId: 'transactions' },
+          ).catch(() => {});
+
+          return sig;
+        } catch (err) {
+          console.error('[DenomPool/V4] STARK unshield error:', err);
+
+          // Crash-sweep — recover ephemeral signer balance. Same retry loop as
+          // the v3 action: in-flight upload TXs keep draining the ephemeral
+          // after a mid-batch failure, so re-read the balance each attempt.
+          if (stealthKp) {
+            const connection = getConnection();
+            await sweepLegacyStealth(connection, legacyStealthKp, stealthKp.publicKey);
+            const FEE_RESERVE = 5000;
+            const SWEEP_ATTEMPTS = 5;
+            let swept = false;
+            for (let a = 0; a < SWEEP_ATTEMPTS && !swept; a++) {
+              try {
+                if (a > 0) await new Promise(r => setTimeout(r, 2000));
+                const stealthBal = await connection.getBalance(stealthKp.publicKey);
+                if (stealthBal <= FEE_RESERVE) { swept = true; break; } // nothing to recover
+                const sweepAmount = stealthBal - FEE_RESERVE;
+                const sweepTx = new Transaction().add(
+                  SystemProgram.transfer({
+                    fromPubkey: stealthKp.publicKey,
+                    toPubkey: new PublicKey(recipientAddress),
+                    lamports: sweepAmount,
+                  }),
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                sweepTx.recentBlockhash = blockhash;
+                sweepTx.feePayer = stealthKp.publicKey;
+                sweepTx.sign(stealthKp);
+                const sweepSig = await connection.sendRawTransaction(sweepTx.serialize());
+                await connection.confirmTransaction(sweepSig, 'confirmed');
+                console.log(`[DenomStore/V4] 🛟 crash-sweep: ${(sweepAmount / 1e9).toFixed(4)} SOL recovered (attempt ${a + 1})`);
+                swept = true;
+              } catch (sweepErr: any) {
+                if (a === SWEEP_ATTEMPTS - 1) {
+                  console.error(
+                    `[DenomStore/V4] ❌ crash-sweep FAILED after ${SWEEP_ATTEMPTS} attempts — funds at ${stealthKp.publicKey.toBase58()} (re-run this note's unshield to recover; ephemeral is deterministically derived):`,
                     sweepErr.message,
                   );
                 }

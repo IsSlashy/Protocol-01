@@ -40,6 +40,7 @@ import {
   goldilocksToLeBytes32,
   C3_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
+import { routeUnshieldSpend } from '@/services/denominatedPool/spendRouting';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
 import { getConnection } from '@/services/solana/connection';
@@ -64,6 +65,7 @@ export default function DenominatedUnshieldScreen() {
   const {
     notes, isLoading, isProving, error, progress,
     unshieldNoteStark, unshieldNoteStarkV3, refreshNoteStatuses, resetOperationState,
+    prepareUnshieldNoteV4, unshieldNoteStarkV4,
   } = useDenominatedPoolStore();
 
   const { publicKey: walletPublicKey } = useWalletStore();
@@ -71,6 +73,7 @@ export default function DenominatedUnshieldScreen() {
     isReady: starkReady,
     generatePoolCommitmentProof,
     generateMerklePathProof,
+    generateSpendProof,
   } = useStarkProver();
 
   const [selectedNote, setSelectedNote] = useState<StoredNote | null>(null);
@@ -168,11 +171,25 @@ export default function DenominatedUnshieldScreen() {
         const receipt = receiptFromJSON(vaultDecrypt(selectedNote.receiptJSON));
 
         if (selectedNote.poolVersion === 'v3') {
+          const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === selectedNote.poolPDA);
+          if (!pool) throw new Error('V3 pool config not found for this note');
+
+          // ── ROUTE: CIRCUIT 7, OR THE C1 + C3 PAIR ───────────────────────
+          //
+          // THE ROUTE IS PER NOTE, NOT A MIGRATION. `routeUnshieldSpend`
+          // (services/denominatedPool/spendRouting.ts) asks `whyCircuit7Cannot`
+          // synchronously first, then tries the circuit-7 prepare, and falls
+          // back to the pair below ONLY on `V4Unprovable`. Nothing after the
+          // prepare falls back. The pair stays reachable indefinitely: a note
+          // whose blinding is a real epoch can be spent nowhere else, and a note
+          // whose root aged out of the pool's ring still needs the v3 rebuild.
+          //
+          // The pair path is byte for byte what this screen ran before circuit
+          // 7 existed, wrapped as the fallback closure.
+          const spendPair = async (): Promise<string> => {
           // V3 unshield = C1 (pool_commitment) + C3 (merkle_path) proofs
           // submitted sequentially. The StarkProver is single-threaded
           // (one WebView) — DO NOT use Promise.all here.
-          const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === selectedNote.poolPDA);
-          if (!pool) throw new Error('V3 pool config not found for this note');
 
           // C1 — pool commitment proof (same publicInputs format as v2).
           const c1Result = await generatePoolCommitmentProof(
@@ -293,6 +310,19 @@ export default function DenominatedUnshieldScreen() {
             c3Walk,
             emergency,
           );
+          };
+
+          const routed = await routeUnshieldSpend({
+            receipt,
+            // Step 1: stealth recipient + ONE circuit-7 proof. Nothing funded.
+            prepareV4: () => prepareUnshieldNoteV4(selectedNote.id, generateSpendProof),
+            // Step 2: fund, upload, spend, sweep. `emergency` does not appear:
+            // v4 has no min_epoch field.
+            spendV4: (prepared) => unshieldNoteStarkV4(selectedNote.id, finalRecipient, prepared),
+            spendPair,
+          });
+          console.log(`[Unshield] note ${selectedNote.id.slice(0, 8)}… spent via ${routed.version}`);
+          return routed.txSig;
         }
 
         // v2 path — single STARK proof (pool_commitment).
@@ -333,7 +363,7 @@ export default function DenominatedUnshieldScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [selectedNote, recipient, unshieldNoteStark, unshieldNoteStarkV3, starkReady, generatePoolCommitmentProof, generateMerklePathProof, router, t, submitting]);
+  }, [selectedNote, recipient, unshieldNoteStark, unshieldNoteStarkV3, prepareUnshieldNoteV4, unshieldNoteStarkV4, starkReady, generatePoolCommitmentProof, generateMerklePathProof, generateSpendProof, router, t, submitting]);
 
   const handleUnshield = useCallback(() => {
     if (emergencyToggle) {

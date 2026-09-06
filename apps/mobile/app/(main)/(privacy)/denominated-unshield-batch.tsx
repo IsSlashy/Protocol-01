@@ -43,6 +43,7 @@ import {
   buildMerkleProofFromLeavesV3,
   C3_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
+import { routeUnshieldSpend } from '@/services/denominatedPool/spendRouting';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
 import { getConnection } from '@/services/solana/connection';
@@ -58,12 +59,15 @@ export default function DenominatedUnshieldBatchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const { notes, unshieldNoteStark, unshieldNoteStarkV3 } = useDenominatedPoolStore();
+  const {
+    notes, unshieldNoteStark, unshieldNoteStarkV3, prepareUnshieldNoteV4, unshieldNoteStarkV4,
+  } = useDenominatedPoolStore();
   const { publicKey: walletPublicKey } = useWalletStore();
   const {
     isReady: starkReady,
     generatePoolCommitmentProof,
     generateMerklePathProof,
+    generateSpendProof,
   } = useStarkProver();
 
   const selectedIds = useBatchUnshieldStore((s) => s.selectedIds);
@@ -167,9 +171,16 @@ export default function DenominatedUnshieldBatchScreen() {
 
           let sig: string;
           if (note.poolVersion === 'v3') {
-            // V3: C1 + C3 sequentially (StarkProver is single-threaded).
             const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
             if (!pool) throw new Error('V3 pool config not found');
+
+            // ── ROUTE: CIRCUIT 7, OR THE C1 + C3 PAIR ─────────────────────
+            // Same decision as denominated-unshield.tsx, same helper: the pair
+            // below is reached ONLY on `V4Unprovable` from the prepare step,
+            // and nothing after the prepare falls back. The pair path is byte
+            // for byte what this screen ran before circuit 7, as the closure.
+            const spendPair = async (): Promise<string> => {
+            // V3: C1 + C3 sequentially (StarkProver is single-threaded).
 
             const c1Result = await generatePoolCommitmentProof(
               receipt.nullifierPreimage.toString(),
@@ -217,7 +228,7 @@ export default function DenominatedUnshieldBatchScreen() {
               progress: t('privacy.batchNoteUnshielding'),
             });
 
-            sig = await unshieldNoteStarkV3(
+            return unshieldNoteStarkV3(
               id,
               resolved.addr,
               {
@@ -233,6 +244,22 @@ export default function DenominatedUnshieldBatchScreen() {
               c3Walk,
               false,
             );
+            };
+
+            const routed = await routeUnshieldSpend({
+              receipt,
+              prepareV4: () => prepareUnshieldNoteV4(id, generateSpendProof),
+              spendV4: (prepared) => {
+                updateNote(id, {
+                  status: 'unshielding',
+                  progress: t('privacy.batchNoteUnshielding'),
+                });
+                return unshieldNoteStarkV4(id, resolved.addr, prepared);
+              },
+              spendPair,
+            });
+            console.log(`[BatchUnshield] note ${id.slice(0, 8)}… spent via ${routed.version}`);
+            sig = routed.txSig;
           } else {
             const starkResult = await generatePoolCommitmentProof(
               receipt.nullifierPreimage.toString(),
@@ -285,8 +312,11 @@ export default function DenominatedUnshieldBatchScreen() {
       selectedIds,
       generatePoolCommitmentProof,
       generateMerklePathProof,
+      generateSpendProof,
       unshieldNoteStark,
       unshieldNoteStarkV3,
+      prepareUnshieldNoteV4,
+      unshieldNoteStarkV4,
       t,
       beginRun,
       advance,

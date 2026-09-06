@@ -1,25 +1,22 @@
 /**
- * MOBILE's v4 spend instruction — pinned independently of the two other twins.
+ * MOBILE's v4 spend — the instruction, pinned independently of the two other
+ * twins, and the prepare step that feeds it.
  *
- * ⛔ MOBILE DOES NOT SPEND ON v4 YET, AND THIS TEST DOES NOT SAY IT DOES. Only
- * the pure pieces are ported: the instruction layout and the recipient-hash
- * limbs. `stores/denominatedPoolStore.ts` still drives a C1 + C3 spend, which
- * PUBLISHES the note commitment. The cutover is blocked on a measurement nobody
- * has taken. NOT the one this header used to name: "on-device proving already
- * exceeds 180 s for the lighter v3 pair" was RETRACTED the evening it was
- * written (memory/measured-on-device-proving-exceeds-180s-2026-08-03.md, whose
- * first section is titled "SECTION 1 BELOW IS WRONG"). The real device figure
- * is C3 = 1,482 ms. The 180 s was a WebView HANG.
+ * ✅ MOBILE SPENDS v3-POOL NOTES ON v4 SINCE 2026-09-06. `stores/
+ * denominatedPoolStore.ts` (`prepareUnshieldNoteV4` + `unshieldNoteStarkV4`)
+ * drives a circuit-7 spend through `prepareUnshieldV4` / `unshieldDenominatedStarkV4`
+ * below, and both unshield screens route to it through
+ * `services/denominatedPool/spendRouting.ts`. The C1 + C3 pair — which
+ * PUBLISHES the note commitment — is the per-note fallback, not the default.
  *
- * The blocker is upstream of any timing: mobile's WebView bridge has no spend
- * entry point, so the device cannot produce a circuit-7 proof at all. And C7's
- * proving time is high variance anyway - 1,881 / 3,708 / 10,359 ms on an
- * identical witness (PoW grind), so it must be reported as a median with its
- * spread, never as a single number.
- *
- * Pinning the builder now is still worth it: when the store does cut over, the
- * wire format it will use is already fixed and already checked against the
- * Rust, instead of being written and shipped in the same step.
+ * ⚠️ WHAT THE CUTOVER SHIPPED WITHOUT: the on-device circuit-7 timing. C7's
+ * proving time is high variance in Node - 1,881 / 3,708 / 10,359 ms on an
+ * identical witness (PoW grind) - and no phone number exists at all. The
+ * "180 s" that used to circulate was a WebView HANG, retracted the evening it
+ * was written (memory/measured-on-device-proving-exceeds-180s-2026-08-03.md).
+ * A live v4 withdrawal from this app has not been executed on a device or on
+ * devnet either. The `prepareUnshieldV4` describe below pins what the prepare
+ * REFUSES and what it hands the prover; it says nothing about a proof landing.
  *
  * ⛔ NOT REDUNDANT WITH apps/web's copy, and the reason is measured history.
  * On 2026-08-21 the extension and the mobile app were found shipping a prover
@@ -55,14 +52,26 @@
  * program. Do not read this suite as a gate on the proof.
  */
 
-import { PublicKey, SystemProgram } from '@solana/web3.js';
+import { PublicKey, SystemProgram, type Connection } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildUnshieldDenominatedStarkV4Ix,
+  buildMerkleProofFromLeavesV3,
+  goldilocksToLeBytes32,
+  prepareUnshieldV4,
   recipientHashLimbs,
+  whyCircuit7Cannot,
+  C7_SUBTREE_DEPTH,
+  LEGACY_BLINDING_CEILING,
+  MERKLE_DEPTH,
+  V4Unprovable,
+  type PoolConfig,
+  type ShieldReceipt,
+  type SpendProver,
 } from './index';
+import { SPEND_SUBTREE_DEPTH } from '../stark/spendWitness';
 
 const PAYER = new PublicKey('7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU');
 const RECIPIENT = new PublicKey('9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM');
@@ -265,5 +274,199 @@ describe('mobile: recipientHashLimbs', () => {
       const limbs = recipientHashLimbs(key);
       for (let j = 0; j < 4; j++) expect(limbs[j]).toBe(digest.readBigUInt64LE(j * 8));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The prepare step — what it refuses, and what it hands the prover.
+//
+// No RPC and no WASM: the connection is a stub whose signature scan is empty
+// (so the note sits at leaf 0 of an otherwise-empty tree and the builder's
+// root is deterministic), and the prover is a closure that answers with
+// whatever public inputs the test wants circuit 7 to have "published".
+// ---------------------------------------------------------------------------
+
+const GOLDILOCKS_P = (1n << 64n) - (1n << 32n) + 1n;
+
+const POOL_CONFIG = {
+  token: 'SOL',
+  tokenMint: SystemProgram.programId,
+  denomination: 1,
+  decimals: 9,
+  denominationAtomic: 1_000_000_000n,
+  poolPDA: POOL,
+  treePDA: TREE,
+  version: 'v3',
+} as unknown as PoolConfig;
+
+/** A PRF-blinded receipt at leaf 0. `depositEpoch` is the blinding. */
+const RECEIPT: ShieldReceipt = {
+  secret: 22n,
+  nullifierPreimage: 11n,
+  depositEpoch: 7284991002338477113n,
+  tokenMint: 0n,
+  commitment: 0xdeadbeefcafebaben,
+  leafIndex: 0,
+  denomination: 1_000_000_000n,
+  pool: POOL.toBase58(),
+  token: 'SOL',
+  denominationHuman: 1,
+  shieldedAt: 0,
+};
+
+/** The root the builder produces for a tree holding nothing but leaf 0. */
+const EMPTY_TREE_ROOT = buildMerkleProofFromLeavesV3({ leavesByIndex: [], targetLeafIndex: 0 }).root;
+
+/** A `DenominatedPool` account whose current root is `root` and whose ring is empty. */
+function poolAccountBytes(root: bigint): Buffer {
+  const buf = Buffer.alloc(183);
+  Buffer.from(goldilocksToLeBytes32(root)).copy(buf, 88);
+  buf.writeUInt32LE(0, 178);
+  buf[182] = 100;
+  return buf;
+}
+
+function stubConnection(poolAccount: Buffer | null): Connection {
+  return {
+    getSignaturesForAddress: async () => [],
+    getTransaction: async () => null,
+    getAccountInfo: async () => (poolAccount ? { data: poolAccount } : null),
+  } as unknown as Connection;
+}
+
+/** A prover that publishes exactly what circuit 7 publishes, unless told otherwise. */
+function stubProver(over: {
+  nullifier?: bigint;
+  felts?: number;
+  limbTamper?: number;
+} = {}): { prove: SpendProver; calls: Parameters<SpendProver>[] } {
+  const calls: Parameters<SpendProver>[] = [];
+  const prove: SpendProver = async (...args) => {
+    calls.push(args);
+    const rh = args[6].map((s) => BigInt(s));
+    if (over.limbTamper !== undefined) rh[over.limbTamper] = rh[over.limbTamper] ^ 1n;
+    const publicInputs = [over.nullifier ?? 0x1122334455667788n, EMPTY_TREE_ROOT, ...rh].map(String);
+    return {
+      proofHex: 'ab'.repeat(64),
+      publicInputs: over.felts === undefined ? publicInputs : publicInputs.slice(0, over.felts),
+      proofSize: 64,
+    };
+  };
+  return { prove, calls };
+}
+
+describe('mobile: whyCircuit7Cannot', () => {
+  it('refuses a note whose third input is a real epoch, and says why', () => {
+    const why = whyCircuit7Cannot({ depositEpoch: 67838n });
+    expect(why).toMatch(/circuit 7 needs at least/);
+    expect(why).toMatch(/predates commitment blinding/);
+    expect(why).toContain('67838');
+  });
+
+  it('admits a PRF-blinded note', () => {
+    expect(whyCircuit7Cannot({ depositEpoch: RECEIPT.depositEpoch })).toBeNull();
+  });
+
+  it('puts the threshold where the two populations actually are', () => {
+    expect(LEGACY_BLINDING_CEILING).toBe(2n ** 32n);
+    expect(67838n).toBeLessThan(LEGACY_BLINDING_CEILING); // every real epoch
+    expect(LEGACY_BLINDING_CEILING).toBeLessThan(2n ** 63n); // every PRF draw's range
+    expect(whyCircuit7Cannot({ depositEpoch: LEGACY_BLINDING_CEILING })).toBeNull();
+    expect(whyCircuit7Cannot({ depositEpoch: LEGACY_BLINDING_CEILING - 1n })).not.toBeNull();
+  });
+});
+
+describe('mobile: prepareUnshieldV4', () => {
+  it('hands the prover exactly the circuit depth, and keeps the rest for the chain', async () => {
+    const { prove, calls } = stubProver();
+    const prepared = await prepareUnshieldV4(
+      RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(poolAccountBytes(EMPTY_TREE_ROOT)), prove,
+    );
+    expect(calls).toHaveLength(1);
+    const [np, secret, blinding, mint, pathElements, pathIndices, recipientHash] = calls[0];
+    expect(np).toBe('11');
+    expect(secret).toBe('22');
+    // The commitment's third input travels as the blinding — the same field
+    // the pair sends to C1 as `depositEpoch`.
+    expect(blinding).toBe(RECEIPT.depositEpoch.toString());
+    expect(mint).toBe('0');
+    // ⛔ 11, NOT 12 and NOT 15. The two depths are declared twice on purpose
+    // (index.ts and spendWitness.ts); this is the tie.
+    expect(C7_SUBTREE_DEPTH).toBe(SPEND_SUBTREE_DEPTH);
+    expect(pathElements).toHaveLength(C7_SUBTREE_DEPTH);
+    expect(pathIndices).toHaveLength(C7_SUBTREE_DEPTH);
+    expect(recipientHash.map(BigInt)).toEqual(recipientHashLimbs(RECIPIENT));
+    // The levels above the circuit are walked on chain.
+    expect(prepared.siblings).toHaveLength(MERKLE_DEPTH - C7_SUBTREE_DEPTH);
+    expect(prepared.directions).toHaveLength(MERKLE_DEPTH - C7_SUBTREE_DEPTH);
+    expect(prepared.merkleRoot).toBe(EMPTY_TREE_ROOT);
+    expect(prepared.subtreeRoot).toBe(EMPTY_TREE_ROOT);
+    expect(prepared.nullifierGoldilocks).toBe(0x1122334455667788n);
+    expect(prepared.recipient.equals(RECIPIENT)).toBe(true);
+    // No commitment travels with the result. Its absence is the property.
+    expect(Object.keys(prepared)).not.toContain('starkCommitment');
+  });
+
+  it('is V4Unprovable — not Error — when the rebuilt root is not in the ring, before proving', async () => {
+    const { prove, calls } = stubProver();
+    const someOtherRoot = 0x99aabbccddeeff00n;
+    const err = await prepareUnshieldV4(
+      RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(poolAccountBytes(someOtherRoot)), prove,
+    ).then(
+      () => { throw new Error('the prepare did NOT refuse'); },
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(V4Unprovable);
+    expect((err as Error).message).toMatch(/PRE-FLIGHT FAIL/);
+    // Nothing proved, so nothing to upload: the refusal is free.
+    expect(calls).toHaveLength(0);
+  });
+
+  it('skips the pre-flight when the pool account cannot be read, like the twins', async () => {
+    const { prove } = stubProver();
+    await expect(
+      prepareUnshieldV4(RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(null), prove),
+    ).resolves.toBeDefined();
+  });
+
+  // ⛔ THE THREE BELOW FAIL CLOSED. "The prover published 5 felts" is a defect
+  // to surface, not a reason to republish the commitment on the pair.
+  it('a wrong felt count is a plain Error, never V4Unprovable', async () => {
+    const { prove } = stubProver({ felts: 5 });
+    const err = await prepareUnshieldV4(RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(null), prove)
+      .then(() => { throw new Error('did not throw'); }, (e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(V4Unprovable);
+    expect((err as Error).message).toMatch(/exactly 6 felts, got 5/);
+  });
+
+  it('a transcript bound to another payee is a plain Error, never V4Unprovable', async () => {
+    const { prove } = stubProver({ limbTamper: 2 });
+    const err = await prepareUnshieldV4(RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(null), prove)
+      .then(() => { throw new Error('did not throw'); }, (e: unknown) => e);
+    expect(err).not.toBeInstanceOf(V4Unprovable);
+    expect((err as Error).message).toMatch(/recipient hash that does not match .* at limb 2/);
+  });
+
+  it('a non-canonical nullifier is a plain Error, never V4Unprovable', async () => {
+    // The chain refuses any nullifier >= p: below 2**32 - 1 every value had a
+    // second encoding n + p seeding a distinct nullifier PDA.
+    const { prove } = stubProver({ nullifier: GOLDILOCKS_P });
+    const err = await prepareUnshieldV4(RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(null), prove)
+      .then(() => { throw new Error('did not throw'); }, (e: unknown) => e);
+    expect(err).not.toBeInstanceOf(V4Unprovable);
+    expect((err as Error).message).toMatch(/non-canonical nullifier/);
+    // And the boundary itself is accepted: p - 1 is the largest canonical felt.
+    const ok = stubProver({ nullifier: GOLDILOCKS_P - 1n });
+    await expect(
+      prepareUnshieldV4(RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(null), ok.prove),
+    ).resolves.toMatchObject({ nullifierGoldilocks: GOLDILOCKS_P - 1n });
+  });
+
+  it('reports progress, so a two-minute proof is not a frozen screen', async () => {
+    const steps: string[] = [];
+    const { prove } = stubProver();
+    await prepareUnshieldV4(RECEIPT, RECIPIENT, POOL_CONFIG, stubConnection(null), prove, (s) => steps.push(s));
+    expect(steps.join(' | ')).toMatch(/Proving ownership and membership in one trace/);
   });
 });

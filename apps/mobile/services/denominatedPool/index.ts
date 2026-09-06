@@ -3042,7 +3042,7 @@ function buildShieldDenominatedV3Ix(
  * would require manual deserialization for marginal privacy gain.
  */
 // ===========================================================================
-// V4 SPEND — the instruction, and nothing that drives it
+// V4 SPEND — circuit 7, and everything that drives it on this surface
 // ===========================================================================
 //
 // v3 spends on a C1 + C3 pair tied together by `stark_commitment`, PUBLISHED IN
@@ -3050,81 +3050,66 @@ function buildShieldDenominatedV3Ix(
 // the deposit events walks back to the deposit that funded it. C7 proves both
 // halves in one trace and the commitment never reaches the instruction.
 //
-// ⛔ ONLY THE PURE PIECES ARE HERE. `prepareUnshieldV4` / `unshieldDenominatedStarkV4`
-// exist on apps/web and apps/extension and are NOT ported, on purpose:
+// ✅ MOBILE ROUTES v3-POOL WITHDRAWALS TO CIRCUIT 7 (cut over 2026-09-06). The
+// pieces, and where each lives:
 //
-//   - mobile's spend is driven by `stores/denominatedPoolStore.ts`, which proves
-//     C1 and C3 itself and passes the results down. Cutting that over puts
-//     unexercised code on a fund path in a shipping app.
+//   - `whyCircuit7Cannot` / `V4Unprovable` / `prepareUnshieldV4` /
+//     `unshieldDenominatedStarkV4` — below, ported from the extension twin
+//     (apps/extension/src/shared/services/denominatedPool.ts). One difference
+//     is structural, not cosmetic: the prover on this surface is a WebView
+//     bridge reached through a React context hook (`useStarkProver()`), not an
+//     importable singleton, so `prepareUnshieldV4` takes the prove function as
+//     a parameter (`SpendProver`) exactly the way the screens already pass C1
+//     and C3 results down.
+//   - `routeUnshieldSpend` — ./spendRouting.ts. The allow-list decision, pure
+//     and Node-testable: whyCircuit7Cannot(receipt) synchronously FIRST; then
+//     try prepare; the catch falls back to the C1 + C3 pair ONLY on
+//     `err instanceof V4Unprovable` and rethrows everything else. NOTHING
+//     after the prepare may fall back — once the proof is uploaded and the
+//     nullifier PDA initialised, a v3 retry pays rent twice and dies on the
+//     double-spend guard with the note already spent.
+//   - `prepareUnshieldNoteV4` + `unshieldNoteStarkV4` — stores/denominatedPoolStore.ts.
+//     Two actions, not one, because circuit 7 binds sha256(recipient) into the
+//     transcript and the recipient on this surface is an ECDH stealth address
+//     the STORE derives. The v3 flow proved first and derived the recipient
+//     later; v4 must derive first, prove second, and the screen has to see a
+//     V4Unprovable from the prepare step before any lamport moves. Stealth
+//     signer, pre-fund, jitter, persisted sweep claim, mark-spent-immediately,
+//     delayed sweep and crash-sweep are the v3 action's, byte for byte.
+//   - Both callers route: denominated-unshield.tsx AND
+//     denominated-unshield-batch.tsx. The pair path they used to run is kept
+//     as the fallback, unchanged.
 //
-//   - and it is blocked on a measurement nobody has taken. NOT THE ONE THIS
-//     COMMENT USED TO NAME. It said on-device proving "already exceeds 180 s
-//     for the LIGHTER v3 pair". That figure was RETRACTED the evening it was
-//     written: memory/measured-on-device-proving-exceeds-180s-2026-08-03.md
-//     opens with "SECTION 1 BELOW IS WRONG" and records the real device
-//     number - C3 = 1,482 ms on 0019235AU004508, bridge 64 ms. The 180 s was a
-//     WebView HANG, not latency, and a hang and a slowdown are fixed in
-//     OPPOSITE directions. The retraction lived only in memory, so this
-//     comment kept re-teaching the wrong number to everyone who read it.
+// 🚨 WHAT IS STILL UNMEASURED: how long circuit 7 takes ON A PHONE. The cutover
+// shipped WITHOUT that number, by the owner's decision on 2026-09-06, and the
+// number is still owed. Everything measured so far is Node on a desktop
+// (2026-08-27: 1,881 / 3,708 / 10,359 ms on an identical witness — the PoW
+// grind is geometrically distributed, so only a median with its spread means
+// anything). The single device datapoint in this repository (C3 = 1,482 ms on
+// 0019235AU004508, 2026-08-03) was taken on a circuit and a blob the verifier
+// no longer accepts, so it is an anecdote and not a correction factor. The
+// 180 s figure that used to circulate here was a WebView HANG, retracted the
+// evening it was written (memory/measured-on-device-proving-exceeds-180s-2026-08-03.md).
 //
-//     What is genuinely unmeasured, measured 2026-08-27 in Node: C7's proving
-//     time is HIGH VARIANCE - 1,881 / 3,708 / 10,359 ms across three
-//     consecutive runs on an IDENTICAL witness, a 5.5x spread, because the
-//     STARK's proof-of-work grind is geometrically distributed. A single
-//     timing proves nothing in either direction; the honest number is a median
-//     over many runs, published with its spread.
-//
-//     THE BLOCKER THAT SAT UPSTREAM OF THE TIMING IS CLOSED (2026-08-27).
-//     mobile's WebView bridge had no spend entry point at any of its three
-//     layers, so the device could not produce a circuit-7 proof to time at
-//     all. All three now exist: the 'generateSpendProof' case in
-//     services/stark/StarkProver.tsx's switch, the method on
-//     StarkProverHandle, and the wrapper in providers/StarkProverProvider.tsx.
-//     The blob and the glue were never the problem - wasmData.ts decodes to
-//     the same 267,610 bytes, sha256 72a8c700c466a296, as the package's blob.
-//
-//     VERIFIED BY EXECUTION, not by inspection: services/stark/webviewSpend.test.ts
-//     extracts the WebView's own ES5 string out of StarkProver.tsx and runs it
-//     against that blob in a vm. It returns a real 77,965-byte circuit-7 proof
-//     whose six public inputs match c7-live-proof.ts felt for felt (nullifier
-//     8223017349269710682, root 5529976937288699293). That string is a
-//     template literal: tsc does not parse it and ESLint does not lint it, so
-//     executing it is the only check that means anything.
-//
-//     What does NOT need re-measuring, because it is deterministic: C7 uploads
-//     78 chunks against the pair's 148, one buffer instead of two. On a phone
-//     that is the number that matters.
-//
-// 🚨 SO MOBILE STILL SPENDS ON v3 AND STILL PUBLISHES THE COMMITMENT. That is
-// the current state, not an oversight. The prover is reachable now; the STORE
-// is deliberately untouched.
-//
-// WHAT IS STILL MISSING IS ONE NUMBER: how long circuit 7 takes ON A PHONE.
-// Everything measured so far is Node on a desktop and THE CORRECTION FACTOR IS
-// UNKNOWN - the single device datapoint in this repository (C3 = 1,482 ms on
-// 0019235AU004508) happens to be FASTER than the same circuit in Node here,
-// but one datapoint on one circuit on one device, carrying the pre-coset blob
-// the verifier now rejects, is an anecdote and not a factor.
-//
-// To take it, with no RPC and no SOL:
+// To take the number, with no RPC and no SOL:
 //   Settings -> About -> tap the version seven times -> Privacy tech tests
 //   -> "Circuit 7 spend proof". Five runs over a synthetic witness; the proof
 //   is generated and discarded. Read the median off
-//   'adb logcat -s ReactNativeJS' - every circuit now emits
+//   'adb logcat -s ReactNativeJS' - every circuit emits
 //   '[P01PERF] circuit=<n> prover=<n> ms bridge=<n> ms proofSize=<n>' from
 //   StarkProverProvider's sendRequestRaw, in the same format as the 2026-08-03
 //   capture, so a logcat line and a desktop line compare without translation.
 //   Build with JDK 17, NOT 21 (memory/feedback_jdk21_temurin_jit_crash).
 //
-// THEN cut the store over. And when cutting over, the routing must be:
-// whyCircuit7Cannot(receipt) synchronously FIRST; then try prepareUnshieldV4;
-// catch falls back to the pair ONLY on 'err instanceof V4Unprovable' and
-// rethrows everything else - an ALLOW-LIST, because a broken prover answered by
-// republishing the commitment is the exact failure the pair exists to remove.
-// NOTHING after the prepare may fall back: once the proof is uploaded and the
-// nullifier PDA initialised, a v3 retry pays rent twice and dies on the
-// double-spend guard with the note already spent. Both callers route -
-// denominated-unshield.tsx AND denominated-unshield-batch.tsx.
+// A live withdrawal through this path has NOT been executed on a device or on
+// devnet as of the cutover. What has: the WebView glue produces a real
+// 77,965-byte circuit-7 proof in a vm (services/stark/webviewSpend.test.ts),
+// the wire layout is pinned (unshieldV4.test.ts), and the routing decision is
+// pinned against mocks (spendRouting.test.ts). None of those is a proof that a
+// v4 spend lands end to end from this app.
+//
+// What does NOT need measuring, because it is deterministic: C7 uploads 78
+// chunks against the pair's 148, one buffer instead of two.
 // ---------------------------------------------------------------------------
 
 /** C7's subtree depth. NOT the pool tree's 15. See `air/spend.rs`. */
@@ -3232,6 +3217,415 @@ export function buildUnshieldDenominatedStarkV4Ix(
   ];
 
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
+}
+
+// ---------------------------------------------------------------------------
+// V4 SPEND — the driver (ported from the extension twin, 2026-09-06)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every real deposit epoch is under 2**32 (slot/7200 = 67,838 on 2026-08-26,
+ * five digits); every `deriveNoteBlinding` draw is 63 bits. The gap between
+ * the two populations is where this line sits. See `whyCircuit7Cannot`.
+ */
+export const LEGACY_BLINDING_CEILING = 2n ** 32n;
+
+/**
+ * Why circuit 7 must NOT be used for this note — or `null` when it may.
+ *
+ * A note whose `depositEpoch` is a real epoch rather than a PRF blinding
+ * predates commitment blinding. Proving it on circuit 7 hides the commitment
+ * from the wire while leaving the leaf recoverable from the published nullifier
+ * by trying a few thousand epochs — which is worse than the C1 + C3 pair only in
+ * that it LOOKS private. The circuit cannot close this: `blinding` is a private
+ * witness and `stark/src/air/spend.rs:908-913` forbids constraining it. So it is
+ * a ROUTING decision, and it must not block the note: the caller falls back to
+ * the pair, which publishes the commitment and is honest about it.
+ *
+ * Classifies by MAGNITUDE. On an imported note the magnitude is the sender's
+ * choice, and a blinding just above the ceiling is admitted — accepted, with
+ * the reasoning written on the extension twin (`apps/extension/src/shared/
+ * store/denominatedPool.ts`): the outcome is never worse than the pair, and
+ * the party who could exploit it already holds the nullifier.
+ *
+ * Wording kept aligned with the two other surfaces, `circuit 7 needs at least`
+ * included. ⚠️ Nothing on this surface ROUTES on the wording — see
+ * `V4Unprovable`.
+ */
+export function whyCircuit7Cannot(receipt: Pick<ShieldReceipt, 'depositEpoch'>): string | null {
+  if (receipt.depositEpoch < LEGACY_BLINDING_CEILING) {
+    return (
+      'circuit 7 needs at least a randomised blinding, and this note carries its deposit ' +
+      `epoch (${receipt.depositEpoch}) instead — it predates commitment blinding. Proving ` +
+      'it on circuit 7 would hide the commitment while leaving the leaf recoverable from ' +
+      'the published nullifier by trying a few thousand epochs, which is worse than the ' +
+      'C1 + C3 pair only in that it looks private. Falling back to the pair.'
+    );
+  }
+  return null;
+}
+
+/**
+ * "This NOTE cannot go through circuit 7" — and nothing else.
+ *
+ * ⛔ AN ALLOW-LIST, AND THAT IS THE WHOLE SAFETY PROPERTY. `routeUnshieldSpend`
+ * (./spendRouting.ts) falls back to the C1 + C3 pair on `instanceof V4Unprovable`
+ * and rethrows everything else. A wrong felt count or a transcript bound to the
+ * wrong payee is a broken PROVER, thrown as a plain `Error` below, and answering
+ * that by republishing the commitment and reporting success is the exact
+ * failure the pair exists to remove.
+ *
+ * Routed on the TYPE, not on a string: the prover result crosses the WebView
+ * bridge as JSON, but the ERROR is thrown here, in the JS realm, after the
+ * bridge — so `instanceof` survives and cannot be broken by rewording.
+ */
+export class V4Unprovable extends Error {
+  constructor(message: string) {
+    super(message);
+    // Hermes honours the native prototype chain for `class extends Error`, but
+    // `name` is set anyway: without it every log line says "Error", which is
+    // the one thing a reader chasing this fallback needs to see.
+    this.name = 'V4Unprovable';
+  }
+}
+
+/**
+ * The prove function `prepareUnshieldV4` is handed. On this surface it is
+ * `generateSpendProof` from `useStarkProver()` — a React context hook — so it
+ * cannot be imported here; the screen passes it down. The shape is the
+ * provider's, verbatim.
+ */
+export type SpendProver = (
+  nullifierPreimage: string,
+  secret: string,
+  blinding: string,
+  tokenMint: string,
+  pathElements: string[],
+  pathIndices: number[],
+  recipientHash: string[],
+) => Promise<{ proofHex: string; publicInputs: string[]; proofSize: number }>;
+
+export interface PrepareUnshieldV4Result {
+  c7ProofResult: { proofBytes: Uint8Array; publicInputs: bigint[]; proofSize: number };
+  /** The pool root the instruction NAMES. */
+  merkleRoot: bigint;
+  /** The depth-11 root the proof REACHES. The handler walks from here to the above. */
+  subtreeRoot: bigint;
+  nullifierGoldilocks: bigint;
+  /** Levels 11..15 of the path — walked on chain, not in the circuit. */
+  siblings: bigint[];
+  directions: number[];
+  /**
+   * The payee this proof is bound to. Carried so `unshieldDenominatedStarkV4`
+   * can refuse a prepared-for-A / executed-for-B mismatch BEFORE spending an
+   * upload on a proof the chain will reject.
+   *
+   * 🚨 There is deliberately NO `starkCommitment` field. Its absence is the
+   * property, and leaving it in the type would let a caller keep publishing it.
+   */
+  recipient: PublicKey;
+}
+
+/**
+ * Fetch leaves, build the Merkle path, pre-flight the root, and generate ONE
+ * circuit-7 proof.
+ *
+ * ⛔ `recipient` is a parameter HERE, unlike the C1 + C3 prepare. C7 binds
+ * sha256(recipient) into its transcript; the proof does not exist without it.
+ * On this surface that recipient is the ECDH stealth address the store derives,
+ * which is why the store derives it BEFORE calling this.
+ *
+ * Throws `V4Unprovable` for exactly two note-shaped facts (root not in the
+ * pool's ring; path too short for the circuit) and a plain `Error` for
+ * everything a broken prover could produce. Nothing has been spent by the time
+ * any of them fires.
+ */
+export async function prepareUnshieldV4(
+  receipt: ShieldReceipt,
+  recipient: PublicKey,
+  poolConfig: PoolConfig,
+  connection: Connection,
+  prove: SpendProver,
+  onProgress?: (step: string) => void,
+): Promise<PrepareUnshieldV4Result> {
+  onProgress?.('Fetching pool leaves from on-chain events...');
+  // 5000, like the v3 pair path on this surface: devnet Helius 429s truncate
+  // the signature list at low limits, and one missed LeafInserted gap-fills a
+  // root no pool ever published.
+  const SIG_SCAN_LIMIT = 5000;
+  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
+    connection,
+    poolConfig.poolPDA,
+    { maxSignatures: SIG_SCAN_LIMIT, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+  );
+  if (missing.length > 0) {
+    console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+  }
+
+  onProgress?.('Building Merkle proof from leaf history...');
+  let merkleResult = buildMerkleProofFromLeavesV3({
+    leavesByIndex,
+    targetLeafIndex: receipt.leafIndex,
+  });
+
+  // Root pre-flight. A rebuilt root the pool has never published means the
+  // proof would be refused at the END of a ~78-chunk upload, so this check
+  // is worth its two RPC calls.
+  onProgress?.('Pre-flight root verification...');
+  const { parsePoolAccount } = await import('./parsePool');
+  const poolAcct = await connection.getAccountInfo(poolConfig.poolPDA, 'confirmed');
+  if (poolAcct) {
+    const parsed = parsePoolAccount(poolAcct.data);
+    if (parsed) {
+      const known = (root: bigint): boolean => {
+        const b = new Uint8Array(goldilocksToLeBytes32(root));
+        return bytesEqual(b, parsed.currentRoot) || parsed.historicalRoots.some((r) => bytesEqual(b, r));
+      };
+      if (!known(merkleResult.root)) {
+        onProgress?.('Root not in ring — retrying event scan with extended limit...');
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: SIG_SCAN_LIMIT * 2 });
+        merkleResult = buildMerkleProofFromLeavesV3({
+          leavesByIndex: retry.leavesByIndex,
+          targetLeafIndex: receipt.leafIndex,
+        });
+        if (!known(merkleResult.root)) {
+          // V4Unprovable, not Error: the note is fine and the prover is fine —
+          // this rebuild could not place the note's root in the pool's ring, and
+          // the C1 + C3 path pre-flights the root from the other side, so the
+          // caller may retry there. Nothing has been spent at this point; the
+          // message below says so itself.
+          throw new V4Unprovable(
+            `PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots ` +
+            `(current + ${parsed.historicalRoots.length} historical). Aborting before proof rent is spent. ` +
+            `Wait ~10s for the RPC to index recent transactions, then retry.`,
+          );
+        }
+      }
+    } else {
+      console.warn('[DenomPool/v4] PRE-FLIGHT skip — pool parser returned null (layout drift?)');
+    }
+  } else {
+    console.warn('[DenomPool/v4] PRE-FLIGHT skip — pool account fetch returned null');
+  }
+
+  // 11 / 4 split. `buildMerkleProofFromLeavesV3` returns the full depth-15 path
+  // and the two halves go to different verifiers: the first eleven levels are
+  // proven in the circuit, the last four are walked on chain.
+  if (merkleResult.pathElements.length < C7_SUBTREE_DEPTH) {
+    // V4Unprovable for the same reason as the root pre-flight above: a path this
+    // circuit cannot consume is a fact about the note, and the pair can still
+    // spend it. Defence in depth: the builder above pushes one element per
+    // level for MERKLE_DEPTH = 15 levels unconditionally, so this cannot fire
+    // against today's builder (spendRouting.test.ts measures that).
+    throw new V4Unprovable(
+      `Merkle path is ${merkleResult.pathElements.length} deep; circuit 7 needs at least ${C7_SUBTREE_DEPTH}.`,
+    );
+  }
+  const U64 = U64_MASK_V3;
+  const circuitElements = merkleResult.pathElements.slice(0, C7_SUBTREE_DEPTH).map((e) => e & U64);
+  const circuitIndices = merkleResult.pathIndices.slice(0, C7_SUBTREE_DEPTH);
+  const siblings = merkleResult.pathElements.slice(C7_SUBTREE_DEPTH).map((e) => e & U64);
+  const directions = merkleResult.pathIndices.slice(C7_SUBTREE_DEPTH);
+
+  const rhLimbs = recipientHashLimbs(recipient);
+
+  const proofStartedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    const seconds = Math.round((Date.now() - proofStartedAt) / 1000);
+    onProgress?.(`Proving ownership and membership in one trace (${seconds}s)...`);
+  }, 10_000);
+  let raw: { proofHex: string; publicInputs: string[]; proofSize: number };
+  try {
+    onProgress?.('Proving ownership and membership in one trace...');
+    raw = await prove(
+      receipt.nullifierPreimage.toString(),
+      receipt.secret.toString(),
+      // Named `depositEpoch` here and `noteBlinding` on the web twin: it is the
+      // SAME field — the commitment's third input, which stopped being a real
+      // epoch when blinding landed. `whyCircuit7Cannot` has already refused the
+      // notes for which it is still an epoch.
+      receipt.depositEpoch.toString(),
+      receipt.tokenMint.toString(),
+      circuitElements.map((e) => e.toString()),
+      circuitIndices,
+      rhLimbs.map((l) => l.toString()),
+    );
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  const publicInputs = raw.publicInputs.map((v) => BigInt(v));
+  // ⛔ THE THREE THROWS BELOW ARE PLAIN `Error` ON PURPOSE AND MUST STAY THAT WAY.
+  // Everything above says "this note cannot go through this circuit"; these say
+  // "the prover produced something circuit 7 does not produce" — a wrong felt
+  // count, a transcript bound to a payee nobody asked for, or a nullifier the
+  // chain refuses. Routing those to the C1 + C3 pair would answer a broken
+  // prover by republishing the commitment and reporting a successful
+  // withdrawal, which is the exact failure the pair exists to remove. They
+  // fail closed.
+  if (publicInputs.length !== 6) {
+    throw new Error(`Circuit 7 must publish exactly 6 felts, got ${publicInputs.length}.`);
+  }
+  // Fail here rather than on chain: a transcript bound to a different payee is
+  // otherwise only discovered by the public-inputs hash, after the upload.
+  for (let i = 0; i < 4; i++) {
+    if (publicInputs[2 + i] !== rhLimbs[i]) {
+      throw new Error(
+        `Circuit 7 published a recipient hash that does not match ${recipient.toBase58()} at limb ${i}.`,
+      );
+    }
+  }
+  // The chain refuses any nullifier >= p (`unshield_denominated_stark_v4.rs`):
+  // below 2**32 - 1 every value had a second encoding n + p that hashed to the
+  // same felt but seeded a distinct nullifier PDA — a double-spend with no
+  // forgery in it. A prover that emits a non-canonical felt is broken; say so
+  // before the upload, not after.
+  if (publicInputs[0] >= GOLDILOCKS_MODULUS) {
+    throw new Error(
+      `Circuit 7 published a non-canonical nullifier (${publicInputs[0]} >= Goldilocks p); the chain would refuse it.`,
+    );
+  }
+
+  const proofBytes = new Uint8Array(Buffer.from(raw.proofHex, 'hex'));
+  return {
+    c7ProofResult: { proofBytes, publicInputs, proofSize: raw.proofSize },
+    merkleRoot: merkleResult.root,
+    subtreeRoot: publicInputs[1],
+    nullifierGoldilocks: publicInputs[0],
+    siblings,
+    directions,
+    recipient,
+  };
+}
+
+/**
+ * Submit the one proof, then spend. Mirrors `unshieldDenominatedStarkV3` on
+ * this surface — same wallet / stealth-keypair fee-payer model, same close in
+ * `finally` — with ONE buffer instead of two and no `stark_commitment` on the
+ * wire.
+ *
+ * ⛔ `recipient` is passed again and CHECKED against the prepared one. It is not
+ * redundant: the proof is bound to a payee, and executing for a different one
+ * builds a transaction the chain refuses after the whole upload has been paid
+ * for.
+ *
+ * ⛔ NON-UNIFORM upload on purpose. `submitAndVerifyStarkProofUniform` probes
+ * circuits [1, 3, 5, 6] and cannot verify circuit 7; `submitAndVerifyStarkProof`
+ * dispatches phase 1 + phase 2 (DEEP-ALI) for circuit ids 1..7, and phase 2 is
+ * where ALL of C7's binding lives. The circuit id therefore travels in the init
+ * instruction (the L13 leak the uniform pipeline closes for the pair). Known,
+ * and the same trade the web and extension twins make.
+ */
+export async function unshieldDenominatedStarkV4(
+  poolConfig: PoolConfig,
+  recipient: PublicKey,
+  prepared: PrepareUnshieldV4Result,
+  onProgress?: (step: string) => void,
+  walletSigner?: WalletSigner,
+  overrideKeypair?: import('@solana/web3.js').Keypair,
+): Promise<string> {
+  if (!prepared.recipient.equals(recipient)) {
+    throw new Error(
+      `This proof was prepared for ${prepared.recipient.toBase58()} and cannot pay ` +
+      `${recipient.toBase58()}. Circuit 7 binds sha256(recipient) into its transcript; ` +
+      `re-run prepareUnshieldV4 for the new payee.`,
+    );
+  }
+
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer, getProofBufferPDA } = await import('../stark');
+  const { CIRCUIT_SPEND } = await import('../stark/spendWitness');
+
+  onProgress?.('Reading wallet...');
+  const keypair = overrideKeypair || (walletSigner ? null : await getKeypair());
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const connection = getConnection();
+
+  const starkSigner: WalletSigner = keypair
+    ? {
+        publicKey: keypair.publicKey,
+        signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+      }
+    : walletSigner!;
+
+  // Derived upfront so the `finally` can close it even if submit throws
+  // mid-flight — the stealth signer is gone after this returns.
+  const [c7ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_SPEND);
+
+  try {
+    onProgress?.('Submitting the circuit-7 spend proof on-chain...');
+    await submitAndVerifyStarkProof(
+      {
+        proofBytes: prepared.c7ProofResult.proofBytes,
+        circuitId: CIRCUIT_SPEND,
+        publicInputs: prepared.c7ProofResult.publicInputs,
+        proofSize: prepared.c7ProofResult.proofSize,
+      },
+      starkSigner,
+      onProgress,
+      connection,
+    );
+
+    onProgress?.('Building V4 unshield transaction...');
+    const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
+    const merkleRootBytes = goldilocksToLeBytes32(prepared.merkleRoot);
+    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+    const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+    let tokenProgram: PublicKey | undefined;
+    let recipientTokenAccount: PublicKey | undefined;
+    let poolVault: PublicKey | undefined;
+    if (!isNativeSOL) {
+      tokenProgram = TOKEN_PROGRAM_ID;
+      recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+      poolVault = poolConfig.vaultATA;
+    }
+
+    const ix = buildUnshieldDenominatedStarkV4Ix(
+      walletPubkey,
+      recipient,
+      poolConfig.poolPDA,
+      poolConfig.treePDA,
+      nullifierPDA,
+      c7ProofBuffer,
+      nullifierBytes,
+      merkleRootBytes,
+      prepared.subtreeRoot,
+      prepared.siblings,
+      prepared.directions,
+      tokenProgram,
+      poolVault,
+      recipientTokenAccount,
+    );
+
+    const tx = new Transaction();
+    // The handler walks four Poseidon levels on top of the v3 work; 400,000 is
+    // what the v3 path already requests for the same walk.
+    tx.add(...buildComputeBudgetIxs(400_000));
+    if (!isNativeSOL && recipientTokenAccount) {
+      tx.add(
+        createAssociatedTokenAccountIdempotentInstruction(
+          walletPubkey, recipientTokenAccount, recipient, poolConfig.tokenMint,
+        ),
+      );
+    }
+    tx.add(ix);
+
+    onProgress?.('Sending V4 unshield transaction...');
+    const sig = await signAndSendV3(connection, tx, keypair, walletSigner);
+    onProgress?.('V4 unshield confirmed!');
+    return sig;
+  } finally {
+    try {
+      onProgress?.('Closing proof buffer (rent recovery)...');
+      await closeStarkProofBuffer(c7ProofBuffer, starkSigner, connection);
+    } catch (closeErr: unknown) {
+      console.warn(
+        '[DenomPool/v4] closeStarkProofBuffer failed (rent may be stranded):',
+        closeErr instanceof Error ? closeErr.message : String(closeErr),
+      );
+    }
+  }
 }
 
 export function buildUnshieldDenominatedStarkV3Ix(
