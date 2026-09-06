@@ -17,8 +17,12 @@
  *   the C3-free path — `subscribe_private_stark` validates the merkle root via the
  *   pool's valid-root ring, not a circuit-3 merkle-path proof.
  *
- *   `subscribePrivate` (below) generates the C1 proof via
- *   starkProver.generatePoolCommitmentProof and submits subscribe_private_stark.
+ *   `subscribePrivate` (below) routes PER NOTE, the same way the withdrawal
+ *   store does: a PRF-blinded note is proven on circuit 7 and submitted as
+ *   `subscribe_private_stark_v4` (ONE buffer, no `stark_commitment` on the
+ *   wire — see `subscribePrivateStarkV4.ts`); a note circuit 7 cannot prove
+ *   (`whyCircuit7Cannot`, or a `V4Unprovable` from the prepare) falls back to
+ *   the C1 + C3 pair and `subscribe_private_stark`. Nothing else falls back.
  *   Circuit 0 (subscriber_ownership) drives pause/resume — the subscriber
  *   secret is a Goldilocks bigint stored at vault creation time.
  *
@@ -58,9 +62,17 @@ import {
   prepareUnshield,
   findPoolV3,
   CIRCUIT_MERKLE_PATH,
+  V4Unprovable,
   type ShieldReceipt,
   type PoolConfig,
 } from './denominatedPool';
+import { whyCircuit7Cannot } from '../store/denominatedPool';
+import {
+  prepareSubscribeV4,
+  subscribePrivateStarkV4,
+  type PrepareSubscribeV4Result,
+  type SubscribeBinding,
+} from './subscribePrivateStarkV4';
 
 /**
  * Thrown when the selected note's nullifier already exists on-chain — the note
@@ -1024,10 +1036,130 @@ export async function subscribePrivate(params: {
     );
   }
 
-  // ── Generate C1 (pool_commitment) + C3 (merkle_path) via the shared
+  // ── ROUTE: CIRCUIT 7, OR THE C1 + C3 PAIR ─────────────────────────────────
+  //
+  // THE ROUTE IS PER NOTE, NOT A MIGRATION — the same decision, in the same
+  // order, as the withdrawal store (`store/denominatedPool.ts`). The pair
+  // below stays reachable indefinitely: a note whose blinding is unknown can
+  // be spent nowhere else, and `prepareSubscribeV4` has no stored-path fast
+  // path, so a note whose root aged out of the pool's 100-root ring still
+  // needs the v3 rebuild. Neither leg is legacy.
+  //
+  // The binding is fixed BEFORE the proof: `rate`, `intervalSlots`,
+  // `vkHashSubscriber` and the license commitment are inside the circuit-7
+  // transcript, so a change to any of them after this point is a different
+  // proof. `subscribePrivateStarkV4` re-checks every one of them at send.
+  const binding: SubscribeBinding = {
+    vault: vaultPDA,
+    rate,
+    intervalSlots,
+    vkHashSubscriber,
+    licenseCommitment: licenseCommitmentBytes,
+  };
+  let preparedV4: PrepareSubscribeV4Result | null = null;
+  // Asked synchronously first, so a pre-blinding note never enters the try
+  // below and can never be mistaken for a prover failure.
+  const v4Refusal: string | null = whyCircuit7Cannot(receipt);
+  if (v4Refusal === null) {
+    try {
+      onProgress?.('Preparing the circuit-7 subscribe proof...');
+      preparedV4 = await prepareSubscribeV4(
+        receipt,
+        poolConfig,
+        connection,
+        binding,
+        subscriberOwnershipCommitment,
+        retailerPubkey,
+        onProgress,
+      );
+    } catch (err: unknown) {
+      // ⛔ AN ALLOW-LIST, AND THAT IS THE WHOLE SAFETY PROPERTY. Only
+      // `V4Unprovable` — "this NOTE cannot go through this circuit" — routes
+      // to the pair. A wrong felt count, a transcript bound to other terms, a
+      // vault that does not derive: those are a broken prover or a broken
+      // caller, and answering them by republishing the commitment on the pair
+      // and reporting success is the exact failure the pair exists to remove.
+      // Everything that is not `V4Unprovable` is rethrown, fail closed.
+      if (!(err instanceof V4Unprovable)) throw err;
+      onProgress?.(
+        'Circuit 7 cannot prove this note — falling back to the C1 + C3 pair ' +
+        '(this subscription will publish the note commitment).',
+      );
+      console.warn('[SubscriptionVault] circuit 7 refused, falling back to the pair:', err.message);
+    }
+  } else {
+    onProgress?.(
+      'Falling back to the C1 + C3 pair (this subscription will publish the note commitment).',
+    );
+    console.warn('[SubscriptionVault] circuit 7 refused:', v4Refusal);
+  }
+
+  if (preparedV4 !== null) {
+    // ⛔ NOTHING AFTER THIS POINT MAY FALL BACK TO v3. Once the proof is
+    // uploaded and the nullifier PDA initialised, a v3 retry pays the buffer
+    // rent a second time and dies on the double-spend guard with the note
+    // already spent. Any throw from here propagates as is.
+    const { txSig } = await subscribePrivateStarkV4(
+      {
+        receipt,
+        poolConfig,
+        prepared: preparedV4,
+        retailer: retailerPubkey,
+        subscriberCommitment: subscriberOwnershipCommitment,
+        binding,
+        // FIX C, part 1 — the same placement as the v3 leg below: the instant
+        // before the tx is sent, after the upload, so a proof or upload failure
+        // never leaves a tag for a vault that was never created.
+        onBeforeSend: () => {
+          if (serviceId) {
+            useLicenseStore.getState().recordVaultTag({
+              vaultAddress: vaultPDA.toBase58(),
+              retailer,
+              serviceTag: serviceId,
+              serviceName,
+            });
+          }
+        },
+      },
+      signer,
+      connection,
+      onProgress,
+    );
+
+    // FIX C, part 2 — synchronously, the moment the tx is confirmed, exactly
+    // as the v3 leg does it. The proof-buffer close has already run inside
+    // `subscribePrivateStarkV4`'s `finally`; that is one confirmed transaction
+    // between confirmation and this write rather than zero, and the tag
+    // recorded above covers it if this device never gets here.
+    if (serviceId && licenseSecretBytes) {
+      try {
+        useLicenseStore.getState().saveLicense({
+          licenseKey: encodeLicenseKey(licenseSecretBytes),
+          retailer,
+          mode: 'zk',
+          serviceName,
+          createdAt: Date.now(),
+          vaultAddress: vaultPDA.toBase58(),
+          serviceTag: serviceId,
+        });
+      } catch (e) {
+        console.warn(
+          '[SubscriptionVault] license key persist failed (rebuildable from the vault tag):',
+          e instanceof Error ? e.message : String(e),
+        );
+      }
+    }
+
+    onProgress?.('Done!');
+    return txSig;
+  }
+
+  // ── v3: byte for byte what this function did before circuit 7 existed. ──
+  //
+  // Generate C1 (pool_commitment) + C3 (merkle_path) via the shared
   // unshield-v3 preparer. This fetches pool leaves, rebuilds the Merkle path,
   // root-preflights against the pool ring, and produces both proofs with the
-  // exact public-input layout the on-chain handler reconstructs. ──
+  // exact public-input layout the on-chain handler reconstructs.
   onProgress?.('Generating C1 + C3 STARK proofs (~2 min)...');
   const prepared = await prepareUnshield(receipt, poolConfig, connection, onProgress);
   const {
