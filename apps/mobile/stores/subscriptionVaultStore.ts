@@ -22,6 +22,13 @@ import {
   ZK_SHIELDED_PROGRAM_ID,
 } from '../services/subscriptionVault';
 import {
+  prepareSubscribeV4,
+  subscribePrivateStarkV4,
+  type PrepareSubscribeV4Result,
+  type SpendProver,
+  type SubscribeBinding,
+} from '../services/subscriptionVault/subscribePrivateStarkV4';
+import {
   receiptFromJSON,
   type ShieldReceipt,
   type PoolConfig,
@@ -125,6 +132,41 @@ interface SubscriptionVaultState {
      * subscriberSecret, serviceId))` is service-scoped. When omitted, no license
      * commitment is posted (older callers; the vault simply has none).
      */
+    serviceId?: string,
+  ) => Promise<{ signature: string; vaultAddress: string }>;
+  /**
+   * [C7] Step 1 of the circuit-7 subscribe: derive the license commitment and
+   * the vault PDA, bind the terms, rebuild the path and prove ONCE. Nothing is
+   * sent and nothing is spent. Throws `SubscribeV4Unprovable` when this NOTE
+   * cannot go through circuit 7 (the caller then takes the C1 + C3 pair) and a
+   * plain `Error` for anything else, which must NOT fall back.
+   *
+   * `prove` is `useStarkProver().generateSpendProof` — the WebView bridge is a
+   * hook, so the screen hands it in.
+   */
+  prepareSubscribeV4Action: (
+    receipt: ShieldReceipt,
+    poolConfig: PoolConfig,
+    vaultConfig: SubscribePrivateConfig,
+    subscriberSecret: bigint,
+    subscriberOwnershipCommitment: bigint,
+    vkHashSubscriber: Uint8Array,
+    prove: SpendProver,
+    serviceId?: string,
+  ) => Promise<PrepareSubscribeV4Result>;
+  /**
+   * [C7] Step 2: upload the ONE proof, open the vault on
+   * `subscribe_private_stark_v4`, then the same bookkeeping as the v3 action.
+   * No `stark_commitment` reaches the wire. Takes the `prepared` result of
+   * step 1; the terms are re-checked against it before a lamport moves.
+   */
+  subscribePrivateStarkV4Action: (
+    receipt: ShieldReceipt,
+    poolConfig: PoolConfig,
+    vaultConfig: SubscribePrivateConfig,
+    subscriberSecret: bigint,
+    subscriberOwnershipCommitment: bigint,
+    prepared: PrepareSubscribeV4Result,
     serviceId?: string,
   ) => Promise<{ signature: string; vaultAddress: string }>;
   claimPeriodAction: (vaultAddress: string) => Promise<string>;
@@ -359,6 +401,136 @@ export async function fillStreamRowFromChain(
 // Store
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+// After a vault is OPEN on chain: the bookkeeping both spend paths share.
+//
+// Extracted from the v3 action on 2026-09-06 so the circuit-7 action could
+// reuse it byte for byte instead of carrying a second copy that drifts. Nothing
+// here depends on which circuit opened the vault: the vault PDA, the terms and
+// the subscriber secret are the same three things either way.
+// ---------------------------------------------------------------------------
+
+type StoreSet = (
+  partial: Partial<SubscriptionVaultState> | ((s: SubscriptionVaultState) => Partial<SubscriptionVaultState>),
+) => void;
+type StoreGet = () => SubscriptionVaultState;
+
+async function recordOpenedVault(args: {
+  label: string;
+  sig: string;
+  vaultPDA: PublicKey;
+  vaultConfig: SubscribePrivateConfig;
+  poolConfig: PoolConfig;
+  subscriberSecret: bigint;
+  subscriberOwnershipCommitment: bigint;
+  serviceId: string | undefined;
+  set: StoreSet;
+  get: StoreGet;
+}): Promise<{ signature: string; vaultAddress: string }> {
+  const {
+    label, sig, vaultPDA, vaultConfig, poolConfig,
+    subscriberSecret, subscriberOwnershipCommitment, serviceId, set, get,
+  } = args;
+  const storedVault: StoredVaultInfo = {
+    vaultAddress: vaultPDA.toBase58(),
+    retailer: vaultConfig.retailer.toBase58(),
+    tokenMint: poolConfig.tokenMint.toBase58(),
+    rate: vaultConfig.rate.toString(),
+    intervalSlots: vaultConfig.intervalSlots.toString(),
+    isNormalMode: false,
+    isPrivateMode: true,
+    serviceId,
+    createdAt: Date.now(),
+  };
+
+  // Save secret to SecureStore (not AsyncStorage)
+  await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
+  if (__DEV__) {
+    // Verify the round-trip — SecureStore can silently fail on locked
+    // device or 2 KB key-size cap. A vault that exists on-chain but
+    // whose secret isn't retrievable later is the canonical
+    // "subscription stops renewing" symptom.
+    try {
+      const roundTrip = await loadSecretSecurely(vaultPDA.toBase58());
+      const ok = roundTrip === subscriberSecret.toString();
+      console.log('[Sub:Create:Store] vault secret saved', {
+        vaultPDA: vaultPDA.toBase58(),
+        secretRoundTripOk: ok,
+        storedLen: roundTrip?.length ?? 0,
+      });
+      if (!ok) {
+        console.warn('[Sub:Create:Store] SECRET ROUND-TRIP MISMATCH — renewal will fail');
+      }
+    } catch (e) {
+      console.warn('[Sub:Create:Store] secret round-trip check threw', e);
+    }
+  }
+
+  set(state => ({
+    vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
+  }));
+
+  // Write the Stream row NOW, from the terms just sent, so the Streams
+  // tab and the license key card have a row whether or not the RPC is
+  // already serving the account (see the note above
+  // `provisionalVaultInfo`). Best-effort, non-fatal: the subscription
+  // is on chain either way.
+  const confirmedSlot = await readConfirmedSlot();
+  try {
+    const { upsertStreamFromVault } = await import('../services/solana/streams');
+    const row = await upsertStreamFromVault(
+      provisionalVaultInfo({
+        vaultAddress: vaultPDA.toBase58(),
+        vaultConfig,
+        poolConfig,
+        subscriberOwnershipCommitment,
+        startSlot: confirmedSlot,
+      }),
+      {
+        // Record the tag that was hashed into license_commitment above.
+        // Without it this row can only re-derive the retailer fallback,
+        // and a subscription made under a registry slug shows a key the
+        // merchant is bound to reject.
+        licenseServiceTag: serviceId,
+        // The same slot as `startSlot`: the status is judged at the
+        // moment the vault opened, not against a slot the RPC may
+        // refuse to answer a second time.
+        currentSlot: confirmedSlot ?? 0,
+      },
+    );
+    if (__DEV__) {
+      console.log('[Sub:Create:Store] stream row written from sent terms', {
+        vaultPDA: vaultPDA.toBase58(),
+        streamId: row?.id ?? '(already existed)',
+        startSlot: confirmedSlot,
+      });
+    }
+  } catch (e) {
+    console.warn('[SubscriptionVault] stream row after subscribePrivateStark failed (non-fatal):', e);
+  }
+
+  // What only the chain knows is filled in once the account is
+  // readable, retrying a few times. Not awaited: the caller has a
+  // spinner up and the vault is already theirs.
+  void fillStreamRowFromChain(vaultPDA, { licenseServiceTag: serviceId });
+
+  notifySubscriptionEvent(
+    'Subscription Active',
+    `Subscribed at ${formatRateSOL(vaultConfig.rate)} per period`,
+    { transactionId: sig },
+  );
+
+  if (__DEV__) {
+    console.log(`[Sub:Create:Store] ${label} success`, {
+      vaultPDA: vaultPDA.toBase58(),
+      sigPrefix: sig.slice(0, 16),
+      storedVaultCount: get().vaults.length,
+    });
+  }
+  return { signature: sig, vaultAddress: vaultPDA.toBase58() };
+}
+
 export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
   persist(
     (set, get) => ({
@@ -485,103 +657,18 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
             poolConfig.tokenMint
           );
 
-          const storedVault: StoredVaultInfo = {
-            vaultAddress: vaultPDA.toBase58(),
-            retailer: vaultConfig.retailer.toBase58(),
-            tokenMint: poolConfig.tokenMint.toBase58(),
-            rate: vaultConfig.rate.toString(),
-            intervalSlots: vaultConfig.intervalSlots.toString(),
-            isNormalMode: false,
-            isPrivateMode: true,
+          return await recordOpenedVault({
+            label: 'subscribePrivateStarkAction',
+            sig,
+            vaultPDA,
+            vaultConfig,
+            poolConfig,
+            subscriberSecret,
+            subscriberOwnershipCommitment,
             serviceId,
-            createdAt: Date.now(),
-          };
-
-          // Save secret to SecureStore (not AsyncStorage)
-          await saveSecretSecurely(vaultPDA.toBase58(), subscriberSecret.toString());
-          if (__DEV__) {
-            // Verify the round-trip — SecureStore can silently fail on locked
-            // device or 2 KB key-size cap. A vault that exists on-chain but
-            // whose secret isn't retrievable later is the canonical
-            // "subscription stops renewing" symptom.
-            try {
-              const roundTrip = await loadSecretSecurely(vaultPDA.toBase58());
-              const ok = roundTrip === subscriberSecret.toString();
-              console.log('[Sub:Create:Store] vault secret saved', {
-                vaultPDA: vaultPDA.toBase58(),
-                secretRoundTripOk: ok,
-                storedLen: roundTrip?.length ?? 0,
-              });
-              if (!ok) {
-                console.warn('[Sub:Create:Store] SECRET ROUND-TRIP MISMATCH — renewal will fail');
-              }
-            } catch (e) {
-              console.warn('[Sub:Create:Store] secret round-trip check threw', e);
-            }
-          }
-
-          set(state => ({
-            vaults: [storedVault, ...state.vaults.filter(v => v.vaultAddress !== storedVault.vaultAddress)],
-          }));
-
-          // Write the Stream row NOW, from the terms just sent, so the Streams
-          // tab and the license key card have a row whether or not the RPC is
-          // already serving the account (see the note above
-          // `provisionalVaultInfo`). Best-effort, non-fatal: the subscription
-          // is on chain either way.
-          const confirmedSlot = await readConfirmedSlot();
-          try {
-            const { upsertStreamFromVault } = await import('../services/solana/streams');
-            const row = await upsertStreamFromVault(
-              provisionalVaultInfo({
-                vaultAddress: vaultPDA.toBase58(),
-                vaultConfig,
-                poolConfig,
-                subscriberOwnershipCommitment,
-                startSlot: confirmedSlot,
-              }),
-              {
-                // Record the tag that was hashed into license_commitment above.
-                // Without it this row can only re-derive the retailer fallback,
-                // and a subscription made under a registry slug shows a key the
-                // merchant is bound to reject.
-                licenseServiceTag: serviceId,
-                // The same slot as `startSlot`: the status is judged at the
-                // moment the vault opened, not against a slot the RPC may
-                // refuse to answer a second time.
-                currentSlot: confirmedSlot ?? 0,
-              },
-            );
-            if (__DEV__) {
-              console.log('[Sub:Create:Store] stream row written from sent terms', {
-                vaultPDA: vaultPDA.toBase58(),
-                streamId: row?.id ?? '(already existed)',
-                startSlot: confirmedSlot,
-              });
-            }
-          } catch (e) {
-            console.warn('[SubscriptionVault] stream row after subscribePrivateStark failed (non-fatal):', e);
-          }
-
-          // What only the chain knows is filled in once the account is
-          // readable, retrying a few times. Not awaited: the caller has a
-          // spinner up and the vault is already theirs.
-          void fillStreamRowFromChain(vaultPDA, { licenseServiceTag: serviceId });
-
-          notifySubscriptionEvent(
-            'Subscription Active',
-            `Subscribed at ${formatRateSOL(vaultConfig.rate)} per period`,
-            { transactionId: sig },
-          );
-
-          if (__DEV__) {
-            console.log('[Sub:Create:Store] subscribePrivateStarkAction success', {
-              vaultPDA: vaultPDA.toBase58(),
-              sigPrefix: sig.slice(0, 16),
-              storedVaultCount: get().vaults.length,
-            });
-          }
-          return { signature: sig, vaultAddress: vaultPDA.toBase58() };
+            set,
+            get,
+          });
         } catch (err) {
           console.error('[SubscriptionVault] subscribePrivateStark error:', err);
           if (__DEV__) {
@@ -596,6 +683,154 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
         } finally {
           // Always clear transient spinner — prevents a stuck UI if the STARK
           // flow throws mid-step (prover, RPC, signer, notification, etc.).
+          set({ isLoading: false, progress: null });
+        }
+      },
+
+      // ------------------------------------------------------------------
+      // Subscribe Private on CIRCUIT 7 (subscribe_private_stark_v4)
+      //
+      // THE ROUTE IS PER NOTE, NOT A MIGRATION. `subscribePrivateStarkAction`
+      // above stays reachable indefinitely; the screen decides between the two
+      // with `chooseSubscribeRoute` (services/subscriptionVault/
+      // subscribePrivateStarkV4.ts): the synchronous refusal first, then this
+      // prepare, and the pair ONLY on `SubscribeV4Unprovable`.
+      //
+      // Two actions, not one, because the terms are INSIDE the circuit-7
+      // transcript: the license commitment, the vault PDA, rate and interval
+      // must exist before the proof does, and the proof must exist before the
+      // route is known. Nothing in the prepare touches the chain's state.
+      // ------------------------------------------------------------------
+
+      prepareSubscribeV4Action: async (
+        receipt,
+        poolConfig,
+        vaultConfig,
+        subscriberSecret,
+        subscriberOwnershipCommitment,
+        vkHashSubscriber,
+        prove,
+        serviceId,
+      ) => {
+        set({ isLoading: true, error: null, progress: 'Preparing the circuit-7 subscription...' });
+        try {
+          // The SAME derivation the v3 action performs, so a vault opened on
+          // either circuit carries the same license commitment for the same
+          // (secret, serviceId) — LicenseKeyCard cannot tell them apart.
+          let licenseCommitmentBytes: Uint8Array | undefined;
+          if (serviceId) {
+            const { deriveLicenseSecret, licenseCommitment } = await import('../services/license/derive');
+            const licenseSecret = deriveLicenseSecret(subscriberSecret, serviceId);
+            licenseCommitmentBytes = licenseCommitment(licenseSecret);
+          }
+
+          const { deriveVaultPDA } = await import('../services/subscriptionVault');
+          const [vaultPDA] = deriveVaultPDA(
+            vaultConfig.retailer,
+            goldilocksU64To32(subscriberOwnershipCommitment),
+            poolConfig.tokenMint,
+          );
+          const binding: SubscribeBinding = {
+            vault: vaultPDA,
+            rate: vaultConfig.rate,
+            intervalSlots: vaultConfig.intervalSlots,
+            vkHashSubscriber,
+            licenseCommitment: licenseCommitmentBytes,
+          };
+
+          // ⛔ NOT wrapped: a `SubscribeV4Unprovable` thrown in here must reach
+          // the screen's `instanceof` check intact, and any other error must
+          // reach it as itself so it is NOT mistaken for one.
+          return await prepareSubscribeV4(
+            receipt,
+            poolConfig,
+            getConnection(),
+            binding,
+            subscriberOwnershipCommitment,
+            vaultConfig.retailer,
+            prove,
+            (step) => {
+              set({ progress: step });
+            },
+          );
+        } finally {
+          // The spinner belongs to the SEND that follows, on whichever route.
+          set({ isLoading: false, progress: null });
+        }
+      },
+
+      subscribePrivateStarkV4Action: async (
+        receipt,
+        poolConfig,
+        vaultConfig,
+        subscriberSecret,
+        subscriberOwnershipCommitment,
+        prepared,
+        serviceId,
+      ) => {
+        set({ isLoading: true, error: null, progress: 'Submitting the circuit-7 subscription...' });
+
+        if (__DEV__) {
+          console.log('[Sub:Create:Store] subscribePrivateStarkV4Action begin', {
+            poolPDA: poolConfig.poolPDA.toBase58(),
+            retailer: vaultConfig.retailer.toBase58().slice(0, 8) + '…',
+            rate: vaultConfig.rate.toString(),
+            intervalSlots: vaultConfig.intervalSlots.toString(),
+            proofSize: prepared.c7ProofResult.proofSize,
+            // The subscribe binding, NOT the note commitment: the latter is the
+            // value this path exists to keep off every log and every wire.
+            vault: prepared.binding.vault.toBase58(),
+          });
+        }
+
+        try {
+          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
+
+          // The terms are passed AGAIN, from the store's own inputs, and
+          // `subscribePrivateStarkV4` refuses if they differ from what the proof
+          // was bound to. That is the whole point of carrying `binding` twice.
+          const { txSig, vaultPDA } = await subscribePrivateStarkV4(
+            {
+              receipt,
+              poolConfig,
+              prepared,
+              retailer: vaultConfig.retailer,
+              subscriberCommitment: subscriberOwnershipCommitment,
+              binding: {
+                ...prepared.binding,
+                rate: vaultConfig.rate,
+                intervalSlots: vaultConfig.intervalSlots,
+              },
+            },
+            (step) => {
+              set({ progress: step });
+            },
+            walletSigner,
+          );
+
+          return await recordOpenedVault({
+            label: 'subscribePrivateStarkV4Action',
+            sig: txSig,
+            vaultPDA,
+            vaultConfig,
+            poolConfig,
+            subscriberSecret,
+            subscriberOwnershipCommitment,
+            serviceId,
+            set,
+            get,
+          });
+        } catch (err) {
+          console.error('[SubscriptionVault] subscribePrivateStarkV4 error:', err);
+          if (__DEV__) {
+            console.warn('[Sub:Create:Store] V4 FAILED', {
+              message: (err as Error).message,
+              poolPDA: poolConfig.poolPDA.toBase58(),
+            });
+          }
+          set({ error: (err as Error).message });
+          throw err;
+        } finally {
           set({ isLoading: false, progress: null });
         }
       },

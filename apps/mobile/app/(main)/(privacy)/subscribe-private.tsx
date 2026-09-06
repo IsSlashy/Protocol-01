@@ -38,6 +38,7 @@ import {
 } from '@/services/solana/serviceRegistry';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { licenseServiceTag } from '@/services/license/derive';
+import { chooseSubscribeRoute } from '@/services/subscriptionVault/subscribePrivateStarkV4';
 import { useStarkProver } from '@/providers/StarkProverProvider';
 import { useT } from '@/i18n';
 import {
@@ -81,12 +82,20 @@ export default function SubscribePrivateScreen() {
   const { notes } = useDenominatedPoolStore();
   const {
     subscribePrivateStarkAction,
+    prepareSubscribeV4Action,
+    subscribePrivateStarkV4Action,
     isLoading,
     progress,
     setProgress,
     resetOperationState,
   } = useSubscriptionVaultStore();
-  const { isReady: starkReady, generateProof: starkGenerate, generatePoolCommitmentProof, generateMerklePathProof } = useStarkProver();
+  const {
+    isReady: starkReady,
+    generateProof: starkGenerate,
+    generatePoolCommitmentProof,
+    generateMerklePathProof,
+    generateSpendProof,
+  } = useStarkProver();
 
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [retailer, setRetailer] = useState(params.retailer ?? '');
@@ -288,6 +297,60 @@ export default function SubscribePrivateScreen() {
         });
       }
 
+      // ── ROUTE: CIRCUIT 7, OR THE C1 + C3 PAIR ───────────────────────────
+      //
+      // THE ROUTE IS PER NOTE, NOT A MIGRATION. `subscribe_private_stark` (v3)
+      // stays reachable indefinitely: a note whose blinding is an epoch can be
+      // spent nowhere else, and the v4 prepare has no stored-path fast path, so
+      // a note whose root aged out of the pool's 100-root ring still needs the
+      // v3 rebuild. Neither leg is legacy.
+      //
+      // `chooseSubscribeRoute` asks `whySubscribeCircuit7Cannot(receipt)`
+      // SYNCHRONOUSLY FIRST, then tries the prepare, and falls back to the pair
+      // ONLY on `SubscribeV4Unprovable` — an allow-list. A wrong felt count or a
+      // transcript bound to the wrong terms is a broken PROVER, and answering
+      // that by publishing the commitment on v3 and reporting success is the
+      // exact failure the pair exists to remove. Everything else rethrows.
+      //
+      // NOTHING after the prepare falls back: once the proof is uploaded and
+      // the nullifier PDA initialised, a v3 retry pays rent twice and dies on
+      // the double-spend guard with the note already spent.
+      const serviceTag = licenseServiceTag(lockedEntry?.slug, retailerKey.toBase58());
+      const route = await chooseSubscribeRoute(receipt, () =>
+        prepareSubscribeV4Action(
+          receipt,
+          poolConfig,
+          vaultConfig,
+          subscriberSecret,
+          BigInt(ownershipResult.commitment),
+          vkHashSubscriber,
+          generateSpendProof,
+          serviceTag,
+        ),
+      );
+      if (route.version === 'v3') {
+        console.warn(
+          '[Sub:Create] circuit 7 could not prove this note; falling back to the C1 + C3 ' +
+          'pair, which publishes the note commitment:',
+          route.reason,
+        );
+      }
+
+      let sig: string;
+      let vaultAddress: string;
+      if (route.version === 'v4') {
+        setStarkStatus('Submitting the circuit-7 subscription...');
+        ({ signature: sig, vaultAddress } = await subscribePrivateStarkV4Action(
+          receipt,
+          poolConfig,
+          vaultConfig,
+          subscriberSecret,
+          BigInt(ownershipResult.commitment),
+          route.prepared,
+          serviceTag,
+        ));
+      } else {
+      // Byte for byte what this screen did before circuit 7 existed.
       setStarkStatus('Generating STARK pool commitment proof...');
       const starkResult = await generatePoolCommitmentProof(
         receipt.nullifierPreimage.toString(),
@@ -373,7 +436,7 @@ export default function SubscribePrivateScreen() {
       }
 
       setStarkStatus('Submitting STARK subscription...');
-      const { signature: sig, vaultAddress } = await subscribePrivateStarkAction(
+      ({ signature: sig, vaultAddress } = await subscribePrivateStarkAction(
         receipt,
         poolConfig,
         vaultConfig,
@@ -395,10 +458,12 @@ export default function SubscribePrivateScreen() {
         // registered service, else the retailer address. One rule, shared with
         // LicenseKeyCard (licenseServiceTag).
         licenseServiceTag(lockedEntry?.slug, retailerKey.toBase58()),
-      );
+      ));
+      }
 
       if (__DEV__) {
-        console.log('[Sub:Create] subscribePrivateStarkAction returned', {
+        console.log('[Sub:Create] subscribe action returned', {
+          route: route.version,
           sigPrefix: sig.slice(0, 16),
           // Pool version we created against — Pay Now / processDuePayments
           // must select the matching V2/V3 unshield path for this same note.

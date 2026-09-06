@@ -77,8 +77,8 @@ const COMPUTE_BUDGET_PROGRAM_ID = new PublicKey(
   'ComputeBudget111111111111111111111111111111'
 );
 
-/** Build compute budget instructions */
-function buildComputeBudgetIxs(cuLimit = 300_000, cuPriceMicroLamports = 1000) {
+/** Build compute budget instructions. Exported for the v4 sibling (`./subscribePrivateStarkV4.ts`). */
+export function buildComputeBudgetIxs(cuLimit = 300_000, cuPriceMicroLamports = 1000) {
   const limitData = Buffer.alloc(5);
   limitData.writeUInt8(2, 0);
   limitData.writeUInt32LE(cuLimit, 1);
