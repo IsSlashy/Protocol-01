@@ -2341,7 +2341,15 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
 // inside the shared validator instead of trusting its callers — so the entry is
 // gone and the target runs in CI. That is the intended lifetime of an entry
 // here: written with the reason, deleted when the reason is.
-const CI_UNRUN_TEST_TARGETS: [(&str, &str); 2] = [
+const CI_UNRUN_TEST_TARGETS: [(&str, &str); 3] = [
+    (
+        "l2_presized_buffers",
+        "[L2 2026-09-06] same reason as cu_budget, same artifact: it drives `init_proof_buffer_v3` \
+         and `reset_proof_buffer` through the .so it builds itself with `cargo-build-sbf` \
+         (shared fingerprint cache under target/cu-budget), which the rust-programs-build job \
+         does not have. The wire format those two instructions expose is ALSO pinned by \
+         `proofBufferV3.test.ts` on the three client surfaces, and those DO run in CI",
+    ),
     (
         "cu_budget",
         "it BUILDS the .so it measures, so it needs `cargo-build-sbf`, which the \

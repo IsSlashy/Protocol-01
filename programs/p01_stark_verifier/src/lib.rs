@@ -456,9 +456,147 @@ pub mod p01_stark_verifier {
     }
 
     /// Close the proof buffer and return rent to authority.
+    ///
+    /// Works on every buffer shape this program owns: the `stark_proof` PDA,
+    /// the `stark_proof_v2` nonce PDA, and a keypair account initialised by
+    /// `init_proof_buffer_v3`. Anchor's `close` moves the lamports, assigns
+    /// the account to the system program and resizes it to zero, none of
+    /// which depends on how the address was derived.
     pub fn close_proof_buffer(
         _ctx: Context<CloseProofBuffer>,
     ) -> Result<()> {
+        Ok(())
+    }
+
+    /// [L2 2026-09-06] Initialise a proof buffer that the CLIENT allocated.
+    ///
+    /// # Why a third init
+    ///
+    /// `init_proof_buffer` and `_v2` allocate a PDA through a CPI to the system
+    /// program, and a CPI allocation is capped at 10,240 bytes
+    /// (`MAX_PERMITTED_DATA_INCREASE`). An 80 KB circuit-7 proof therefore
+    /// costs one init plus EIGHT `resize_proof_buffer` transactions, each of
+    /// which has to be confirmed before the next can be sent. Measured on
+    /// 2026-09-02 (`docs/BENCHMARK-2026-09-02.md`), a private subscription is
+    /// 94 transactions, and those nine sequential confirmations are a third of
+    /// the wall clock that is not the devnet rate limit.
+    ///
+    /// The cap does not apply to a top-level `SystemProgram::CreateAccount`
+    /// signed by the new account's keypair: the client can allocate the full
+    /// `ProofBuffer::space(proof_size)` in one instruction, owner = this
+    /// program, and this instruction initialises it in the SAME transaction.
+    /// One transaction replaces nine. It also works for a fresh ephemeral
+    /// signer, which the web withdrawal uses once per spend and which no PDA
+    /// reuse can help.
+    ///
+    /// # What consumers see
+    ///
+    /// Exactly a `ProofBuffer`: same discriminator, same layout, same
+    /// `authority` field, same `verified` / `deep_ali_verified` flags. Every
+    /// consumer in `zk_shielded` checks `owner == this program`, `authority`,
+    /// `circuit_id`, the two flags and the public-inputs hash, and NONE of them
+    /// re-derives the PDA (verified 2026-09-06 against
+    /// `shield_denominated_v3.rs:93-160` and the `parse_stark_proof_buffer`
+    /// readers). So a keypair-owned buffer is consumed without any change on
+    /// the pool side.
+    ///
+    /// # What `zero` buys
+    ///
+    /// `#[account(zero)]` requires the account to be owned by this program and
+    /// to carry an all-zero discriminator, and writes the real discriminator
+    /// on exit. Only the system program can hand this program a fresh
+    /// zero-filled account (`create_account` / `allocate` + `assign`), and only
+    /// this program can write to accounts it owns, so an account that passes
+    /// `zero` is one this program has never initialised. A live buffer cannot
+    /// be re-initialised over: its discriminator is set, and `zero` refuses
+    /// it with `ConstraintZero`. The size check below is the one thing `zero`
+    /// does not do.
+    pub fn init_proof_buffer_v3(
+        ctx: Context<InitProofBufferV3>,
+        proof_size: u32,
+        circuit_id: u8,
+    ) -> Result<()> {
+        require!(
+            get_circuit_config(circuit_id).is_some(),
+            StarkVerifierError::UnsupportedCircuit
+        );
+        // The declared size must fit the bytes the client actually allocated.
+        // Without this, `write_proof_chunk`'s bound against `proof_size` would
+        // pass for a chunk that indexes past the account (the same seam its
+        // own length check closes), and `verify_*` would slice past the end.
+        let allocated = ctx.accounts.proof_buffer.to_account_info().data_len();
+        require!(
+            allocated >= ProofBuffer::space(proof_size as usize),
+            StarkVerifierError::BufferTooSmall
+        );
+
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.authority = ctx.accounts.authority.key();
+        buffer.circuit_id = circuit_id;
+        buffer.proof_size = proof_size;
+        buffer.bytes_written = 0;
+        buffer.verified = false;
+        buffer.public_inputs_hash = [0u8; 32];
+        buffer.deep_ali_verified = false;
+        Ok(())
+    }
+
+    /// [L2 2026-09-06] Rearm an existing buffer for a new proof.
+    ///
+    /// A wallet or relayer that keeps ONE buffer per circuit alive pays zero
+    /// init and zero resize transactions per proof: reset, upload the chunks,
+    /// verify, consume, repeat. The buffer may be any shape this program owns
+    /// (`stark_proof` PDA, `stark_proof_v2` PDA, or a `init_proof_buffer_v3`
+    /// keypair account); it only has to be large enough for the new
+    /// `proof_size`. Shrinking is allowed, growing is not (use
+    /// `resize_proof_buffer` or a new buffer).
+    ///
+    /// # Replay surface
+    ///
+    /// Everything a consumer reads — `circuit_id`, `verified`,
+    /// `deep_ali_verified`, `public_inputs_hash` — is cleared here, in one
+    /// instruction, so there is no interleaving in which a consumer sees the
+    /// previous proof's flags next to the new proof's bytes:
+    ///
+    /// * A consumer that ran BEFORE the reset saw the old, complete state and
+    ///   acted on it; the reset afterwards changes nothing it relied on.
+    /// * A consumer that runs AFTER the reset sees `verified == false` and is
+    ///   refused until the NEW bytes pass both phases.
+    /// * Stale proof bytes below the `bytes_written` high-water mark are the
+    ///   same "torn buffer" surface `write_proof_chunk` already has: the
+    ///   verifier verifies whatever bytes are there against the public inputs
+    ///   the caller names, so a mix of old and new bytes either is a valid
+    ///   proof of exactly those inputs or is refused. Nothing about the
+    ///   mixture weakens soundness; it can only waste the caller's CU.
+    ///
+    /// Only the authority can reset (`has_one`), and a reset of a
+    /// verified-but-not-yet-consumed buffer only ever costs its own authority
+    /// the upload it discards.
+    ///
+    /// `circuit_id == u8::MAX` is accepted as the `verify_uniform` sentinel,
+    /// so the nonce-seeded v2 flow can reuse its buffer too.
+    pub fn reset_proof_buffer(
+        ctx: Context<ResetProofBuffer>,
+        proof_size: u32,
+        circuit_id: u8,
+    ) -> Result<()> {
+        require!(
+            circuit_id == u8::MAX || get_circuit_config(circuit_id).is_some(),
+            StarkVerifierError::UnsupportedCircuit
+        );
+        let allocated = ctx.accounts.proof_buffer.to_account_info().data_len();
+        require!(
+            allocated >= ProofBuffer::space(proof_size as usize),
+            StarkVerifierError::BufferTooSmall
+        );
+
+        let buffer = &mut ctx.accounts.proof_buffer;
+        buffer.circuit_id = circuit_id;
+        buffer.proof_size = proof_size;
+        buffer.bytes_written = 0;
+        buffer.verified = false;
+        buffer.public_inputs_hash = [0u8; 32];
+        buffer.deep_ali_verified = false;
         Ok(())
     }
 
@@ -812,6 +950,30 @@ pub struct CloseProofBuffer<'info> {
     pub authority: Signer<'info>,
 }
 
+/// [L2 2026-09-06] A client-allocated buffer, initialised in place.
+///
+/// `zero`: owned by this program, discriminator all zeros, discriminator
+/// written on exit. The client's `SystemProgram::CreateAccount` (signed by the
+/// buffer keypair, paid by the authority) precedes this instruction in the same
+/// transaction. No system program account is needed here: nothing is allocated
+/// by this instruction.
+#[derive(Accounts)]
+#[instruction(proof_size: u32, circuit_id: u8)]
+pub struct InitProofBufferV3<'info> {
+    #[account(zero)]
+    pub proof_buffer: Account<'info, ProofBuffer>,
+    pub authority: Signer<'info>,
+}
+
+/// [L2 2026-09-06] Rearm a buffer for its next proof. See `reset_proof_buffer`.
+#[derive(Accounts)]
+#[instruction(proof_size: u32, circuit_id: u8)]
+pub struct ResetProofBuffer<'info> {
+    #[account(mut, has_one = authority)]
+    pub proof_buffer: Account<'info, ProofBuffer>,
+    pub authority: Signer<'info>,
+}
+
 // ============================================================================
 // State
 // ============================================================================
@@ -880,4 +1042,10 @@ pub enum StarkVerifierError {
     /// call and failing inside would be indistinguishable from a bad proof.
     #[msg("Circuit 0 is verified only by the legacy verify_stark_proof path")]
     CircuitZeroIsLegacyOnly,
+    /// [L2 2026-09-06] `init_proof_buffer_v3` / `reset_proof_buffer`: the
+    /// account is shorter than `ProofBuffer::space(proof_size)`. Appended LAST
+    /// so every existing code (6000..=6007) keeps its number; consumers and
+    /// tests pin `InvalidProof = 6003` by value.
+    #[msg("Proof buffer account is smaller than the declared proof size")]
+    BufferTooSmall,
 }
