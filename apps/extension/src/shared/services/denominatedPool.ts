@@ -53,7 +53,9 @@ import {
 // Stark proof upload — extension's legacy pipeline (non-uniform).
 import {
   submitAndVerifyStarkProof,
+  submitAndConsumeStarkProof,
   closeStarkProofBuffer,
+  getProofBufferPDA,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_POOL_COMMITMENT,
   CIRCUIT_SPEND,
@@ -837,9 +839,11 @@ export async function shieldV3(
   connection: Connection,
   onProgress?: (step: string) => void,
 ): Promise<{ txSig: string; receipt: ShieldReceipt; c6ProofBuffer: PublicKey }> {
-  let c6ProofBuffer!: PublicKey;
-  try {
-    // 1. Submit + verify C6 proof on-chain (legacy non-uniform pipeline).
+  {
+    // 1. The C6 proof goes up, then [phase 2 + shield + close] land in ONE
+    //    transaction (phase 1 keeps its own: 1,316,491 CU measured, and the cap
+    //    is 1,400,000). Two confirmations instead of four, and the buffer's rent
+    //    comes back in the shield transaction itself. Matches the web app.
     onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
     const proof: GenericStarkProof = {
       proofBytes: c6ProofResult.proofBytes,
@@ -847,8 +851,7 @@ export async function shieldV3(
       publicInputs: c6ProofResult.publicInputs,
       proofSize: c6ProofResult.proofSize,
     };
-    const c6Result = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
-    c6ProofBuffer = c6Result.proofBuffer;
+    const [c6ProofBuffer] = getProofBufferPDA(signer.publicKey, CIRCUIT_MERKLE_UPDATE);
 
     // 2. Build shield_denominated_v3.
     onProgress?.('Building V3 shield transaction...');
@@ -887,7 +890,6 @@ export async function shieldV3(
       poolVault,
     );
 
-    const tx = new Transaction();
     // [C6-D12] 300,000 -> 600,000.
     //
     // MEASURED 2026-08-29 on the litesvm SBF VM: one on-chain Poseidon-GL
@@ -900,9 +902,13 @@ export async function shieldV3(
     // measured is the fold's cost; this handler's own total has not been
     // measured on the SBF VM since the fold landed. Erring high costs only a
     // marginally higher priority fee. Matches the web app.
-    tx.add(...buildComputeBudgetIxs(600_000));
+    // [ONE-TX 2026-09-06] 600,000 -> 1,000,000, and it now covers phase 2 as
+    // well: the shield instruction shares its transaction with
+    // `verify_deep_ali_phase2` and the buffer close. The remaining headroom is
+    // for the depth-19 pool (16 `hash2` in the fold, ~552,000 CU).
+    const consume: TransactionInstruction[] = [];
     if (!isNativeSOL && userTokenAccount) {
-      tx.add(
+      consume.push(
         createAssociatedTokenAccountIdempotentInstruction(
           signer.publicKey,
           userTokenAccount,
@@ -911,10 +917,16 @@ export async function shieldV3(
         ),
       );
     }
-    tx.add(ix);
+    consume.push(ix);
 
     onProgress?.('Sending V3 shield transaction...');
-    const txSig = await signSendConfirmTx(connection, tx, signer);
+    const { txSignature: txSig } = await submitAndConsumeStarkProof(
+      proof,
+      signer,
+      connection,
+      { instructions: consume, computeUnits: 1_000_000, label: 'shielding the deposit' },
+      onProgress,
+    );
     onProgress?.('V3 shield confirmed!');
 
     const receipt: ShieldReceipt = {
@@ -932,16 +944,9 @@ export async function shieldV3(
       merkleRoot: insertParams.newRoot,
     };
 
+    // The buffer was closed inside the shield transaction; the address is
+    // returned for callers that still key on it.
     return { txSig, receipt, c6ProofBuffer };
-  } finally {
-    if (c6ProofBuffer) {
-      try {
-        onProgress?.('Closing C6 proof buffer...');
-        await closeStarkProofBuffer(c6ProofBuffer, signer, connection);
-      } catch (e: unknown) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer failed:', e instanceof Error ? e.message : String(e));
-      }
-    }
   }
 }
 
@@ -1400,8 +1405,41 @@ export async function fetchPoolLeavesByIndex(
   opts: {
     maxSignatures?: number;
     onProgress?: (scanned: number, total: number) => void;
+    /** Human-readable step line, so the caller can say WHICH path ran. */
+    onStep?: (step: string) => void;
+    /** The answer must hold at least this many leaves (`leafIndex + 1`). */
+    minLeafCount?: number;
+    /** Force the indexer to re-read the chain before answering (retry path). */
+    fresh?: boolean;
+    /** `false` disables the indexer; a string overrides its base URL. */
+    indexer?: false | string;
   } = {},
 ): Promise<{ leavesByIndex: bigint[]; scannedLeafCount: number; missing: number[] }> {
+  // ── FAST PATH: one HTTP call to the leaf indexer ────────────────────────
+  // Mirrors the web twin (denominatedPool.ts, same function). The RPC scan
+  // below is one `getTransaction` per pool signature; the indexer answers the
+  // same dense array in one request. It is NOT trusted: every caller rebuilds
+  // the path and pre-flights the root against the on-chain ring before any
+  // proof rent is spent, so a lying indexer can only cause a refused spend.
+  if (opts.indexer !== false) {
+    const { fetchLeavesFromIndexer, resolvePoolLeavesBaseUrl } = await import('./poolLeavesClient');
+    const baseUrl = typeof opts.indexer === 'string' ? opts.indexer : resolvePoolLeavesBaseUrl();
+    if (baseUrl) {
+      opts.onStep?.('Fetching pool leaves from the indexer...');
+      const fast = await fetchLeavesFromIndexer(poolPDA.toBase58(), {
+        baseUrl,
+        fresh: opts.fresh,
+        minLeafCount: opts.minLeafCount,
+      });
+      if (fast) {
+        opts.onStep?.(`Fetched ${fast.scannedLeafCount} leaves from the indexer`);
+        opts.onProgress?.(fast.scannedLeafCount, fast.scannedLeafCount);
+        return { leavesByIndex: fast.leavesByIndex, scannedLeafCount: fast.scannedLeafCount, missing: fast.missing };
+      }
+      opts.onStep?.('Indexer unavailable — scanning pool events from RPC...');
+    }
+  }
+
   const onChain = await fetchPoolCommitments(connection, poolPDA, {
     maxSignatures: opts.maxSignatures ?? 1000,
     onProgress: opts.onProgress,
@@ -1673,11 +1711,16 @@ export async function prepareUnshield(
   // Import starkProver lazily to avoid circular module issues.
   const { starkProver: prover } = await import('./starkProver');
 
-  onProgress?.('Fetching pool leaves from on-chain events...');
+  onProgress?.('Fetching pool leaves...');
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
     connection,
     poolConfig.poolPDA,
-    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    {
+      maxSignatures: 1000,
+      onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`),
+      onStep: onProgress,
+      minLeafCount: receipt.leafIndex + 1,
+    },
   );
 
   if (missing.length > 0) {
@@ -1705,6 +1748,9 @@ export async function prepareUnshield(
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
         const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
           maxSignatures: 3000,
+          fresh: true,
+          onStep: onProgress,
+          minLeafCount: receipt.leafIndex + 1,
         });
         merkleResult = buildMerkleProofFromLeavesV3({
           leavesByIndex: retry.leavesByIndex,
@@ -2179,11 +2225,16 @@ export async function prepareUnshieldV4(
   // forces the lazy import over there does not exist in this bundle.
   const prover = starkProver;
 
-  onProgress?.('Fetching pool leaves from on-chain events...');
+  onProgress?.('Fetching pool leaves...');
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
     connection,
     poolConfig.poolPDA,
-    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    {
+      maxSignatures: 1000,
+      onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`),
+      onStep: onProgress,
+      minLeafCount: receipt.leafIndex + 1,
+    },
   );
   if (missing.length > 0) {
     console.warn(`[DenomPool/ext-v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
@@ -2209,7 +2260,12 @@ export async function prepareUnshieldV4(
       };
       if (!known(merkleResult.root)) {
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
-        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
+          maxSignatures: 3000,
+          fresh: true,
+          onStep: onProgress,
+          minLeafCount: receipt.leafIndex + 1,
+        });
         merkleResult = buildMerkleProofFromLeavesV3({
           leavesByIndex: retry.leavesByIndex,
           targetLeafIndex: receipt.leafIndex,
@@ -2345,8 +2401,7 @@ export async function unshieldDenominatedStarkV4(
     );
   }
 
-  let c7ProofBuffer: PublicKey | undefined;
-  try {
+  {
     onProgress?.('Submitting the circuit-7 spend proof on-chain...');
     const proof: GenericStarkProof = {
       proofBytes: prepared.c7ProofResult.proofBytes,
@@ -2354,8 +2409,10 @@ export async function unshieldDenominatedStarkV4(
       publicInputs: prepared.c7ProofResult.publicInputs,
       proofSize: prepared.c7ProofResult.proofSize,
     };
-    const result = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
-    c7ProofBuffer = result.proofBuffer;
+    // The buffer address is a PDA of (signer, circuit): known before the
+    // upload, so the spend instruction can be built now and ride in the SAME
+    // transaction as the two verify phases and the buffer close.
+    const [c7ProofBuffer] = getProofBufferPDA(signer.publicKey, CIRCUIT_SPEND);
 
     onProgress?.('Building V4 unshield transaction...');
     const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
@@ -2390,35 +2447,40 @@ export async function unshieldDenominatedStarkV4(
       recipientTokenAccount,
     );
 
-    const tx = new Transaction();
-    // The handler walks three Poseidon levels on top of the v3 work; measured
-    // headroom, not a guess carried over.
-    tx.add(...buildComputeBudgetIxs(400_000));
+    // [ONE-TX 2026-09-06] phase 1 + phase 2 + this instruction + close in ONE
+    // transaction. MEASURED 2026-09-02: 878,756 + 192,715 + 176,404 =
+    // 1,247,875 CU, under the 1,400,000 cap. The split-shape budget below
+    // (500,000) is kept for the automatic fallback: `resolve_pool_root` walks
+    // FOUR levels, ~137,876 CU at the ~34,469 measured per on-chain `hash2`.
+    // ⚠️ Headroom, not an end-to-end measurement.
+    const consume: TransactionInstruction[] = [];
     if (!isNativeSOL && recipientTokenAccount) {
-      tx.add(
+      consume.push(
         createAssociatedTokenAccountIdempotentInstruction(
           signer.publicKey, recipientTokenAccount, recipient, poolConfig.tokenMint,
         ),
       );
     }
-    tx.add(ix);
+    consume.push(ix);
 
     onProgress?.('Sending V4 unshield transaction...');
-    const sig = await signSendV3(connection, tx, signer, onProgress);
+    const { txSignature: sig } = await submitAndConsumeStarkProof(
+      proof,
+      signer,
+      connection,
+      {
+        instructions: consume,
+        computeUnits: 500_000,
+        label: 'withdrawing',
+        // The privacy relayer route (settings gate → relayer → direct
+        // fallback) carries the whole composed transaction: it is complete and
+        // user-signed either way, only the transport differs.
+        send: (tx) => signSendV3(connection, tx, signer, onProgress),
+      },
+      onProgress,
+    );
     onProgress?.('V4 unshield confirmed!');
     return sig;
-  } finally {
-    if (c7ProofBuffer) {
-      try {
-        onProgress?.('Closing proof buffer (rent recovery)...');
-        await closeStarkProofBuffer(c7ProofBuffer, signer, connection);
-      } catch (closeErr: unknown) {
-        console.warn(
-          '[DenomPool/ext-v4] closeStarkProofBuffer failed:',
-          closeErr instanceof Error ? closeErr.message : String(closeErr),
-        );
-      }
-    }
   }
 }
 

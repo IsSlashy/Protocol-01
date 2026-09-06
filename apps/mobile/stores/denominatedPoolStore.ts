@@ -1275,15 +1275,15 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             shieldEphemeral = ephemeral;
             shieldFunder = localKp!;
 
-            const { UNIFORM_PROOF_SIZE } = await import('../services/stark');
             const PROOF_DATA_OFFSET_LOCAL = 83;
-            // Rent for the PADDED size, not the proof's actual size. The
-            // uniform pipeline reallocs the buffer to UNIFORM_PROOF_SIZE, and
-            // pricing the real size runs E out of lamports during the last
-            // resize (ResultWithNegativeLamports) — the same trap the V3
-            // unshield pre-fund documents.
+            // [PERF 2026-09-06] The deposit uploads the proof's REAL size
+            // again (non-uniform pipeline, like the web twin), so the rent is
+            // priced on `c6ProofResult.proofSize` + the 83-byte header. When
+            // this was the 145 KB uniform pad, pricing the real size ran E out
+            // of lamports during the last resize; the size and the price now
+            // come from the same number.
             const bufferRent = await connection.getMinimumBalanceForRentExemption(
-              PROOF_DATA_OFFSET_LOCAL + UNIFORM_PROOF_SIZE,
+              PROOF_DATA_OFFSET_LOCAL + c6ProofResult.proofSize,
             );
             const relayerEnabled = (
               await import('./settingsStore').then(m => m.useSettingsStore.getState())

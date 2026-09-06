@@ -48,12 +48,34 @@ async function sleep(ms: number): Promise<void> {
  *    so STARK uploads (15-20 sequential calls) don't blow the 60s blockhash window through Tor.
  * 4. Direct-RPC failures are surfaced as-is (no infinite fallback loop).
  */
+/**
+ * [PERF 2026-09-06] Endpoints we pay for or run ourselves (Helius, the P01
+ * privacy relay, localhost) get no per-call timing jitter. The 30-120 ms sleep
+ * before EVERY RPC call was measured at ~14.6 s per uploaded proof
+ * (docs/MOBILE_PROVER_LATENCY.md §2.1) for a correlation defence the same doc
+ * rates as worth almost nothing: the provider already sees the whole burst.
+ * The public cluster endpoints keep it; they are rate-limited anyway.
+ */
+export function isPrivateRpcEndpoint(urlStr: string): boolean {
+  const lower = urlStr.toLowerCase();
+  return (
+    lower.includes('helius-rpc.com') ||
+    lower.includes('/v1/rpc') ||
+    lower.startsWith('http://localhost') ||
+    lower.startsWith('http://127.0.0.1')
+  );
+}
+
 async function resilientFetch(
   url: Parameters<typeof fetch>[0],
   options: Parameters<typeof fetch>[1],
 ): Promise<Response> {
   const sanitizedOptions = stripIdentifyingHeaders(options);
-  await sleep(30 + Math.floor(Math.random() * 90));
+  const urlForJitter =
+    typeof url === 'string' ? url : url instanceof URL ? url.toString() : (url as Request)?.url ?? String(url);
+  if (!isPrivateRpcEndpoint(urlForJitter)) {
+    await sleep(30 + Math.floor(Math.random() * 90));
+  }
 
   // Detect whether this fetch targets the configured privacy relay vs a
   // direct RPC. Relay calls get a fallback to direct on 5xx/timeout (line

@@ -101,7 +101,6 @@ import { CIRCUIT_SPEND, SPEND_SUBTREE_DEPTH } from '../stark/spendWitness';
 import { payLog, markPayComplete, inspectPayError } from '../payments/diagnostics';
 import {
   ZK_SHIELDED_PROGRAM_ID,
-  buildComputeBudgetIxs,
   deriveVaultPDA,
   goldilocksU64To32,
   type WalletSigner,
@@ -564,11 +563,16 @@ export async function prepareSubscribeV4(
   // work so a malformed binding (short vkHash, zero rate) fails at zero cost.
   const rhLimbs = subscribeBindingLimbs(binding);
 
-  onProgress?.('Fetching pool leaves from on-chain events...');
+  onProgress?.('Fetching pool leaves...');
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
     connection,
     poolConfig.poolPDA,
-    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    {
+      maxSignatures: 1000,
+      onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`),
+      onStep: onProgress,
+      minLeafCount: receipt.leafIndex + 1,
+    },
   );
   if (missing.length > 0) {
     console.warn(
@@ -596,7 +600,12 @@ export async function prepareSubscribeV4(
       };
       if (!known(merkleResult.root)) {
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
-        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
+          maxSignatures: 3000,
+          fresh: true,
+          onStep: onProgress,
+          minLeafCount: receipt.leafIndex + 1,
+        });
         merkleResult = buildMerkleProofFromLeavesV3({
           leavesByIndex: retry.leavesByIndex,
           targetLeafIndex: receipt.leafIndex,
@@ -826,100 +835,101 @@ export async function subscribePrivateStarkV4(
     circuit: CIRCUIT_SPEND,
   });
 
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer } = await import('../stark');
+  const { submitAndConsumeStarkProof, closeStarkProofBuffer, getProofBufferPDA, MAX_TX_CU } = await import('../stark');
 
   onProgress?.('Reading wallet...');
   const keypair = walletSigner ? null : await getKeypair();
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
   const payer = keypair ? keypair.publicKey : walletSigner!.publicKey;
 
-  let c7ProofBuffer: PublicKey | undefined;
+  // The buffer's authority is the payer (the local keypair or the wallet
+  // signer), so its address is known before the upload — and it must be: the
+  // subscribe instruction is built first and rides in the SAME transaction as
+  // both verify phases and the close (L3, 2026-09-06: 878,756 + 192,715 +
+  // ~176,000 CU measured on devnet 2026-09-02, under the 1,400,000 cap).
+  const [c7ProofBuffer] = getProofBufferPDA(payer, CIRCUIT_SPEND);
+
+  const nullifierBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.nullifierGoldilocks));
+  const merkleRootBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.merkleRoot));
+  const subscriberCommitmentBytes = goldilocksU64To32(params.subscriberCommitment);
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+  const vaultPDA = params.binding.vault;
+
+  const isNativeSOL = poolConfig.tokenMint.equals(SystemProgram.programId);
+  let tokenProgram: PublicKey | undefined;
+  let poolVault: PublicKey | undefined;
+  let vaultTokenAccount: PublicKey | undefined;
+  if (!isNativeSOL) {
+    // UNPROVEN LEG. Both funded pools are native SOL, so the handler's
+    // `vault_token.owner == vault.key()` require has never executed on chain.
+    // The vault's ATA is derived with allowOwnerOffCurve = true because the
+    // vault is a PDA, and it MUST be owned by the vault: `claim_period`
+    // constrains the same thing, so a subscribe into a foreign-owned token
+    // account mints a vault whose funds can never be claimed and whose rent is
+    // stranded permanently.
+    const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } = await import('@solana/spl-token');
+    tokenProgram = TOKEN_PROGRAM_ID;
+    poolVault = poolConfig.vaultATA
+      ?? await getAssociatedTokenAddress(poolConfig.tokenMint, poolConfig.poolPDA, true);
+    vaultTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, vaultPDA, true);
+  }
+
+  const ix = buildSubscribePrivateStarkV4Ix({
+    payer,
+    retailer: params.retailer,
+    vaultPDA,
+    poolPDA: poolConfig.poolPDA,
+    treePDA: poolConfig.treePDA,
+    nullifierPDA,
+    c7ProofBuffer,
+    nullifierBytes,
+    merkleRootBytes,
+    subtreeRoot: prepared.subtreeRoot,
+    siblings: prepared.siblings,
+    directions: prepared.directions,
+    subscriberCommitmentBytes,
+    rate: params.binding.rate,
+    intervalSlots: params.binding.intervalSlots,
+    vkHashSubscriber: params.binding.vkHashSubscriber,
+    licenseCommitment: params.binding.licenseCommitment,
+    tokenProgram,
+    poolVault,
+    vaultTokenAccount,
+  });
+
+  let closed = false;
   try {
     onProgress?.('Submitting the circuit-7 spend proof on-chain...');
-    // `submitAndVerifyStarkProof` runs phase 1 AND the DEEP-ALI phase 2 for
-    // circuitId <= 7. Phase 2 is NOT optional here: the handler hard-requires
-    // the `deep_ali_verified` byte at ProofBuffer offset 82, because without it
-    // the buffer records only that the FRI layer checked out, which is not a
-    // statement about the trace.
-    const result = await submitAndVerifyStarkProof(
-      {
-        proofBytes: prepared.c7ProofResult.proofBytes,
-        circuitId: CIRCUIT_SPEND,
-        publicInputs: prepared.c7ProofResult.publicInputs,
-        proofSize: prepared.c7ProofResult.proofSize,
-      },
-      walletSigner,
-      onProgress,
-      connection,
-    );
-    c7ProofBuffer = result.proofBuffer;
-
-    const nullifierBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.nullifierGoldilocks));
-    const merkleRootBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.merkleRoot));
-    const subscriberCommitmentBytes = goldilocksU64To32(params.subscriberCommitment);
-    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
-    const vaultPDA = params.binding.vault;
-
-    const isNativeSOL = poolConfig.tokenMint.equals(SystemProgram.programId);
-    let tokenProgram: PublicKey | undefined;
-    let poolVault: PublicKey | undefined;
-    let vaultTokenAccount: PublicKey | undefined;
-    if (!isNativeSOL) {
-      // UNPROVEN LEG. Both funded pools are native SOL, so the handler's
-      // `vault_token.owner == vault.key()` require has never executed on chain.
-      // The vault's ATA is derived with allowOwnerOffCurve = true because the
-      // vault is a PDA, and it MUST be owned by the vault: `claim_period`
-      // constrains the same thing, so a subscribe into a foreign-owned token
-      // account mints a vault whose funds can never be claimed and whose rent is
-      // stranded permanently.
-      const { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } = await import('@solana/spl-token');
-      tokenProgram = TOKEN_PROGRAM_ID;
-      poolVault = poolConfig.vaultATA
-        ?? await getAssociatedTokenAddress(poolConfig.tokenMint, poolConfig.poolPDA, true);
-      vaultTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, vaultPDA, true);
-    }
-
-    onProgress?.('Opening the subscription vault...');
-    const ix = buildSubscribePrivateStarkV4Ix({
-      payer,
-      retailer: params.retailer,
-      vaultPDA,
-      poolPDA: poolConfig.poolPDA,
-      treePDA: poolConfig.treePDA,
-      nullifierPDA,
-      c7ProofBuffer,
-      nullifierBytes,
-      merkleRootBytes,
-      subtreeRoot: prepared.subtreeRoot,
-      siblings: prepared.siblings,
-      directions: prepared.directions,
-      subscriberCommitmentBytes,
-      rate: params.binding.rate,
-      intervalSlots: params.binding.intervalSlots,
-      vkHashSubscriber: params.binding.vkHashSubscriber,
-      licenseCommitment: params.binding.licenseCommitment,
-      tokenProgram,
-      poolVault,
-      vaultTokenAccount,
-    });
-
-    const tx = new Transaction();
-    // A STARTING FIGURE, NOT A MEASUREMENT — the same 500,000 the web twin
-    // sends. `resolve_pool_root` walks FOUR levels at ~34,469 CU per on-chain
-    // `hash2`, plus one sha256 over 132 bytes and two `find_program_address`.
-    // ⚠️ Headroom, not an end-to-end measurement; pin the real number on the
-    // first devnet send.
-    tx.add(...buildComputeBudgetIxs(500_000));
-    tx.add(ix);
-
-    onProgress?.('Sending the V4 subscription...');
-    let txSig: string;
+    // `submitAndConsumeStarkProof` runs phase 1 AND the DEEP-ALI phase 2, then
+    // the subscribe, in one transaction. Phase 2 is NOT optional here: the
+    // handler hard-requires the `deep_ali_verified` byte at ProofBuffer offset
+    // 82, because without it the buffer records only that the FRI layer
+    // checked out, which is not a statement about the trace.
+    let result: Awaited<ReturnType<typeof submitAndConsumeStarkProof>>;
     try {
-      txSig = await signAndSendV3(connection, tx, keypair, walletSigner);
+      result = await submitAndConsumeStarkProof(
+        {
+          proofBytes: prepared.c7ProofResult.proofBytes,
+          circuitId: CIRCUIT_SPEND,
+          publicInputs: prepared.c7ProofResult.publicInputs,
+          proofSize: prepared.c7ProofResult.proofSize,
+        },
+        {
+          ixs: [ix],
+          cuLimit: MAX_TX_CU,
+          cuPriceMicroLamports: 1000,
+          send: (tx) => signAndSendV3(connection, tx, keypair, walletSigner),
+        },
+        walletSigner,
+        onProgress,
+        connection,
+      );
     } catch (err: any) {
       inspectPayError('zk-recurring', err?.message ?? String(err), 'subscribePrivateStarkV4');
       throw err;
     }
+    closed = result.closed;
+    const txSig = result.txSignature;
 
     // NO EVENT is emitted by this instruction, so there is nothing to read back
     // out of the logs. Recovery is a discriminator-filtered `getProgramAccounts`
@@ -934,8 +944,9 @@ export async function subscribePrivateStarkV4(
     return { txSig, vaultPDA };
   } finally {
     // Buffer rent is only reclaimable by the key that opened it, so this runs
-    // even on failure — the same reason the v3 path closes both of its buffers.
-    if (c7ProofBuffer) {
+    // even on failure. When the composed transaction landed, the close was in
+    // it and there is nothing left to recover.
+    if (!closed) {
       try {
         onProgress?.('Closing proof buffer (rent recovery)...');
         await closeStarkProofBuffer(c7ProofBuffer, walletSigner, connection);

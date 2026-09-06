@@ -62,7 +62,10 @@ const ROUTERS: Array<{ surface: string; rel: string; routesV4: boolean }> = [
   // doors: an epoch-blinded note, and a `V4Unprovable` from prepare. Both SPEND
   // on the C1 + C3 pair — they do not merely throw.
   { surface: 'apps/extension', rel: 'apps/extension/src/shared/store/denominatedPool.ts', routesV4: true },
-  { surface: 'apps/mobile', rel: 'apps/mobile/stores/denominatedPoolStore.ts', routesV4: false },
+  // Cut over 2026-09-06: `unshieldNoteStarkV4` in the store, reached through
+  // `routeUnshieldSpend` (services/denominatedPool/spendRouting.ts) from both
+  // withdraw screens; the pair stays reachable for a `V4Unprovable` note.
+  { surface: 'apps/mobile', rel: 'apps/mobile/stores/denominatedPoolStore.ts', routesV4: true },
 ];
 
 /** The file on each surface that DEFINES the v4 entry points, where one exists. */

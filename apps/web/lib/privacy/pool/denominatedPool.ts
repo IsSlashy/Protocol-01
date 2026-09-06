@@ -58,10 +58,12 @@ import {
 // Stark proof upload — extension's legacy pipeline (non-uniform).
 import {
   submitAndVerifyStarkProof,
+  submitAndConsumeStarkProof,
   closeStarkProofBuffer,
   buildStarkProofUploadBatch,
   buildCloseProofBufferIx,
   getProofBufferPDA,
+  type ProofBufferOptions,
   RELAY_PLACEHOLDER_BLOCKHASH,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_POOL_COMMITMENT,
@@ -1410,10 +1412,20 @@ export async function shieldV3(
   signer: WalletSigner,
   connection: Connection,
   onProgress?: (step: string) => void,
+  /**
+   * [L2 2026-09-06] Where the proof buffer comes from. Default: a fresh
+   * keypair buffer allocated in ONE transaction (`init_proof_buffer_v3`), so
+   * the 8 sequential resizes of a circuit-6 proof are gone. The ephemeral
+   * deposit path passes a DETERMINISTIC keypair so `recoverFloat` can find a
+   * buffer a dead job left behind.
+   */
+  bufferOpts?: ProofBufferOptions,
 ): Promise<{ txSig: string; receipt: ShieldReceipt; c6ProofBuffer: PublicKey }> {
-  let c6ProofBuffer!: PublicKey;
-  try {
-    // 1. Submit + verify C6 proof on-chain (legacy non-uniform pipeline).
+  {
+    // 1. The C6 proof goes up, then [phase 2 + shield + close] land in ONE
+    //    transaction (phase 1 keeps its own: 1,316,491 CU measured, and the cap
+    //    is 1,400,000). Two confirmations instead of four, and the buffer's rent
+    //    comes back in the shield transaction itself.
     onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
     const proof: GenericStarkProof = {
       proofBytes: c6ProofResult.proofBytes,
@@ -1421,8 +1433,6 @@ export async function shieldV3(
       publicInputs: c6ProofResult.publicInputs,
       proofSize: c6ProofResult.proofSize,
     };
-    const c6Result = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
-    c6ProofBuffer = c6Result.proofBuffer;
 
     // 2. Build shield_denominated_v3.
     onProgress?.('Building V3 shield transaction...');
@@ -1447,7 +1457,10 @@ export async function shieldV3(
     const newSubtreeRootBytes = goldilocksToLeBytes32(insertParams.newSubtreeRoot);
     const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
 
-    const ix = buildShieldDenominatedV3Ix(
+    // The buffer address is decided at allocation (a keypair, not a PDA), so
+    // the shield instruction is built as a function of it; the helper calls
+    // this after the allocation and before the composed transaction.
+    const buildShieldIx = (c6ProofBuffer: PublicKey) => buildShieldDenominatedV3Ix(
       signer.publicKey,
       poolConfig.poolPDA,
       poolConfig.treePDA,
@@ -1461,7 +1474,6 @@ export async function shieldV3(
       poolVault,
     );
 
-    const tx = new Transaction();
     // [C6-D12] 300,000 -> 600,000.
     //
     // MEASURED 2026-08-29 (`subscribe_v4_adversarial::the_walk_is_what_the_new_
@@ -1481,21 +1493,37 @@ export async function shieldV3(
     // instead of six: ~275,752 CU at the ~34,469 measured per hash, up from
     // ~206,814. ⚠️ Still headroom rather than a measurement of this handler's
     // total, which has not been run on the SBF VM since the cut.
-    tx.add(...buildComputeBudgetIxs(700_000));
-    if (!isNativeSOL && userTokenAccount) {
-      tx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          signer.publicKey,
-          userTokenAccount,
-          signer.publicKey,
-          poolConfig.tokenMint,
-        ),
-      );
-    }
-    tx.add(ix);
+    // [ONE-TX 2026-09-06] 700,000 -> 1,000,000, and it now covers phase 2 as
+    // well: the shield instruction shares its transaction with
+    // `verify_deep_ali_phase2` (~190,000 CU measured for C7's; C6's is of the
+    // same shape) and the buffer close. The remaining headroom is for the
+    // depth-19 pool (16 `hash2` in the fold, ~552,000 CU) so this figure does
+    // not have to move again when the tree grows.
+    const consume = (c6ProofBuffer: PublicKey): TransactionInstruction[] => {
+      const ixs: TransactionInstruction[] = [];
+      if (!isNativeSOL && userTokenAccount) {
+        ixs.push(
+          createAssociatedTokenAccountIdempotentInstruction(
+            signer.publicKey,
+            userTokenAccount,
+            signer.publicKey,
+            poolConfig.tokenMint,
+          ),
+        );
+      }
+      ixs.push(buildShieldIx(c6ProofBuffer));
+      return ixs;
+    };
 
     onProgress?.('Sending V3 shield transaction...');
-    const txSig = await signSendConfirmTx(connection, tx, signer);
+    const { txSignature: txSig, proofBuffer: c6ProofBuffer } = await submitAndConsumeStarkProof(
+      proof,
+      signer,
+      connection,
+      { instructions: consume, computeUnits: 1_000_000, label: 'shielding the deposit' },
+      onProgress,
+      bufferOpts,
+    );
     onProgress?.('V3 shield confirmed!');
 
     const receipt: ShieldReceipt = {
@@ -1513,16 +1541,9 @@ export async function shieldV3(
       merkleRoot: insertParams.newRoot,
     };
 
+    // The buffer was closed inside the shield transaction; the address is
+    // returned for callers that still key on it.
     return { txSig, receipt, c6ProofBuffer };
-  } finally {
-    if (c6ProofBuffer) {
-      try {
-        onProgress?.('Closing C6 proof buffer...');
-        await closeStarkProofBuffer(c6ProofBuffer, signer, connection);
-      } catch (e: unknown) {
-        console.warn('[DenomPool/V3] closeStarkProofBuffer failed:', e instanceof Error ? e.message : String(e));
-      }
-    }
   }
 }
 
@@ -2014,6 +2035,49 @@ export function parsePoolV3Account(data: Uint8Array): ParsedPoolV3 | null {
 // Extension adaptation: uses DataView/Uint8Array (not Buffer.readBigUInt64LE).
 // ---------------------------------------------------------------------------
 
+/**
+ * Decode every leaf insertion carried by one transaction's log lines.
+ *
+ * This is the ONE place the event byte layouts are read. `fetchPoolCommitments`
+ * (the client-side RPC scan) and the server-side leaf indexer
+ * (`lib/privacy/pool/poolLeavesIndex.ts`, behind `/api/pool-leaves/[pool]`)
+ * both call it, so the two can never disagree on an offset: the indexer's
+ * dense array and the scan's dense array are pinned byte-identical in
+ * `poolLeavesIndexParity.test.ts`.
+ */
+export function decodeLeafInsertionLogs(
+  logs: readonly string[],
+): Array<{ commitment: bigint; leafIndex: number }> {
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
+  const out: Array<{ commitment: bigint; leafIndex: number }> = [];
+  for (const log of logs) {
+    const m = log.match(/^Program data: (.+)$/);
+    if (!m) continue;
+    let data: Uint8Array;
+    try {
+      const b64 = m[1];
+      const binStr = atob(b64);
+      data = new Uint8Array(binStr.length);
+      for (let k = 0; k < binStr.length; k++) data[k] = binStr.charCodeAt(k);
+    } catch { continue; }
+    if (data.length < 8) continue;
+    const disc = data.subarray(0, 8);
+
+    for (const layout of LEAF_INSERTION_EVENTS) {
+      if (!bytesEqual(disc, layout.disc)) continue;
+      if (data.length < layout.minLength) continue;
+      const rawIdx = readU64LE(data, layout.leafIndexOffset);
+      if (rawIdx > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+      const leafIndex = Number(rawIdx);
+      if (leafIndex < 0 || leafIndex >= MAX_LEAVES) continue;
+      const commitment = leBytes32ToBigint(data, layout.commitmentOffset);
+      out.push({ commitment, leafIndex });
+      break;
+    }
+  }
+  return out;
+}
+
 export async function fetchPoolCommitments(
   connection: Connection,
   poolPDA: PublicKey,
@@ -2026,7 +2090,6 @@ export async function fetchPoolCommitments(
   const maxSignatures = options.maxSignatures ?? 1000;
   const batchSize = options.batchSize ?? 25;
   const PAGE = 1000;
-  const MAX_LEAVES = 1 << MERKLE_DEPTH;
 
   const sigs: Array<{ signature: string }> = [];
   let before: string | undefined;
@@ -2067,32 +2130,7 @@ export async function fetchPoolCommitments(
       // `OnChainCommitment.depositSlot`.
       const depositSlot = typeof tx?.slot === 'number' ? tx.slot : null;
       const signature = batch[t]!.signature;
-      for (const log of logs) {
-        const m = log.match(/^Program data: (.+)$/);
-        if (!m) continue;
-        let data: Uint8Array;
-        try {
-          const b64 = m[1];
-          const binStr = atob(b64);
-          data = new Uint8Array(binStr.length);
-          for (let k = 0; k < binStr.length; k++) data[k] = binStr.charCodeAt(k);
-        } catch { continue; }
-        if (data.length < 8) continue;
-        const disc = data.subarray(0, 8);
-
-        let decoded: { commitment: bigint; leafIndex: number } | null = null;
-        for (const layout of LEAF_INSERTION_EVENTS) {
-          if (!bytesEqual(disc, layout.disc)) continue;
-          if (data.length < layout.minLength) continue;
-          const rawIdx = readU64LE(data, layout.leafIndexOffset);
-          if (rawIdx > BigInt(Number.MAX_SAFE_INTEGER)) continue;
-          const leafIndex = Number(rawIdx);
-          if (leafIndex < 0 || leafIndex >= MAX_LEAVES) continue;
-          const commitment = leBytes32ToBigint(data, layout.commitmentOffset);
-          decoded = { commitment, leafIndex };
-          break;
-        }
-        if (!decoded) continue;
+      for (const decoded of decodeLeafInsertionLogs(logs)) {
         out.set(decoded.commitment.toString(), { ...decoded, depositPayer, depositSlot, signature });
       }
     }
@@ -2116,8 +2154,54 @@ export async function fetchPoolLeavesByIndex(
   opts: {
     maxSignatures?: number;
     onProgress?: (scanned: number, total: number) => void;
+    /** Human-readable step line, so the caller can say WHICH path ran. */
+    onStep?: (step: string) => void;
+    /**
+     * The leaf the caller is about to spend must exist in the answer. An indexer
+     * that has not caught up yet returns fewer leaves than this; the fast path
+     * then refreshes once and, still short, hands over to the RPC scan.
+     */
+    minLeafCount?: number;
+    /** Force the indexer to re-read the chain before answering (retry path). */
+    fresh?: boolean;
+    /**
+     * `false` disables the indexer (RPC scan only). A string overrides the base
+     * URL. Default: resolved from the environment, see `poolLeavesClient.ts`.
+     */
+    indexer?: false | string;
   } = {},
 ): Promise<{ leavesByIndex: bigint[]; scannedLeafCount: number; missing: number[] }> {
+  // ── FAST PATH: one HTTP call to the leaf indexer ────────────────────────
+  //
+  // 2026-09-06: the RPC scan below is one `getTransaction` PER POOL SIGNATURE,
+  // paced at 120 ms by `pacedFetch` — 154 signatures on the 1 SOL pool today
+  // is ~20 s, a thousand is two minutes, a full pool is an hour. The indexer
+  // (`/api/pool-leaves/[pool]`) answers the same dense array in one request.
+  //
+  // WHY THIS IS SAFE TO TRUST: it is not trusted. Every caller rebuilds the
+  // Merkle path from these leaves and pre-flights the root against the pool's
+  // own on-chain ring before spending any proof rent. A lying or stale indexer
+  // can only make that pre-flight refuse the spend; it cannot make a wrong
+  // path verify, and it never sees which leaf is being spent.
+  if (opts.indexer !== false) {
+    const { fetchLeavesFromIndexer, resolvePoolLeavesBaseUrl } = await import('./poolLeavesClient');
+    const baseUrl = typeof opts.indexer === 'string' ? opts.indexer : resolvePoolLeavesBaseUrl();
+    if (baseUrl) {
+      opts.onStep?.('Fetching pool leaves from the indexer...');
+      const fast = await fetchLeavesFromIndexer(poolPDA.toBase58(), {
+        baseUrl,
+        fresh: opts.fresh,
+        minLeafCount: opts.minLeafCount,
+      });
+      if (fast) {
+        opts.onStep?.(`Fetched ${fast.scannedLeafCount} leaves from the indexer`);
+        opts.onProgress?.(fast.scannedLeafCount, fast.scannedLeafCount);
+        return { leavesByIndex: fast.leavesByIndex, scannedLeafCount: fast.scannedLeafCount, missing: fast.missing };
+      }
+      opts.onStep?.('Indexer unavailable — scanning pool events from RPC...');
+    }
+  }
+
   const onChain = await fetchPoolCommitments(connection, poolPDA, {
     maxSignatures: opts.maxSignatures ?? 1000,
     onProgress: opts.onProgress,
@@ -2380,11 +2464,16 @@ export async function prepareUnshield(
   // Import starkProver lazily to avoid circular module issues.
   const { starkProver: prover } = await import('./starkProver');
 
-  onProgress?.('Fetching pool leaves from on-chain events...');
+  onProgress?.('Fetching pool leaves...');
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
     connection,
     poolConfig.poolPDA,
-    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    {
+      maxSignatures: 1000,
+      onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`),
+      onStep: onProgress,
+      minLeafCount: receipt.leafIndex + 1,
+    },
   );
 
   if (missing.length > 0) {
@@ -2412,6 +2501,9 @@ export async function prepareUnshield(
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
         const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
           maxSignatures: 3000,
+          fresh: true,
+          onStep: onProgress,
+          minLeafCount: receipt.leafIndex + 1,
         });
         merkleResult = buildMerkleProofFromLeavesV3({
           leavesByIndex: retry.leavesByIndex,
@@ -2947,11 +3039,16 @@ export async function prepareUnshieldV4(
   }
 
   if (!merkleResult) {
-    onProgress?.('Fetching pool leaves from on-chain events...');
+    onProgress?.('Fetching pool leaves...');
     const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
       connection,
       poolConfig.poolPDA,
-      { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+      {
+        maxSignatures: 1000,
+        onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`),
+        onStep: onProgress,
+        minLeafCount: receipt.leafIndex + 1,
+      },
     );
     if (missing.length > 0) {
       console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
@@ -2982,7 +3079,12 @@ export async function prepareUnshieldV4(
         // from a wider scan. The stored candidate is discarded here rather than
         // patched, because a path whose root the pool never had is not a path.
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
-        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
+          maxSignatures: 3000,
+          fresh: true,
+          onStep: onProgress,
+          minLeafCount: receipt.leafIndex + 1,
+        });
         merkleResult = buildMerkleProofFromLeavesV3({
           leavesByIndex: retry.leavesByIndex,
           targetLeafIndex: receipt.leafIndex,
@@ -3087,6 +3189,8 @@ export async function unshieldDenominatedStarkV4(
    * is why v3 relaying needed a trusted operator and this does not.
    */
   relayed = false,
+  /** [L2 2026-09-06] Proof buffer allocation; see `shieldV3`. */
+  bufferOpts?: ProofBufferOptions,
 ): Promise<string> {
   if (!prepared.recipient.equals(recipient)) {
     throw new Error(
@@ -3096,8 +3200,7 @@ export async function unshieldDenominatedStarkV4(
     );
   }
 
-  let c7ProofBuffer: PublicKey | undefined;
-  try {
+  {
     onProgress?.('Submitting the circuit-7 spend proof on-chain...');
     const proof: GenericStarkProof = {
       proofBytes: prepared.c7ProofResult.proofBytes,
@@ -3105,9 +3208,10 @@ export async function unshieldDenominatedStarkV4(
       publicInputs: prepared.c7ProofResult.publicInputs,
       proofSize: prepared.c7ProofResult.proofSize,
     };
-    const result = await submitAndVerifyStarkProof(proof, signer, connection, onProgress);
-    c7ProofBuffer = result.proofBuffer;
-
+    // [L2 2026-09-06] The buffer is a keypair chosen at allocation, not a
+    // PDA, so the spend instruction is built as a FUNCTION of its address and
+    // still rides in the SAME transaction as the two verify phases and the
+    // close.
     onProgress?.('Building V4 unshield transaction...');
     const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
     const merkleRootBytes = goldilocksToLeBytes32(prepared.merkleRoot);
@@ -3124,7 +3228,7 @@ export async function unshieldDenominatedStarkV4(
         ?? await getAssociatedTokenAddress(poolConfig.tokenMint, poolConfig.poolPDA, true);
     }
 
-    const ix = buildUnshieldDenominatedStarkV4Ix(
+    const buildSpendIx = (c7ProofBuffer: PublicKey) => buildUnshieldDenominatedStarkV4Ix(
       signer.publicKey,
       recipient,
       poolConfig.poolPDA,
@@ -3142,38 +3246,44 @@ export async function unshieldDenominatedStarkV4(
       relayed,
     );
 
-    const tx = new Transaction();
-    // The handler walks three Poseidon levels on top of the v3 work; measured
-    // headroom, not a guess carried over.
-    // [ZK-DEPTH-11 2026-08-30] 400,000 -> 500,000. `resolve_pool_root` walks
-    // FOUR levels now: ~137,876 CU at the ~34,469 measured per on-chain `hash2`,
-    // up from ~103,407. ⚠️ Headroom, not an end-to-end measurement.
-    tx.add(...buildComputeBudgetIxs(500_000));
-    if (!isNativeSOL && recipientTokenAccount) {
-      tx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          signer.publicKey, recipientTokenAccount, recipient, poolConfig.tokenMint,
-        ),
-      );
-    }
-    tx.add(ix);
-
-    onProgress?.('Sending V4 unshield transaction...');
-    const sig = await signSendV3(connection, tx, signer, onProgress);
-    onProgress?.('V4 unshield confirmed!');
-    return sig;
-  } finally {
-    if (c7ProofBuffer) {
-      try {
-        onProgress?.('Closing proof buffer (rent recovery)...');
-        await closeStarkProofBuffer(c7ProofBuffer, signer, connection);
-      } catch (closeErr: unknown) {
-        console.warn(
-          '[DenomPool/v4] closeStarkProofBuffer failed:',
-          closeErr instanceof Error ? closeErr.message : String(closeErr),
+    // [ONE-TX 2026-09-06] phase 1 + phase 2 + this instruction + close in ONE
+    // transaction. MEASURED 2026-09-02: 878,756 + 192,715 + 176,404 =
+    // 1,247,875 CU, under the 1,400,000 cap. The split-shape budget below
+    // (500,000) is the figure this path sent before, kept for the automatic
+    // fallback: `resolve_pool_root` walks FOUR levels, ~137,876 CU at the
+    // ~34,469 measured per on-chain `hash2`. ⚠️ Headroom, not an end-to-end
+    // measurement.
+    const consume = (c7ProofBuffer: PublicKey): TransactionInstruction[] => {
+      const ixs: TransactionInstruction[] = [];
+      if (!isNativeSOL && recipientTokenAccount) {
+        ixs.push(
+          createAssociatedTokenAccountIdempotentInstruction(
+            signer.publicKey, recipientTokenAccount, recipient, poolConfig.tokenMint,
+          ),
         );
       }
-    }
+      ixs.push(buildSpendIx(c7ProofBuffer));
+      return ixs;
+    };
+
+    onProgress?.('Sending V4 unshield transaction...');
+    const { txSignature: sig } = await submitAndConsumeStarkProof(
+      proof,
+      signer,
+      connection,
+      {
+        instructions: consume,
+        computeUnits: 500_000,
+        label: 'withdrawing',
+        // Step 1 (web /pay): no privacy relayer here yet — `signSendV3` submits
+        // directly, so the helper's own send is the same transport.
+        send: (tx) => signSendV3(connection, tx, signer, onProgress),
+      },
+      onProgress,
+      bufferOpts,
+    );
+    onProgress?.('V4 unshield confirmed!');
+    return sig;
   }
 }
 

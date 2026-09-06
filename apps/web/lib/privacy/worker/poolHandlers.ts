@@ -67,7 +67,7 @@ import {
 import type { StoredMerklePath } from '../pool/unshieldFromPath';
 import { recoverNotes, scanPoolForSeed, type RecoveredNote } from '../pool/poolNotes';
 import { recoverStuckFloat, refusalSentence, type SweepRefusal } from '../pool/recoverFloat';
-import { createPacedFetch } from './pacedFetch';
+import { createPacedFetch, pacingIntervalFor } from './pacedFetch';
 import { usePollingConfirmation } from './pollingConfirm';
 import {
   executeUnshield,
@@ -1507,10 +1507,14 @@ export function configurePoolHandlers(rpcUrl: string): void {
   // for web3.js, so the default confirmTransaction waits out the blockhash on
   // EVERY transaction (~58s each, ~14 per shield) and reports a landed
   // transaction as expired. See pollingConfirm.ts.
+  // The pace depends on the endpoint: the public devnet RPC needs the 120 ms
+  // serial queue, a Helius endpoint (NEXT_PUBLIC_HELIUS_API_KEY set on the
+  // page, which is what `connection.rpcEndpoint` carries here) takes the
+  // whole chunk round in flight at once. See pacingIntervalFor.
   connection = usePollingConfirmation(
     new Connection(rpcUrl, {
       commitment: 'confirmed',
-      fetch: createPacedFetch(),
+      fetch: createPacedFetch(pacingIntervalFor(rpcUrl)),
     }),
   );
 }

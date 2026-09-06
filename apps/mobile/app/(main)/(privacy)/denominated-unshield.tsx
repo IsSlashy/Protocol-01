@@ -19,6 +19,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useElapsedSeconds, formatElapsedLabel } from '@/hooks/useElapsedSeconds';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
   ActivityIndicator, StyleSheet,
@@ -390,7 +391,13 @@ export default function DenominatedUnshieldScreen() {
     }
   };
 
-  const canSubmit = !!selectedNote && !isLoading && !submitting;
+  // [PERF 2026-09-06] The proof runs in this screen BEFORE the store flips
+  // `isLoading`; `submitting` is the synchronous flag that covers that gap,
+  // and `isProving` covers the circuit-7 prepare (store sets it without
+  // `isLoading`). Gate every progress element on the union.
+  const busy = isLoading || isProving || submitting;
+  const elapsed = useElapsedSeconds(busy);
+  const canSubmit = !!selectedNote && !busy;
 
   return (
     <View style={[st.container, { paddingTop: insets.top }]}>
@@ -410,11 +417,14 @@ export default function DenominatedUnshieldScreen() {
         <View style={st.iconBtn} />
       </View>
 
-      {isLoading && (
+      {busy && (
         <View style={st.stickyProgress}>
           <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={st.stickyProgressText} numberOfLines={2}>
-            {isProving ? `${progress ?? 'Processing'} (proving)` : (progress ?? 'Processing')}
+            {formatElapsedLabel(
+              progress ?? ((isProving || submitting) ? t('shieldUnshield.generatingProof') : 'Processing'),
+              elapsed,
+            )}
           </Text>
           <TouchableOpacity
             style={st.iconBtn}
@@ -628,10 +638,13 @@ export default function DenominatedUnshieldScreen() {
               : t('shieldUnshield.withdraw', { amount: selectedNote.denomination, token: selectedNote.token }))
             : t('shieldUnshield.selectNoteFirst')}
         </Button>
-        {isLoading && (
+        {busy && (
           <>
             <Text style={st.progressText} accessibilityLiveRegion="polite">
-              {isProving ? t('shieldUnshield.generatingProof') : progress || t('shieldUnshield.unshielding')}
+              {formatElapsedLabel(
+                progress || ((isProving || (submitting && !isLoading)) ? t('shieldUnshield.generatingProof') : t('shieldUnshield.unshielding')),
+                elapsed,
+              )}
             </Text>
             <OperationProgressBar progress={progress} variant="inline" />
           </>

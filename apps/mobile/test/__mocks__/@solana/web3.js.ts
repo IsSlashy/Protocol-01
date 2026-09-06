@@ -163,10 +163,44 @@ export class Transaction {
     this.signatures = signers.map(s => ({ publicKey: s.publicKey, signature: Buffer.alloc(64) }));
   }
 
-  serialize(): Buffer {
-    return Buffer.from('mock-serialized-tx');
+  /**
+   * Encodes the instruction list (program id + data) as JSON so a test's fake
+   * `Connection.sendRawTransaction` can see WHAT was sent — the upload
+   * pipeline tests replay chunk writes off this. Not a wire format.
+   */
+  serialize(_opts?: any): Buffer {
+    return Buffer.from(
+      JSON.stringify({
+        feePayer: this.feePayer ? this.feePayer.toBase58() : null,
+        recentBlockhash: this.recentBlockhash,
+        instructions: this.instructions.map((ix: any) => ({
+          programId: ix.programId ? ix.programId.toBase58() : null,
+          data: Array.from(ix.data ?? []),
+        })),
+      }),
+    );
   }
 }
+
+/**
+ * Real encodings (matches `buildComputeBudgetIxs` in the app): discriminator
+ * 2 + u32 LE for the limit, 3 + u64 LE for the price.
+ */
+export const ComputeBudgetProgram = {
+  programId: new PublicKey('ComputeBudget111111111111111111111111111111'),
+  setComputeUnitLimit({ units }: { units: number }): TransactionInstruction {
+    const data = Buffer.alloc(5);
+    data.writeUInt8(2, 0);
+    data.writeUInt32LE(units, 1);
+    return new TransactionInstruction({ programId: ComputeBudgetProgram.programId, keys: [], data });
+  },
+  setComputeUnitPrice({ microLamports }: { microLamports: number | bigint }): TransactionInstruction {
+    const data = Buffer.alloc(9);
+    data.writeUInt8(3, 0);
+    data.writeBigUInt64LE(BigInt(microLamports), 1);
+    return new TransactionInstruction({ programId: ComputeBudgetProgram.programId, keys: [], data });
+  },
+};
 
 export class Connection {
   private _endpoint: string;

@@ -50,16 +50,17 @@
  * below is conditional too, and it must STAY conditional rather than collapse
  * into either half:
  *
- *   from the phone                  the withdrawal republishes the commitment
- *                                     the ORIGINAL deposit published, so the
- *                                     exit is publicly matchable to the
- *                                     sender's deposit; measured on devnet
- *                                     (leaf 16, commitment 8901821612542787864,
- *                                     present in both the deposit and the
- *                                     withdrawal). Still true today: its router
- *                                     calls `unshieldDenominatedStarkV3` and
- *                                     nothing else, pinned in both directions
- *                                     by `spendRouting.test.ts`.
+ *   from the phone                  cut over to circuit 7 on 2026-09-06
+ *                                     (`routeUnshieldSpend` in both withdraw
+ *                                     screens): no commitment on the wire, a
+ *                                     stealth keypair pays the fees. Before
+ *                                     that date it republished the commitment
+ *                                     the ORIGINAL deposit published (measured
+ *                                     on devnet, leaf 16, commitment
+ *                                     8901821612542787864). A v4 withdrawal
+ *                                     from the phone has NOT landed on devnet
+ *                                     yet, so the copy says so. Pinned in both
+ *                                     directions by `spendRouting.test.ts`.
  *   from the extension                no commitment, and NO payer separation.
  *                                     It was wired to circuit 7 on 2026-08-26,
  *                                     so the commitment link is gone — but that
@@ -907,10 +908,14 @@ export default function SendForm({
                     </p>
                     <p className="text-p01-yellow">
                       What it does not hide depends on the client they withdraw from, and
-                      handing a note over does not let you pick it. From the phone, the
-                      withdrawal publishes the same note commitment your deposit published, so
-                      that exit is publicly matchable to your deposit. Measured on devnet. So
-                      does any client, on any note that cannot be proven on the newer circuit.
+                      handing a note over does not let you pick it. Any client, on any note
+                      that cannot be proven on the newer circuit, publishes the same note
+                      commitment your deposit published, so that exit is publicly matchable to
+                      your deposit. Measured on devnet. From the phone, for a note deposited
+                      recently, the withdrawal is proven on circuit 7 as well (since
+                      2026-09-06) and publishes no commitment; a stealth key pays its fees,
+                      funded one hop from the recipient&apos;s wallet, and no phone withdrawal
+                      on that circuit has landed on devnet yet.
                     </p>
                     <p className="text-p01-yellow">
                       From the Protocol 01 extension, for a note deposited recently, the

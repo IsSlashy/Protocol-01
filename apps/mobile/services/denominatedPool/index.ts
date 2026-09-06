@@ -21,7 +21,6 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL,
   Keypair,
-  sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import {
   getAssociatedTokenAddress,
@@ -968,8 +967,45 @@ export function buildMerkleProofFromLeaves(params: {
 export async function fetchPoolLeavesByIndex(
   connection: Connection,
   poolPDA: PublicKey,
-  opts: { maxSignatures?: number; onProgress?: (scanned: number, total: number) => void } = {},
+  opts: {
+    maxSignatures?: number;
+    onProgress?: (scanned: number, total: number) => void;
+    /** Human-readable step line, so the caller can say WHICH path ran. */
+    onStep?: (step: string) => void;
+    /** The answer must hold at least this many leaves (`leafIndex + 1`). */
+    minLeafCount?: number;
+    /** Force the indexer to re-read the chain before answering (retry path). */
+    fresh?: boolean;
+    /** `false` disables the indexer; a string overrides its base URL. */
+    indexer?: false | string;
+  } = {},
 ): Promise<{ leavesByIndex: bigint[]; scannedLeafCount: number; missing: number[] }> {
+  // ── FAST PATH: one HTTP call to the leaf indexer ────────────────────────
+  // Mirrors the web twin (apps/web denominatedPool.ts, same function). The
+  // RPC scan below is one `getTransaction` per pool signature, behind this
+  // surface's per-call jitter; the indexer answers the same dense array in one
+  // request. It is NOT trusted: every caller rebuilds the path and pre-flights
+  // the root against the on-chain ring before any proof rent is spent, so a
+  // lying indexer can only cause a refused spend.
+  if (opts.indexer !== false) {
+    const { fetchLeavesFromIndexer, resolvePoolLeavesBaseUrl } = await import('./poolLeavesClient');
+    const baseUrl = typeof opts.indexer === 'string' ? opts.indexer : resolvePoolLeavesBaseUrl();
+    if (baseUrl) {
+      opts.onStep?.('Fetching pool leaves from the indexer...');
+      const fast = await fetchLeavesFromIndexer(poolPDA.toBase58(), {
+        baseUrl,
+        fresh: opts.fresh,
+        minLeafCount: opts.minLeafCount,
+      });
+      if (fast) {
+        opts.onStep?.(`Fetched ${fast.scannedLeafCount} leaves from the indexer`);
+        opts.onProgress?.(fast.scannedLeafCount, fast.scannedLeafCount);
+        return { leavesByIndex: fast.leavesByIndex, scannedLeafCount: fast.scannedLeafCount, missing: fast.missing };
+      }
+      opts.onStep?.('Indexer unavailable — scanning pool events from RPC...');
+    }
+  }
+
   const onChain = await fetchPoolCommitments(connection, poolPDA, {
     maxSignatures: opts.maxSignatures ?? 1000,
     onProgress: opts.onProgress,
@@ -1145,6 +1181,7 @@ export async function ensureMerkleProof(
   // are actually captured. Bounded by the pool's depth-15 tree capacity.
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
     maxSignatures: 10000,
+    minLeafCount: receipt.leafIndex + 1,
   });
   console.log(`[DenomPool] Merkle rebuild: scanned ${leavesByIndex.length} leaves, ${missing.length} missing`);
   if (missing.length > 0) {
@@ -1531,21 +1568,28 @@ async function signAndSend(
   keypair: Keypair | null,
   walletSigner: WalletSigner | undefined,
 ): Promise<string> {
+  // [PERF 2026-09-06] One `confirmed` blockhash, preflight kept (a singleton
+  // pool transaction is worth one simulation), and an HTTP status poll every
+  // 400 ms instead of `confirmTransaction` / `sendAndConfirmTransaction`,
+  // whose WebSocket path has a fixed 60 s timeout and was observed not to
+  // fire on this surface (docs/MOBILE_PROVER_LATENCY.md §5).
+  const { confirmSignatureFast } = await import('../stark');
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+  tx.recentBlockhash = blockhash;
+  let signed: Transaction;
   if (keypair) {
-    return await sendAndConfirmTransaction(connection, tx, [keypair], {
-      commitment: 'confirmed',
-    });
-  }
-  if (walletSigner) {
-    const { blockhash } = await connection.getLatestBlockhash();
-    tx.recentBlockhash = blockhash;
+    tx.feePayer = keypair.publicKey;
+    tx.sign(keypair);
+    signed = tx;
+  } else if (walletSigner) {
     tx.feePayer = walletSigner.publicKey;
-    const signed = await walletSigner.signTransaction(tx);
-    const sig = await connection.sendRawTransaction(signed.serialize());
-    await connection.confirmTransaction(sig, 'confirmed');
-    return sig;
+    signed = await walletSigner.signTransaction(tx);
+  } else {
+    throw new Error('No wallet available for signing');
   }
-  throw new Error('No wallet available for signing');
+  const sig = await connection.sendRawTransaction(signed.serialize({ verifySignatures: false }));
+  await confirmSignatureFast(connection, sig, { lastValidBlockHeight });
+  return sig;
 }
 
 /**
@@ -3356,7 +3400,12 @@ export async function prepareUnshieldV4(
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
     connection,
     poolConfig.poolPDA,
-    { maxSignatures: SIG_SCAN_LIMIT, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    {
+      maxSignatures: SIG_SCAN_LIMIT,
+      onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`),
+      onStep: onProgress,
+      minLeafCount: receipt.leafIndex + 1,
+    },
   );
   if (missing.length > 0) {
     console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
@@ -3383,7 +3432,12 @@ export async function prepareUnshieldV4(
       };
       if (!known(merkleResult.root)) {
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
-        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: SIG_SCAN_LIMIT * 2 });
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
+          maxSignatures: SIG_SCAN_LIMIT * 2,
+          fresh: true,
+          onStep: onProgress,
+          minLeafCount: receipt.leafIndex + 1,
+        });
         merkleResult = buildMerkleProofFromLeavesV3({
           leavesByIndex: retry.leavesByIndex,
           targetLeafIndex: receipt.leafIndex,
@@ -3532,7 +3586,7 @@ export async function unshieldDenominatedStarkV4(
     );
   }
 
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer, getProofBufferPDA } = await import('../stark');
+  const { submitAndConsumeStarkProof, closeStarkProofBuffer, getProofBufferPDA, MAX_TX_CU } = await import('../stark');
   const { CIRCUIT_SPEND } = await import('../stark/spendWitness');
 
   onProgress?.('Reading wallet...');
@@ -3552,78 +3606,90 @@ export async function unshieldDenominatedStarkV4(
   // mid-flight — the stealth signer is gone after this returns.
   const [c7ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_SPEND);
 
+  // [L3 2026-09-06] The spend instruction is built BEFORE the upload because
+  // it rides in the SAME transaction as both verify phases and the close:
+  // phase 1 878,756 + phase 2 192,715 + spend 176,404 = 1,247,875 CU, measured
+  // on devnet 2026-09-02 (docs/BENCHMARK-2026-09-02.md), under the 1,400,000
+  // per-transaction cap. A rejected proof reverts the whole transaction — no
+  // nullifier, no rent lost — and an accepted one leaves no buffer behind.
+  const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
+  const merkleRootBytes = goldilocksToLeBytes32(prepared.merkleRoot);
+  const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
+
+  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+  let tokenProgram: PublicKey | undefined;
+  let recipientTokenAccount: PublicKey | undefined;
+  let poolVault: PublicKey | undefined;
+  if (!isNativeSOL) {
+    tokenProgram = TOKEN_PROGRAM_ID;
+    recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
+    poolVault = poolConfig.vaultATA;
+  }
+
+  const ix = buildUnshieldDenominatedStarkV4Ix(
+    walletPubkey,
+    recipient,
+    poolConfig.poolPDA,
+    poolConfig.treePDA,
+    nullifierPDA,
+    c7ProofBuffer,
+    nullifierBytes,
+    merkleRootBytes,
+    prepared.subtreeRoot,
+    prepared.siblings,
+    prepared.directions,
+    tokenProgram,
+    poolVault,
+    recipientTokenAccount,
+  );
+  const consumeIxs: TransactionInstruction[] = [];
+  if (!isNativeSOL && recipientTokenAccount) {
+    consumeIxs.push(
+      createAssociatedTokenAccountIdempotentInstruction(
+        walletPubkey, recipientTokenAccount, recipient, poolConfig.tokenMint,
+      ),
+    );
+  }
+  consumeIxs.push(ix);
+
+  let closed = false;
   try {
     onProgress?.('Submitting the circuit-7 spend proof on-chain...');
-    await submitAndVerifyStarkProof(
+    const result = await submitAndConsumeStarkProof(
       {
         proofBytes: prepared.c7ProofResult.proofBytes,
         circuitId: CIRCUIT_SPEND,
         publicInputs: prepared.c7ProofResult.publicInputs,
         proofSize: prepared.c7ProofResult.proofSize,
       },
+      {
+        ixs: consumeIxs,
+        cuLimit: MAX_TX_CU,
+        cuPriceMicroLamports: 1000,
+        // The relayer toggle keeps its meaning: the composed transaction goes
+        // out through the same door the v3 spend used.
+        send: (tx) => signAndSendV3(connection, tx, keypair, walletSigner),
+      },
       starkSigner,
       onProgress,
       connection,
     );
-
-    onProgress?.('Building V4 unshield transaction...');
-    const nullifierBytes = goldilocksToLeBytes32(prepared.nullifierGoldilocks);
-    const merkleRootBytes = goldilocksToLeBytes32(prepared.merkleRoot);
-    const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
-
-    const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
-    let tokenProgram: PublicKey | undefined;
-    let recipientTokenAccount: PublicKey | undefined;
-    let poolVault: PublicKey | undefined;
-    if (!isNativeSOL) {
-      tokenProgram = TOKEN_PROGRAM_ID;
-      recipientTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, recipient);
-      poolVault = poolConfig.vaultATA;
-    }
-
-    const ix = buildUnshieldDenominatedStarkV4Ix(
-      walletPubkey,
-      recipient,
-      poolConfig.poolPDA,
-      poolConfig.treePDA,
-      nullifierPDA,
-      c7ProofBuffer,
-      nullifierBytes,
-      merkleRootBytes,
-      prepared.subtreeRoot,
-      prepared.siblings,
-      prepared.directions,
-      tokenProgram,
-      poolVault,
-      recipientTokenAccount,
-    );
-
-    const tx = new Transaction();
-    // The handler walks four Poseidon levels on top of the v3 work; 400,000 is
-    // what the v3 path already requests for the same walk.
-    tx.add(...buildComputeBudgetIxs(400_000));
-    if (!isNativeSOL && recipientTokenAccount) {
-      tx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          walletPubkey, recipientTokenAccount, recipient, poolConfig.tokenMint,
-        ),
-      );
-    }
-    tx.add(ix);
-
-    onProgress?.('Sending V4 unshield transaction...');
-    const sig = await signAndSendV3(connection, tx, keypair, walletSigner);
+    closed = result.closed;
     onProgress?.('V4 unshield confirmed!');
-    return sig;
+    return result.txSignature;
   } finally {
-    try {
-      onProgress?.('Closing proof buffer (rent recovery)...');
-      await closeStarkProofBuffer(c7ProofBuffer, starkSigner, connection);
-    } catch (closeErr: unknown) {
-      console.warn(
-        '[DenomPool/v4] closeStarkProofBuffer failed (rent may be stranded):',
-        closeErr instanceof Error ? closeErr.message : String(closeErr),
-      );
+    // The composed transaction closes the buffer itself when it lands. Only a
+    // failure between the upload and that landing leaves rent to recover.
+    if (!closed) {
+      try {
+        onProgress?.('Closing proof buffer (rent recovery)...');
+        await closeStarkProofBuffer(c7ProofBuffer, starkSigner, connection);
+      } catch (closeErr: unknown) {
+        console.warn(
+          '[DenomPool/v4] closeStarkProofBuffer failed (rent may be stranded):',
+          closeErr instanceof Error ? closeErr.message : String(closeErr),
+        );
+      }
     }
   }
 }
@@ -3830,10 +3896,15 @@ export async function shieldV3(
   walletSigner?: WalletSigner,
   overrideKeypair?: import('@solana/web3.js').Keypair,
 ): Promise<{ txSig: string; receipt: ShieldReceipt; c6ProofBuffer: PublicKey }> {
-  // Phase C v1 (deployed 2026-05-07): use uniform STARK pipeline for V3.
-  // Pads to 145KB, drops circuit_id from init+verify ix data, randomized
-  // nonce-keyed PDA. Closes L13 + L14.
-  const { submitAndVerifyStarkProofUniform, closeStarkProofBuffer, CIRCUIT_MERKLE_UPDATE } =
+  // [PERF 2026-09-06] NON-UNIFORM pipeline, like the web twin. The uniform
+  // pipeline (Phase C v1, 2026-05-07) padded every proof to 145,000 bytes to
+  // hide the circuit id and the proof size (L13 / L14): that is 145 chunks and
+  // 14 resizes for an 82 KB proof, and this surface's circuit-7 spends already
+  // put the circuit id in the init instruction. The deposit now uploads its
+  // real 83 chunks, and the shield instruction rides in the SAME transaction
+  // as phase 2 and the close (L3): phase 1 alone is 1,316,491 CU, so it keeps
+  // its own transaction. 14 sequential confirmations become 5.
+  const { submitAndConsumeStarkProof, closeStarkProofBuffer, getProofBufferPDA, CIRCUIT_MERKLE_UPDATE } =
     await import('../stark');
 
   onProgress?.('Reading wallet...');
@@ -3849,100 +3920,98 @@ export async function shieldV3(
       }
     : walletSigner!;
 
-  // 1. Submit + verify C6 proof on-chain (init → upload → verify phase 1+2).
-  // PDA is randomized per call (16-byte nonce); we get it back from the call.
-  onProgress?.('Submitting C6 (merkle_update) proof on-chain (uniform)...');
+  // Known before the upload: the buffer authority is the depositor, and
+  // `shield_denominated_v3` binds `proof_buffer.authority == depositor`.
+  const [c6ProofBuffer] = getProofBufferPDA(starkSigner.publicKey, CIRCUIT_MERKLE_UPDATE);
 
-  // Track buffers created during this operation. Any error path (including
-  // wrapper preflight failure, relayer timeout, etc.) must close them in
-  // `finally` to recover the rent. Decoupled from "did the shield ix land"
-  // because the buffer can exist on-chain even when the final tx fails.
-  const createdBuffers: PublicKey[] = [];
-  let c6ProofBuffer: PublicKey;
+  // 1. Build shield_denominated_v3 against the buffer the upload will fill.
+  onProgress?.('Building V3 shield transaction...');
+  const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
+  let tokenProgram: PublicKey | undefined;
+  let userTokenAccount: PublicKey | undefined;
+  let poolVault: PublicKey | undefined;
+  if (!isNativeSOL) {
+    tokenProgram = TOKEN_PROGRAM_ID;
+    userTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, walletPubkey);
+    poolVault = poolConfig.vaultATA;
+  }
+
+  // [C6-D12] The two SUBTREE roots the instruction now takes, read straight
+  // out of the proof's own public inputs
+  // ([old_leaf, new_leaf, old_root, new_root, depth]) rather than recomputed.
+  // The circuit derived them from the same 12 path elements it proved over, so
+  // there is no second implementation of the walk to disagree with the first.
+  //
+  // ⛔ `insertParams.newRoot` IS NO LONGER SENT. It is the POOL root from the
+  // client's own tree, and the program computes that itself now.
+  if (c6ProofResult.publicInputs.length !== 5) {
+    throw new Error(
+      `C6 returned ${c6ProofResult.publicInputs.length} public inputs, expected 5 ` +
+      `[old_leaf, new_leaf, old_root, new_root, depth]. The prover wire changed.`,
+    );
+  }
+  if (c6ProofResult.publicInputs[4] !== BigInt(C6_SUBTREE_DEPTH)) {
+    throw new Error(
+      `C6 proved depth ${c6ProofResult.publicInputs[4]}, expected ${C6_SUBTREE_DEPTH}. ` +
+      `The shipped wasm prover is stale — it predates the depth cut, and the ` +
+      `on-chain verifier rejects every proof it makes. Reship the blob.`,
+    );
+  }
+  const commitmentBytes = goldilocksToLeBytes32(insertParams.commitment);
+  const oldSubtreeRootBytes = goldilocksToLeBytes32(c6ProofResult.publicInputs[2]);
+  const newSubtreeRootBytes = goldilocksToLeBytes32(c6ProofResult.publicInputs[3]);
+  const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
+
+  const ix = buildShieldDenominatedV3Ix(
+    walletPubkey,
+    poolConfig.poolPDA,
+    poolConfig.treePDA,
+    c6ProofBuffer,
+    commitmentBytes,
+    oldSubtreeRootBytes,
+    newSubtreeRootBytes,
+    newSubtreesBytes,
+    tokenProgram,
+    userTokenAccount,
+    poolVault,
+  );
+  const consumeIxs: TransactionInstruction[] = [];
+  if (!isNativeSOL && userTokenAccount) {
+    consumeIxs.push(
+      createAssociatedTokenAccountIdempotentInstruction(
+        walletPubkey, userTokenAccount, walletPubkey, poolConfig.tokenMint,
+      ),
+    );
+  }
+  consumeIxs.push(ix);
+
+  // 2. Upload + verify phase 1, then [phase 2 + shield + close] in one tx.
+  let closed = false;
   try {
-    const c6Result = await submitAndVerifyStarkProofUniform(
+    onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
+    const result = await submitAndConsumeStarkProof(
       {
         proofBytes: c6ProofResult.proofBytes,
         circuitId: CIRCUIT_MERKLE_UPDATE,
         publicInputs: c6ProofResult.publicInputs,
         proofSize: c6ProofResult.proofSize,
       },
+      {
+        ixs: consumeIxs,
+        // Phase 2 (~190,000) + the shield: 302,672 measured at depth 15, and
+        // the fold grows to ~552,000 at the depth-19 pools that are coming
+        // (16 on-chain `hash2` at ~34,469 CU each). 1,000,000 is headroom for
+        // both, not a measurement of this handler's total.
+        cuLimit: 1_000_000,
+        cuPriceMicroLamports: 1000,
+        send: (tx) => signAndSendV3(connection, tx, keypair, walletSigner),
+      },
       starkSigner,
       onProgress,
       connection,
     );
-    c6ProofBuffer = c6Result.proofBuffer;
-    createdBuffers.push(c6ProofBuffer);
-
-    // 2. Build shield_denominated_v3 referencing the verified buffer.
-    onProgress?.('Building V3 shield transaction...');
-    const isNativeSOL = poolConfig.tokenMint.equals(NATIVE_SOL_MINT);
-    let tokenProgram: PublicKey | undefined;
-    let userTokenAccount: PublicKey | undefined;
-    let poolVault: PublicKey | undefined;
-    if (!isNativeSOL) {
-      tokenProgram = TOKEN_PROGRAM_ID;
-      userTokenAccount = await getAssociatedTokenAddress(poolConfig.tokenMint, walletPubkey);
-      poolVault = poolConfig.vaultATA;
-    }
-
-    // [C6-D12] The two SUBTREE roots the instruction now takes, read straight
-    // out of the proof's own public inputs
-    // ([old_leaf, new_leaf, old_root, new_root, depth]) rather than recomputed.
-    // The circuit derived them from the same 12 path elements it proved over, so
-    // there is no second implementation of the walk to disagree with the first.
-    //
-    // ⛔ `insertParams.newRoot` IS NO LONGER SENT. It is the POOL root from the
-    // client's own tree, and the program computes that itself now.
-    if (c6ProofResult.publicInputs.length !== 5) {
-      throw new Error(
-        `C6 returned ${c6ProofResult.publicInputs.length} public inputs, expected 5 ` +
-        `[old_leaf, new_leaf, old_root, new_root, depth]. The prover wire changed.`,
-      );
-    }
-    if (c6ProofResult.publicInputs[4] !== BigInt(C6_SUBTREE_DEPTH)) {
-      throw new Error(
-        `C6 proved depth ${c6ProofResult.publicInputs[4]}, expected ${C6_SUBTREE_DEPTH}. ` +
-        `The shipped wasm prover is stale — it predates the depth cut, and the ` +
-        `on-chain verifier rejects every proof it makes. Reship the blob.`,
-      );
-    }
-    const commitmentBytes = goldilocksToLeBytes32(insertParams.commitment);
-    const oldSubtreeRootBytes = goldilocksToLeBytes32(c6ProofResult.publicInputs[2]);
-    const newSubtreeRootBytes = goldilocksToLeBytes32(c6ProofResult.publicInputs[3]);
-    const newSubtreesBytes = insertParams.newSubtrees.map(goldilocksToLeBytes32);
-
-    const ix = buildShieldDenominatedV3Ix(
-      walletPubkey,
-      poolConfig.poolPDA,
-      poolConfig.treePDA,
-      c6ProofBuffer,
-      commitmentBytes,
-      oldSubtreeRootBytes,
-      newSubtreeRootBytes,
-      newSubtreesBytes,
-      tokenProgram,
-      userTokenAccount,
-      poolVault,
-    );
-
-    const tx = new Transaction();
-    // [C6-D12] 300,000 -> 600,000. One on-chain `hash2` is ~34,469 CU (measured
-    // 2026-08-29, litesvm SBF VM); the fold does SIX — three levels, old root and
-    // new root — so it adds ~206,814 CU on its own. ⚠️ 600,000 is headroom, not a
-    // measurement of this handler's total. Matches web and extension.
-    tx.add(...buildComputeBudgetIxs(600_000));
-    if (!isNativeSOL && userTokenAccount) {
-      tx.add(
-        createAssociatedTokenAccountIdempotentInstruction(
-          walletPubkey, userTokenAccount, walletPubkey, poolConfig.tokenMint,
-        ),
-      );
-    }
-    tx.add(ix);
-
-    onProgress?.('Sending V3 shield transaction...');
-    const txSig = await signAndSendV3(connection, tx, keypair, walletSigner);
+    closed = result.closed;
+    const txSig = result.txSignature;
     onProgress?.('V3 shield confirmed!');
 
     const receipt: ShieldReceipt = {
@@ -3963,12 +4032,12 @@ export async function shieldV3(
     };
     return { txSig, receipt, c6ProofBuffer };
   } finally {
-    // Close every buffer that was created — single-use, must recover rent
-    // regardless of whether the final shield tx succeeded.
-    for (const buf of createdBuffers) {
+    // The composed transaction closes the buffer when it lands; anything that
+    // failed between the upload and that landing still has rent to recover.
+    if (!closed) {
       try {
         onProgress?.('Closing proof buffer...');
-        await closeStarkProofBuffer(buf, starkSigner, connection);
+        await closeStarkProofBuffer(c6ProofBuffer, starkSigner, connection);
       } catch (closeErr: any) {
         console.warn('[DenomPool/V3] closeStarkProofBuffer (shield) failed:', closeErr?.message ?? String(closeErr));
       }

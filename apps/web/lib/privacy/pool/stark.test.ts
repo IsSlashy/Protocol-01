@@ -55,6 +55,9 @@ const FIXED_BLOCKHASH = new PublicKey(Buffer.alloc(32, 7)).toBase58();
 // Anchor instruction discriminators, copied from stark.ts (frozen literals —
 // they identify the deployed program's handlers and can never change).
 const DISC = {
+  // [L2 2026-09-06] the one-transaction allocation; `init` stays for the
+  // legacy PDA path.
+  initV3: Buffer.from([239, 25, 230, 31, 173, 116, 84, 51]),
   init: Buffer.from([49, 27, 28, 88, 19, 99, 133, 194]),
   write: Buffer.from([183, 3, 171, 138, 153, 138, 133, 147]),
   verify: Buffer.from([208, 216, 183, 38, 47, 69, 156, 138]),
@@ -109,7 +112,11 @@ class FakeConn {
     this.getAccountInfoCalls++;
     this.bytesWrittenAtReadback.push(this.bytesWritten);
     if (!this.exists) return null;
-    return { data: Buffer.from(this.account) };
+    return { data: Buffer.from(this.account), owner: STARK_VERIFIER_PROGRAM_ID };
+  }
+
+  async getMinimumBalanceForRentExemption(_len: number) {
+    return 1_000_000;
   }
 
   async getLatestBlockhash(_commitment?: unknown) {
@@ -123,7 +130,7 @@ class FakeConn {
       if (!ix.programId.equals(STARK_VERIFIER_PROGRAM_ID)) continue;
       const d = ix.data;
       const disc = d.subarray(0, 8);
-      if (disc.equals(DISC.init)) {
+      if (disc.equals(DISC.init) || disc.equals(DISC.initV3)) {
         this.exists = true;
         this.ixOrder.push('init');
         this.confirmedSigs.add(sig);
@@ -337,7 +344,10 @@ describe('submitAndVerifyStarkProof — per-chunk resume', () => {
     }
     // Stale-buffer check + the completeness readback: exactly one extra RPC
     // read against a 1.4M CU failed verification.
-    expect(conn.getAccountInfoCalls).toBe(2);
+    // [L2 2026-09-06] ONE readback and nothing else: the fresh keypair buffer
+    // needs no stale-PDA probe (there is no PDA), so the only account read is
+    // the byte-for-byte completeness gate. It was 2 on the PDA path.
+    expect(conn.getAccountInfoCalls).toBe(1);
     expect(findBufferHoles(PROOF_BYTES, conn.account)).toEqual([]);
   });
 
@@ -522,9 +532,19 @@ async function circuitsTheClientRunsPhase2For(range: number[]): Promise<number[]
   const sent: number[] = [];
   for (const circuitId of range) {
     const conn = new FakeConn(PROOF_SIZE);
-    await drive(
-      submitAndVerifyStarkProof(makeGenericProof(circuitId), makeSigner(), conn.asConnection()),
-    );
+    // [L2 2026-09-06] An id outside 0..7 is refused by the client's own
+    // `init_proof_buffer_v3` builder BEFORE anything is sent (the program's
+    // `get_circuit_config` refuses it too, on both init paths). For this
+    // probe that is the same observation as "no phase 2 on the wire".
+    try {
+      await drive(
+        submitAndVerifyStarkProof(makeGenericProof(circuitId), makeSigner(), conn.asConnection()),
+      );
+    } catch (e) {
+      if (!/circuitId must be 0\.\.7/.test((e as Error).message)) throw e;
+      expect(conn.deepAliSigs.length, `client refused circuit ${circuitId} but had sent phase 2`).toBe(0);
+      continue;
+    }
     if (conn.deepAliSigs.length > 0) sent.push(circuitId);
   }
   return sent;

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useElapsedSeconds, formatElapsedLabel } from '@/hooks/useElapsedSeconds';
 import {
   View,
   Text,
@@ -102,6 +103,8 @@ export default function SubscribePrivateScreen() {
   const [rate, setRate] = useState(params.rate ?? '');
   const [intervalSlots, setIntervalSlots] = useState(params.intervalSlots ?? '7200');
   const [starkStatus, setStarkStatusLocal] = useState<string | null>(null);
+  // [PERF 2026-09-06] Visible clock for the whole flow (proof + upload + vault).
+  const elapsed = useElapsedSeconds(isLoading || starkStatus !== null);
   const setStarkStatus = useCallback((s: string | null) => {
     setStarkStatusLocal(s);
     setProgress(s);
@@ -520,7 +523,7 @@ export default function SubscribePrivateScreen() {
         <View style={styles.stickyProgress}>
           <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={styles.stickyProgressText} numberOfLines={2}>
-            {starkStatus ?? progress ?? 'Processing...'}
+            {formatElapsedLabel(starkStatus ?? progress ?? 'Processing...', elapsed)}
           </Text>
           <TouchableOpacity
             style={styles.stickyCancel}
@@ -751,7 +754,7 @@ export default function SubscribePrivateScreen() {
             <Panel style={styles.progressPanel}>
               <ActivityIndicator size="small" color={Colors.primary} />
               <Text style={styles.progressText}>
-                {starkStatus ?? progress ?? 'Processing...'}
+                {formatElapsedLabel(starkStatus ?? progress ?? 'Processing...', elapsed)}
               </Text>
             </Panel>
           </Animated.View>

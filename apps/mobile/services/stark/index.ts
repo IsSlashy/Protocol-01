@@ -400,12 +400,126 @@ function buildCloseProofBufferIx(
 }
 
 // ---------------------------------------------------------------------------
+// Send pacing — the ONLY place the pipeline decides how fast to talk to an RPC
+// ---------------------------------------------------------------------------
+//
+// [PERF 2026-09-06] docs/MOBILE_PROVER_LATENCY.md measured ~61 s of pure
+// `setTimeout` per uploaded proof on this surface: waves of 3 tx / 700 ms
+// (30.1 s for 145 chunks), 30-120 ms of jitter before EVERY RPC call, and a
+// 1,500 ms confirmation poll. None of that was chain time. The wave stagger
+// was "tuned for Helius free tier (~10 RPS)"; the project runs on a paid
+// Helius key (`EXPO_PUBLIC_HELIUS_API_KEY`, services/solana/connection.ts).
+//
+// The rule now: an endpoint we pay for gets the transactions as fast as the
+// phone can sign them; the public `api.*.solana.com` endpoints, which answer
+// 429 at full speed, keep a SMALL batch pacing. `resilientFetch` still
+// retries 429 / -32429 transparently underneath, so a mis-classified endpoint
+// degrades to slow, not to broken.
+
+export interface SendPacing {
+  /** Transactions sent per burst. `Infinity` = everything at once. */
+  batch: number;
+  /** Sleep between bursts. */
+  delayMs: number;
+  /** Signature-status poll interval while waiting for confirmations. */
+  pollMs: number;
+}
+
+/** Paid / private endpoints (Helius, a relay, localhost): no throttle. */
+export const FAST_PACING: SendPacing = { batch: Infinity, delayMs: 0, pollMs: 400 };
+/** Public cluster endpoints: ~30 tx/s, which they tolerate without 429 storms. */
+export const PUBLIC_RPC_PACING: SendPacing = { batch: 8, delayMs: 250, pollMs: 400 };
+
+const PUBLIC_RPC_HOSTS = ['api.devnet.solana.com', 'api.mainnet-beta.solana.com', 'api.testnet.solana.com'];
+
+/** Pure: which pacing an RPC URL gets. Exported for the tests. */
+export function pacingForEndpoint(rpcEndpoint: string | undefined | null): SendPacing {
+  if (!rpcEndpoint) return PUBLIC_RPC_PACING;
+  const lower = rpcEndpoint.toLowerCase();
+  for (const host of PUBLIC_RPC_HOSTS) {
+    if (lower.includes(host)) return PUBLIC_RPC_PACING;
+  }
+  return FAST_PACING;
+}
+
+function pacingFor(conn: Connection): SendPacing {
+  return pacingForEndpoint((conn as { rpcEndpoint?: string }).rpcEndpoint);
+}
+
+const sleepMs = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/** Let the JS thread breathe between CPU bursts (ed25519 signing runs on the
+ * RN JS thread; 20 back-to-back signatures with no yield were the measured
+ * input-lag source in docs/MOBILE_PROVER_LATENCY.md). */
+const yieldToEventLoop = () => new Promise<void>(r => setTimeout(r, 0));
+
+/**
+ * Keep a long `await` AUDIBLE. Mirrors web `stark.ts`: emit `${label} (Ns)`
+ * every `everyMs` so a slow confirmation never looks like a hang.
+ */
+export async function audible<T>(
+  label: string,
+  onProgress: ((step: string) => void) | undefined,
+  run: () => Promise<T>,
+  everyMs = 5_000,
+): Promise<T> {
+  if (!onProgress) return run();
+  const startedAt = Date.now();
+  onProgress(label);
+  const beat = setInterval(() => {
+    onProgress(`${label} (${Math.round((Date.now() - startedAt) / 1000)}s)`);
+  }, everyMs);
+  try {
+    return await run();
+  } finally {
+    clearInterval(beat);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // High-Level API
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Transaction signing helper (supports a raw Keypair or a WalletSigner)
 // ---------------------------------------------------------------------------
+
+/**
+ * Poll one signature to `confirmed` over HTTP. Replaces
+ * `conn.confirmTransaction(sig, 'confirmed')`, which is WebSocket-driven with a
+ * fixed 60 s timeout and, on this surface, was observed not to fire at all
+ * (docs/MOBILE_PROVER_LATENCY.md §5). 400 ms polling puts the floor per
+ * sequential transaction at one slot, not one timeout.
+ */
+export async function confirmSignatureFast(
+  conn: Connection,
+  sig: string,
+  opts?: { pollMs?: number; timeoutMs?: number; lastValidBlockHeight?: number },
+): Promise<void> {
+  const pollMs = opts?.pollMs ?? 400;
+  const timeoutMs = opts?.timeoutMs ?? 60_000;
+  const start = Date.now();
+  let polls = 0;
+  for (;;) {
+    const { value } = await conn.getSignatureStatuses([sig]);
+    const st = value[0];
+    if (st) {
+      if (st.err) throw new Error(`Transaction failed: ${JSON.stringify(st.err)}`);
+      if (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized') return;
+    }
+    polls += 1;
+    if (opts?.lastValidBlockHeight !== undefined && polls % 10 === 0) {
+      const height = await conn.getBlockHeight('confirmed');
+      if (height > opts.lastValidBlockHeight) {
+        throw new Error(`Transaction ${sig.slice(0, 12)}… expired (blockhash no longer valid)`);
+      }
+    }
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Transaction ${sig.slice(0, 12)}… not confirmed after ${timeoutMs}ms`);
+    }
+    await sleepMs(pollMs);
+  }
+}
 
 async function signSendConfirm(
   conn: Connection,
@@ -414,7 +528,7 @@ async function signSendConfirm(
   walletSigner: WalletSigner | undefined,
   opts?: { skipPreflight?: boolean },
 ): Promise<string> {
-  const { blockhash } = await conn.getLatestBlockhash('confirmed');
+  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
   tx.recentBlockhash = blockhash;
 
   if (keypair) {
@@ -427,45 +541,62 @@ async function signSendConfirm(
     throw new Error('No wallet available for signing');
   }
 
-  const sig = await conn.sendRawTransaction(tx.serialize(), {
+  const sig = await conn.sendRawTransaction(tx.serialize({ verifySignatures: false }), {
     skipPreflight: opts?.skipPreflight ?? false,
   });
-  const result = await conn.confirmTransaction(sig, 'confirmed');
-  if (result.value.err) {
-    throw new Error(`Transaction failed: ${JSON.stringify(result.value.err)}`);
-  }
+  await confirmSignatureFast(conn, sig, { pollMs: pacingFor(conn).pollMs, lastValidBlockHeight });
   return sig;
 }
 
 /**
- * Resize the proof buffer from MAX_INIT_SIZE up to targetSize.
- *
- * Anchor's realloc grows by MAX_REALLOC_STEP (10 KB) per call, so large proofs
- * require multiple iterations. All resize TXs are signed with one blockhash,
- * fired without awaiting confirmations, then confirmed in parallel at the end.
- * Solana serializes writes to the same account, so each TX sees the previous
- * TX's size and advances by STEP (capped at target).
+ * Sign a list of transactions with the local keypair or the wallet signer,
+ * yielding to the event loop every `SIGN_BATCH` signatures.
  */
+const SIGN_BATCH = 20;
+async function signTxs(
+  txs: Transaction[],
+  feePayer: PublicKey,
+  keypair: Keypair | null,
+  walletSigner: WalletSigner | undefined,
+): Promise<Transaction[]> {
+  const out: Transaction[] = new Array(txs.length);
+  for (let i = 0; i < txs.length; i++) {
+    let tx = txs[i];
+    tx.feePayer = feePayer;
+    if (keypair) {
+      tx.sign(keypair);
+    } else if (walletSigner) {
+      tx = await walletSigner.signTransaction(tx);
+    } else {
+      throw new Error('No wallet available for signing');
+    }
+    out[i] = tx;
+    if ((i + 1) % SIGN_BATCH === 0) await yieldToEventLoop();
+  }
+  return out;
+}
+
 /**
- * Send pre-signed TXs in staggered waves. Tuned for Helius free tier (~10 RPS)
- * with resilientFetch handling residual 429s transparently. Within a wave, sends
- * are parallel via Promise.allSettled so one 429 (post-retry-exhaustion) doesn't
- * take down the whole batch — failed sends bubble up as thrown errors with the
- * failed index so the caller can decide whether to abort or retry.
+ * Send pre-signed transactions as fast as the endpoint's pacing allows.
+ * `skipPreflight: true` (a chunk write has nothing a simulation would catch
+ * that the confirmation poll would not), `verifySignatures: false` (we just
+ * signed them; the on-chain check is the one that counts). Within a burst,
+ * sends are parallel via Promise.allSettled; a failed SEND (not a dropped tx)
+ * throws with its index.
  */
-async function sendTxsInWaves(
+async function sendTxsFast(
   conn: Connection,
   signedTxs: Transaction[],
-  waveSize = 3,
-  waveDelayMs = 700,
+  pacing: SendPacing = pacingFor(conn),
 ): Promise<string[]> {
   const sigs: string[] = new Array(signedTxs.length);
-  for (let w = 0; w < signedTxs.length; w += waveSize) {
-    const waveEnd = Math.min(w + waveSize, signedTxs.length);
+  const batch = Number.isFinite(pacing.batch) ? Math.max(1, pacing.batch) : signedTxs.length || 1;
+  for (let w = 0; w < signedTxs.length; w += batch) {
+    const waveEnd = Math.min(w + batch, signedTxs.length);
     const results = await Promise.allSettled(
       signedTxs.slice(w, waveEnd).map(tx =>
-        conn.sendRawTransaction(tx.serialize(), { skipPreflight: true })
-      )
+        conn.sendRawTransaction(tx.serialize({ verifySignatures: false }), { skipPreflight: true }),
+      ),
     );
     for (let i = 0; i < results.length; i++) {
       const r = results[i];
@@ -475,92 +606,127 @@ async function sendTxsInWaves(
         throw new Error(`sendRawTransaction failed for tx[${w + i}]: ${r.reason?.message ?? String(r.reason)}`);
       }
     }
-    if (waveEnd < signedTxs.length) {
-      await new Promise(r => setTimeout(r, waveDelayMs));
+    if (waveEnd < signedTxs.length && pacing.delayMs > 0) {
+      await sleepMs(pacing.delayMs);
     }
   }
   return sigs;
 }
 
 /**
- * Poll getSignatureStatuses in a single batch call for all signatures, instead
- * of N parallel confirmTransaction polls. One RPC call per poll interval keeps
- * us well under rate limits. Errors out on first on-chain tx error or timeout.
+ * Poll signature statuses (one RPC call per 256 signatures per poll) and
+ * return which indices are still unconfirmed when `timeoutMs` elapses,
+ * instead of throwing. Rejects only on an on-chain error (deterministic —
+ * resending would not help).
  */
-async function confirmAllBatched(
-  conn: Connection,
-  sigs: string[],
-  label: string,
-  timeoutMs = 180_000,
-  pollMs = 1500,
-): Promise<void> {
-  if (sigs.length === 0) return;
-  const start = Date.now();
-  const confirmed = new Set<number>();
-  while (confirmed.size < sigs.length) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error(
-        `${label} confirmation timeout: ${confirmed.size}/${sigs.length} confirmed after ${timeoutMs}ms`
-      );
-    }
-    const { value: statuses } = await conn.getSignatureStatuses(sigs);
-    for (let i = 0; i < statuses.length; i++) {
-      const s = statuses[i];
-      if (!s) continue;
-      if (s.err) {
-        throw new Error(`${label} failed: ${JSON.stringify(s.err)} (sig=${sigs[i]})`);
-      }
-      if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') {
-        confirmed.add(i);
-      }
-    }
-    if (confirmed.size < sigs.length) {
-      await new Promise(r => setTimeout(r, pollMs));
-    }
-  }
-}
-
-/**
- * Poll signature statuses and return which indices are unconfirmed on timeout,
- * instead of throwing. Lets the caller resend dropped TXs with a fresh blockhash.
- *
- * Rejects only on on-chain tx error (deterministic failure — resending won't help).
- */
-async function confirmAllBatchedSoft(
+export async function confirmSignaturesSoft(
   conn: Connection,
   sigs: string[],
   label: string,
   timeoutMs = 60_000,
-  pollMs = 1500,
+  pollMs = 400,
 ): Promise<number[]> {
   if (sigs.length === 0) return [];
   const start = Date.now();
   const confirmed = new Set<number>();
-  while (confirmed.size < sigs.length) {
+  for (;;) {
+    for (let i = 0; i < sigs.length; i += 256) {
+      const slice = sigs.slice(i, i + 256);
+      const { value: statuses } = await conn.getSignatureStatuses(slice);
+      for (let k = 0; k < statuses.length; k++) {
+        const s = statuses[k];
+        if (!s) continue;
+        if (s.err) {
+          throw new Error(`${label} failed: ${JSON.stringify(s.err)} (sig=${slice[k]})`);
+        }
+        if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') {
+          confirmed.add(i + k);
+        }
+      }
+    }
+    if (confirmed.size >= sigs.length) return [];
     if (Date.now() - start > timeoutMs) {
       const unconfirmed: number[] = [];
       for (let i = 0; i < sigs.length; i++) if (!confirmed.has(i)) unconfirmed.push(i);
       console.warn(`[STARK] ${label} soft timeout: ${confirmed.size}/${sigs.length} confirmed, ${unconfirmed.length} will retry`);
       return unconfirmed;
     }
-    const { value: statuses } = await conn.getSignatureStatuses(sigs);
-    for (let i = 0; i < statuses.length; i++) {
-      const s = statuses[i];
-      if (!s) continue;
-      if (s.err) {
-        throw new Error(`${label} failed: ${JSON.stringify(s.err)} (sig=${sigs[i]})`);
-      }
-      if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') {
-        confirmed.add(i);
-      }
-    }
-    if (confirmed.size < sigs.length) {
-      await new Promise(r => setTimeout(r, pollMs));
-    }
+    await sleepMs(pollMs);
   }
-  return [];
 }
 
+// Kept under its old name so nothing else in this module has to move.
+async function confirmAllBatchedSoft(
+  conn: Connection,
+  sigs: string[],
+  label: string,
+  timeoutMs = 60_000,
+  pollMs = pacingFor(conn).pollMs,
+): Promise<number[]> {
+  return confirmSignaturesSoft(conn, sigs, label, timeoutMs, pollMs);
+}
+
+/** One upload unit. Chunk writes are offset-addressed on-chain. */
+export interface ProofChunk {
+  index: number;
+  offset: number;
+  bytes: Uint8Array;
+}
+
+/** Split proof bytes into MAX_CHUNK_SIZE upload units. Pure. */
+export function splitProofIntoChunks(proofBytes: Uint8Array): ProofChunk[] {
+  const chunks: ProofChunk[] = [];
+  for (let index = 0, offset = 0; offset < proofBytes.length; index++, offset += MAX_CHUNK_SIZE) {
+    const end = Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length);
+    chunks.push({ index, offset, bytes: proofBytes.slice(offset, end) });
+  }
+  return chunks;
+}
+
+/**
+ * Compare local proof bytes against the RAW proof-buffer account data (header
+ * included, exactly as getAccountInfo returns it) and return the indices of
+ * chunks whose on-chain bytes differ. Null or truncated data marks the
+ * unreadable chunks as holes. Pure — mirrors web `findBufferHoles`.
+ *
+ * On-chain `bytes_written` is a HIGH-WATER MARK, not a count: lose chunk 5
+ * while 6..80 land and the program's own completeness check passes over a
+ * hole of zeros, and verification fails later, unreadably, after the CU is
+ * spent. The client is the sole source of truth on which chunks arrived.
+ */
+export function findBufferHoles(
+  proofBytes: Uint8Array,
+  accountData: Uint8Array | null,
+): number[] {
+  const holes: number[] = [];
+  for (const { index, offset, bytes } of splitProofIntoChunks(proofBytes)) {
+    const start = PROOF_DATA_OFFSET + offset;
+    if (accountData === null || accountData.length < start + bytes.length) {
+      holes.push(index);
+      continue;
+    }
+    for (let i = 0; i < bytes.length; i++) {
+      if (accountData[start + i] !== bytes[i]) {
+        holes.push(index);
+        break;
+      }
+    }
+  }
+  return holes;
+}
+
+const MAX_RESEND_ROUNDS = 3;
+
+/**
+ * Grow the proof buffer from MAX_INIT_SIZE up to `targetSize`.
+ *
+ * Anchor's realloc grows by MAX_REALLOC_STEP (10 KB) per TRANSACTION, so a
+ * ~80 KB proof needs 7 to 8 of them. They are all signed with one blockhash,
+ * fired at once (the runtime serialises writes to one account, and each step
+ * is `min(len + STEP, target)`, so ordering is irrelevant), confirmed in one
+ * barrier, and the account length is READ BACK: a dropped realloc is resent,
+ * up to MAX_RESEND_ROUNDS.
+ */
 async function resizeToTarget(
   conn: Connection,
   targetSize: number,
@@ -571,52 +737,120 @@ async function resizeToTarget(
   onProgress?: (step: string) => void,
 ): Promise<void> {
   if (targetSize <= MAX_INIT_SIZE) return;
-  const resizesNeeded = Math.ceil((targetSize - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
-  console.log(`[STARK] Resizing proof buffer 10KB → ${targetSize}B in ${resizesNeeded} steps`);
-  const { blockhash } = await conn.getLatestBlockhash('confirmed');
-  // Phase C v1.1: each tx is made byte-unique via a SPL Memo ix carrying a
-  // 4-byte LE counter (NOT a priority-fee counter — kills the L18 fingerprint).
-  // The Memo program is generic enough that its presence doesn't tag P01.
-  // CU price is uniform = UNIFORM_CU_PRICE_MICROLAMPORTS for all resize tx.
-  const signedTxs = await Promise.all(
-    Array.from({ length: resizesNeeded }, async (_, i) => {
-      onProgress?.(`Resizing proof buffer (${i + 1}/${resizesNeeded})...`);
-      let tx = new Transaction()
+  let currentLen = MAX_INIT_SIZE;
+  for (let round = 0; ; round++) {
+    const resizesNeeded = Math.ceil((targetSize - currentLen) / MAX_REALLOC_STEP);
+    if (resizesNeeded <= 0) return;
+    if (round >= MAX_RESEND_ROUNDS) {
+      throw new Error(
+        `Proof buffer resize incomplete: ${currentLen}/${targetSize} bytes after ${MAX_RESEND_ROUNDS} rounds.`,
+      );
+    }
+    console.log(`[STARK] Resizing proof buffer ${currentLen}B → ${targetSize}B in ${resizesNeeded} steps (round ${round + 1})`);
+    onProgress?.(`Sizing the proof buffer (${resizesNeeded} steps)...`);
+    const { blockhash } = await conn.getLatestBlockhash('confirmed');
+    // Phase C v1.1: each tx is made byte-unique via a SPL Memo ix carrying a
+    // 4-byte LE counter (NOT a priority-fee counter — kills the L18 fingerprint).
+    const txs = Array.from({ length: resizesNeeded }, (_, i) => {
+      const tx = new Transaction()
         .add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: UNIFORM_CU_PRICE_MICROLAMPORTS }))
-        .add(buildMemoCounterIx(i))
+        .add(buildMemoCounterIx(round * 64 + i))
         .add(buildResizeProofBufferIx(proofBuffer, authority));
       tx.recentBlockhash = blockhash;
-      if (keypair) {
-        tx.feePayer = keypair.publicKey;
-        tx.sign(keypair);
-      } else if (walletSigner) {
-        tx.feePayer = walletSigner.publicKey;
-        tx = await walletSigner.signTransaction(tx);
-      } else {
-        throw new Error('No wallet available for signing');
-      }
       return tx;
-    })
-  );
-  const sigs = await sendTxsInWaves(conn, signedTxs);
-  console.log(`[STARK] All ${resizesNeeded} resize TXs sent, awaiting batch confirm`);
-  await confirmAllBatched(conn, sigs, 'Resize');
-  console.log(`[STARK] Resize complete`);
+    });
+    const signed = await signTxs(txs, authority, keypair, walletSigner);
+    const sigs = await sendTxsFast(conn, signed);
+    await audible('Confirming buffer size...', onProgress, () =>
+      confirmAllBatchedSoft(conn, sigs, 'Resize'),
+    );
+    const info = await conn.getAccountInfo(proofBuffer);
+    currentLen = info?.data?.length ?? currentLen;
+    if (currentLen >= targetSize) {
+      console.log('[STARK] Resize complete');
+      return;
+    }
+  }
 }
 
 /**
- * Build + sign + send + batch-confirm all chunk upload TXs. Chunks are
- * naturally unique (different offset/data) so no dedup hack needed.
+ * Upload every chunk AT ONCE under one blockhash, confirm in one barrier,
+ * resend only what did not confirm (fresh blockhash), then prove
+ * completeness by reading the buffer back byte for byte and repairing any
+ * torn chunk. See `findBufferHoles` for why the readback is not optional.
  *
- * Chunks are processed in BATCHES so each batch uses a fresh blockhash. A single
- * blockhash only stays valid ~60-90s on Solana, and rate-limited sends + 121
- * chunks can easily exceed that window — the late-arriving TXs would get
- * silently dropped, causing the whole flow to time out.
- *
- * PIPELINED: batch N+1 prepares + sends WHILE batch N is still confirming. Cuts
- * the per-batch confirm wait (~2s) out of the critical path for all batches
- * except the last one. Chunks are order-independent writes so interleaving is safe.
+ * Before 2026-09-06 this was 8 sequential batches of 20 with a 700 ms wave
+ * stagger inside each: 30 s of sleep for a 145-chunk proof. The chain absorbs
+ * 80 chunk writes in one or two slots.
  */
+export async function uploadProofChunks(
+  conn: Connection,
+  proofBytes: Uint8Array,
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+  keypair: Keypair | null,
+  walletSigner: WalletSigner | undefined,
+  onProgress?: (step: string) => void,
+  opts?: { confirmWindowMs?: number; pollMs?: number },
+): Promise<void> {
+  const chunks = splitProofIntoChunks(proofBytes);
+  const confirmWindowMs = opts?.confirmWindowMs ?? 60_000;
+  const pollMs = opts?.pollMs ?? pacingFor(conn).pollMs;
+  console.log(`[STARK] Uploading ${proofBytes.length}B in ${chunks.length} chunks (single barrier)`);
+
+  const sendChunks = async (toSend: ProofChunk[], label: string): Promise<string[]> => {
+    const { blockhash } = await conn.getLatestBlockhash('confirmed');
+    onProgress?.(`${label} (${toSend.length} chunks)...`);
+    const txs = toSend.map(chunk => {
+      const tx = new Transaction().add(
+        buildWriteProofChunkIx(chunk.offset, chunk.bytes, proofBuffer, authority),
+      );
+      tx.recentBlockhash = blockhash;
+      return tx;
+    });
+    const signed = await signTxs(txs, authority, keypair, walletSigner);
+    return sendTxsFast(conn, signed);
+  };
+
+  let pending = chunks;
+  for (let round = 0; ; round++) {
+    const label = round === 0 ? 'Uploading the proof' : `Resending chunks (round ${round}/${MAX_RESEND_ROUNDS})`;
+    const sigs = await sendChunks(pending, label);
+    const unconfirmed = await audible('Confirming the upload...', onProgress, () =>
+      confirmAllBatchedSoft(conn, sigs, `Chunk round ${round}`, confirmWindowMs, pollMs),
+    );
+    if (unconfirmed.length === 0) break;
+    if (round >= MAX_RESEND_ROUNDS) {
+      throw new Error(
+        `Chunk upload failed: ${unconfirmed.length} chunk(s) unconfirmed after ${MAX_RESEND_ROUNDS} resend round(s).`,
+      );
+    }
+    pending = unconfirmed.map(i => pending[i]);
+    onProgress?.(`${pending.length} chunk(s) lost, resending...`);
+  }
+
+  // Authoritative completeness gate.
+  onProgress?.('Checking the uploaded proof against the local bytes...');
+  for (let attempt = 0; ; attempt++) {
+    const info = await conn.getAccountInfo(proofBuffer);
+    const holes = findBufferHoles(proofBytes, info?.data ? new Uint8Array(info.data) : null);
+    if (holes.length === 0) {
+      console.log(`[STARK] All ${chunks.length} chunks confirmed and read back`);
+      return;
+    }
+    if (attempt >= 1) {
+      throw new Error(
+        `Proof buffer is torn on-chain: chunk(s) [${holes.join(', ')}] still differ ` +
+          'from the local proof after a repair pass. Aborting before spending verify CU.',
+      );
+    }
+    onProgress?.(`Readback found ${holes.length} torn chunk(s), repairing...`);
+    const repairSigs = await sendChunks(holes.map(i => chunks[i]), 'Re-uploading torn chunks');
+    await confirmAllBatchedSoft(conn, repairSigs, 'Chunk repair', confirmWindowMs, pollMs);
+  }
+}
+
+/** Legacy name, same fast path. */
 async function uploadChunksParallel(
   conn: Connection,
   proofBytes: Uint8Array,
@@ -626,77 +860,189 @@ async function uploadChunksParallel(
   walletSigner: WalletSigner | undefined,
   onProgress?: (step: string) => void,
 ): Promise<void> {
-  const totalChunks = Math.ceil(proofBytes.length / MAX_CHUNK_SIZE);
-  const BATCH_SIZE = 20; // chunks per blockhash window — smaller batch survives heavy 429 retries
-  const totalBatches = Math.ceil(totalChunks / BATCH_SIZE);
-  console.log(`[STARK] Uploading ${proofBytes.length}B in ${totalChunks} chunks (${totalBatches} batches, pipelined)`);
+  return uploadProofChunks(conn, proofBytes, proofBuffer, authority, keypair, walletSigner, onProgress);
+}
 
-  const MAX_BATCH_RETRIES = 4;
+// ---------------------------------------------------------------------------
+// Composed verify + consume — L3 of docs/PERF-AND-CAPACITY-PLAN-2026-09-06.md
+// ---------------------------------------------------------------------------
+//
+// Instructions of one transaction see the writes of the ones before them, and
+// nothing in the verifier requires a slot boundary between phase 1, phase 2
+// and the consuming instruction. Measured 2026-09-02 (docs/BENCHMARK):
+//
+//   circuit 7  phase 1 878,756 + phase 2 192,715 + spend 176,404 = 1,247,875 CU
+//              -> ONE transaction under the 1,400,000 per-tx cap (11 % headroom)
+//   circuit 6  phase 1 1,316,491 alone -> TWO transactions:
+//              [phase 1] then [phase 2 + shield + close]
+//
+// Every other circuit takes the split plan until its phase-1 cost is pinned.
 
-  for (let batchStart = 0; batchStart < totalChunks; batchStart += BATCH_SIZE) {
-    const batchEnd = Math.min(batchStart + BATCH_SIZE, totalChunks);
-    const batchNum = Math.floor(batchStart / BATCH_SIZE) + 1;
+export type ComposePlan = 'single' | 'split';
 
-    // Chunks to send in this batch. After each retry round, trimmed to
-    // only the chunks whose signatures didn't confirm in time (phone-sleep,
-    // blockhash expired, RPC dropped the TX, etc).
-    let remaining = Array.from({ length: batchEnd - batchStart }, (_, j) => {
-      const i = batchStart + j;
-      const offset = i * MAX_CHUNK_SIZE;
-      const end = Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length);
-      return { offset, data: proofBytes.slice(offset, end) };
-    });
+/** Measured 2026-09-02, devnet, read back from the transactions. */
+export const C7_PHASE1_CU = 878_756;
+export const C7_PHASE2_CU = 192_715;
+export const C6_PHASE1_CU = 1_316_491;
+export const MAX_TX_CU = 1_400_000;
 
-    for (let attempt = 0; attempt < MAX_BATCH_RETRIES; attempt++) {
-      onProgress?.(
-        attempt === 0
-          ? `Uploading proof batch ${batchNum}/${totalBatches}...`
-          : `Retrying batch ${batchNum}/${totalBatches} (${remaining.length} chunks, attempt ${attempt + 1}/${MAX_BATCH_RETRIES})...`,
-      );
+export function planForCircuit(circuitId: number): ComposePlan {
+  return circuitId === 7 ? 'single' : 'split';
+}
 
-      const { blockhash } = await conn.getLatestBlockhash('confirmed');
-      const signedTxs = await Promise.all(
-        remaining.map(async ({ offset, data }) => {
-          let tx = new Transaction().add(
-            buildWriteProofChunkIx(offset, data, proofBuffer, authority)
-          );
-          tx.recentBlockhash = blockhash;
-          if (keypair) {
-            tx.feePayer = keypair.publicKey;
-            tx.sign(keypair);
-          } else if (walletSigner) {
-            tx.feePayer = walletSigner.publicKey;
-            tx = await walletSigner.signTransaction(tx);
-          } else {
-            throw new Error('No wallet available for signing');
-          }
-          return tx;
-        })
-      );
-      const sigs = await sendTxsInWaves(conn, signedTxs);
-      console.log(
-        `[STARK] Batch ${batchNum}/${totalBatches} attempt ${attempt + 1}: ${sigs.length} TXs sent`
-      );
+export interface ConsumeSpec {
+  /** Instructions that read the verified buffer (e.g. `unshield_denominated_stark_v4`). */
+  ixs: TransactionInstruction[];
+  /** CU limit of the composed transaction. */
+  cuLimit: number;
+  cuPriceMicroLamports?: number;
+  /** Sends the composed, UNSIGNED transaction. The relayer toggle lives with the caller. */
+  send: (tx: Transaction) => Promise<string>;
+  /** Override the per-circuit default. */
+  plan?: ComposePlan;
+  /** Append `close_proof_buffer` after the consuming instructions (default true). */
+  closeInline?: boolean;
+}
 
-      const unconfirmed = await confirmAllBatchedSoft(
-        conn,
-        sigs,
-        `Chunk batch ${batchNum} attempt ${attempt + 1}`,
-      );
-      if (unconfirmed.length === 0) {
-        console.log(`[STARK] Batch ${batchNum}/${totalBatches} confirmed`);
-        break;
-      }
-      remaining = unconfirmed.map(i => remaining[i]);
-      if (attempt === MAX_BATCH_RETRIES - 1) {
+/**
+ * Pure: build the composed transaction. Order is FROZEN and pinned by the
+ * tests: [cu limit, cu price?, phase 1?, phase 2?, ...consume, close?].
+ * Phase 1 is included only under the 'single' plan; phase 2 only for the
+ * circuits that have one (1..7); circuit 0 verifies inline in phase 1.
+ */
+export function composeConsumeTransaction(params: {
+  proof: GenericStarkProof;
+  proofBuffer: PublicKey;
+  authority: PublicKey;
+  consume: Pick<ConsumeSpec, 'ixs' | 'cuLimit' | 'cuPriceMicroLamports' | 'closeInline'>;
+  includePhase1: boolean;
+}): Transaction {
+  const { proof, proofBuffer, authority, consume, includePhase1 } = params;
+  if (consume.cuLimit > MAX_TX_CU) {
+    throw new Error(`composeConsumeTransaction: cuLimit ${consume.cuLimit} exceeds the ${MAX_TX_CU} per-transaction cap`);
+  }
+  const tx = new Transaction();
+  tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: consume.cuLimit }));
+  if (consume.cuPriceMicroLamports !== undefined) {
+    tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: consume.cuPriceMicroLamports }));
+  }
+  if (includePhase1) {
+    if (proof.circuitId === 0) {
+      tx.add(buildVerifyStarkProofIx(proof.publicInputs[0], proofBuffer, authority));
+    } else {
+      tx.add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
+    }
+  }
+  if (proof.circuitId >= 1 && proof.circuitId <= 7) {
+    tx.add(buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority));
+  }
+  for (const ix of consume.ixs) tx.add(ix);
+  if (consume.closeInline !== false) {
+    tx.add(buildCloseProofBufferIx(proofBuffer, authority));
+  }
+  return tx;
+}
+
+/**
+ * Shared front half of every submit: stale-buffer cleanup, init, resize,
+ * upload with readback. Returns the buffer and the authority.
+ */
+async function prepareProofBuffer(
+  conn: Connection,
+  proof: GenericStarkProof,
+  keypair: Keypair | null,
+  walletSigner: WalletSigner | undefined,
+  onProgress?: (step: string) => void,
+): Promise<{ proofBuffer: PublicKey; authority: PublicKey }> {
+  const authority = keypair ? keypair.publicKey : walletSigner!.publicKey;
+  const [proofBuffer] = getProofBufferPDA(authority, proof.circuitId);
+
+  const existing = await conn.getAccountInfo(proofBuffer);
+  if (existing) {
+    onProgress?.('Closing a stale proof buffer...');
+    try {
+      const closeTx = new Transaction().add(buildCloseProofBufferIx(proofBuffer, authority));
+      await signSendConfirm(conn, closeTx, keypair, walletSigner);
+    } catch {
+      await sleepMs(2000);
+      const recheck = await conn.getAccountInfo(proofBuffer);
+      if (recheck) {
         throw new Error(
-          `Chunk batch ${batchNum} failed after ${MAX_BATCH_RETRIES} attempts: ${remaining.length} chunks still unconfirmed`
+          'Stale STARK proof buffer exists and cannot be closed. ' +
+          'Please wait a few seconds and try again, or use a different wallet.'
         );
       }
     }
   }
 
-  console.log(`[STARK] All ${totalChunks} chunks confirmed`);
+  await audible('Opening the proof buffer...', onProgress, () =>
+    signSendConfirm(
+      conn,
+      new Transaction().add(buildInitProofBufferIx(proof.proofSize, proof.circuitId, proofBuffer, authority)),
+      keypair,
+      walletSigner,
+    ),
+  );
+
+  await resizeToTarget(conn, proof.proofSize + PROOF_DATA_OFFSET, proofBuffer, authority, keypair, walletSigner, onProgress);
+  await uploadProofChunks(conn, proof.proofBytes, proofBuffer, authority, keypair, walletSigner, onProgress);
+  return { proofBuffer, authority };
+}
+
+/**
+ * Upload the proof, then verify AND consume it in as few transactions as the
+ * CU cap allows. The consuming instruction(s) and the close ride in the same
+ * transaction as the last verify phase, so a rejected proof reverts
+ * everything (the buffer survives for the caller's `finally` to close) and an
+ * accepted one leaves nothing behind (`closed: true`).
+ *
+ * Sequential confirmations per proof, before → after:
+ *   circuit 7: init + 8 resize + 1 chunk barrier + verify1 + verify2 + spend + close = 13
+ *              → init + 1 resize barrier + 1 chunk barrier + 1 composed tx = 4
+ *   circuit 6: 14 → 5 (phase 1 stays alone: 1,316,491 CU)
+ */
+export async function submitAndConsumeStarkProof(
+  proof: GenericStarkProof,
+  consume: ConsumeSpec,
+  walletSigner?: WalletSigner,
+  onProgress?: (step: string) => void,
+  connection?: Connection,
+): Promise<{ proofBuffer: PublicKey; authority: PublicKey; txSignature: string; verifySignature?: string; closed: boolean }> {
+  const conn = connection ?? getConnection();
+  const keypair = walletSigner ? null : await getKeypair();
+  if (!keypair && !walletSigner) throw new Error('Wallet not found');
+
+  const { proofBuffer, authority } = await prepareProofBuffer(conn, proof, keypair, walletSigner, onProgress);
+  const plan = consume.plan ?? planForCircuit(proof.circuitId);
+
+  let verifySignature: string | undefined;
+  if (plan === 'split') {
+    const verifyTx = new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({ units: MAX_TX_CU }));
+    if (proof.circuitId === 0) {
+      verifyTx.add(buildVerifyStarkProofIx(proof.publicInputs[0], proofBuffer, authority));
+    } else {
+      verifyTx.add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
+    }
+    verifySignature = await audible('Verifying the proof on-chain (phase 1)...', onProgress, () =>
+      signSendConfirm(conn, verifyTx, keypair, walletSigner),
+    );
+  }
+
+  const composed = composeConsumeTransaction({
+    proof,
+    proofBuffer,
+    authority,
+    consume,
+    includePhase1: plan === 'single',
+  });
+  const txSignature = await audible(
+    plan === 'single'
+      ? 'Verifying the proof and finishing on-chain (one transaction)...'
+      : 'Finishing on-chain (phase 2 + your transaction)...',
+    onProgress,
+    () => consume.send(composed),
+  );
+  return { proofBuffer, authority, txSignature, verifySignature, closed: consume.closeInline !== false };
 }
 
 /**
@@ -914,51 +1260,8 @@ export async function submitAndVerifyStarkProof(
   const keypair = walletSigner ? null : await getKeypair();
   if (!keypair && !walletSigner) throw new Error('Wallet not found');
 
-  const authority = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const [proofBuffer] = getProofBufferPDA(authority, proof.circuitId);
-
-  // Clean up stale proof buffer if it exists
-  const existing = await conn.getAccountInfo(proofBuffer);
-  if (existing) {
-    onProgress?.('Closing stale proof buffer...');
-    try {
-      const closeTx = new Transaction().add(
-        buildCloseProofBufferIx(proofBuffer, authority)
-      );
-      await signSendConfirm(conn, closeTx, keypair, walletSigner);
-    } catch (closeErr) {
-      // Buffer exists but can't be closed (bad state / zeroed discriminator).
-      await new Promise(r => setTimeout(r, 2000));
-      const recheck = await conn.getAccountInfo(proofBuffer);
-      if (recheck) {
-        throw new Error(
-          'Stale STARK proof buffer exists and cannot be closed. ' +
-          'Please wait a few seconds and try again, or use a different wallet.'
-        );
-      }
-    }
-  }
-
-  // Step 1: Init proof buffer
-  onProgress?.('Initializing proof buffer...');
-  const initTx = new Transaction().add(
-    buildInitProofBufferIx(proof.proofSize, proof.circuitId, proofBuffer, authority)
-  );
-  await signSendConfirm(conn, initTx, keypair, walletSigner);
-
-  // Step 1b: Resize iteratively — Anchor realloc grows 10 KB per call
-  await resizeToTarget(
-    conn,
-    proof.proofSize + PROOF_DATA_OFFSET,
-    proofBuffer,
-    authority,
-    keypair,
-    walletSigner,
-    onProgress,
-  );
-
-  // Step 2: Upload proof chunks in parallel
-  await uploadChunksParallel(conn, proof.proofBytes, proofBuffer, authority, keypair, walletSigner, onProgress);
+  // Steps 1-2: stale cleanup, init, resize, upload + readback.
+  const { proofBuffer, authority } = await prepareProofBuffer(conn, proof, keypair, walletSigner, onProgress);
 
   // Step 3a: Phase 1 verification — circuit_id-aware dispatch.
   //
@@ -966,7 +1269,7 @@ export async function submitAndVerifyStarkProof(
   // (`CompactStarkProof`). The on-chain verifier exposes two ix:
   //   - `verify_stark_proof`     → for C0 ONLY: parses CompactStarkProof and
   //                                runs `verify_subscriber_ownership`.
-  //   - `verify_stark_proof_v2`  → for C1..C6: parses GenericCompactProof and
+  //   - `verify_stark_proof_v2`  → for C1..C7: parses GenericCompactProof and
   //                                runs `verify_generic`.
   //
   // The two formats are byte-compatible enough to parse through either
@@ -975,33 +1278,36 @@ export async function submitAndVerifyStarkProof(
   // the C0 trace layout, so step 4 (transition constraints) silently
   // fails with InvalidProof. Without this branch, pause / resume /
   // cancel of V3 vaults all simulate-fail with custom error 0x1773.
-  // (See programs/p01_stark_verifier/src/lib.rs:108-114 for the legacy
-  // dispatch, vs lib.rs:149-178 which always goes generic.)
-  onProgress?.('Verifying STARK proof phase 1...');
   const verifyTx = new Transaction()
-    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }));
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: MAX_TX_CU }));
   if (proof.circuitId === 0) {
     // Legacy ix takes a single u64 commitment, not a vec of public_inputs.
     verifyTx.add(buildVerifyStarkProofIx(proof.publicInputs[0], proofBuffer, authority));
   } else {
     verifyTx.add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
   }
-  const txSig = await signSendConfirm(conn, verifyTx, keypair, walletSigner);
+  const txSig = await audible('Verifying the proof on-chain (phase 1)...', onProgress, () =>
+    signSendConfirm(conn, verifyTx, keypair, walletSigner),
+  );
 
-  // Step 3b: Phase 2 — DEEP-ALI at OOD. Mandatory for circuits 1-6 (C0 runs
-  // DEEP-ALI inline in phase 1). Combined phase 1+2 exceeds 1.4M CU per-ix,
-  // so split across two transactions.
+  // Step 3b: Phase 2 — DEEP-ALI at OOD. Mandatory for circuits 1-7 (C0 runs
+  // DEEP-ALI inline in phase 1).
   // [C7 2026-08-24] <= 7. Circuit 7 (spend) splits phase 1 / phase 2 like
   // 1..6, and phase 2 is where ALL of its binding lives -- its per-query
   // arm is vacuous and step 5 is gone. Left at <= 6 this branch skips
   // phase 2 silently and the client reports SUCCESS on a proof whose six
   // boundary assertions were never checked against the trace.
+  //
+  // Callers that can put their consuming instruction in the same transaction
+  // as phase 2 should use `submitAndConsumeStarkProof` instead: it saves the
+  // separate phase-2, consume and close confirmations.
   if (proof.circuitId >= 1 && proof.circuitId <= 7) {
-    onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
     const deepAliTx = new Transaction()
-      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: MAX_TX_CU }))
       .add(buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority));
-    await signSendConfirm(conn, deepAliTx, keypair, walletSigner);
+    await audible('Verifying the proof on-chain (phase 2, DEEP-ALI)...', onProgress, () =>
+      signSendConfirm(conn, deepAliTx, keypair, walletSigner),
+    );
   }
 
   onProgress?.('STARK proof verified (buffer retained for cross-program read)');

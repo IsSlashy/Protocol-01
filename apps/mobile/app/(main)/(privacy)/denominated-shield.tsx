@@ -36,6 +36,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useElapsedSeconds, formatElapsedLabel } from '@/hooks/useElapsedSeconds';
 import {
   View,
   Text,
@@ -405,6 +406,9 @@ export default function DenominatedShieldScreen() {
   }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, router, starkReady, generateMerkleUpdateProof, submitting]);
 
   const busy = isLoading || submitting;
+  // [PERF 2026-09-06] Seconds next to the step: the C6 proof runs here before
+  // the store flips `isLoading`, and a bare spinner for that long reads as a hang.
+  const elapsed = useElapsedSeconds(busy);
   const canAfford = useMemo(
     () => (selectedPool && selectedPool.token === 'SOL'
       ? balanceSol >= selectedPool.denomination
@@ -570,7 +574,7 @@ export default function DenominatedShieldScreen() {
                 a hang. */}
             {busy && (
               <Text style={st.progress} accessibilityLiveRegion="polite">
-                {progress || 'Depositing. Keep the app open; the proof runs on this phone.'}
+                {formatElapsedLabel(progress || 'Depositing. Keep the app open; the proof runs on this phone.', elapsed)}
               </Text>
             )}
 

@@ -56,17 +56,14 @@ import {
   Connection,
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { sendWithFreshBlockhash } from './sendTx';
 import { deriveSubscriptionVaultPDA } from './subscribePrivateStark';
 import {
   C7_SUBTREE_DEPTH,
   CIRCUIT_SPEND,
   ZK_SHIELDED_PROGRAM_ID,
-  buildComputeBudgetIxs,
   buildMerkleProofFromLeavesV3,
   bytesEqual,
   deriveNullifierPDA,
@@ -393,11 +390,16 @@ export async function prepareSubscribeV4(
 
   const { starkProver: prover } = await import('./starkProver');
 
-  onProgress?.('Fetching pool leaves from on-chain events...');
+  onProgress?.('Fetching pool leaves...');
   const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
     connection,
     poolConfig.poolPDA,
-    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    {
+      maxSignatures: 1000,
+      onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`),
+      onStep: onProgress,
+      minLeafCount: receipt.leafIndex + 1,
+    },
   );
   if (missing.length > 0) {
     console.warn(
@@ -425,7 +427,12 @@ export async function prepareSubscribeV4(
       };
       if (!known(merkleResult.root)) {
         onProgress?.('Root not in ring — retrying event scan with extended limit...');
-        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
+        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, {
+          maxSignatures: 3000,
+          fresh: true,
+          onStep: onProgress,
+          minLeafCount: receipt.leafIndex + 1,
+        });
         merkleResult = buildMerkleProofFromLeavesV3({
           leavesByIndex: retry.leavesByIndex,
           targetLeafIndex: receipt.leafIndex,
@@ -552,6 +559,11 @@ export async function subscribePrivateStarkV4(
   signer: WalletSigner,
   connection: Connection,
   onProgress?: (step: string) => void,
+  /**
+   * [L2 2026-09-06] Where the proof buffer comes from (default: a fresh
+   * keypair buffer in ONE transaction, no resizes). See `ProofBufferOptions`.
+   */
+  bufferOpts?: import('./stark').ProofBufferOptions,
 ): Promise<{ txSig: string; vaultPDA: PublicKey }> {
   const { prepared, poolConfig } = params;
 
@@ -617,28 +629,18 @@ export async function subscribePrivateStarkV4(
     );
   }
 
-  const { submitAndVerifyStarkProof, closeStarkProofBuffer } = await import('./stark');
+  const { submitAndConsumeStarkProof } = await import('./stark');
 
-  let c7ProofBuffer: PublicKey | undefined;
-  try {
+  {
     onProgress?.('Submitting the circuit-7 spend proof on-chain...');
-    // `submitAndVerifyStarkProof` runs phase 1 AND the DEEP-ALI phase 2 for
-    // circuitId <= 7. Phase 2 is NOT optional here: the handler hard-requires
+    // `submitAndConsumeStarkProof` runs phase 1 AND the DEEP-ALI phase 2 for
+    // circuitId <= 7, in the SAME transaction as the subscribe instruction and
+    // the buffer close. Phase 2 is NOT optional here: the handler hard-requires
     // the `deep_ali_verified` byte at ProofBuffer offset 82, because without it
     // the buffer records only that the FRI layer checked out, which is not a
-    // statement about the trace.
-    const result = await submitAndVerifyStarkProof(
-      {
-        proofBytes: prepared.c7ProofResult.proofBytes,
-        circuitId: CIRCUIT_SPEND,
-        publicInputs: prepared.c7ProofResult.publicInputs,
-        proofSize: prepared.c7ProofResult.proofSize,
-      },
-      signer,
-      connection,
-      onProgress,
-    );
-    c7ProofBuffer = result.proofBuffer;
+    // statement about the trace. [L2 2026-09-06] The buffer is a keypair
+    // chosen at allocation, so the instruction is built as a function of its
+    // address (below) rather than of a PDA derived here.
 
     const nullifierBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.nullifierGoldilocks));
     const merkleRootBytes = Uint8Array.from(goldilocksToLeBytes32(prepared.merkleRoot));
@@ -666,7 +668,7 @@ export async function subscribePrivateStarkV4(
     }
 
     onProgress?.('Opening the subscription vault...');
-    const ix = buildSubscribePrivateStarkV4Ix({
+    const buildIx = (c7ProofBuffer: PublicKey) => buildSubscribePrivateStarkV4Ix({
       payer: signer.publicKey,
       retailer: params.retailer,
       vaultPDA,
@@ -689,51 +691,40 @@ export async function subscribePrivateStarkV4(
       vaultTokenAccount,
     });
 
-    const tx = new Transaction();
-    // A STARTING FIGURE, NOT A MEASUREMENT. The v4 withdrawal sends 400,000 and
-    // this handler does the same three-level Poseidon walk plus ONE more sha256
-    // syscall over 132 bytes and ONE more find_program_address (the vault as
-    // well as the nullifier record). v3 subscribe measured 28,918..40,721 CU of
-    // spread from those PDA searches alone. Measure on the first devnet send and
-    // pin the real number here.
-    // [ZK-DEPTH-11 2026-08-30] 400,000 -> 500,000. `resolve_pool_root` walks
-    // FOUR levels now: ~137,876 CU at the ~34,469 measured per on-chain `hash2`,
-    // up from ~103,407. ⚠️ Headroom, not an end-to-end measurement.
-    tx.add(...buildComputeBudgetIxs(500_000));
-    tx.add(ix);
-
-    // The blockhash is set HERE rather than left to the signer's fallback, which
-    // fetches a `confirmed` one — the same defect the v3 subscribe path fixed.
+    // [ONE-TX 2026-09-06] verify phase 1 + phase 2 + this instruction + close
+    // in ONE transaction. MEASURED 2026-09-02 on the subscribe ephemerals:
+    // phase 1 878,756 + phase 2 192,715 + subscribe ~175,000 = ~1,246,000 CU,
+    // under the 1,400,000 cap. The 500,000 below is the split-shape budget,
+    // kept for the automatic fallback: `resolve_pool_root` walks FOUR levels
+    // (~137,876 CU at the ~34,469 measured per on-chain `hash2`), plus one
+    // sha256 syscall over 132 bytes and two find_program_address searches.
+    // ⚠️ Headroom, not an end-to-end measurement.
     onProgress?.('Sending the V4 subscription...');
-    const { signature: txSig, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+    const { txSignature: txSig } = await submitAndConsumeStarkProof(
+      {
+        proofBytes: prepared.c7ProofResult.proofBytes,
+        circuitId: CIRCUIT_SPEND,
+        publicInputs: prepared.c7ProofResult.publicInputs,
+        proofSize: prepared.c7ProofResult.proofSize,
+      },
+      signer,
       connection,
-      tx,
-      (t) => signer.signTransaction(t),
-      signer.publicKey,
-    );
-    await connection.confirmTransaction(
-      { signature: txSig, blockhash, lastValidBlockHeight },
-      'confirmed',
+      {
+        instructions: (c7ProofBuffer) => [buildIx(c7ProofBuffer)],
+        computeUnits: 500_000,
+        label: 'opening the subscription',
+      },
+      onProgress,
+      bufferOpts,
     );
     // NO EVENT is emitted by this instruction, so there is nothing to read back
     // out of the logs. Recovery is a discriminator-filtered `getProgramAccounts`
     // over vault accounts (`subscriptionRecovery.ts:152`), which is unchanged:
     // the vault layout keeps all eighteen fields in v3's order.
+    //
+    // The buffer's rent came back inside that same transaction; on failure the
+    // helper closed it before rethrowing, so there is no `finally` here.
     onProgress?.('V4 subscription confirmed!');
     return { txSig, vaultPDA };
-  } finally {
-    // Buffer rent is only reclaimable by the ephemeral that opened it, so this
-    // runs even on failure — the same reason both other spend paths do it.
-    if (c7ProofBuffer) {
-      try {
-        onProgress?.('Closing proof buffer (rent recovery)...');
-        await closeStarkProofBuffer(c7ProofBuffer, signer, connection);
-      } catch (closeErr: unknown) {
-        console.warn(
-          '[pool/subscribe-v4] closeStarkProofBuffer failed, rent recoverable later:',
-          closeErr instanceof Error ? closeErr.message : String(closeErr),
-        );
-      }
-    }
   }
 }

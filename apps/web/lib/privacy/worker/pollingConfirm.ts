@@ -18,7 +18,12 @@
 
 import type { Connection } from '@solana/web3.js';
 
-const POLL_INTERVAL_MS = 1_500;
+/**
+ * One slot. 1,500 ms until 2026-09-06: every confirmation in a flow paid that
+ * floor, and a withdrawal makes ~15 of them in sequence. A confirmed slot is
+ * ~400 ms on a healthy cluster, so that is the granularity.
+ */
+const POLL_INTERVAL_MS = 400;
 
 /** Ceiling per confirmation, in case a transaction is simply dropped. */
 const MAX_WAIT_MS = 90_000;

@@ -216,9 +216,23 @@ describe('⛔ the copy names each surface — this re-measures them', () => {
    * assertion went red inside the same test run that wired it. Nothing else in
    * 585 pool tests noticed, because nothing else reads the sentence.
    */
-  const STILL_V3: Array<{ surface: string; rel: string }> = [
-    { surface: 'the phone', rel: 'apps/mobile/stores/denominatedPoolStore.ts' },
-  ];
+  /**
+   * AND IT SHRANK AGAIN ON 2026-09-06: the phone was cut over to circuit 7
+   * (`routeUnshieldSpend` in both withdraw screens), the copy still said "From
+   * the phone, the withdrawal publishes the same note commitment", and this
+   * assertion went red in the same run. The list is now empty on purpose: every
+   * surface routes v4 for a PRF-blinded note, and the matchable case is stated
+   * per NOTE ("any client, on any note that cannot be proven on the newer
+   * circuit") rather than per surface. If a surface ever loses its v4 route,
+   * `spendRouting.test.ts` goes red first; put it back here so the user is told.
+   */
+  const STILL_V3: Array<{ surface: string; rel: string }> = [];
+
+  it('no longer tells the user the phone publishes the commitment unconditionally', () => {
+    const copy = copyOf(SEND_FORM);
+    expect(copy).not.toMatch(/From the phone, the\s+withdrawal publishes the same note commitment/);
+    expect(copy, 'the phone paragraph must name circuit 7').toMatch(/From the phone[\s\S]{0,200}circuit 7/);
+  });
 
   it('the surfaces named as v3 really are, which is what the copy tells the user', () => {
     for (const { surface, rel } of STILL_V3) {

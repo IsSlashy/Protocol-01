@@ -19,6 +19,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useElapsedSeconds, formatElapsedLabel } from '@/hooks/useElapsedSeconds';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
   ActivityIndicator, StyleSheet,
@@ -73,6 +74,8 @@ export default function DenominatedUnshieldBatchScreen() {
   const selectedIds = useBatchUnshieldStore((s) => s.selectedIds);
   const recipient = useBatchUnshieldStore((s) => s.recipient);
   const running = useBatchUnshieldStore((s) => s.running);
+  // [PERF 2026-09-06] Batch clock next to the spinner.
+  const elapsed = useElapsedSeconds(running);
   const currentIndex = useBatchUnshieldStore((s) => s.currentIndex);
   const states = useBatchUnshieldStore((s) => s.states);
   const setRecipient = useBatchUnshieldStore((s) => s.setRecipient);
@@ -417,7 +420,12 @@ export default function DenominatedUnshieldBatchScreen() {
           </View>
           <View style={st.summaryRow}>
             <Text style={st.summaryLabel}>{t('privacy.batchSelectedCount', { count: selectedIds.length })}</Text>
-            {running && <ActivityIndicator size="small" color={Colors.primary} />}
+            {running && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <ActivityIndicator size="small" color={Colors.primary} />
+                <Text style={st.summaryLabel}>{formatElapsedLabel('', elapsed)}</Text>
+              </View>
+            )}
             {allDone && (
               <Ionicons name="checkmark-circle-outline" size={20} color={Colors.primary} />
             )}
