@@ -31,7 +31,7 @@ export const ZK_SHIELDED_PROGRAM_ID = new PublicKey(
 );
 
 export const PROTOCOL_FEE_WALLET = new PublicKey(
-  'BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN',
+  'AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh',
 );
 
 const POOL_SEED = Buffer.from('liquidity_pool');

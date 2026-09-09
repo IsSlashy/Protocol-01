@@ -62,7 +62,7 @@ export const USDC_DEVNET_MINT = new PublicKey(
  * (deployed 2026-05-07) closes L16/partial-L17 by removing this constant
  * from V3 tx accounts. */
 const PROTOCOL_FEE_WALLET = new PublicKey(
-  'BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN'
+  'AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh'
 );
 
 /** Per-pool fee_escrow PDA (Phase E v1). Mirrors the on-chain Anchor

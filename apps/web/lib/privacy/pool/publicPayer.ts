@@ -36,6 +36,10 @@ export const PUBLICLY_NAMED_IN_THIS_REPO: Readonly<Record<string, string>> = Obj
     'the upgrade authority of the pool AND the verifier, TREASURY_AUTHORITY in ' +
     'programs/zk_shielded/src/fee.rs, a live p01_relayer node, and printed in README.md',
   BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN:
+    'the FORMER PROTOCOL_FEE_WALLET (rotated out 2026-09-09, wallet reported ' +
+    'compromised). Kept per the add-never-remove rule above: it stays published ' +
+    'in git history and in every V2 tx already on chain',
+  AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh:
     'PROTOCOL_FEE_WALLET in programs/zk_shielded/src/fee.rs',
 });
 

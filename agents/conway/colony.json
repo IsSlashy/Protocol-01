@@ -2,7 +2,7 @@
   "$comment": "Owner-side colony configuration for the Conway lineage supervisor. Paths accept ~ and forward slashes on every OS.",
   "automatonRepo": "~/automaton",
   "colonyRoot": "~/.p01-conway/colony",
-  "ownerAddress": "BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN",
+  "ownerAddress": "AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh",
   "ownerKeypair": "~/.p01-conway/owner.json",
   "chainType": "solana",
   "solanaRpcUrl": "https://api.mainnet-beta.solana.com",

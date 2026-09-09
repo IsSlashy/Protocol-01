@@ -24,7 +24,7 @@ import { join } from 'path';
 
 const P01_LIQUIDITY_ID = new PublicKey('6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg');
 const ZK_SHIELDED_ID   = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
-const PROTOCOL_FEE     = new PublicKey('BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN');
+const PROTOCOL_FEE     = new PublicKey('AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh');
 const COMPUTE_BUDGET   = new PublicKey('ComputeBudget111111111111111111111111111111');
 const SLOTS_PER_EPOCH  = 7200n;
 

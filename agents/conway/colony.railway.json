@@ -2,7 +2,7 @@
   "$comment": "Railway variant: paths inside the container. State on the /data volume.",
   "automatonRepo": "/opt/automaton",
   "colonyRoot": "/data/colony",
-  "ownerAddress": "BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN",
+  "ownerAddress": "AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh",
   "ownerKeypair": null,
   "chainType": "solana",
   "solanaRpcUrl": "https://api.mainnet-beta.solana.com",

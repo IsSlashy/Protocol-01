@@ -35,8 +35,8 @@ import * as crypto from 'crypto';
 const FEE_SPLITTER_PROGRAM_ID = new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM');
 const REGISTRY_PROGRAM_ID = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB');
 
-/** Hardcoded protocol fee wallet (BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN) */
-const PROTOCOL_FEE_WALLET = new PublicKey('BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN');
+/** Hardcoded protocol fee wallet (AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh) */
+const PROTOCOL_FEE_WALLET = new PublicKey('AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh');
 
 // Fee splitter constants
 const DEFAULT_FEE_BPS = 50; // 0.5%
@@ -257,7 +257,7 @@ describe('E2E: Cross-Program Integration', () => {
       // The split_sol_direct instruction has a constraint:
       // constraint = fee_wallet.key() == PROTOCOL_FEE_WALLET @ ErrorCode::InvalidFeeWallet
       // This is verified by the on-chain program, not client-side
-      expect(PROTOCOL_FEE_WALLET.toBase58()).to.equal('BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN');
+      expect(PROTOCOL_FEE_WALLET.toBase58()).to.equal('AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh');
     });
 
     it('rejects arbitrary fee wallet address', async () => {

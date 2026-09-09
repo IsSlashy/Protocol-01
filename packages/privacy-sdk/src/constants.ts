@@ -246,7 +246,7 @@ export const MAX_LEAVES = 2 ** MERKLE_TREE_DEPTH; // 32,768
 export const SHIELD_FEE_BPS = 30;   // 0.3%
 export const UNSHIELD_FEE_BPS = 50; // 0.5%
 export const MAX_FEE_BPS = 500;     // 5%
-export const FEE_WALLET = new PublicKey('BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN');
+export const FEE_WALLET = new PublicKey('AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh');
 
 // ─── STARK Circuit IDs ────────────────────────────────────────────────────────
 

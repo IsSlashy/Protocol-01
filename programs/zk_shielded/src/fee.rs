@@ -2,16 +2,22 @@ use anchor_lang::prelude::*;
 
 /// Legacy hardcoded protocol fee wallet (V2 paths only).
 ///
-/// Address: BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN
+/// Address: AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh
+///
+/// ROTATED 2026-09-09. Previous value:
+/// BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN - reported compromised by the
+/// founder. It stays named here, and in `PUBLICLY_NAMED_IN_THIS_REPO`, because
+/// it remains published in git history and in every V2 fee transfer already on
+/// chain: no harness should ever pay from it again.
 ///
 /// V3 paths (`shield_denominated_v3`, `unshield_denominated_stark_v3`) MIGRATED
 /// to per-pool `fee_escrow` PDAs. See `derive_fee_escrow` below. The constant
 /// stays for V2 backward compat during the deprecation window.
 pub const PROTOCOL_FEE_WALLET: Pubkey = Pubkey::new_from_array([
-    0x9a, 0xef, 0xbc, 0xf9, 0x06, 0x95, 0x58, 0x0f,
-    0x6f, 0x96, 0x19, 0xeb, 0x7b, 0x6c, 0xd6, 0x3a,
-    0xcd, 0xc6, 0x66, 0x1b, 0xd3, 0xed, 0xfb, 0x93,
-    0xb7, 0x75, 0x23, 0x24, 0x5e, 0xb4, 0xa0, 0xcf,
+    0x8e, 0xd3, 0xab, 0xfb, 0x94, 0x47, 0x0d, 0x7b,
+    0xf7, 0x4a, 0xca, 0x06, 0xbf, 0xfe, 0x80, 0x1b,
+    0x26, 0x14, 0xdf, 0x23, 0xc0, 0x69, 0xec, 0x1d,
+    0xea, 0xeb, 0x64, 0xd6, 0xdc, 0x59, 0xde, 0x94,
 ]);
 
 /// Treasury authority — only this signer can call `sweep_fee_escrow` to drain

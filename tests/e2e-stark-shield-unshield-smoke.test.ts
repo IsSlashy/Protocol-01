@@ -52,7 +52,7 @@ import * as path from 'path';
 // ---------------------------------------------------------------------------
 const ZK_SHIELDED_ID = new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c');
 const STARK_VERIFIER_ID = new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs');
-const PROTOCOL_FEE_WALLET = new PublicKey('BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN');
+const PROTOCOL_FEE_WALLET = new PublicKey('AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh');
 
 const NATIVE_SOL_MINT = SystemProgram.programId;
 

@@ -2,7 +2,7 @@
 
 Une lignée d'agents [Conway Automaton](https://github.com/Conway-Research/automaton) qui gagnent des USDC (ou des SOL) sur Solana, reversent le surplus au propriétaire, meurent quand ils ne produisent plus, renaissent avec la mémoire de ce qui a marché, et se répliquent seulement quand ils sont rentables.
 
-- Propriétaire (Phantom) : `BRop3akxwuQaAHeMUC33ZyRjzLh78ENquVMgHum9TjNN`
+- Propriétaire (Phantom) : `AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh`
 - Chaîne : Solana **mainnet** (USDC préféré, SOL accepté)
 - Inférence : **pool de fournisseurs gratuits** avec rotation (Groq, Cerebras, Google AI Studio, NVIDIA, Mistral, OpenRouter)
 - Hébergement : n'importe quelle machine Linux toujours allumée (VPS). Rien ne tourne sur le PC du propriétaire.
