@@ -2290,10 +2290,15 @@
   color: var(--styx-muted);
 }
 
-/* ── The field: one background for the whole page, 2026-09-12 ─────────────
+/* ── The ground: one background for the whole page, 2026-09-12 ────────────
    app/_styx/StyxField.tsx draws it: fixed, full viewport, behind the header,
-   the app and the footer alike. */
-.styx-field {
+   the app and the footer alike.
+   [2026-09-13] Renamed from `.styx-field`: that class is the FORM FIELD
+   wrapper (line ~735, waitlist, admin, sdk-demo, styx-kit), and the fixed
+   full-viewport rule below had been turning every form field on those pages
+   into a full-screen box (founder: "bug d'affichage en arrière-plan dans la
+   page waitlist"). */
+.styx-ground {
   position: fixed;
   inset: 0;
   z-index: -1;
@@ -2301,16 +2306,16 @@
   background: var(--styx-ink);
 }
 
-/* The shell paints the ink itself; on a page that carries the field, that
+/* The shell paints the ink itself; on a page that carries the ground, that
    paint would sit on top of a negative-z fixed layer and hide it (MEASURED:
-   canvas drawn, page black). So the shell goes clear and the field is the
+   canvas drawn, page black). So the shell goes clear and the ground is the
    ink. */
-.styx:has(.styx-field) {
+.styx:has(.styx-ground) {
   background: transparent;
 }
 
-.styx-field-canvas,
-.styx-field-fallback {
+.styx-ground-canvas,
+.styx-ground-fallback {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -2318,7 +2323,7 @@
   object-fit: cover;
 }
 
-.styx-field-fallback {
+.styx-ground-fallback {
   display: none;
   opacity: 0.9;
 }
