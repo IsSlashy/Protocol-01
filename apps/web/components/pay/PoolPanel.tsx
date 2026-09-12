@@ -26,6 +26,7 @@ import {
   resolveSpentNotes,
   recordPayout,
   recordSpentNote,
+  SPENT_NOTES_CHANGED_EVENT,
   scanPool,
   shieldToPool,
   contributeToPool,
@@ -394,6 +395,26 @@ export default function PoolPanel({
     return () => {
       stale = true;
       window.removeEventListener(HANDOFFS_CHANGED_EVENT, catchUp);
+    };
+  }, [meta, ownerKey]);
+  // [2026-09-12] The subscribe tab, the exchange and a withdrawal all record
+  // the note they consumed in the local spent store; this is what makes the
+  // row leave THIS list the moment the transaction lands, instead of after
+  // the next chain scan finds the nullifier (founder: "au moment où elle est
+  // dépensée ou envoyée, elle doit disparaître").
+  useEffect(() => {
+    let stale = false;
+    const catchUp = () => {
+      void knownSpentNoteKeys(meta, ownerKey)
+        .then((res) => {
+          if (!stale) setSpentLocally((prev) => new Set([...prev, ...res.keys]));
+        })
+        .catch(() => {});
+    };
+    window.addEventListener(SPENT_NOTES_CHANGED_EVENT, catchUp);
+    return () => {
+      stale = true;
+      window.removeEventListener(SPENT_NOTES_CHANGED_EVENT, catchUp);
     };
   }, [meta, ownerKey]);
 
@@ -1117,6 +1138,12 @@ export default function PoolPanel({
   // SOL of buffer rent and minutes of upload. Trust what we did over what we
   // read; the chain scan agrees on the following pass.
   const unspent = notes.filter((n) => !n.spent && !spentLocally.has(noteKey(n)));
+  // A note handed to somebody else is still spendable by this wallet, but it
+  // is no longer THEIRS to plan around: it leaves the list and the balance,
+  // and sits behind one link that says how many there are (2026-09-12).
+  const sentNotes = unspent.filter((n) => handedOver.has(noteKey(n)));
+  const held = unspent.filter((n) => !handedOver.has(noteKey(n)));
+  const [showSent, setShowSent] = useState(false);
   const selectedSize = poolSizes.find((p) => p.denomination === denomination);
 
   // ONE source of truth for what the user holds. The balance is the sum of the
@@ -1124,7 +1151,7 @@ export default function PoolPanel({
   // The screen once said "0 SOL" next to "2 unspent notes" because the balance
   // came from the chain scan while the list came from the local first paint;
   // deriving both from `unspent` makes that contradiction unrepresentable.
-  const shieldedBalance = unspent.reduce((sum, n) => sum + n.denomination, 0);
+  const shieldedBalance = held.reduce((sum, n) => sum + n.denomination, 0);
 
   /**
    * What a deposit actually costs the BUYER, derived rather than remembered.
@@ -1777,8 +1804,8 @@ export default function PoolPanel({
           </p>
           <p className="mt-1 text-xs text-p01-text-muted">
             {t("pay.pool.notesReady")
-              .replace("{count}", String(unspent.length))
-              .replaceAll("{plural}", unspent.length === 1 ? "" : "s")}
+              .replace("{count}", String(held.length))
+              .replaceAll("{plural}", held.length === 1 ? "" : "s")}
             {storedNotes > 0 && <> · {storedNotes} encrypted backup{storedNotes === 1 ? "" : "s"} on this device</>}
           </p>
           {notesProvisional && (
@@ -1856,16 +1883,25 @@ export default function PoolPanel({
             not read a treatise. The dictionary keys and the tests that guard
             their wording are untouched; the sentences live on in the docs. */}
 
-        {unspent.length > 0 && (
+        {(held.length > 0 || sentNotes.length > 0) && (
           <div>
             <p className="mb-2 font-display text-sm text-p01-text">
               {t("pay.pool.yourNotes")}
             </p>
+            {sentNotes.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowSent((v) => !v)}
+                className="mb-2 text-xs text-p01-text-dim underline underline-offset-2 hover:text-p01-text"
+              >
+                {(showSent ? t("pay.pool.hideSent") : t("pay.pool.showSent")).replace("{n}", String(sentNotes.length))}
+              </button>
+            )}
             {withdrawReason && (
               <p className="mb-2 text-xs text-p01-text-dim">{withdrawReason}</p>
             )}
             <ul className="space-y-2">
-              {unspent.map((n) => (
+              {[...held, ...(showSent ? sentNotes : [])].map((n) => (
                 <li
                   // NOT `counter`: notes painted from local storage all carry 0,
                   // so two of them collide and React may duplicate or omit rows,

@@ -319,3 +319,24 @@ The v4 path located the same kind of note in 3.9–5.7 s, so the time is in
 something `locateOwnedNote` does after the walk (`fetchSpentNullifierSet`, the
 blob check, the two-pass derivation search) — not measured apart yet. It is
 legacy item 1 of HANDOFF §4 and stays open.
+
+## 6d. The note-in exchange, live, on the redeployed verifier (2026-09-12, 20:49–20:50 UTC)
+
+`liveNoteInExchange.test.ts` against the PRODUCTION API (protocol-01.dev) and
+Helius devnet, unnamed key, `live_exchange.log`, record `exchange-record.json`.
+The buyer shields a fresh note, withdraws it on circuit 7 with the deployment's
+till as recipient, presents the withdrawal to `/api/claim-for-payment`, and
+`/api/issue-note` hands back an OLDER note the buyer never deposited.
+
+| leg | time | landed |
+|---|---|---|
+| shield leg (not the exchange) | 27.6 s | `2DWBY13t…` leaf 120 |
+| harness gap (registry reload) | 15.0 s | — |
+| **exchange: withdraw to the till** | prepare 3.6 s + execute 17.4 s = 21.0 s | `2xm8EGkp…`, till credited 995,000,000 lamports |
+| **exchange: claim** | 0.6 s | 200, kind `pool-withdrawal` |
+| **exchange: issue** | 6.3 s | leaf 92, deposited by the treasury before this buyer existed |
+| **exchange total** | **28.1 s** | leaf 120 → leaf 92; inventory 318 notes |
+
+Whole test 70.4 s. The exchange is one v4 withdrawal plus two API calls; the
+6.3 s of `issue-note` is the server sealing the older note to the buyer's
+address. Under the 60 s target, above the 20 s the flows reach.

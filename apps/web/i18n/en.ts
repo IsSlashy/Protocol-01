@@ -1817,6 +1817,8 @@ const en = {
       privacyIp: 'This tab submits every transaction it sends, including the hundreds of proof-chunk uploads a withdrawal needs, so your IP reaches the RPC throughout. One leg is the exception: funding the one-time key is requested from this deployment and signed on its server, so it sees that request and where it came from. Relaying only the last transaction would not change the rest.',
       privacyToday: 'What you get today: the amount is quantised to a denomination, the note itself is post-quantum encrypted (hybrid X25519 + ML-KEM-768), and the money does not land in your wallet unless you move it there. That is the whole list.',
       noteSent: 'Sent, not claimed yet. Still yours until one of you spends it.',
+      showSent: 'Sent notes ({n})',
+      hideSent: 'Hide sent notes',
       noteChecking: 'Still being checked against the chain; may already be spent.',
       noteReady: 'In the pool, ready to withdraw.',
       markSent: 'Mark as sent',

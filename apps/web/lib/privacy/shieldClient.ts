@@ -2461,6 +2461,13 @@ async function openLinkage(meta: string, walletPubkey: string): Promise<LinkageV
  * unspent, an entry here can only ever correct a stale read, never hide a live
  * note. It is a local memory of our own actions, not a substitute for the chain.
  */
+/**
+ * [2026-09-12] Fired on `window` after a note is recorded as spent, so a panel
+ * that did not do the spending (the pool list, while the subscribe tab spent
+ * the note) drops the row at once instead of after its next chain scan.
+ */
+export const SPENT_NOTES_CHANGED_EVENT = 'p01:spent-notes-changed';
+
 export async function recordSpentNote(
   meta: string,
   walletPubkey: string,
@@ -2495,6 +2502,7 @@ async function recordSpentNotes(
     }
     all[session.label] = list;
     writeMap(SPENT_STORE_KEY, all);
+    if (typeof window !== 'undefined') window.dispatchEvent(new Event(SPENT_NOTES_CHANGED_EVENT));
   } catch {
     // Quota or private-mode failure. The chain scan still resolves it, slowly.
   }

@@ -1778,6 +1778,8 @@ const fr: Translations = {
       privacyIp: 'Cet onglet soumet lui-même chaque transaction qu’il envoie, y compris les centaines de téléversements de fragments de preuve qu’un retrait exige : votre IP atteint donc le RPC tout du long. Une étape fait exception : le financement de la clé à usage unique est demandé à ce déploiement et signé sur son serveur, qui voit donc cette demande et d’où elle vient. Ne relayer que la dernière transaction ne changerait rien au reste.',
       privacyToday: 'Ce que vous obtenez aujourd’hui : le montant est quantifié à une dénomination, la note elle-même est chiffrée post-quantique (hybride X25519 + ML-KEM-768), et l’argent n’atterrit pas dans votre portefeuille tant que vous ne l’y déplacez pas. C’est toute la liste.',
       noteSent: 'Envoyée, pas encore réclamée. Toujours à vous jusqu’à ce que l’un de vous la dépense.',
+      showSent: 'Notes envoyées ({n})',
+      hideSent: 'Masquer les notes envoyées',
       noteChecking: 'Encore en cours de vérification sur la chaîne ; elle est peut-être déjà dépensée.',
       noteReady: 'Dans le pool, prête à être retirée.',
       markSent: 'Marquer comme envoyée',
