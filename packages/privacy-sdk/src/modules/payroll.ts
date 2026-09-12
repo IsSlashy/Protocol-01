@@ -3,8 +3,6 @@ import {
   PublicKey,
 } from '@solana/web3.js';
 import { poseidon2 } from 'poseidon-lite';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 import type {
   Signer,
@@ -15,7 +13,6 @@ import type {
 } from '../types';
 import { PrivacyError, PrivacyErrorCode } from '../errors';
 
-import { StealthModule } from './stealth';
 import { StreamsModule } from './streams';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -26,20 +23,17 @@ const DEFAULT_STREAM_DURATION = 30 * 24 * 60 * 60;
 /** Estimated rent cost per stream account in lamports. */
 const ESTIMATED_STREAM_RENT = 2_039_280n;
 
-/** Estimated rent cost per stealth account in lamports. */
-const ESTIMATED_STEALTH_RENT = 1_461_600n;
-
 /** Estimated transaction fee in lamports. */
 const ESTIMATED_TX_FEE = 5_000n;
 
 // ─── Exported Types ─────────────────────────────────────────────────────────
 
 export interface PayrollEmployee {
-  /** Employee wallet or stealth meta-address */
+  /** Employee wallet address (base58 string or PublicKey). */
   address: string | PublicKey;
   /** Salary amount in token base units */
   amount: bigint;
-  /** Optional: use streaming payment (vesting) instead of direct transfer */
+  /** Must be `true` since 2.0.0: every payroll payment is a private stream. */
   useStream?: boolean;
   /** Optional: stream duration in seconds (default: 30 days) */
   streamDuration?: number;
@@ -99,12 +93,17 @@ export interface PayrollResult {
  * PayrollModule provides confidential batch salary payments.
  *
  * Individual salary amounts remain hidden; only the total batch amount
- * is visible on-chain. Payments are executed as stealth transfers (direct)
- * or private streams (vesting), depending on per-employee configuration.
+ * is visible on-chain. Every payment is a private stream (vesting).
  *
- * This is a **coordinator module** — it orchestrates {@link StealthModule}
- * and {@link StreamsModule} internally and does not have its own on-chain
- * program. Batch history is stored locally in memory.
+ * [2026-09-13] The direct leg (a one-time stealth transfer per employee)
+ * spoke to the `specter` program, which was closed on devnet that day and
+ * removed from this SDK in 2.0.0. `executeBatch` now refuses a batch with an
+ * employee that is not `useStream: true` BEFORE any payment goes out, so a
+ * batch never stops halfway.
+ *
+ * This is a **coordinator module** — it orchestrates {@link StreamsModule}
+ * internally and does not have its own on-chain program. Batch history is
+ * stored locally in memory.
  *
  * @example
  * ```ts
@@ -114,8 +113,8 @@ export interface PayrollResult {
  *   token: 'USDC',
  *   name: 'April 2026',
  *   employees: [
- *     { address: 'st:...alice', amount: 5_000_000_000n },
- *     { address: 'st:...bob', amount: 3_500_000_000n, useStream: true },
+ *     { address: aliceWallet, amount: 5_000_000_000n, useStream: true },
+ *     { address: bobWallet, amount: 3_500_000_000n, useStream: true },
  *   ],
  * });
  *
@@ -133,8 +132,7 @@ export class PayrollModule {
   /** Local batch history (not persisted on-chain). */
   private batches: Map<string, PayrollBatch> = new Map();
 
-  /** Internal module instances for orchestration. */
-  private readonly stealth: StealthModule;
+  /** Internal module instance for orchestration. */
   private readonly streams: StreamsModule;
 
   constructor(
@@ -150,7 +148,6 @@ export class PayrollModule {
     this.programIds = programIds;
     this.resolveToken = resolveToken;
 
-    this.stealth = new StealthModule(connection, wallet, network, programIds, resolveToken);
     this.streams = new StreamsModule(connection, wallet, network, programIds, resolveToken);
   }
 
@@ -160,8 +157,8 @@ export class PayrollModule {
    * Execute a confidential payroll batch.
    *
    * Processes all employee payments sequentially — each as a separate
-   * transaction. Employees configured with `useStream: true` receive
-   * a private vesting stream; all others receive a direct stealth transfer.
+   * transaction, each as a private vesting stream (`useStream: true` on
+   * every employee; anything else is refused up front).
    *
    * After execution, a Poseidon commitment tree is built over all payment
    * amounts to produce a solvency proof that can be disclosed to auditors
@@ -170,7 +167,8 @@ export class PayrollModule {
    * @param config - Batch configuration with token, employees, and options.
    * @returns Batch summary with all payment receipts and an optional solvency proof.
    * @throws {PrivacyError} TRANSACTION_FAILED if any individual payment fails.
-   * @throws {PrivacyError} INVALID_CONFIG if the batch has no employees.
+   * @throws {PrivacyError} INVALID_CONFIG if the batch has no employees or an
+   *   employee without `useStream: true`.
    */
   async executeBatch(config: PayrollBatchConfig): Promise<PayrollResult> {
     try {
@@ -210,24 +208,11 @@ export class PayrollModule {
             streamAddress: receipt.streamAddress,
           });
         } else {
-          // Direct stealth transfer
-          const addressStr =
-            typeof employee.address === 'string'
-              ? employee.address
-              : employee.address.toBase58();
-
-          const receipt = await this.stealth.send({
-            to: addressStr,
-            amount,
-            token: config.token,
-          });
-
-          payments.push({
-            recipient,
-            amount,
-            type: 'direct',
-            txSignature: receipt.tx.signature,
-          });
+          // Unreachable: validateBatchConfig refused this batch already.
+          throw new PrivacyError(
+            PrivacyErrorCode.INVALID_CONFIG,
+            'Direct payouts left this SDK with the specter program (2.0.0); every employee needs useStream: true.',
+          );
         }
       }
 
@@ -262,7 +247,7 @@ export class PayrollModule {
    * Estimate the cost of executing a payroll batch without sending transactions.
    *
    * Returns the total token amount, estimated transaction fees, and
-   * estimated rent costs for any new accounts (streams, stealth addresses).
+   * estimated rent costs for the new stream accounts.
    *
    * @param config - Batch configuration to estimate.
    * @returns Cost breakdown: total payment amount, TX fees, and rent.
@@ -283,11 +268,7 @@ export class PayrollModule {
       totalAmount += BigInt(employee.amount);
       txCount += 1n;
 
-      if (employee.useStream) {
-        rentCosts += ESTIMATED_STREAM_RENT;
-      } else {
-        rentCosts += ESTIMATED_STEALTH_RENT;
-      }
+      rentCosts += ESTIMATED_STREAM_RENT;
     }
 
     const txFees = txCount * ESTIMATED_TX_FEE;
@@ -341,24 +322,31 @@ export class PayrollModule {
           `Employee at index ${i} has invalid amount: must be greater than zero.`,
         );
       }
+      if (!emp.useStream) {
+        throw new PrivacyError(
+          PrivacyErrorCode.INVALID_CONFIG,
+          `Employee at index ${i} is not \`useStream: true\`. Direct payouts left this SDK ` +
+            'with the specter program (closed on devnet 2026-09-13, removed in 2.0.0); ' +
+            'every payroll payment is a private stream.',
+        );
+      }
     }
   }
 
   /**
    * Resolve an employee address (string or PublicKey) to a PublicKey.
-   * For stealth meta-addresses (st:...) this returns the wallet public key
-   * as the stream recipient; actual stealth derivation happens inside send().
+   *
+   * A meta-address string (`st:...`) is refused: the stealth leg that turned
+   * one into a one-time address left with the specter program (2.0.0). A
+   * stream needs a plain Solana address.
    */
   private resolveRecipient(address: string | PublicKey): PublicKey {
     if (typeof address === 'string') {
-      // Stealth meta-addresses start with "st:" — cannot be used as stream recipient directly,
-      // so we derive a deterministic key. For direct sends, StealthModule handles this.
       if (address.startsWith('st:')) {
-        // Use SHA-256 of the meta-address to derive a deterministic PublicKey for record-keeping.
-        // The actual payment goes through the stealth protocol.
-        const hash = sha256(new TextEncoder().encode(address));
-        // Return a stand-in key — the real stealth address is ephemeral and derived by StealthModule
-        return this.walletPublicKey();
+        throw new PrivacyError(
+          PrivacyErrorCode.INVALID_CONFIG,
+          'Stealth meta-addresses (st:...) are not accepted since 2.0.0; give each employee a Solana address.',
+        );
       }
       return new PublicKey(address);
     }

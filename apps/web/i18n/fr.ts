@@ -701,10 +701,6 @@ const fr: Translations = {
         title: 'Les abonnements deviennent sans retour',
         desc: 'Annulation et remboursements retir\u00e9s du protocole. cancel_normal et cancel_private_stark sont supprim\u00e9s ; claim_period ferme d\u00e9sormais un coffre \u00e9puis\u00e9 et verse le reliquat et la rente au commer\u00e7ant. Cela supprime aussi la seule op\u00e9ration entrante du syst\u00e8me, l\u00e0 o\u00f9 se d\u00e9pensait le budget de tra\u00e7abilit\u00e9. L\'abonn\u00e9 conserve la pause et la reprise, et est pr\u00e9venu avant de payer que l\'argent ne revient pas. Remplace le portage pr\u00e9vu de cancel_private_stark vers V3, devenu sans objet.',
       },
-      quantumWallet: {
-        title: 'Quantum Wallet (p01_quantum_wallet)',
-        desc: 'Wallet smart-contract authorise par STARK qui remplace la custody Ed25519. Fonds depenses via preuve de connaissance du preimage Poseidon (Goldilocks, post-quantum), pas par signature. Meme quand Shor casse Ed25519 (>= 2030), un attaquant qui vole la cle de gas ne peut pas mover les fonds. Environ 9 a 11 semaines solo, gate sur fermeture audit V3.',
-      },
       coverTraffic: {
         title: 'Cover Traffic (dummies self-loop)',
         desc: 'Transactions dummies cote user, byte-identiques a un round-trip shield vers unshield reel, qui noient l\'activite reelle dans du bruit indistinguable. Ferme la correlation timing (L20) et degrade le signal programs-touched (L11). Plafond d\'indistinguishability 5/5. Zero surface protocole, zero cout infra.',
@@ -1226,7 +1222,7 @@ const fr: Translations = {
         title: 'Architecture SDK client',
         desc: 'Dix paquets TypeScript composent la pile client : un SDK de confidentialité unifié, les portefeuilles furtifs, les transactions blindées, le prouveur STARK, les tokens confidentiels, les deux intégrations marchand, les primitives de Merkle, l’auth et l’infrastructure RPC. Tous s’exécutent côté client sauf merchant-sdk, qui est la moitié serveur d’une intégration marchand.',
         detail1: '@protocol-01/privacy-sdk. Le point d’entrée unifié : blindage, envoi furtif, soldes confidentiels et flux derrière un seul import',
-        detail2: '@protocol-01/specter-sdk. Confidentialité principale : portefeuilles furtifs, transferts, coffre quantique, registre, indexeur',
+        detail2: '@protocol-01/specter-sdk. Clients registre, abonnement et relais, preuve côté client, dérivation d’adresses furtives hors chaîne',
         detail3: '@protocol-01/zk-sdk. Primitives ZK : ShieldedClient, Note, MerkleTree, ZkProver, clés de visualisation',
         detail4: '@protocol-01/stark-prover. Prouveur STARK WASM et soumetteur au vérificateur on-chain. Sans setup de confiance, sans courbes elliptiques',
         detail5: '@protocol-01/zkspl-sdk. Tokens confidentiels : dépôt, retrait, transfert, preuve de solde',
@@ -1299,18 +1295,6 @@ const fr: Translations = {
         detail13: 'M\u00e9moire (3) : sauvegarder, lire, lister la m\u00e9moire persistante de l\u2019agent',
         detail14: 'Web et prix (4) : recherche web, récupération de page, prix du SOL, prix d’un token. Ce sont les seuls outils qui accèdent au réseau d’eux-mêmes',
         detail15: 'Boucle d’outils : jusqu’à 3 tours d’exécution d’outils par message',
-      },
-      quantumWallet: {
-        title: 'Quantum Wallet (à venir)',
-        desc: 'Wallet smart-contract autorisé par STARK qui remplace la custody Ed25519. Fonds dépensés via preuve de connaissance du préimage Poseidon (Goldilocks, post-quantique), pas par signature. Même UX qu’un wallet Solana classique, votre adresse semble identique, vos amis envoient pareil, mais Shor ne peut pas déplacer vos fonds. Non livré : aucun programme n’est déployé pour cela et aucune date n’est promise. Le document de conception est daté du 2026-05-09.',
-        detail1: 'Custody : ed25519 vers preuve STARK de connaissance du préimage de Poseidon(seed_secret, salt) sur Goldilocks',
-        detail2: 'Adresse wallet = PDA owned par p01_quantum_wallet (32 octets, indistinguable d\'une pubkey classique pour les senders)',
-        detail3: 'Receive : tout wallet (Phantom, exchange, ami) envoie sur votre PDA via SystemProgram.transfer, aucune intégration spéciale requise côté sender',
-        detail4: 'Envoi : une preuve STARK du préimage autorise l’instruction de retrait (génération de la preuve, envoi du tampon, vérification, exécution). Aucun temps par envoi n’est publié ici : rien n’est déployé pour le mesurer',
-        detail5: 'Threat model après ship : une fois que Shor cassera Ed25519, à une date que cette page ne prétend pas connaître, un attaquant qui vole votre keypair Solana peut payer du gas en votre nom mais ne peut pas déplacer les fonds. Custody = connaissance du préimage, pas signature',
-        detail6: 'Migration : auto-drain Ed25519 vers quantum wallet au premier launch post-update (1 tx silencieuse, ~3s). L\'utilisateur voit son wallet existant upgrade in place, pas de nouvelle seed, pas de transfert manuel',
-        detail7: 'Recovery : clé SPHINCS+ optionnelle pour recovery "même si seed perdue". MVP ship sans (la seed phrase suffit)',
-        detail8: 'Réutilise le verifier STARK V3 (DGY37k…) avec un nouveau circuit_id = 7 pour wallet-auth. Même Goldilocks Poseidon, même chunked buffer upload, même rotation multi-relayer. Zéro nouvelle infrastructure',
       },
       migrationHistory: {
         title: 'Legacy / Historique de migration',

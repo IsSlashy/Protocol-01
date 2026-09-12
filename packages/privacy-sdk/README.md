@@ -4,7 +4,7 @@
 
 **The complete privacy SDK for Solana.**
 
-Shield funds, send privately, manage stealth addresses, create payment streams, and more.
+Shield funds, send privately, create payment streams, and more.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../../LICENSE)
 
@@ -54,7 +54,7 @@ console.log('Shielded:', shieldReceipt.commitment);
 
 // Send a private transfer
 await sdk.shield.transfer({
-  to: recipientStealthAddress,
+  to: recipientAddress,
   amount: 500_000_000,
   token: 'SOL',
 });
@@ -71,11 +71,9 @@ await sdk.shield.unshield({
 | Module | What It Does | Import |
 |--------|-------------|--------|
 | **Shield** | Deposit/withdraw from privacy pools | `@protocol-01/privacy-sdk/shield` |
-| **Stealth** | Generate/scan stealth addresses | `@protocol-01/privacy-sdk/stealth` |
 | **Confidential** | Private balances with ZK proofs | `@protocol-01/privacy-sdk/confidential` |
 | **Streams** | Continuous payment streams | `@protocol-01/privacy-sdk/streams` |
 | **Subscriptions** | Recurring private payments | `@protocol-01/privacy-sdk/subscriptions` |
-| **Vault** | Quantum-safe key storage (WOTS+) | `@protocol-01/privacy-sdk/vault` |
 | **Registry** | On-chain stealth address directory | `@protocol-01/privacy-sdk/registry` |
 | **Relay** | Transaction relay for sender privacy | `@protocol-01/privacy-sdk/relay` |
 | **Compliance** | ZK-KYC proofs (range proofs, sanctions innocence) -- *optional Groth16 overlay, not on the post-quantum hot path* | `@protocol-01/privacy-sdk/compliance` |
@@ -84,15 +82,18 @@ await sdk.shield.unshield({
 | **Payroll** | Confidential salary payments (batch) | `@protocol-01/privacy-sdk/payroll` |
 | **Treasury** | Multi-sig treasury with privacy | `@protocol-01/privacy-sdk/treasury` |
 
+Removed in 2.0.0 (see `CHANGELOG.md`): `stealth` and `vault`. Both spoke
+only to programs the founder closed on devnet on 2026-09-13 (`specter`
+`FgKhXakZ…`, `p01_quantum_vault` `9yVr79Xk…`); the `specter`, `feeSplitter`,
+`quantumVault` and `arcium` keys left `ProgramIds` with them.
+
 All modules are accessible through the main SDK instance:
 
 ```typescript
 sdk.shield.shield(...)
-sdk.stealth.send(...)
 sdk.confidential.deposit(...)
 sdk.streams.create(...)
 sdk.subscriptions.create(...)
-sdk.vault.create(...)
 sdk.registry.register(...)
 sdk.relay.submitJob(...)
 sdk.compliance.proveRange(...)
@@ -159,7 +160,7 @@ const deployed = getDeployedProgramIds('mainnet');
 Wrap your app with `PrivacyProvider` and use the hooks:
 
 ```tsx
-import { PrivacyProvider, usePrivacy, useShield, useStealth } from '@protocol-01/privacy-sdk/react';
+import { PrivacyProvider, usePrivacy, useShield } from '@protocol-01/privacy-sdk/react';
 
 function App() {
   return (
@@ -175,9 +176,6 @@ function MyComponent() {
 
   // Shield operations with loading/error state
   const { shield, shieldState, unshield, transfer, getBalance } = useShield();
-
-  // Stealth address operations
-  const { generateMetaAddress, send, scan, claim } = useStealth();
 
   const handleShield = async () => {
     try {
@@ -202,11 +200,9 @@ function MyComponent() {
 |------|--------|-----------|
 | `usePrivacy()` | All | Full SDK instance |
 | `useShield()` | Shield | `shield`, `unshield`, `transfer`, `getBalance` |
-| `useStealth()` | Stealth | `generateMetaAddress`, `send`, `scan`, `claim` |
 | `useConfidential()` | Confidential | `deposit`, `transfer`, `withdraw`, `getBalance` |
 | `useStreams()` | Streams | `create`, `withdraw`, `cancel`, `getStream`, `listStreams` |
 | `useSubscriptions()` | Subscriptions | `create`, `cancel`, `pause`, `resume` |
-| `useVault()` | Vault | `create`, `deposit`, `withdraw` |
 | `useRegistry()` | Registry | `register`, `lookup`, `isRegistered` |
 | `useRelay()` | Relay | `submitJob`, `listRelayers` |
 
@@ -249,11 +245,11 @@ try {
 |-------|--------|--------------|
 | 1xxx | General | `WALLET_NOT_CONNECTED`, `INVALID_CONFIG`, `TRANSACTION_FAILED` |
 | 2xxx | Shield | `SHIELD_FAILED`, `NULLIFIER_ALREADY_SPENT`, `POOL_NOT_FOUND` |
-| 3xxx | Stealth | `STEALTH_SEND_FAILED`, `INVALID_META_ADDRESS`, `SPENDING_KEY_REQUIRED` |
+| 3xxx | Retired (stealth) | none — the module and the `specter` program it spoke to left in 2.0.0 |
 | 4xxx | Confidential | `CONFIDENTIAL_DEPOSIT_FAILED`, `BALANCE_PROOF_FAILED` |
 | 5xxx | Streams | `STREAM_CREATE_FAILED`, `STREAM_EXHAUSTED` |
 | 6xxx | Subscriptions | `SUBSCRIPTION_CREATE_FAILED`, `SUBSCRIPTION_NOT_FOUND` |
-| 7xxx | Vault | `VAULT_CREATE_FAILED`, `WOTS_KEY_EXHAUSTED` |
+| 7xxx | Retired (vault) | none — the module and the quantum vault program it spoke to left in 2.0.0 |
 | 8xxx | Relay | `RELAY_SUBMIT_FAILED`, `RELAY_NO_ACTIVE_RELAYERS` |
 | 9xxx | Retired (private governance) | `MPC_NOT_AVAILABLE` — thrown by every `treasury` governance call; the feature was removed from Protocol 01 |
 | 10xxx | Registry | `REGISTRY_NOT_FOUND`, `REGISTRY_ALREADY_EXISTS` |
@@ -268,8 +264,8 @@ sdk.on('shield', (event) => {
   console.log('Shielded at', event.timestamp, event.data);
 });
 
-sdk.on('stealth:receive', (event) => {
-  console.log('Incoming stealth payment:', event.data);
+sdk.on('unshield', (event) => {
+  console.log('Unshielded at', event.timestamp, event.data);
 });
 
 sdk.on('error', (event) => {
@@ -282,16 +278,13 @@ sdk.on('error', (event) => {
 | Program | Devnet | Mainnet |
 |---------|--------|---------|
 | Shield (zkShielded) | Deployed | Deployed |
-| Stealth (specter) | Deployed | Deployed |
 | Confidential (zkspl) | Deployed | Deployed |
 | Streams | Deployed | Deployed |
 | Subscriptions | Deployed | Deployed |
-| Fee Splitter | Deployed | Deployed |
 | Whitelist | Deployed | Deployed |
 | Trustless | Deployed | Not yet deployed |
 | Relay | Deployed | Not yet deployed |
 | Registry | Deployed | Not yet deployed |
-| Quantum Vault | Deployed | Not yet deployed |
 | STARK Verifier | Deployed | Not yet deployed |
 | Bundler | Deployed | Not yet deployed |
 
@@ -301,8 +294,6 @@ The SDK will throw `PrivacyError(INVALID_CONFIG)` if you try to use mainnet with
 
 - **Spending keys never leave the client.** All ZK proofs are generated locally (snarkjs). There is no remote prover fallback.
 - **Nullifier preimages are the spending authority.** Whoever knows the nullifier preimage can spend the note. Treat them like private keys.
-- **Stealth private keys must be persisted securely.** The SDK returns them from `generateMetaAddress()` but does not store them. Use encrypted storage (e.g., SecureStore on mobile).
-- **WOTS+ vault keys are one-time.** Each withdrawal rotates the key. If you lose the seed, you lose access to the vault.
 - **The SDK warns loudly if no network is specified** (defaults to devnet). Always set `network` explicitly in production.
 
 ## Architecture
@@ -312,11 +303,9 @@ The SDK will throw `PrivacyError(INVALID_CONFIG)` if you try to use mainnet with
   |
   +-- PrivacySDK (main client)
   |     |-- shield      (ShieldModule)
-  |     |-- stealth     (StealthModule)
   |     |-- confidential (ConfidentialModule)
   |     |-- streams     (StreamsModule)
   |     |-- subscriptions (SubscriptionsModule)
-  |     |-- vault       (VaultModule)
   |     |-- registry    (RegistryModule)
   |     |-- relay       (RelayModule)
   |     |-- compliance  (ComplianceModule)
@@ -327,7 +316,7 @@ The SDK will throw `PrivacyError(INVALID_CONFIG)` if you try to use mainnet with
   |
   +-- react/
   |     |-- PrivacyProvider
-  |     +-- useShield, useStealth, useConfidential, ...
+  |     +-- useShield, useConfidential, ...
   |
   +-- errors (PrivacyError, PrivacyErrorCode)
   +-- constants (PROGRAM_IDS, TOKENS, SEEDS, ...)

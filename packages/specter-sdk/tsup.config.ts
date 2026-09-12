@@ -12,7 +12,6 @@ export default defineConfig({
     'src/wallet/index.ts',
     'src/stealth/index.ts',
     'src/transfer/index.ts',
-    'src/streams/index.ts',
     'src/proving/index.ts',
     'src/indexing/index.ts',
     'src/relay/index.ts',

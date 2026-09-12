@@ -1080,8 +1080,8 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
               // decimal digit is valid hex — and yields a different u64 that matches
               // no vault on chain, which made ZK subscription recovery impossible
               // while reporting "recovered: 0" as if the user simply had none.
-              // The other consumer of this same WASM output agrees: see
-              // `feltStringToCommitment` in services/quantumWallet/index.ts:308.
+              // (The quantum-wallet service that used to parse this same WASM
+              // output the same way was removed on 2026-09-13 with its program.)
               const commitmentDecimal = await computeStarkCommitment(c.secret.toString());
               const bytes = goldilocksU64To32(BigInt(commitmentDecimal));
               c.starkHex = Buffer.from(bytes).toString('hex');

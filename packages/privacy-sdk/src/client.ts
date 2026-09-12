@@ -15,11 +15,9 @@ import { PROGRAM_IDS, TOKENS } from './constants';
 import { asSpendingKey, type SpendingKey } from './identity/spendingKey';
 
 import { ShieldModule } from './modules/shield';
-import { StealthModule } from './modules/stealth';
 import { ConfidentialModule } from './modules/confidential';
 import { StreamsModule } from './modules/streams';
 import { SubscriptionsModule } from './modules/subscriptions';
-import { VaultModule } from './modules/vault';
 import { RegistryModule } from './modules/registry';
 import { RelayModule } from './modules/relay';
 import { ComplianceModule } from './modules/compliance';
@@ -44,9 +42,6 @@ import { TreasuryModule } from './modules/treasury';
  * // Shield 1 SOL
  * const receipt = await sdk.shield.shield({ amount: 1e9, token: 'SOL' });
  *
- * // Send private payment via stealth address
- * await sdk.stealth.send({ to: 'st:...', amount: 0.5e9 });
- *
  * // Create payment stream
  * await sdk.streams.create({ recipient, totalAmount: 10e9, duration: 86400 });
  * ```
@@ -60,16 +55,12 @@ export class PrivacySDK {
 
   /** Shield, unshield, and private transfer operations */
   readonly shield: ShieldModule;
-  /** Stealth address generation, sending, scanning, and claiming */
-  readonly stealth: StealthModule;
   /** Confidential token balances (zkSPL) */
   readonly confidential: ConfidentialModule;
   /** Payment streaming */
   readonly streams: StreamsModule;
   /** Recurring subscription payments */
   readonly subscriptions: SubscriptionsModule;
-  /** Quantum-safe vaults (WOTS+ and Hash-Timelock) */
-  readonly vault: VaultModule;
   /** Stealth meta-address registry */
   readonly registry: RegistryModule;
   /** Privacy relay for transaction submission */
@@ -139,11 +130,9 @@ export class PrivacySDK {
     const resolveToken = this.resolveToken.bind(this);
 
     this.shield = new ShieldModule(this.connection, this.wallet, this.network, this.programIds, resolveToken, this.spendingKey);
-    this.stealth = new StealthModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.confidential = new ConfidentialModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.streams = new StreamsModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.subscriptions = new SubscriptionsModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.vault = new VaultModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.registry = new RegistryModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.relay = new RelayModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.compliance = new ComplianceModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);

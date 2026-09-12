@@ -77,12 +77,6 @@ export const REPOS = {
       visibility: 'public' as const,
       note: 'le vérifieur on-chain',
     },
-    {
-      label: 'programs/p01_quantum_vault/',
-      href: `${REPO}/tree/master/programs/p01_quantum_vault`,
-      visibility: 'public' as const,
-      note: 'la signature WOTS+',
-    },
   ],
   sdk: [
     {
@@ -189,18 +183,6 @@ export const PROGRAMS: ProgramRow[] = [
     id: 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c',
     role: "Pool blindé : les dépôts se font à dénomination fixe et sont stockés comme des commitments Poseidon insérés dans un arbre de Merkle, le retrait est conditionné à une preuve STARK. Porte aussi les coffres d'abonnement. 383 comptes de test créés par moi sur devnet, aucun utilisateur.",
     sourcePath: 'programs/zk_shielded/src/lib.rs',
-  },
-  {
-    name: 'specter',
-    id: 'FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL',
-    role: "Comptes furtifs et annonces de paiement : le transport on-chain sur lequel circulent les adresses à usage unique.",
-    sourcePath: 'programs/specter/src/lib.rs',
-  },
-  {
-    name: 'p01_quantum_vault',
-    id: 'HazoS6VKk4fqzjJg2yNYSPYTSq8yEHm2EZyb23seTh7o',
-    role: "Coffre à signature WOTS+ : 67 chaînes de hachage vérifiées on-chain pour 97 787 unités de calcul. Le seul endroit du système où une primitive post-quantique est vérifiée par la chaîne elle-même.",
-    sourcePath: 'programs/p01_quantum_vault/src/lib.rs',
   },
   {
     name: 'p01_relayer',
@@ -339,9 +321,9 @@ export const STEPS = [
   {
     no: '02',
     name: 'Adresse',
-    body: "Le destinataire publie une adresse furtive à usage unique, dérivée par un échange hybride X25519 et ML-KEM-768 (FIPS 203). Les annonces transitent par le programme specter.",
-    metaLabel: 'specter [source]',
-    metaHref: sourceUrl('programs/specter/src/lib.rs'),
+    body: "Le marchand est désigné par le haché de son adresse de collecte, lue dans le registre des services. La dépense publie le nullificateur, la racine et ce haché : ni le commitment du dépôt, ni le portefeuille du payeur.",
+    metaLabel: 'p01_registry [source]',
+    metaHref: sourceUrl('programs/p01_registry/src/lib.rs'),
   },
   {
     no: '03',

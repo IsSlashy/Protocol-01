@@ -944,137 +944,15 @@ export const useShieldedStore = create<ShieldedState>()(
 
       // ============= STEALTH PAYMENT RECOVERY =============
 
-      // Scan for stealth payments directly from Solana (no relayer)
+      // [2026-09-13] This action used to scan the on-chain stealth announcements
+      // of the `specter` program through the SDK's StealthIndexer. That program
+      // was closed on devnet on 2026-09-13 (`FgKhXakZ…`); there is nothing left
+      // on chain to read, the SDK export is gone, and the extension is being
+      // rebuilt on the web app's shielded-pool flow, where the pool scan finds
+      // a wallet's notes instead. Until then the recovery screens get an
+      // honest empty result rather than a stale one.
       scanStealthPayments: async () => {
-        const { isInitialized, _zkService } = get();
-        if (!isInitialized || !_zkService) {
-          return { found: 0, amount: 0, payments: [] };
-        }
-
-        try {
-          // Scan on-chain transactions directly — no relayer dependency.
-          // Uses the SDK's StealthIndexer for batched signature fetching,
-          // view-tag quick-rejection, and instruction data parsing.
-          const { scanForPayments } = await import('@protocol-01/specter-sdk');
-          const { network: net } = getWalletData();
-          const conn = getConnection(net);
-
-          const stealthKeys = _zkService.getStealthKeys();
-          if (!stealthKeys) {
-            console.warn('[Shielded] Stealth keys not available');
-            return { found: 0, amount: 0, payments: [] };
-          }
-
-          const onChainPayments = await scanForPayments(
-            conn,
-            stealthKeys.viewingKey,
-            stealthKeys.spendingKey,
-            { limit: 100 }
-          );
-
-          // Convert SDK StealthPayment format to the legacy format used below
-          const payments = onChainPayments.map(p => ({
-            ephemeralPublicKey: Buffer.from(p.ephemeralPubKey).toString('base64'),
-            viewTag: p.viewTag.toString(),
-            stealthAddress: p.stealthAddress.toBase58(),
-            signature: p.signature,
-          }));
-
-          if (payments.length === 0) {
-            return { found: 0, amount: 0, payments: [] };
-          }
-
-          // Use the stealth keys already fetched above
-          const viewingKey = stealthKeys.viewingKey;
-          const spendingKey = stealthKeys.spendingKey;
-
-          // Scan each payment to find ones that belong to us
-          let found = 0;
-          let totalAmount = 0;
-          const foundPayments: Array<{ stealthAddress: string; amount: number; signature: string }> = [];
-          const newFoundPayments: Array<{
-            stealthAddress: string;
-            privateKey: Uint8Array;
-            amount: number;
-            signature: string;
-            ephemeralPublicKey: string;
-          }> = [];
-
-          for (const payment of payments) {
-            try {
-              // Always re-derive the private key via scanStealthPayment so that
-              // _foundStealthPayments is populated with keys even after a page
-              // reload (the store does not persist private keys).
-              const result = await scanStealthPayment(
-                payment.ephemeralPublicKey,
-                viewingKey,
-                spendingKey,
-                payment.viewTag
-              );
-
-              if (!result.found || result.stealthAddress !== payment.stealthAddress || !result.privateKey) {
-                continue;
-              }
-
-              // Check on-chain balance — skip if already swept
-              const { network } = getWalletData();
-              const conn = getConnection(network);
-              const onChainBalance = await conn.getBalance(new PublicKey(payment.stealthAddress));
-
-              if (onChainBalance === 0) {
-                // Already swept — remove stale entry from local state
-                set(state => ({
-                  _foundStealthPayments: state._foundStealthPayments.filter(p => p.signature !== payment.signature),
-                }));
-                continue;
-              }
-
-              // Dust check: balance must cover tx fee (5000 lamports) with something
-              // left to send.  Rent-exempt threshold for a zero-data account is
-              // ~890_880 lamports; flag these as dust so the user knows.
-              const TX_FEE = 5000;
-              if (onChainBalance <= TX_FEE) {
-                continue;
-              }
-
-              const actualAmount = onChainBalance / 1e9;
-              found++;
-              totalAmount += actualAmount;
-
-              foundPayments.push({
-                stealthAddress: payment.stealthAddress,
-                amount: actualAmount,
-                signature: payment.signature,
-              });
-
-              newFoundPayments.push({
-                stealthAddress: payment.stealthAddress,
-                privateKey: result.privateKey,
-                amount: actualAmount,
-                signature: payment.signature,
-                ephemeralPublicKey: payment.ephemeralPublicKey,
-              });
-            } catch (e) {
-              // Not for us, skip
-            }
-          }
-
-          // Store found payments
-          if (newFoundPayments.length > 0) {
-            set(state => ({
-              _foundStealthPayments: [...state._foundStealthPayments, ...newFoundPayments],
-            }));
-          }
-
-          return {
-            found,
-            amount: totalAmount,
-            payments: foundPayments,
-          };
-        } catch (error) {
-          console.error('[Shielded] Stealth scan error:', error);
-          return { found: 0, amount: 0, payments: [] };
-        }
+        return { found: 0, amount: 0, payments: [] };
       },
 
       // Get pending stealth payments

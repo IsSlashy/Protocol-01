@@ -153,17 +153,6 @@ vi.mock('./stealth/generate', () => ({
   generateStealthMetaAddress: vi.fn(),
 }));
 
-vi.mock('./stealth/scan', () => ({
-  StealthScanner: vi.fn().mockImplementation(() => ({
-    scan: vi.fn().mockResolvedValue([]),
-    checkViewTag: vi.fn().mockReturnValue(false),
-    verifyAndDeriveKey: vi.fn().mockReturnValue({ isOwner: false }),
-  })),
-  subscribeToPayments: vi.fn().mockReturnValue({
-    unsubscribe: vi.fn(),
-  }),
-}));
-
 vi.mock('./stealth/derive', () => ({
   deriveStealthPrivateKey: vi.fn().mockReturnValue(Keypair.generate()),
 }));
@@ -173,89 +162,8 @@ vi.mock('./stealth/derive', () => ({
 // ---------------------------------------------------------------------------
 
 vi.mock('./transfer/send', () => ({
-  sendPrivate: vi.fn().mockResolvedValue({
-    signature: MOCK_SIGNATURE,
-    stealthAddress: MOCK_STEALTH_ADDRESS_PK,
-    ephemeralPubKey: new Uint8Array(32),
-    confirmed: true,
-    fee: 5000n,
-  }),
   sendPublic: vi.fn().mockResolvedValue({ signature: MOCK_SIGNATURE }),
-  estimateTransferFee: vi.fn().mockResolvedValue(5000n),
 }));
-
-vi.mock('./transfer/claim', () => ({
-  claimStealth: vi.fn().mockResolvedValue({
-    signature: MOCK_SIGNATURE,
-    amount: 1_000_000_000n,
-    destination: MOCK_KEYPAIR.publicKey,
-    confirmed: true,
-  }),
-  getStealthBalance: vi.fn().mockResolvedValue(1_000_000_000n),
-  canClaim: vi.fn().mockResolvedValue({ canClaim: true, balance: 1_000_000_000n }),
-}));
-
-// ---------------------------------------------------------------------------
-// Mock stream modules
-// ---------------------------------------------------------------------------
-
-vi.mock('./streams/create', () => ({
-  createStream: vi.fn().mockResolvedValue({
-    id: MOCK_STREAM_PDA,
-    sender: MOCK_KEYPAIR.publicKey,
-    recipient: Keypair.generate().publicKey,
-    totalAmount: 1_000_000_000n,
-    withdrawnAmount: 0n,
-    startTime: new Date(),
-    endTime: new Date(Date.now() + 86_400_000),
-    tokenMint: null,
-    status: 'active',
-    withdrawableAmount: 0n,
-    privacyLevel: 'standard',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }),
-  calculateWithdrawableAmount: vi.fn().mockReturnValue(500_000_000n),
-  getStreamProgress: vi.fn().mockReturnValue(50),
-}));
-
-vi.mock('./streams/withdraw', () => ({
-  withdrawStream: vi.fn().mockResolvedValue({
-    signature: MOCK_SIGNATURE,
-    amountWithdrawn: 500_000_000n,
-    remainingBalance: 500_000_000n,
-  }),
-  getStream: vi.fn().mockResolvedValue({
-    id: MOCK_STREAM_PDA,
-    sender: MOCK_KEYPAIR.publicKey,
-    recipient: MOCK_KEYPAIR.publicKey,
-    totalAmount: 1_000_000_000n,
-    withdrawnAmount: 0n,
-    startTime: new Date(),
-    endTime: new Date(Date.now() + 86_400_000),
-    tokenMint: null,
-    status: 'active',
-    withdrawableAmount: 500_000_000n,
-    privacyLevel: 'standard',
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  }),
-  getUserStreams: vi.fn().mockResolvedValue([]),
-}));
-
-vi.mock('./streams/cancel', () => ({
-  cancelStream: vi.fn().mockResolvedValue({
-    signature: MOCK_SIGNATURE,
-    refundedToSender: 500_000_000n,
-    sentToRecipient: 500_000_000n,
-  }),
-  pauseStream: vi.fn().mockResolvedValue(MOCK_SIGNATURE),
-  resumeStream: vi.fn().mockResolvedValue(MOCK_SIGNATURE),
-}));
-
-// ---------------------------------------------------------------------------
-// Import under test (after all mocks)
-// ---------------------------------------------------------------------------
 
 import { P01Client } from './client';
 
@@ -425,52 +333,6 @@ describe('P01Client', () => {
   // -----------------------------------------------------------------------
   // Scanning
   // -----------------------------------------------------------------------
-  describe('scanForIncoming', () => {
-    it('throws when no wallet is connected', async () => {
-      await expect(client.scanForIncoming()).rejects.toThrow(/connect/i);
-    });
-
-    it('returns payments array when connected', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const payments = await client.scanForIncoming();
-
-      expect(Array.isArray(payments)).toBe(true);
-    });
-  });
-
-  describe('subscribeToIncoming', () => {
-    it('throws when no wallet is connected', () => {
-      expect(() => client.subscribeToIncoming(vi.fn())).toThrow(
-        /connect/i
-      );
-    });
-
-    it('returns an unsubscribe function when connected', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const unsubscribe = client.subscribeToIncoming(vi.fn());
-
-      expect(typeof unsubscribe).toBe('function');
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Transfer methods
-  // -----------------------------------------------------------------------
-  describe('sendPrivate', () => {
-    it('throws when not connected', async () => {
-      await expect(
-        client.sendPrivate('st_recipient', 1.0)
-      ).rejects.toThrow(/connect/i);
-    });
-
-    it('sends a private transfer and returns signature', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const sig = await client.sendPrivate('st_recipient', 1.0);
-
-      expect(sig).toBe(MOCK_SIGNATURE);
-    });
-  });
-
   describe('sendPublic', () => {
     it('throws when not connected', async () => {
       await expect(
@@ -489,219 +351,6 @@ describe('P01Client', () => {
     });
   });
 
-  describe('claimStealth', () => {
-    it('throws when not connected', async () => {
-      await expect(client.claimStealth('someAddress')).rejects.toThrow(
-        /connect/i
-      );
-    });
-
-    it('claims a payment by address string', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const sig = await client.claimStealth(
-        Keypair.generate().publicKey.toBase58()
-      );
-
-      expect(sig).toBe(MOCK_SIGNATURE);
-    });
-
-    it('claims a payment from a StealthPayment object', async () => {
-      await client.connect(MOCK_P01_WALLET);
-
-      const payment = {
-        stealthAddress: Keypair.generate().publicKey,
-        ephemeralPubKey: new Uint8Array(32),
-        amount: 1_000_000_000n,
-        tokenMint: null,
-        signature: 'paymentSig',
-        blockTime: Date.now(),
-        claimed: false,
-        viewTag: 10,
-      };
-
-      const sig = await client.claimStealth(payment);
-      expect(sig).toBe(MOCK_SIGNATURE);
-    });
-  });
-
-  describe('estimateFee', () => {
-    it('returns a bigint fee', async () => {
-      const fee = await client.estimateFee('standard');
-      expect(typeof fee).toBe('bigint');
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Stream methods
-  // -----------------------------------------------------------------------
-  describe('createStream', () => {
-    it('throws when not connected', async () => {
-      await expect(
-        client.createStream('recipient', 1.0, 30)
-      ).rejects.toThrow(/connect/i);
-    });
-
-    it('creates a stream and returns a Stream object', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const stream = await client.createStream('st_recipient', 1.0, 30);
-
-      expect(stream.id).toEqual(MOCK_STREAM_PDA);
-      expect(typeof stream.totalAmount).toBe('bigint');
-      expect(stream.status).toBe('active');
-    });
-  });
-
-  describe('withdrawStream', () => {
-    it('throws when not connected', async () => {
-      await expect(
-        client.withdrawStream(MOCK_STREAM_PDA)
-      ).rejects.toThrow(/connect/i);
-    });
-
-    it('withdraws from a stream with PublicKey', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const sig = await client.withdrawStream(MOCK_STREAM_PDA);
-
-      expect(sig).toBe(MOCK_SIGNATURE);
-    });
-
-    it('withdraws from a stream with string ID', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const sig = await client.withdrawStream(MOCK_STREAM_PDA.toBase58());
-
-      expect(sig).toBe(MOCK_SIGNATURE);
-    });
-  });
-
-  describe('cancelStream', () => {
-    it('throws when not connected', async () => {
-      await expect(
-        client.cancelStream(MOCK_STREAM_PDA)
-      ).rejects.toThrow(/connect/i);
-    });
-
-    it('cancels a stream and returns signature', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const sig = await client.cancelStream(MOCK_STREAM_PDA);
-
-      expect(sig).toBe(MOCK_SIGNATURE);
-    });
-  });
-
-  describe('getStream', () => {
-    it('returns a stream or null', async () => {
-      const result = await client.getStream(MOCK_STREAM_PDA);
-      // getStream does not require wallet connection
-      expect(result).toBeDefined();
-    });
-
-    it('accepts string stream ID', async () => {
-      const result = await client.getStream(MOCK_STREAM_PDA.toBase58());
-      expect(result).toBeDefined();
-    });
-  });
-
-  describe('getMyStreams', () => {
-    it('throws when not connected', async () => {
-      await expect(client.getMyStreams()).rejects.toThrow(/connect/i);
-    });
-
-    it('returns array of streams', async () => {
-      await client.connect(MOCK_P01_WALLET);
-      const streams = await client.getMyStreams();
-      expect(Array.isArray(streams)).toBe(true);
-    });
-  });
-
-  // -----------------------------------------------------------------------
-  // Event methods
-  // -----------------------------------------------------------------------
-  describe('event system', () => {
-    it('registers and triggers an event listener', () => {
-      const listener = vi.fn();
-      client.on('payment_received', listener);
-
-      // Trigger via private emit -- access through bracket notation
-      const event = {
-        type: 'payment_received' as const,
-        timestamp: new Date(),
-        payment: {
-          stealthAddress: Keypair.generate().publicKey,
-          ephemeralPubKey: new Uint8Array(32),
-          amount: 1n,
-          tokenMint: null,
-          signature: '',
-          blockTime: 0,
-          claimed: false,
-          viewTag: 0,
-        },
-      };
-
-      // Call private emit
-      (client as any).emit(event);
-
-      expect(listener).toHaveBeenCalledTimes(1);
-      expect(listener).toHaveBeenCalledWith(event);
-    });
-
-    it('removes a listener with off()', () => {
-      const listener = vi.fn();
-      client.on('payment_received', listener);
-      client.off('payment_received', listener);
-
-      (client as any).emit({
-        type: 'payment_received',
-        timestamp: new Date(),
-        payment: {} as any,
-      });
-
-      expect(listener).not.toHaveBeenCalled();
-    });
-
-    it('multiple listeners on the same event all fire', () => {
-      const a = vi.fn();
-      const b = vi.fn();
-      client.on('stream_created', a);
-      client.on('stream_created', b);
-
-      (client as any).emit({
-        type: 'stream_created',
-        timestamp: new Date(),
-        stream: {} as any,
-      });
-
-      expect(a).toHaveBeenCalledTimes(1);
-      expect(b).toHaveBeenCalledTimes(1);
-    });
-
-    it('listener errors are caught and do not propagate', () => {
-      const badListener = vi.fn(() => {
-        throw new Error('listener boom');
-      });
-      const goodListener = vi.fn();
-
-      const errorSpy = vi
-        .spyOn(console, 'error')
-        .mockImplementation(() => {});
-
-      client.on('payment_received', badListener);
-      client.on('payment_received', goodListener);
-
-      expect(() =>
-        (client as any).emit({
-          type: 'payment_received',
-          timestamp: new Date(),
-          payment: {} as any,
-        })
-      ).not.toThrow();
-
-      expect(goodListener).toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalled();
-
-      errorSpy.mockRestore();
-    });
-  });
-
   // -----------------------------------------------------------------------
   // Utility methods
   // -----------------------------------------------------------------------
@@ -711,15 +360,23 @@ describe('P01Client', () => {
       expect(conn).toBeDefined();
     });
 
-    it('getProgramId returns a PublicKey', () => {
-      const pid = client.getProgramId();
-      expect(pid).toBeInstanceOf(PublicKey);
+    it('getRegistryProgramId and getRelayerProgramId return PublicKeys', () => {
+      expect(client.getRegistryProgramId()).toBeInstanceOf(PublicKey);
+      expect(client.getRelayerProgramId()).toBeInstanceOf(PublicKey);
     });
 
     it('setCluster updates the cluster and connection', () => {
       client.setCluster('mainnet-beta');
-      // getProgramId should now reflect mainnet
-      expect(client.getProgramId()).toBeInstanceOf(PublicKey);
+      // the registry id now reflects mainnet (PublicKey.default until deployed)
+      expect(client.getRegistryProgramId()).toBeInstanceOf(PublicKey);
+    });
+
+    it('no method of the client names the closed specter program', () => {
+      for (const gone of ['scanForIncoming', 'subscribeToIncoming', 'sendPrivate', 'claimStealth',
+        'estimateFee', 'createStream', 'withdrawStream', 'cancelStream', 'getStream', 'getMyStreams',
+        'getProgramId']) {
+        expect((client as any)[gone]).toBeUndefined();
+      }
     });
   });
 });

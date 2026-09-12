@@ -1,4 +1,4 @@
-// Stealth address generation
+// Stealth address generation — key math only, nothing here touches the chain
 export {
   generateStealthMetaAddress,
   parseStealthMetaAddress,
@@ -18,15 +18,7 @@ export {
   computeStealthAddress,
 } from './derive';
 
-// Payment scanning
-export {
-  StealthScanner,
-  scanForPayments,
-  createScanner,
-  subscribeToPayments,
-} from './scan';
-
-// Post-quantum claim proofs (P4.3)
+// Post-quantum claim proofs (P4.3) — WOTS+ over a claim message, off-chain
 export {
   deriveStealthWotsKeypair,
   deriveStealthWotsFromRecipient,
@@ -36,21 +28,7 @@ export {
   type PQClaimProof,
 } from './quantum';
 
-// On-chain v2 hybrid announcement — chunked ML-KEM ciphertext transport.
-// The single source of truth for the init_stealth_v2 / write_stealth_kem_chunk
-// instruction encoding + announcement PDA. Clients MUST use these (not a copy)
-// or the on-chain program will reject the announcement.
-export {
-  buildInitStealthV2Ix,
-  buildWriteKemChunkIx,
-  buildKemChunkIxs,
-  deriveAnnouncementPda,
-  decodeStealthV2,
-  STEALTH_V2_SEED,
-  STEALTH_V2_ACCOUNT_LEN,
-  MLKEM768_CIPHERTEXT_LEN,
-  KEM_CHUNK_SIZE,
-  IX_INIT_STEALTH_V2,
-  IX_WRITE_KEM_CHUNK,
-  ACCT_STEALTH_V2,
-} from './announcement-v2';
+// [2026-09-13] `./scan` (StealthScanner, scanForPayments, createScanner,
+// subscribeToPayments) and `./announcement-v2` (the init_stealth_v2 /
+// write_stealth_kem_chunk builders and the announcement PDA) are gone: both
+// read or wrote the `specter` program, closed on devnet on 2026-09-13.

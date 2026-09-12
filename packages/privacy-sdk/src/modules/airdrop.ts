@@ -1133,10 +1133,11 @@ export class AirdropModule {
       const metaBytes = new TextEncoder().encode(address);
       const hash = sha256(metaBytes);
       // Use the first 32 bytes as a deterministic public key
-      // NOTE: in production, the caller should derive an actual stealth
-      // address via StealthModule.deriveStealthAddress() and pass the
-      // resulting PublicKey here. The meta-address string form is a
-      // convenience that produces a deterministic proxy key.
+      // NOTE: in production, the caller derives the actual one-time address
+      // off-chain and passes the resulting PublicKey here; this module does
+      // not derive it (the stealth module left this SDK in 2.0.0). The
+      // meta-address string form is a convenience that produces a
+      // deterministic proxy key.
       return new PublicKey(hash);
     }
 

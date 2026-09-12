@@ -8,11 +8,6 @@ import type {
   ShieldReceipt,
   UnshieldReceipt,
   TransferReceipt,
-  StealthSendParams,
-  StealthSendReceipt,
-  StealthPayment,
-  StealthScanOptions,
-  StealthClaimReceipt,
   ConfidentialDepositParams,
   ConfidentialTransferParams,
   ConfidentialWithdrawParams,
@@ -23,10 +18,6 @@ import type {
   CreateSubscriptionParams,
   SubscriptionReceipt,
   SubscriptionInfo,
-  CreateVaultParams,
-  VaultReceipt,
-  VaultDepositParams,
-  VaultWithdrawParams,
   RegisterParams,
   RegistryEntry,
   RelayJobParams,
@@ -102,39 +93,6 @@ export function useShield() {
     unshield, unshieldState,
     transfer, transferState,
     getBalance, balanceState,
-  };
-}
-
-/** Stealth address hooks */
-export function useStealth() {
-  const sdk = useSDK();
-
-  const [generateMetaAddress, metaAddressState] = useAsyncAction(
-    useCallback(() => sdk.stealth.generateMetaAddress(), [sdk]),
-  );
-  const [send, sendState] = useAsyncAction(
-    useCallback((params: StealthSendParams) => sdk.stealth.send(params), [sdk]),
-  );
-  const [scan, scanState] = useAsyncAction(
-    useCallback(
-      (viewingKey: Uint8Array, spendingPubKey: Uint8Array, options?: StealthScanOptions) =>
-        sdk.stealth.scan(viewingKey, spendingPubKey, options),
-      [sdk],
-    ),
-  );
-  const [claim, claimState] = useAsyncAction(
-    useCallback(
-      (payment: StealthPayment, spendingKey: Uint8Array, viewingKey: Uint8Array) =>
-        sdk.stealth.claim(payment, spendingKey, viewingKey),
-      [sdk],
-    ),
-  );
-
-  return {
-    generateMetaAddress, metaAddressState,
-    send, sendState,
-    scan, scanState,
-    claim, claimState,
   };
 }
 
@@ -214,27 +172,6 @@ export function useSubscriptions() {
     cancel, cancelState,
     pause, pauseState,
     resume, resumeState,
-  };
-}
-
-/** Quantum-safe vault hooks */
-export function useVault() {
-  const sdk = useSDK();
-
-  const [create, createState] = useAsyncAction(
-    useCallback((params: CreateVaultParams) => sdk.vault.create(params), [sdk]),
-  );
-  const [deposit, depositState] = useAsyncAction(
-    useCallback((params: VaultDepositParams) => sdk.vault.deposit(params), [sdk]),
-  );
-  const [withdraw, withdrawState] = useAsyncAction(
-    useCallback((params: VaultWithdrawParams) => sdk.vault.withdraw(params), [sdk]),
-  );
-
-  return {
-    create, createState,
-    deposit, depositState,
-    withdraw, withdrawState,
   };
 }
 

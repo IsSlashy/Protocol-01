@@ -1,6 +1,6 @@
 {
   "name": "@protocol-01/specter-sdk",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "TypeScript SDK for interacting with Protocol 01 - Privacy-preserving payments on Solana",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -54,16 +54,6 @@
       "require": {
         "types": "./dist/transfer/index.d.ts",
         "default": "./dist/transfer/index.js"
-      }
-    },
-    "./streams": {
-      "import": {
-        "types": "./dist/streams/index.d.mts",
-        "default": "./dist/streams/index.mjs"
-      },
-      "require": {
-        "types": "./dist/streams/index.d.ts",
-        "default": "./dist/streams/index.js"
       }
     },
     "./proving": {

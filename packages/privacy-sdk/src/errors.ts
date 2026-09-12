@@ -17,13 +17,8 @@ export enum PrivacyErrorCode {
   POOL_NOT_FOUND = 2007,
   DENOMINATION_MISMATCH = 2008,
 
-  // ─── Stealth (3xxx) ─────────────────────────────────────────────────
-  STEALTH_SEND_FAILED = 3001,
-  STEALTH_SCAN_FAILED = 3002,
-  STEALTH_CLAIM_FAILED = 3003,
-  INVALID_META_ADDRESS = 3004,
-  VIEWING_KEY_REQUIRED = 3005,
-  SPENDING_KEY_REQUIRED = 3006,
+  // ─── 3xxx: retired with the stealth module (specter program closed 2026-09-13)
+  // ─── 7xxx: retired with the vault module (quantum vault program closed 2026-09-13)
 
   // ─── Confidential (4xxx) ────────────────────────────────────────────
   CONFIDENTIAL_DEPOSIT_FAILED = 4001,
@@ -44,13 +39,6 @@ export enum PrivacyErrorCode {
   SUBSCRIPTION_CANCEL_FAILED = 6002,
   SUBSCRIPTION_PAUSE_FAILED = 6003,
   SUBSCRIPTION_NOT_FOUND = 6004,
-
-  // ─── Vault (7xxx) ───────────────────────────────────────────────────
-  VAULT_CREATE_FAILED = 7001,
-  VAULT_DEPOSIT_FAILED = 7002,
-  VAULT_WITHDRAW_FAILED = 7003,
-  VAULT_LOCKED = 7004,
-  WOTS_KEY_EXHAUSTED = 7005,
 
   // ─── Relay (8xxx) ───────────────────────────────────────────────────
   RELAY_SUBMIT_FAILED = 8001,

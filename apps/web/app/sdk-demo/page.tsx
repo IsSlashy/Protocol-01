@@ -682,24 +682,20 @@ function PrivacySDKSection() {
       >
         <CodeBlock
           title={t('sdkDemo.stealthCodeTitle')}
-          code={`import { generateStealthAddress, scanForPayments } from '@protocol-01/specter-sdk';
+          code={`import { generateStealthAddress, deriveStealthPrivateKey } from '@protocol-01/specter-sdk';
 
-// Sender generates a one-time stealth address for the recipient
-const { stealthAddress, ephemeralPubKey } = generateStealthAddress({
-  spendingPubKey: recipientMeta.spendingPubKey,
-  viewingPubKey: recipientMeta.viewingPubKey,
-  useQuantumSafe: true,  // hybrid X25519 + ML-KEM-768, FIPS 203
-});
+// Sender: a one-time address for the recipient, from their meta-address
+// (hybrid X25519 + ML-KEM-768, FIPS 203). Off-chain, in the sender's client.
+const { address, ephemeralPubKey } = generateStealthAddress(recipientMetaAddress);
 
 // Pay the one-time address. The transfer itself is an ordinary Solana
 // transaction, signed with Ed25519.
-await transfer(connection, payer, stealthAddress, amount);
+await transfer(connection, payer, address, amount);
 
-// Recipient scans chain for payments addressed to them
-const payments = await scanForPayments({
-  viewingKey: myViewingKey,
-  fromSlot: lastScannedSlot,
-});`}
+// Recipient: the ephemeral key travels out of band (the sealed string the
+// app shows). With it and the viewing key, the spending key of that one
+// address is derived locally. Nothing is scanned on chain.
+const keypair = deriveStealthPrivateKey(spendingPubKey, viewingPrivateKey, ephemeralPubKey);`}
         />
       </Block>
 

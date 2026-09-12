@@ -705,10 +705,6 @@ const en = {
         title: 'Subscriptions Become One-Way',
         desc: 'Cancellation and refunds removed from the protocol. cancel_normal and cancel_private_stark are deleted; claim_period now closes an exhausted vault and pays the remainder and the rent to the merchant. This also deletes the only inbound leg in the system, which was where the linkability budget was being spent. The subscriber keeps pause and resume, and is told before paying that the money is one-way. Supersedes the planned cancel_private_stark V3 port, which no longer has a subject.',
       },
-      quantumWallet: {
-        title: 'Quantum Wallet (p01_quantum_wallet)',
-        desc: 'STARK-authorized smart-contract wallet replacing Ed25519 fund custody. Funds spent via Poseidon preimage knowledge proof (Goldilocks, post-quantum), not signature. Even when Shor breaks Ed25519 (≥ 2030), an attacker who steals the gas key cannot move funds. ~9-11 weeks solo, gated on V3 audit close.',
-      },
       coverTraffic: {
         title: 'Cover Traffic (Self-Loop Dummies)',
         desc: 'User-side dummy transactions that are byte-identical to a real round-trip shield → unshield, drowning real activity in indistinguishable noise. Closes timing correlation (L20) and degrades program-touched signal (L11). Indistinguishability ceiling 5/5. Zero protocol surface, zero infra cost.',
@@ -1237,7 +1233,7 @@ const en = {
         title: 'Client SDK Architecture',
         desc: 'Ten TypeScript packages make up the client stack: a unified privacy SDK, stealth wallets, shielded transactions, the STARK prover, confidential tokens, the two merchant integrations, Merkle primitives, auth, and RPC infrastructure. All run client-side except merchant-sdk, which is the server half of a merchant integration.',
         detail1: '@protocol-01/privacy-sdk. The unified entry point: shield, stealth send, confidential balances and streams behind one import',
-        detail2: '@protocol-01/specter-sdk. Core privacy: stealth wallets, transfers, quantum vault, registry, indexer',
+        detail2: '@protocol-01/specter-sdk. Registry, subscription and relay clients, client-side proving, off-chain stealth-address math',
         detail3: '@protocol-01/zk-sdk. ZK primitives: ShieldedClient, Note, MerkleTree, ZkProver, viewing keys',
         detail4: '@protocol-01/stark-prover. WASM STARK prover plus the on-chain verifier submitter. No trusted setup, no elliptic curves',
         detail5: '@protocol-01/zkspl-sdk. Confidential tokens: deposit, withdraw, transfer, balance proof',
@@ -1310,18 +1306,6 @@ const en = {
         detail13: 'Memory (3): save, read, list persistent agent memory',
         detail14: 'Web and prices (4): web search, page fetch, SOL price, token price. These are the only tools that reach the network on their own',
         detail15: 'Tool-use loop: up to 3 rounds of tool execution per message',
-      },
-      quantumWallet: {
-        title: 'Quantum Wallet (Coming)',
-        desc: 'STARK-authorized smart-contract wallet replacing Ed25519 fund custody. Funds spent via Poseidon preimage knowledge proof (Goldilocks, post-quantum), not signature. Same UX as a regular Solana wallet, your address looks the same, friends send to it the same way, but Shor cannot move your funds. Not shipped: no program is deployed for it and no date is promised. The design document is dated 2026-05-09.',
-        detail1: 'Custody: ed25519 → STARK proof of preimage knowledge of Poseidon(seed_secret, salt) over Goldilocks',
-        detail2: 'Wallet address = PDA owned by p01_quantum_wallet program (32 bytes, indistinguishable from a regular pubkey to senders)',
-        detail3: 'Receive: any wallet (Phantom, exchange, friend) sends to your PDA via SystemProgram.transfer, no special integration required from sender',
-        detail4: 'Send: a STARK proof of the preimage authorizes the withdraw instruction (proof gen, buffer upload, verify, execute). No per-send timing is published here: nothing is deployed to measure it on',
-        detail5: 'Threat model after ship: once Shor breaks Ed25519, on a date this page does not claim to know, an attacker who steals your Solana keypair can pay gas in your name but cannot move funds. Custody = preimage knowledge, not signature',
-        detail6: 'Migration: auto-drain Ed25519 → quantum wallet at first launch post-update (1 silent tx, ~3s). User sees their existing wallet upgrade in place, no new seed, no manual transfer',
-        detail7: 'Recovery: optional SPHINCS+ recovery key for "even if seed lost" emergency. MVP ships without it (seed phrase suffices)',
-        detail8: 'Reuses V3 STARK verifier (DGY37k…) with new circuit_id = 7 for wallet-auth. Same Goldilocks Poseidon, same chunked buffer upload, same multi-relayer rotation. Zero new infrastructure',
       },
       migrationHistory: {
         title: 'Legacy / Migration History',

@@ -399,7 +399,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       openTopic('Client SDK Architecture');
       expect(
         screen.getByText(
-          '@protocol-01/specter-sdk. Core privacy: stealth wallets, transfers, quantum vault, registry, indexer',
+          '@protocol-01/specter-sdk. Registry, subscription and relay clients, client-side proving, off-chain stealth-address math',
         ),
       ).toBeInTheDocument();
 

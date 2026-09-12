@@ -11,33 +11,25 @@ import type { Network, ProgramIds, TokenInfo } from './types';
 export const PROGRAM_IDS: Record<Network, ProgramIds> = {
   devnet: {
     zkShielded: new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c'),
-    specter: new PublicKey('FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL'),
     trustless: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     zkspl: new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT'),
     relayer: new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
     registry: new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
-    feeSplitter: new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM'),
     stream: new PublicKey('C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx'),
     subscription: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'),
-    quantumVault: new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv'),
     starkVerifier: new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs'),
-    arcium: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     whitelist: new PublicKey('5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33'),
     bundler: new PublicKey('FzhzTRz8DZDESoCm851n1qB6sSSCTBGV3aZtLVbDfGGX'), // not in Anchor.toml
   },
   mainnet: {
     zkShielded: new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY'),
-    specter: new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
     trustless: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     zkspl: new PublicKey('EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah'),
     relayer: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     registry: new PublicKey('11111111111111111111111111111111'), // not yet deployed
-    feeSplitter: new PublicKey('7xwX64ZxMVyw7xWJPaPuy8WFcvvhJrDDWEkc64nUMDCu'),
     stream: new PublicKey('2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs'),
     subscription: new PublicKey('Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS'),
-    quantumVault: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     starkVerifier: new PublicKey('11111111111111111111111111111111'), // not yet deployed
-    arcium: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     whitelist: new PublicKey('AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE'),
     bundler: new PublicKey('11111111111111111111111111111111'), // not yet deployed
   },
@@ -56,22 +48,24 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
  * Re-checked with `solana account <id> --url devnet` on 2026-08-18:
  *
  *   zkShielded  GbVM5yve…  EXISTS, executable  (upgraded that day)
- *   specter     2okhzLVr…  EXISTS, executable
  *   zkspl       AY38smtd…  ABSENT
  *   subscription 3eDvPJTK… ABSENT — superseded; subscriptions live inside
  *                                    zk_shielded as vaults, there is no
  *                                    separate program to call
- *   arcium                  placeholder (system program); Arcium was removed
- *                                    from this project
- *
  * ⛔ Do not deploy `subscription` or `zkspl` to make these resolve. Absent is
  * the correct state for both; a caller that reaches them is a caller on a path
  * that should not exist.
  *
- * ⚠️ The same sync also moved `specter` off `Ud2JYaq4…`, which is ABSENT on
- * devnet — this SDK had been pointing at a program that is not there. The
- * `pnpm check-program-ids` gate exists and reports this drift; it had not been
- * run.
+ * [2026-09-13] `specter`, `feeSplitter`, `quantumVault` and `arcium` LEFT this
+ * table (2.0.0). The founder had specter `FgKhXakZ…`, p01_fee_splitter
+ * `UdxXEvcA…`, p01_quantum_vault `9yVr79Xk…` (and p01_quantum_wallet
+ * `D7RBAFcM…`) closed on devnet that day — `solana program close`, the ids are
+ * unusable for good — and the modules that spoke to them (`stealth`, `vault`)
+ * went with them. `arcium` had been a placeholder for a product that left
+ * earlier. ⛔ `scripts/sync-program-ids.ts` must not re-emit any of the four
+ * on its next `--write`; `ProgramIds` no longer has the keys, so a stale
+ * generator fails the type check rather than silently pointing at a closed
+ * program.
  */
 
 /**
@@ -164,10 +158,7 @@ export const SEEDS = {
   PRIVACY_ROUTE: 'privacy_route',
   AUCTION_ESCROW: 'auction_escrow',
 
-  // specter
-  P01_WALLET: 'p01_wallet',
-  STEALTH: 'stealth',
-  STEALTH_V2: 'stealth_v2',
+  // stream
   STREAM: 'stream',
 
   // trustless
@@ -182,16 +173,8 @@ export const SEEDS = {
   // registry
   REGISTRY: 'registry',
 
-  // fee-splitter
-  FEE_CONFIG: 'p01-fee-config',
-
   // subscription
   SUBSCRIPTION: 'subscription',
-
-  // quantum vault
-  WINTERNITZ_VAULT: 'winternitz_vault',
-  HASH_VAULT: 'hash_vault',
-  COMMIT_RECORD: 'commit_record',
 
   // stark verifier
   PROOF_BUFFER: 'proof_buffer',
@@ -267,8 +250,6 @@ export const COMPUTE_UNITS = {
   UNSHIELD: 400_000,
   TRANSFER: 400_000,
   STARK_VERIFY: 1_400_000,
-  STEALTH_SEND: 200_000,
-  STEALTH_CLAIM: 200_000,
   STREAM_CREATE: 200_000,
   SUBSCRIPTION_CREATE: 300_000,
   MPC_VOTE: 300_000,

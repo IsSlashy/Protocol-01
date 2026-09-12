@@ -36,11 +36,9 @@ export {
 
 // ─── Modules ──────────────────────────────────────────────────────────────────
 export { ShieldModule } from './modules/shield';
-export { StealthModule } from './modules/stealth';
 export { ConfidentialModule } from './modules/confidential';
 export { StreamsModule } from './modules/streams';
 export { SubscriptionsModule } from './modules/subscriptions';
-export { VaultModule } from './modules/vault';
 export { RegistryModule } from './modules/registry';
 export { RelayModule } from './modules/relay';
 export { ComplianceModule } from './modules/compliance';
@@ -175,15 +173,6 @@ export type {
   EncryptedNote,
   PoolInfo,
 
-  // Stealth
-  StealthMetaAddress,
-  StealthAddress,
-  StealthPayment,
-  StealthSendParams,
-  StealthSendReceipt,
-  StealthScanOptions,
-  StealthClaimReceipt,
-
   // Confidential
   ConfidentialDepositParams,
   ConfidentialTransferParams,
@@ -200,14 +189,6 @@ export type {
   CreateSubscriptionParams,
   SubscriptionInfo,
   SubscriptionReceipt,
-
-  // Vault
-  VaultType,
-  CreateVaultParams,
-  VaultDepositParams,
-  VaultWithdrawParams,
-  VaultInfo,
-  VaultReceipt,
 
   // Registry
   RegisterParams,

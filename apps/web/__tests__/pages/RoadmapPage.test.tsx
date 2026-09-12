@@ -240,16 +240,6 @@ describe('RoadmapPage -- Styx Protocol development roadmap', () => {
       expect(screen.getByText('On the horizon')).toBeInTheDocument();
     });
 
-    it('lists Quantum Wallet (p01_quantum_wallet) as a future feature', () => {
-      expect(screen.getByText('Quantum Wallet (p01_quantum_wallet)')).toBeInTheDocument();
-    });
-
-    it('describes the quantum wallet as STARK-authorized custody', () => {
-      expect(
-        screen.getByText(/STARK-authorized smart-contract wallet replacing Ed25519 fund custody/),
-      ).toBeInTheDocument();
-    });
-
     it('lists Cover Traffic (Self-Loop Dummies) as a future feature', () => {
       expect(screen.getByText('Cover Traffic (Self-Loop Dummies)')).toBeInTheDocument();
     });

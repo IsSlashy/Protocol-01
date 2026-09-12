@@ -54,8 +54,6 @@ export interface PrivacySDKConfig {
 export interface ProgramIds {
   /** ZK shielded pool program (shield/unshield/transfer). */
   zkShielded: PublicKey;
-  /** Stealth address program (send/scan/claim). */
-  specter: PublicKey;
   /** Trustless pool program (no-relayer nullifier verification). */
   trustless: PublicKey;
   /** Confidential SPL token program (encrypted balances). */
@@ -64,22 +62,12 @@ export interface ProgramIds {
   relayer: PublicKey;
   /** Stealth meta-address registry program. */
   registry: PublicKey;
-  /** Fee splitter program (protocol fee distribution). */
-  feeSplitter: PublicKey;
   /** Payment streaming program. */
   stream: PublicKey;
   /** Recurring subscription payment program. */
   subscription: PublicKey;
-  /** Quantum-safe vault program (WOTS+ and Hash-Timelock). */
-  quantumVault: PublicKey;
   /** STARK proof verifier program (quantum-resistant proofs). */
   starkVerifier: PublicKey;
-  /**
-   * @deprecated No longer part of Protocol 01. Nothing in this SDK reads it.
-   * Still in the type so that 1.0.x config objects keep compiling; removed in
-   * the next major version.
-   */
-  arcium: PublicKey;
   /** Transaction bundler program. */
   bundler: PublicKey;
   /** Whitelist program (access control). */
@@ -204,88 +192,6 @@ export interface PoolInfo {
   denomination?: bigint;
   /** Minimum epoch delay before unshielding (anti-timing-attack). */
   epochDelay?: number;
-}
-
-// ─── Stealth Module ───────────────────────────────────────────────────────────
-
-/** A stealth meta-address consisting of spending and viewing keys (EIP-5564 style for Solana). */
-export interface StealthMetaAddress {
-  /** Ed25519 spending public key. */
-  spendingPubKey: Uint8Array;
-  /** X25519 viewing public key (for ECDH shared-secret derivation). */
-  viewingPubKey: Uint8Array;
-  /** ML-KEM-768 public key for quantum resistance (v2). */
-  kemPubKey?: Uint8Array;
-  /** Ed25519 spending private key (only set by generateMetaAddress). Caller MUST persist securely and zero when done. */
-  spendingPrivateKey?: Uint8Array;
-  /** X25519 viewing private key (only set by generateMetaAddress). Caller MUST persist securely and zero when done. */
-  viewingPrivateKey?: Uint8Array;
-  /** Bech32-encoded meta-address string (st:...). */
-  encoded: string;
-}
-
-/** A one-time stealth address derived from a meta-address. */
-export interface StealthAddress {
-  /** The derived one-time Solana address. */
-  address: PublicKey;
-  /** Ephemeral public key (must be published for recipient to scan). */
-  ephemeralPubKey: Uint8Array;
-  /** View tag for fast scanning (first byte of shared secret hash). */
-  viewTag: number;
-}
-
-/** A detected incoming stealth payment. */
-export interface StealthPayment {
-  /** Stealth address holding the funds. */
-  address: PublicKey;
-  /** Payment amount in base units. */
-  amount: bigint;
-  /** SPL token mint. */
-  tokenMint: PublicKey;
-  /** Ephemeral public key from the sender. */
-  ephemeralPubKey: Uint8Array;
-  /** Unix timestamp of the payment transaction. */
-  timestamp: number;
-}
-
-/** Parameters for sending to a stealth address. */
-export interface StealthSendParams {
-  /** Recipient's stealth meta-address string (st:...). */
-  to: string;
-  /** Amount in base units. */
-  amount: number | bigint;
-  /** Token to send (defaults to SOL). */
-  token?: TokenSymbol;
-  /** Use quantum-resistant v2 stealth (ML-KEM-768 key encapsulation). */
-  quantumSafe?: boolean;
-}
-
-/** Receipt from a stealth send operation. */
-export interface StealthSendReceipt {
-  tx: TxResult;
-  /** The one-time stealth address funds were sent to. */
-  stealthAddress: PublicKey;
-  /** Ephemeral public key (recipient needs this to detect and claim). */
-  ephemeralPubKey: Uint8Array;
-}
-
-/** Options for scanning the chain for incoming stealth payments. */
-export interface StealthScanOptions {
-  /** Start scanning from this slot (inclusive). */
-  fromSlot?: number;
-  /** Stop scanning at this slot (inclusive). */
-  toSlot?: number;
-  /** Number of slots to fetch per RPC call. */
-  batchSize?: number;
-}
-
-/** Receipt from claiming a stealth payment. */
-export interface StealthClaimReceipt {
-  tx: TxResult;
-  /** Amount claimed in base units. */
-  amount: bigint;
-  /** Token mint of the claimed funds. */
-  tokenMint: PublicKey;
 }
 
 // ─── Confidential Balances ────────────────────────────────────────────────────
@@ -416,70 +322,6 @@ export interface SubscriptionInfo {
 export interface SubscriptionReceipt {
   tx: TxResult;
   subscriptionAddress: PublicKey;
-}
-
-// ─── Quantum Vault ────────────────────────────────────────────────────────────
-
-/** Vault type: 'wots' for Winternitz OTS (key-rotation), 'htl' for Hash-Timelock (cold storage). */
-export type VaultType = 'wots' | 'htl';
-
-/** Parameters for creating a quantum-safe vault. */
-export interface CreateVaultParams {
-  /** Vault type. 'wots' rotates keys after each withdrawal; 'htl' uses preimage + timelock. */
-  type: VaultType;
-  /** For HTL: timelock duration in seconds. */
-  timelock?: number;
-  /** For HTL: destination wallet that receives funds on unlock. */
-  destination?: PublicKey;
-}
-
-/** Parameters for depositing into a vault. */
-export interface VaultDepositParams {
-  /** Vault account address. */
-  vault: PublicKey;
-  /** Amount to deposit in base units. */
-  amount: number | bigint;
-}
-
-/** Parameters for withdrawing from a vault. */
-export interface VaultWithdrawParams {
-  /** Vault account address. */
-  vault: PublicKey;
-  /** Amount to withdraw in base units. */
-  amount: number | bigint;
-  /** For HTL vaults: the 32-byte SHA-256 preimage that unlocks the vault. */
-  preimage?: Uint8Array;
-  /** For WOTS+ vaults: 32-byte seed for the CURRENT signing key. */
-  seed?: Uint8Array;
-  /** For WOTS+ vaults: 32-byte seed for the NEXT key (post-rotation). */
-  nextSeed?: Uint8Array;
-  /** For WOTS+ vaults: withdrawal destination. Defaults to the wallet owner. */
-  destination?: PublicKey;
-  /** For WOTS+ vaults: the vault's current `withdrawal_count` (fetched on-chain). */
-  withdrawalCount?: number | bigint;
-}
-
-/** On-chain state of a quantum-safe vault. */
-export interface VaultInfo {
-  address: PublicKey;
-  type: VaultType;
-  owner: PublicKey;
-  /** Current vault balance in lamports. */
-  balance: bigint;
-  /** WOTS+: current key index (increments after each withdrawal). */
-  keyIndex?: number;
-  /** HTL: Unix timestamp after which the vault can be unlocked. */
-  unlockAfter?: number;
-  /** HTL: destination wallet for unlocked funds. */
-  destination?: PublicKey;
-}
-
-/** Receipt from a vault operation. */
-export interface VaultReceipt {
-  tx: TxResult;
-  vaultAddress: PublicKey;
-  /** WOTS+: the seed used to derive the keypair. Caller MUST persist this securely. */
-  secret?: Uint8Array;
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
@@ -623,16 +465,10 @@ export type PrivacyEventType =
   | 'shield'
   | 'unshield'
   | 'transfer'
-  | 'stealth:send'
-  | 'stealth:receive'
-  | 'stealth:claim'
   | 'stream:create'
   | 'stream:withdraw'
   | 'subscription:create'
   | 'subscription:payment'
-  | 'vault:create'
-  | 'vault:deposit'
-  | 'vault:withdraw'
   | 'relay:submit'
   | 'relay:complete'
   | 'mpc:vote'

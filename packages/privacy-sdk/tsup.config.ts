@@ -4,11 +4,9 @@ export default defineConfig({
   entry: {
     index: 'src/index.ts',
     'modules/shield': 'src/modules/shield.ts',
-    'modules/stealth': 'src/modules/stealth.ts',
     'modules/confidential': 'src/modules/confidential.ts',
     'modules/streams': 'src/modules/streams.ts',
     'modules/subscriptions': 'src/modules/subscriptions.ts',
-    'modules/vault': 'src/modules/vault.ts',
     'modules/registry': 'src/modules/registry.ts',
     'modules/relay': 'src/modules/relay.ts',
     'modules/compliance': 'src/modules/compliance.ts',

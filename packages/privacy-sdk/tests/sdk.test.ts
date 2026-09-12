@@ -98,9 +98,7 @@ describe('PrivacySDK', () => {
           trustless: dummy,
           relayer: dummy,
           registry: dummy,
-          quantumVault: dummy,
           starkVerifier: dummy,
-          arcium: dummy,
           bundler: dummy,
         },
       });
@@ -132,12 +130,8 @@ describe('PrivacySDK', () => {
       expect(typeof sdk.shield.getShieldedBalance).toBe('function');
     });
 
-    it('should expose stealth module', () => {
-      expect(sdk.stealth).toBeDefined();
-      expect(typeof sdk.stealth.generateMetaAddress).toBe('function');
-      expect(typeof sdk.stealth.send).toBe('function');
-      expect(typeof sdk.stealth.scan).toBe('function');
-      expect(typeof sdk.stealth.claim).toBe('function');
+    it('has no stealth module: the specter program it spoke to was closed on devnet 2026-09-13', () => {
+      expect((sdk as unknown as { stealth?: unknown }).stealth).toBeUndefined();
     });
 
     it('should expose confidential module', () => {
@@ -165,12 +159,8 @@ describe('PrivacySDK', () => {
       expect(typeof sdk.subscriptions.resume).toBe('function');
     });
 
-    it('should expose vault module', () => {
-      expect(sdk.vault).toBeDefined();
-      expect(typeof sdk.vault.create).toBe('function');
-      expect(typeof sdk.vault.deposit).toBe('function');
-      expect(typeof sdk.vault.withdraw).toBe('function');
-      expect(typeof sdk.vault.getVault).toBe('function');
+    it('has no vault module: the quantum vault program it spoke to was closed on devnet 2026-09-13', () => {
+      expect((sdk as unknown as { vault?: unknown }).vault).toBeUndefined();
     });
 
     it('should expose registry module', () => {
@@ -251,9 +241,7 @@ describe('PrivacySDK', () => {
           trustless: dummy,
           relayer: dummy,
           registry: dummy,
-          quantumVault: dummy,
           starkVerifier: dummy,
-          arcium: dummy,
           bundler: dummy,
         },
       });
@@ -324,19 +312,21 @@ describe('Constants', () => {
   it('should have devnet program IDs', () => {
     const ids = PROGRAM_IDS.devnet;
     expect(ids.zkShielded).toBeInstanceOf(PublicKey);
-    expect(ids.specter).toBeInstanceOf(PublicKey);
     expect(ids.trustless).toBeInstanceOf(PublicKey);
     expect(ids.zkspl).toBeInstanceOf(PublicKey);
     expect(ids.relayer).toBeInstanceOf(PublicKey);
     expect(ids.registry).toBeInstanceOf(PublicKey);
-    expect(ids.feeSplitter).toBeInstanceOf(PublicKey);
     expect(ids.stream).toBeInstanceOf(PublicKey);
     expect(ids.subscription).toBeInstanceOf(PublicKey);
-    expect(ids.quantumVault).toBeInstanceOf(PublicKey);
     expect(ids.starkVerifier).toBeInstanceOf(PublicKey);
-    expect(ids.arcium).toBeInstanceOf(PublicKey);
     expect(ids.bundler).toBeInstanceOf(PublicKey);
     expect(ids.whitelist).toBeInstanceOf(PublicKey);
+    // Closed on devnet 2026-09-13 and removed in 2.0.0: a caller that still
+    // reads these keys gets undefined, never a closed program's address.
+    const gone = ids as unknown as Record<string, unknown>;
+    for (const key of ['specter', 'feeSplitter', 'quantumVault', 'arcium']) {
+      expect(gone[key]).toBeUndefined();
+    }
   });
 
   it('should have correct fee configuration', () => {
@@ -411,16 +401,12 @@ describe('PrivacyError', () => {
     expect(PrivacyErrorCode.WALLET_NOT_CONNECTED).toBe(1001);
     // Shield: 2xxx
     expect(PrivacyErrorCode.SHIELD_FAILED).toBe(2001);
-    // Stealth: 3xxx
-    expect(PrivacyErrorCode.STEALTH_SEND_FAILED).toBe(3001);
     // Confidential: 4xxx
     expect(PrivacyErrorCode.CONFIDENTIAL_DEPOSIT_FAILED).toBe(4001);
     // Streams: 5xxx
     expect(PrivacyErrorCode.STREAM_CREATE_FAILED).toBe(5001);
     // Subscriptions: 6xxx
     expect(PrivacyErrorCode.SUBSCRIPTION_CREATE_FAILED).toBe(6001);
-    // Vault: 7xxx
-    expect(PrivacyErrorCode.VAULT_CREATE_FAILED).toBe(7001);
     // Relay: 8xxx
     expect(PrivacyErrorCode.RELAY_SUBMIT_FAILED).toBe(8001);
     // MPC: 9xxx
@@ -458,14 +444,15 @@ describe('Exports', () => {
     const mod = await import('../src');
 
     expect(mod.ShieldModule).toBeDefined();
-    expect(mod.StealthModule).toBeDefined();
     expect(mod.ConfidentialModule).toBeDefined();
     expect(mod.StreamsModule).toBeDefined();
     expect(mod.SubscriptionsModule).toBeDefined();
-    expect(mod.VaultModule).toBeDefined();
     expect(mod.RegistryModule).toBeDefined();
     expect(mod.RelayModule).toBeDefined();
     expect((mod as unknown as { MPCModule?: unknown }).MPCModule).toBeUndefined();
+    // 2.0.0: both spoke only to programs closed on devnet 2026-09-13.
+    expect((mod as unknown as { StealthModule?: unknown }).StealthModule).toBeUndefined();
+    expect((mod as unknown as { VaultModule?: unknown }).VaultModule).toBeUndefined();
   });
 
   it('should export error system', async () => {

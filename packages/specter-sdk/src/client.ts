@@ -4,77 +4,53 @@ import type {
   P01ClientConfig,
   Balance,
   StealthAddress,
-  StealthPayment,
-  PrivacyOptions,
-  Stream,
-  StreamCreateOptions,
-  ScanOptions,
   Cluster,
   WalletAdapter,
-  P01Event,
-  P01EventListener,
   StealthMetaAddress,
 } from './types';
 import { P01Error, P01ErrorCode } from './types';
 import {
-  RPC_ENDPOINTS,
-  DEFAULT_PROGRAM_ID,
-  PROGRAM_IDS,
   REGISTRY_PROGRAM_IDS,
   RELAYER_PROGRAM_IDS,
-  LAMPORTS_PER_SOL,
-  FEATURES,
   getEffectiveRpcEndpoint,
-  getCheckedProgramId,
   isPublicRpcEndpoint,
   setFeature,
 } from './constants';
-import { createConnection, formatSol, solToLamports } from './utils/helpers';
-import { ed25519SecretKeyToX25519 } from './utils/crypto';
+import { createConnection, formatSol } from './utils/helpers';
 
 // Wallet operations
 import { createWallet, createWalletState } from './wallet/create';
-import { importFromSeedPhrase, importWalletState } from './wallet/import';
+import { importFromSeedPhrase } from './wallet/import';
 import type { WalletState } from './wallet/types';
 
-// Stealth operations
-import {
-  generateStealthAddress,
-  generateStealthMetaAddress,
-} from './stealth/generate';
-import { StealthScanner, subscribeToPayments } from './stealth/scan';
+// Stealth operations — key derivation only, nothing touches the chain
+import { generateStealthAddress } from './stealth/generate';
 
-// Transfer operations
-import { sendPrivate, sendPublic, estimateTransferFee } from './transfer/send';
-import { claimStealth, getStealthBalance, canClaim } from './transfer/claim';
-
-// Stream operations
-import {
-  createStream,
-  calculateWithdrawableAmount,
-  getStreamProgress,
-} from './streams/create';
-import { withdrawStream, getStream, getUserStreams } from './streams/withdraw';
-import { cancelStream, pauseStream, resumeStream } from './streams/cancel';
+// Transfer operations — plain transfers only
+import { sendPublic } from './transfer/send';
 
 /**
- * Main client for interacting with the Protocol 01
+ * Main client for interacting with Protocol 01.
+ *
+ * [2026-09-13] The on-chain `specter` program (stealth announcements, stealth
+ * claims, payment streams; devnet id `FgKhXakZ…`) was closed on 2026-09-13.
+ * Every method that sent it an instruction or read its accounts went with it:
+ * `scanForIncoming`, `subscribeToIncoming`, `sendPrivate`, `claimStealth`,
+ * `estimateFee`, `createStream`, `withdrawStream`, `cancelStream`,
+ * `getStream`, `getMyStreams`, and the `programId` option. What remains is
+ * wallet creation and import, balances, stealth meta-address and one-time
+ * address derivation (off-chain math), and plain transfers. Private payments
+ * go through the shielded pool (`./subscription`, `@protocol-01/privacy-sdk`).
  *
  * @example
  * ```typescript
- * // Create a new client
  * const client = new P01Client({ cluster: 'devnet' });
  *
- * // Create a wallet
  * const wallet = await P01Client.createWallet();
- * client.connect(wallet);
+ * await client.connect(wallet);
  *
- * // Send a private transfer
- * const result = await client.sendPrivate(
- *   recipientStealthAddress,
- *   1.5, // SOL
- *   { level: 'enhanced' }
- * );
+ * const balance = await client.getBalance();
+ * const oneTime = client.generateStealthAddress();
  * ```
  */
 export class P01Client {
@@ -82,9 +58,6 @@ export class P01Client {
   private config: Required<Omit<P01ClientConfig, 'features'>>;
   private walletState: WalletState | null = null;
   private externalWallet: WalletAdapter | null = null;
-  private scanner: StealthScanner | null = null;
-  private eventListeners: Map<string, P01EventListener[]> = new Map();
-  private scanSubscription: { unsubscribe: () => void } | null = null;
 
   constructor(config: P01ClientConfig = {}) {
     const cluster = config.cluster || 'devnet';
@@ -93,7 +66,6 @@ export class P01Client {
     const rpcEndpoint = config.rpcEndpoint || getEffectiveRpcEndpoint(cluster);
 
     // Resolve program IDs: explicit override > cluster-based lookup
-    const programId = config.programId || PROGRAM_IDS[cluster];
     const registryProgramId = config.registryProgramId || REGISTRY_PROGRAM_IDS[cluster];
     const relayerProgramId = config.relayerProgramId || RELAYER_PROGRAM_IDS[cluster];
 
@@ -102,7 +74,6 @@ export class P01Client {
       rpcEndpoint,
       commitment: config.commitment || 'confirmed',
       debug: config.debug || false,
-      programId,
       registryProgramId,
       relayerProgramId,
       timeout: config.timeout || 60000,
@@ -129,9 +100,6 @@ export class P01Client {
         'rpcEndpoint (Helius, QuickNode, etc.) to avoid rate limits. ' +
         'Example: new P01Client({ rpcEndpoint: "https://devnet.helius-rpc.com/?api-key=..." })'
       );
-    }
-
-    if (this.config.debug) {
     }
   }
 
@@ -188,23 +156,6 @@ export class P01Client {
       this.externalWallet = adapter;
       this.walletState = null;
     }
-
-    // Initialize scanner if we have stealth keys.
-    // The viewing key is HD-derived as an Ed25519 keypair; stealth ECDH is X25519,
-    // so convert the seed to the matching Montgomery scalar. The KEM secret key is
-    // required to decapsulate v2 hybrid announcements.
-    if (this.walletState) {
-      this.scanner = new StealthScanner(
-        this.connection,
-        ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
-        this.walletState.spendingKeypair.publicKey.toBytes(),
-        this.walletState.kemSecretKey,
-        this.config.programId
-      );
-    }
-
-    if (this.config.debug) {
-    }
   }
 
   /**
@@ -213,16 +164,7 @@ export class P01Client {
   disconnect(): void {
     this.walletState = null;
     this.externalWallet = null;
-    this.scanner = null;
     (this as any)._keypair = null;
-
-    if (this.scanSubscription) {
-      this.scanSubscription.unsubscribe();
-      this.scanSubscription = null;
-    }
-
-    if (this.config.debug) {
-    }
   }
 
   /**
@@ -308,7 +250,8 @@ export class P01Client {
   // ============================================================================
 
   /**
-   * Generate a stealth address for receiving private payments
+   * Generate a one-time stealth address from the connected wallet's
+   * meta-address. Pure key derivation; nothing is announced on chain.
    */
   generateStealthAddress(): StealthAddress {
     this.ensureConnected();
@@ -330,83 +273,9 @@ export class P01Client {
     };
   }
 
-  /**
-   * Scan for incoming stealth payments
-   * @param options - Scan options
-   */
-  async scanForIncoming(options: ScanOptions = {}): Promise<StealthPayment[]> {
-    this.ensureConnected();
-
-    if (!this.scanner) {
-      throw new P01Error(
-        P01ErrorCode.WALLET_NOT_CONNECTED,
-        'Full wallet required for scanning'
-      );
-    }
-
-    return this.scanner.scan(options);
-  }
-
-  /**
-   * Subscribe to incoming payments
-   * @param callback - Called when new payments are detected
-   */
-  subscribeToIncoming(callback: (payment: StealthPayment) => void): () => void {
-    this.ensureConnected();
-
-    if (!this.walletState) {
-      throw new P01Error(
-        P01ErrorCode.WALLET_NOT_CONNECTED,
-        'Full wallet required for subscriptions'
-      );
-    }
-
-    const subscription = subscribeToPayments(
-      this.connection,
-      ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
-      this.walletState.spendingKeypair.publicKey.toBytes(),
-      callback,
-      this.walletState.kemSecretKey,
-      this.config.programId
-    );
-
-    this.scanSubscription = subscription;
-    return subscription.unsubscribe;
-  }
-
   // ============================================================================
   // Transfer Methods
   // ============================================================================
-
-  /**
-   * Send a private transfer to a stealth address
-   * @param to - Recipient's stealth meta-address
-   * @param amount - Amount in SOL
-   * @param options - Privacy options
-   */
-  async sendPrivate(
-    to: string,
-    amount: number,
-    options?: PrivacyOptions
-  ): Promise<string> {
-    this.ensureConnected();
-
-    const sender = this.getSender();
-
-    const result = await sendPrivate({
-      sender,
-      connection: this.connection,
-      recipient: to,
-      amount,
-      privacyOptions: options,
-      programId: this.config.programId,
-    });
-
-    if (this.config.debug) {
-    }
-
-    return result.signature;
-  }
 
   /**
    * Send a regular (non-private) transfer
@@ -428,214 +297,6 @@ export class P01Client {
     return result.signature;
   }
 
-  /**
-   * Claim a stealth payment
-   * @param paymentOrAddress - StealthPayment object or stealth address string
-   */
-  async claimStealth(
-    paymentOrAddress: StealthPayment | string
-  ): Promise<string> {
-    this.ensureConnected();
-
-    if (!this.walletState) {
-      throw new P01Error(
-        P01ErrorCode.WALLET_NOT_CONNECTED,
-        'Full wallet required for claiming'
-      );
-    }
-
-    let payment: StealthPayment;
-
-    if (typeof paymentOrAddress === 'string') {
-      // Fetch payment details from address
-      const stealthAddress = new PublicKey(paymentOrAddress);
-      const balance = await getStealthBalance(this.connection, stealthAddress);
-
-      payment = {
-        stealthAddress,
-        ephemeralPubKey: new Uint8Array(32), // Would need to be fetched
-        amount: balance,
-        tokenMint: null,
-        signature: '',
-        blockTime: 0,
-        claimed: false,
-        viewTag: 0,
-      };
-    } else {
-      payment = paymentOrAddress;
-    }
-
-    const result = await claimStealth({
-      connection: this.connection,
-      payment,
-      spendingPubKey: this.walletState.spendingKeypair.publicKey.toBytes(),
-      viewingPrivateKey: ed25519SecretKeyToX25519(this.walletState.viewingKeypair.secretKey.slice(0, 32)),
-      kemSecretKey: this.walletState.kemSecretKey,
-      destination: this.walletState.keypair.publicKey,
-    });
-
-    if (this.config.debug) {
-    }
-
-    return result.signature;
-  }
-
-  /**
-   * Estimate the fee for a transfer
-   * @param privacyLevel - Privacy level
-   */
-  async estimateFee(privacyLevel: PrivacyOptions['level'] = 'standard'): Promise<bigint> {
-    return estimateTransferFee(this.connection, privacyLevel);
-  }
-
-  // ============================================================================
-  // Stream Methods
-  // ============================================================================
-
-  /**
-   * Create a payment stream
-   * @param recipient - Recipient's stealth meta-address or public key
-   * @param amount - Total amount in SOL
-   * @param durationDays - Stream duration in days
-   * @param options - Additional stream options
-   */
-  async createStream(
-    recipient: string,
-    amount: number,
-    durationDays: number,
-    options?: StreamCreateOptions
-  ): Promise<Stream> {
-    this.ensureConnected();
-
-    const sender = this.getSender();
-
-    const stream = await createStream({
-      connection: this.connection,
-      sender,
-      recipient,
-      totalAmount: amount,
-      durationDays,
-      options,
-      programId: this.config.programId,
-    });
-
-    if (this.config.debug) {
-    }
-
-    return stream;
-  }
-
-  /**
-   * Withdraw from a payment stream
-   * @param streamId - Stream ID (PDA)
-   * @param amount - Optional specific amount to withdraw
-   */
-  async withdrawStream(
-    streamId: string | PublicKey,
-    amount?: number
-  ): Promise<string> {
-    this.ensureConnected();
-
-    const recipient = this.getSender();
-    const id = typeof streamId === 'string' ? new PublicKey(streamId) : streamId;
-
-    const result = await withdrawStream({
-      connection: this.connection,
-      streamId: id,
-      recipient,
-      amount: amount ? solToLamports(amount) : undefined,
-      programId: this.config.programId,
-    });
-
-    if (this.config.debug) {
-    }
-
-    return result.signature;
-  }
-
-  /**
-   * Cancel a payment stream
-   * @param streamId - Stream ID (PDA)
-   */
-  async cancelStream(streamId: string | PublicKey): Promise<string> {
-    this.ensureConnected();
-
-    const sender = this.getSender();
-    const id = typeof streamId === 'string' ? new PublicKey(streamId) : streamId;
-
-    const result = await cancelStream({
-      connection: this.connection,
-      streamId: id,
-      sender,
-      programId: this.config.programId,
-    });
-
-    if (this.config.debug) {
-    }
-
-    return result.signature;
-  }
-
-  /**
-   * Get stream details
-   * @param streamId - Stream ID (PDA)
-   */
-  async getStream(streamId: string | PublicKey): Promise<Stream | null> {
-    const id = typeof streamId === 'string' ? new PublicKey(streamId) : streamId;
-    return getStream(this.connection, id, this.config.programId);
-  }
-
-  /**
-   * Get all streams for the connected wallet
-   */
-  async getMyStreams(): Promise<Stream[]> {
-    this.ensureConnected();
-    return getUserStreams(this.connection, this.publicKey!, this.config.programId);
-  }
-
-  // ============================================================================
-  // Event Methods
-  // ============================================================================
-
-  /**
-   * Add an event listener
-   * @param event - Event type
-   * @param listener - Callback function
-   */
-  on(event: string, listener: P01EventListener): void {
-    const listeners = this.eventListeners.get(event) || [];
-    listeners.push(listener);
-    this.eventListeners.set(event, listeners);
-  }
-
-  /**
-   * Remove an event listener
-   * @param event - Event type
-   * @param listener - Callback function to remove
-   */
-  off(event: string, listener: P01EventListener): void {
-    const listeners = this.eventListeners.get(event) || [];
-    const index = listeners.indexOf(listener);
-    if (index !== -1) {
-      listeners.splice(index, 1);
-      this.eventListeners.set(event, listeners);
-    }
-  }
-
-  /**
-   * Emit an event
-   */
-  private emit(event: P01Event): void {
-    const listeners = this.eventListeners.get(event.type) || [];
-    for (const listener of listeners) {
-      try {
-        listener(event);
-      } catch (error) {
-        console.error('Event listener error:', error);
-      }
-    }
-  }
-
   // ============================================================================
   // Utility Methods
   // ============================================================================
@@ -648,20 +309,12 @@ export class P01Client {
   }
 
   /**
-   * Get the program ID
-   */
-  getProgramId(): PublicKey {
-    return this.config.programId;
-  }
-
-  /**
    * Change the network cluster
    * @param cluster - New cluster
    */
   setCluster(cluster: Cluster): void {
     this.config.cluster = cluster;
     this.config.rpcEndpoint = getEffectiveRpcEndpoint(cluster);
-    this.config.programId = PROGRAM_IDS[cluster];
     this.config.registryProgramId = REGISTRY_PROGRAM_IDS[cluster];
     this.config.relayerProgramId = RELAYER_PROGRAM_IDS[cluster];
     this.connection = createConnection(

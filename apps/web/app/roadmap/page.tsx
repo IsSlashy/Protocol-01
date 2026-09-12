@@ -125,8 +125,9 @@ const itemStem = (titleKey: string): string => titleKey.split(".")[2] ?? "";
  * item makes keeping them indefensible.
  *
  * What still prints: colosseumFrontier carries its own date, which is what makes
- * it a record rather than current standing; quantumWallet is a design sketch in
- * the PLANNED phase and reads as one; onChainContracts is held on screen by
+ * it a record rather than current standing; the quantumWallet sketch left on
+ * 2026-09-13 with the program it described (closed on devnet, never shipped);
+ * onChainContracts is held on screen by
  * __tests__/pages/RoadmapPage.test.tsx, and its counts and its "no server
  * required" line are going out through a dictionary rewrite instead, because the
  * assertion only needs the phrase "Permissionless privacy on the core path"
@@ -434,10 +435,6 @@ const roadmap: RoadmapPhase[] = [
     title: "roadmap.future",
     subtitle: "roadmap.futureSub",
     items: [
-      {
-        title: "roadmap.items.quantumWallet.title",
-        description: "roadmap.items.quantumWallet.desc",
-      },
       {
         title: "roadmap.items.coverTraffic.title",
         description: "roadmap.items.coverTraffic.desc",

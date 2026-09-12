@@ -44,12 +44,6 @@ export const PROGRAMS: ProgramRow[] = [
     sourcePath: 'programs/p01_stark_verifier/src/lib.rs',
   },
   {
-    name: 'specter',
-    id: 'FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL',
-    role: 'Stealth wallet accounts and payment announcements: the on-chain transport stealth payments ride on.',
-    sourcePath: 'programs/specter/src/lib.rs',
-  },
-  {
     name: 'p01_registry',
     id: 'QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB',
     role: 'Merchant service registry: the services a subscription vault can be scoped to.',

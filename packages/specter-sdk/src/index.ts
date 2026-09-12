@@ -23,39 +23,11 @@ export type {
   StealthMetaAddress,
   StealthAddress,
   StealthAddressOptions,
-  StealthPayment,
-  ScanOptions,
-
-  // Privacy types
-  PrivacyLevel,
-  PrivacyOptions,
-
-  // Transfer types
-  TransferRequest,
-  TransferResult,
-  ClaimResult,
-
-  // Stream types
-  Stream,
-  StreamStatus,
-  StreamCreateOptions,
-  StreamWithdrawOptions,
-
-  // Transaction types
-  TransactionType,
-  TransactionRecord,
 
   // Client types
   Cluster,
   P01ClientConfig,
   WalletAdapter,
-
-  // Event types
-  P01EventType,
-  P01Event,
-  P01EventListener,
-  PaymentReceivedEvent,
-  StreamEvent,
 } from './types';
 
 // Error types
@@ -65,11 +37,10 @@ export { P01Error, P01ErrorCode } from './types';
 // Constants
 // ============================================================================
 export {
-  // Program IDs
-  PROGRAM_IDS,
+  // Program IDs — registry and relayer. The specter program's ids left
+  // with it when it was closed on devnet on 2026-09-13.
   REGISTRY_PROGRAM_IDS,
   RELAYER_PROGRAM_IDS,
-  DEFAULT_PROGRAM_ID,
   getCheckedProgramId,
 
   // RPC endpoints
@@ -95,15 +66,6 @@ export {
   VIEW_TAG_SIZE,
   KEM_PUBLIC_KEY_SIZE,
   KEM_CIPHERTEXT_SIZE,
-
-  // Stream constants
-  MIN_STREAM_DURATION,
-  MAX_STREAM_DURATION,
-  MIN_STREAM_AMOUNT,
-
-  // Privacy constants
-  PRIVACY_CONFIG,
-  DEFAULT_SPLIT_COUNT,
 
   // Feature flags
   FEATURES,
@@ -159,62 +121,14 @@ export {
   deriveStealthPrivateKey,
   verifyStealthOwnership,
   computeStealthAddress,
-
-  // Scanning
-  StealthScanner,
-  scanForPayments,
-  createScanner,
-  subscribeToPayments,
 } from './stealth';
 
 // ============================================================================
 // Transfer Module
 // ============================================================================
-export {
-  // Send
-  sendPrivate,
-  sendPublic,
-  estimateTransferFee,
-  type SendOptions,
-
-  // Claim
-  claimStealth,
-  claimMultiple,
-  getStealthBalance,
-  canClaim,
-  estimateClaimFee,
-  closeStealthAccount,
-  buildClaimProof,
-  buildClaimProofV2,
-  type ClaimOptions,
-} from './transfer';
-
-// ============================================================================
-// Streams Module
-// ============================================================================
-export {
-  // Create
-  createStream,
-  calculateStreamRate,
-  calculateWithdrawableAmount,
-  getStreamProgress,
-  estimateStreamCreationFee,
-  type CreateStreamOptions,
-
-  // Withdraw
-  withdrawStream,
-  withdrawAllStreams,
-  getStream,
-  getUserStreams,
-  type WithdrawOptions,
-
-  // Cancel
-  cancelStream,
-  pauseStream,
-  resumeStream,
-  closeExpiredStream,
-  type CancelOptions,
-} from './streams';
+// Plain transfers only: the stealth send and claim paths targeted the specter
+// program, closed on devnet on 2026-09-13.
+export { sendPublic } from './transfer';
 
 // ============================================================================
 // Indexing Module (Client-Side — replaces relayer indexer)
@@ -224,10 +138,6 @@ export {
   CommitmentIndexer,
   type CommitmentIndexerOptions,
   type IndexerStatus,
-
-  // Stealth payment indexer (replaces /relay/stealth-payments)
-  StealthIndexer,
-  type StealthIndexerOptions,
 
   // Cache backends
   type IndexerCache,

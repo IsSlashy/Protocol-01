@@ -334,10 +334,10 @@ await bleTransport.sendFragmented(encrypted, characteristicUUID);
     // 8 -> 10: the arcium-sdk entry was replaced by stark-prover, and the two
     // packages the list never had (privacy-sdk, merchant-sdk) were added.
     detailCount: 10,
-    codeExample: `// === @protocol-01/specter-sdk: Core Privacy SDK ===
-import { P01Client, createWallet, sendPrivate } from '@protocol-01/specter-sdk';
+    codeExample: `// === @protocol-01/specter-sdk: registry, subscriptions, relay ===
+import { P01Client, fetchAllServices } from '@protocol-01/specter-sdk';
 const client = new P01Client({ cluster: 'devnet' });
-await sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
+const services = await fetchAllServices(connection);  // the merchants a vault can pay
 
 // === @protocol-01/zk-sdk: ZK Shielded Pool ===
 import { ShieldedClient } from '@protocol-01/zk-sdk';
@@ -455,42 +455,6 @@ const balance = await executeTool("wallet_balance", {});
 // Agent responds and calls shield tool:
 await executeTool("privacy_shield", { amount: 0.1 });
 // Redirects to Privacy -> Shield screen`,
-  },
-  {
-    id: "quantum-wallet",
-    i18nKey: "quantumWallet",
-    detailCount: 8,
-    // Nothing is deployed for this one, on devnet or anywhere else, and the
-    // sample says so in its first two lines.
-    statusKey: "roadmap.planned",
-    codeExample: `// Quantum Wallet: STARK-authorized fund custody.
-// NOT SHIPPED. No program is deployed for this and no date is promised.
-// What follows is the design, so the shape can be reviewed early.
-// Funds spent via Poseidon preimage proof, not Ed25519 signature.
-
-// 1. Init at first launch: silent, transparent migration
-const seedSecret = hkdf(seedPhrase, "p01_quantum_v1");
-const commitment = poseidonGl(seedSecret, salt);  // Goldilocks
-const ownerId = poseidonGl(seedSecret, "id_v1");
-const pda = derivePda(["qw", ownerId], P01_QUANTUM_WALLET_ID);
-await initQuantumWallet({ commitment, recoveryPubkey: null });
-
-// 2. Receive: your address is the PDA. Senders use SystemProgram.transfer
-// like any other wallet. They don't know it's quantum-protected.
-
-// 3. Send: STARK proves "I know the preimage of commitment"
-const proof = await starkProver.generateProof({
-  seedSecret, salt, recipient, amount, nonce, circuitId: 7,
-});
-await uploadProofBuffer(proof);
-await withdraw({ amount, recipient, proofBuffer });
-
-// The threat this answers: Shor breaks Ed25519 once a large enough
-// quantum computer exists. This page does not claim to know when.
-// Under that design an attacker who steals your gas keypair can pay
-// fees in your name and CANNOT move your funds, because custody is
-// knowledge of a hash preimage (which Grover only speeds up
-// quadratically) rather than a signature.`,
   },
   {
     id: "migration-history",

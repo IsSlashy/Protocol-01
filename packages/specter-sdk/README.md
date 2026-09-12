@@ -1,6 +1,8 @@
 # @protocol-01/specter-sdk
 
-TypeScript SDK for privacy-preserving payments on Solana. Provides stealth addresses, private transfers, payment scanning, and stream payments through a unified client.
+TypeScript SDK for Protocol 01 on Solana: wallet and stealth-key derivation, the on-chain service registry, the relay module, private subscriptions through the shielded pool, and the STARK client prover.
+
+**0.5.0 (2026-09-13).** The on-chain `specter` program that carried stealth announcements, stealth claims and payment streams was closed on devnet on 2026-09-13 (`FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL`). Every function that sent it an instruction or read its accounts is gone from this package; `CHANGELOG.md` lists them. The stealth key math stays, as client-side derivation only. Private payments are the shielded pool's job (`createPrivateSubscription` below, and `@protocol-01/privacy-sdk`).
 
 ## Installation
 
@@ -29,29 +31,17 @@ const imported = await P01Client.importWallet('your seed phrase ...');
 // Connect the wallet to the client
 await client.connect(wallet);
 
-// Send a private transfer
-const signature = await client.sendPrivate(
-  recipientStealthMetaAddress,
-  1.5, // SOL
-  { level: 'enhanced' }
-);
+// Read balances
+const balance = await client.getBalance();
 
-// Scan for incoming stealth payments
-const payments = await client.scanForIncoming();
-for (const payment of payments) {
-  console.log('Received:', payment.amount, 'from', payment.signature);
-}
+// Derive a one-time address from the wallet's meta-address (client-side key math)
+const oneTime = client.generateStealthAddress();
 
-// Claim a stealth payment
-const claimSig = await client.claimStealth(payments[0]);
+// Plain transfer: sender, recipient and amount are public
+const signature = await client.sendPublic(recipientPublicKey, 1.5);
 
-// Create a payment stream
-const stream = await client.createStream(
-  recipientAddress,
-  10,   // 10 SOL total
-  30,   // 30 days duration
-  { privacyLevel: 'standard', cancellable: true }
-);
+// Private payments go through the shielded pool: see "Private Subscriptions"
+// below and @protocol-01/privacy-sdk.
 ```
 
 ## Configuration
@@ -86,14 +76,13 @@ setCustomRpcEndpoint('devnet', 'https://devnet.helius-rpc.com/?api-key=YOUR_KEY'
 
 ### Program ID Overrides
 
-Use custom program IDs for testing with localnet or forked deployments:
+Use custom program IDs for testing with localnet or forked deployments. The registry and the relayer are the two programs this client addresses; the `programId` option (the retired `specter` program) is gone since 0.5.0.
 
 ```typescript
 import { PublicKey } from '@solana/web3.js';
 
 const client = new P01Client({
   cluster: 'localnet',
-  programId: new PublicKey('YourCustomProgramId...'),
   registryProgramId: new PublicKey('YourRegistryProgramId...'),
   relayerProgramId: new PublicKey('YourRelayerProgramId...'),
 });
@@ -108,7 +97,6 @@ Feature flags control optional SDK behavior. Override them at client creation or
 const client = new P01Client({
   features: {
     ENABLE_RELAYER: true,
-    ENABLE_MULTI_HOP: false,
   },
 });
 
@@ -125,77 +113,28 @@ if (getFeature('ENABLE_RELAYER')) {
 
 ### Stealth Addresses
 
-One-time addresses derived from a reusable stealth meta-address. The sender generates a unique address only the recipient can spend from, using ECDH key exchange (with optional ML-KEM-768 post-quantum hybrid mode).
+One-time addresses derived from a reusable stealth meta-address. The sender generates a unique address only the recipient can spend from, using ECDH key exchange (with optional ML-KEM-768 post-quantum hybrid mode). Everything in this module is key math on the client: nothing is announced or scanned on chain (the on-chain announcement program was closed on 2026-09-13), so the sender has to hand the ephemeral key to the recipient through whatever channel the application provides.
 
 ```typescript
 import {
   generateStealthMetaAddress,
   generateStealthAddress,
-  StealthScanner,
+  deriveStealthPrivateKey,
 } from '@protocol-01/specter-sdk';
 
 // Generate a stealth meta-address (share this publicly)
 const meta = generateStealthMetaAddress(spendingKeypair, viewingKeypair);
 console.log('Share this:', meta.encoded); // st:01...
 
-// Sender: generate a one-time address for a payment
+// Sender: derive a one-time address for a payment, keep stealth.ephemeralPubKey for the recipient
 const stealth = generateStealthAddress(meta);
-// Send SOL/tokens to stealth.address
 
-// Recipient: scan for incoming payments
-const scanner = new StealthScanner(connection, viewingPrivateKey, spendingPubKey);
-const payments = await scanner.scan({ fromSlot: 280000000 });
-```
-
-### Private Transfers
-
-Send SOL or SPL tokens to stealth addresses with configurable privacy levels.
-
-```typescript
-import { sendPrivate, claimStealth } from '@protocol-01/specter-sdk';
-
-// Send a private transfer
-const result = await sendPrivate({
-  sender: keypair,
-  connection,
-  recipient: 'st:01abc...', // stealth meta-address
-  amount: 2.5,              // SOL
-  privacyOptions: { level: 'enhanced' },
-});
-
-// Claim a received stealth payment
-const claim = await claimStealth({
-  connection,
-  payment,
+// Recipient: recover the one-time keypair from the ephemeral key
+const oneTimeKeypair = deriveStealthPrivateKey(
   spendingPubKey,
   viewingPrivateKey,
-  destination: myWalletPubkey,
-});
-```
-
-### Payment Streams
-
-Create continuous payment streams where funds are released linearly over time.
-
-```typescript
-import { createStream, withdrawStream } from '@protocol-01/specter-sdk';
-
-// Create a 30-day stream
-const stream = await createStream({
-  connection,
-  sender: keypair,
-  recipient: 'st:01abc...', // or a plain public key
-  totalAmount: 10,           // 10 SOL total
-  durationDays: 30,
-  options: { cancellable: true, pausable: true },
-});
-
-// Recipient: withdraw available funds
-const result = await withdrawStream({
-  connection,
-  streamId: stream.id,
-  recipient: recipientKeypair,
-});
+  stealth.ephemeralPubKey,
+);
 ```
 
 ### ZK Proving (Client-Side)
@@ -240,7 +179,7 @@ const result = await prover.proveDeposit(publicInputs, privateInputs);
 Client-side indexers that replace the need for a centralized backend. Users talk directly to Solana RPC.
 
 ```typescript
-import { CommitmentIndexer, StealthIndexer, MemoryCache } from '@protocol-01/specter-sdk';
+import { CommitmentIndexer, MemoryCache } from '@protocol-01/specter-sdk';
 
 // Index shielded pool commitments (replaces relayer /pool/state)
 const commitmentIndexer = new CommitmentIndexer({
@@ -249,19 +188,11 @@ const commitmentIndexer = new CommitmentIndexer({
   cache: new MemoryCache(),
 });
 const status = await commitmentIndexer.sync();
-
-// Index stealth payments (replaces relayer /relay/stealth-payments)
-const stealthIndexer = new StealthIndexer({
-  connection,
-  viewingPrivateKey,
-  spendingPubKey,
-});
-const payments = await stealthIndexer.scan();
 ```
 
 ### Quantum-Safe Vaults
 
-Application-layer defenses against quantum attacks on Ed25519. Three mechanisms that protect funds even if Shor's algorithm breaks Ed25519.
+Application-layer defenses against quantum attacks on Ed25519. Three mechanisms that protect funds even if Shor's algorithm breaks Ed25519. They are hash-based building blocks for an integrator's own program: the devnet vault program that consumed them was closed on 2026-09-13.
 
 ```typescript
 import {
@@ -281,7 +212,7 @@ const valid = wotsVerify(message, signature, wots.publicKey);
 // Hash-timelock vault: SHA-256 preimage lock for cold storage
 const secret = generateVaultSecret();
 const commitment = computeHashVaultCommitment(secret);
-// Store commitment on-chain, reveal secret to unlock
+// Put the commitment in your own program's account; reveal the secret to unlock
 ```
 
 ### Private Subscriptions
@@ -384,7 +315,7 @@ if (result.success) {
 
 ### Registry (Stealth Address Directory)
 
-On-chain directory where users publish their stealth meta-address so anyone can look them up by wallet and send private payments.
+On-chain directory where users publish their stealth meta-address so anyone can look them up by wallet and derive one-time addresses for them.
 
 ```typescript
 import { lookupMetaAddress, lookupMultiple, isRegistered, entryToMetaAddress } from '@protocol-01/specter-sdk';
@@ -437,49 +368,28 @@ Main client class for all Protocol 01 operations.
 
 | Method | Description |
 |---|---|
-| `generateStealthAddress()` | Generate a one-time stealth address for receiving |
-| `scanForIncoming(options?)` | Scan the chain for incoming stealth payments |
-| `subscribeToIncoming(callback)` | Subscribe to real-time incoming payment notifications |
+| `generateStealthAddress()` | Derive a one-time stealth address (client-side key math) |
 
 **Transfers**
 
 | Method | Description |
 |---|---|
-| `sendPrivate(to, amount, options?)` | Send a private transfer to a stealth meta-address |
 | `sendPublic(to, amount)` | Send a regular (non-private) SOL transfer |
-| `claimStealth(payment)` | Claim a received stealth payment |
-| `estimateFee(privacyLevel?)` | Estimate the transaction fee |
-
-**Streams**
-
-| Method | Description |
-|---|---|
-| `createStream(recipient, amount, durationDays, options?)` | Create a payment stream |
-| `withdrawStream(streamId, amount?)` | Withdraw from a stream (as recipient) |
-| `cancelStream(streamId)` | Cancel a stream (as sender) |
-| `getStream(streamId)` | Get stream details |
-| `getMyStreams()` | Get all streams for the connected wallet |
 
 **Utility**
 
 | Method | Description |
 |---|---|
 | `getConnection()` | Get the Solana connection instance |
-| `getProgramId()` | Get the Specter program ID |
 | `getRegistryProgramId()` | Get the registry program ID |
 | `getRelayerProgramId()` | Get the relayer program ID |
 | `setCluster(cluster)` | Switch to a different network cluster |
-| `on(event, listener)` | Listen for SDK events |
-| `off(event, listener)` | Remove an event listener |
 
 ### Key Types
 
 - `P01Wallet` -- Wallet with stealth capabilities (publicKey, keypair, stealthMetaAddress)
 - `StealthMetaAddress` -- Spending and viewing public keys for deriving stealth addresses
 - `StealthAddress` -- A one-time address for receiving a single payment
-- `StealthPayment` -- A detected incoming stealth payment
-- `PrivacyOptions` -- Privacy level and transfer options (standard, enhanced, maximum)
-- `Stream` -- Payment stream data (id, sender, recipient, amounts, status)
 - `P01ClientConfig` -- Client configuration (cluster, rpcEndpoint, commitment, debug, features)
 - `P01Error` / `P01ErrorCode` -- Structured error types
 - `WalletAdapter` -- Interface for external wallets ({ publicKey, signTransaction })
@@ -488,11 +398,10 @@ Main client class for all Protocol 01 operations.
 
 ```typescript
 import { createWallet } from '@protocol-01/specter-sdk/wallet';
-import { generateStealthAddress, StealthScanner } from '@protocol-01/specter-sdk/stealth';
-import { sendPrivate, claimStealth } from '@protocol-01/specter-sdk/transfer';
-import { createStream, withdrawStream } from '@protocol-01/specter-sdk/streams';
+import { generateStealthAddress, deriveStealthPrivateKey } from '@protocol-01/specter-sdk/stealth';
+import { sendPublic } from '@protocol-01/specter-sdk/transfer';
 import { ClientProver, CircuitLoader } from '@protocol-01/specter-sdk/proving';
-import { CommitmentIndexer, StealthIndexer } from '@protocol-01/specter-sdk/indexing';
+import { CommitmentIndexer } from '@protocol-01/specter-sdk/indexing';
 import { submitRelayJob } from '@protocol-01/specter-sdk/relay';
 ```
 
@@ -504,7 +413,7 @@ All SDK errors use the `P01Error` class with structured error codes organized by
 import { P01Error, P01ErrorCode } from '@protocol-01/specter-sdk';
 
 try {
-  await client.sendPrivate(recipient, 1.0);
+  await client.sendPublic(recipient, 1.0);
 } catch (error) {
   if (error instanceof P01Error) {
     switch (error.code) {
@@ -529,7 +438,7 @@ try {
 | 1xxx | Wallet | `WALLET_NOT_CONNECTED`, `INVALID_SEED_PHRASE`, `DERIVATION_FAILED` |
 | 2xxx | Stealth | `STEALTH_KEY_GENERATION_FAILED`, `INVALID_STEALTH_ADDRESS`, `SCAN_FAILED` |
 | 3xxx | Transfer | `INSUFFICIENT_BALANCE`, `TRANSFER_FAILED`, `CLAIM_FAILED`, `INVALID_RECIPIENT` |
-| 4xxx | Stream | `STREAM_NOT_FOUND`, `STREAM_CREATION_FAILED`, `NOTHING_TO_WITHDRAW` |
+| 4xxx | Stream | `STREAM_NOT_FOUND`, `STREAM_CREATION_FAILED`, `NOTHING_TO_WITHDRAW` (kept in the enum; no code in 0.5.0 raises them) |
 | 5xxx | Network | `RPC_ERROR`, `TIMEOUT`, `CONFIRMATION_FAILED` |
 | 9xxx | General | `UNKNOWN_ERROR` |
 
@@ -547,7 +456,7 @@ try {
 
 | Network | Status | Notes |
 |---|---|---|
-| devnet | Fully deployed | All programs active, use for testing |
+| devnet | Deployed | Registry, relayer, shielded pool and STARK verifier; the specter program was closed on 2026-09-13 |
 | localnet | Supported | Use with `anchor localnet` or `solana-test-validator` |
 | testnet | Not deployed | Programs not yet deployed |
 | mainnet-beta | Pending audit | Will be available after security audit |
@@ -557,9 +466,6 @@ try {
 | Flag | Default | Description |
 |---|---|---|
 | `ENABLE_RELAYER` | `false` | Enable decentralized transaction relay |
-| `ENABLE_MULTI_HOP` | `false` | Enable multi-hop privacy routing |
-| `ENABLE_TOKEN_STREAMS` | `true` | SPL token payment streams |
-| `ENABLE_NFT_TRANSFERS` | `false` | NFT stealth transfers |
 
 Override at runtime with `setFeature(name, enabled)` or at client creation via the `features` config option.
 
@@ -567,7 +473,6 @@ Override at runtime with `setFeature(name, enabled)` or at client creation via t
 
 - **All proofs generated locally** -- The spending key, balance, and salt never leave the user's device. Production proofs are STARK (FRI-based, post-quantum, no trusted setup), generated by the Winterfell-derived WASM prover in `@protocol-01/privacy-sdk`. The legacy Groth16 path in this package uses snarkjs WASM running in-process and is being phased out.
 - **Spending keys never leave device** -- There is no remote prover fallback. If local proving fails, the operation fails.
-- **Stealth scanning uses direct RPC** -- No relayer or backend dependency for payment detection. The `StealthIndexer` talks directly to Solana.
 - **ML-KEM-768 hybrid encryption** -- v2 stealth addresses combine X25519 (classical) with ML-KEM-768 (post-quantum) for defense against future quantum computers.
 - **On-chain nullifier records** -- Double-spend prevention: every spend writes a `NullifierRecord` PDA in the pool program, and a second spend of the same note fails at that account.
 
