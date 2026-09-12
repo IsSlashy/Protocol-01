@@ -109,17 +109,47 @@ jobs:
           P01_SETTLE_MIN_QUIET_SECONDS: ${{ vars.P01_SETTLE_MIN_QUIET_SECONDS }}
         run: npx tsx scripts/topUpRestockWallet.mts
 
+      # [2026-09-12] The stock, read from the live deployment BEFORE the key is
+      # needed. This job had failed on every one of its 4-hourly runs since at
+      # least 2026-09-05 — "P01_TREASURY_KEYPAIR_JSON is unset" — while the
+      # inventory it exists to refill held 318 notes against a target of 10. A
+      # failure e-mail six times a day about a pot that is full is noise, and
+      # noise is how the one that matters gets ignored. So: with the secret
+      # absent AND the pot at or above the low-water mark, the run says so and
+      # ends green; with the secret absent and the pot LOW, it still fails, as
+      # loudly as before. Adding the secret restores the restock itself.
+      - name: Read the live stock
+        id: stock
+        env:
+          P01_BASE: https://protocol-01.dev
+        run: |
+          size=$(curl -sf "$P01_BASE/api/issue-note" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const j=JSON.parse(s);console.log(Number.isInteger(j.inventorySize)?j.inventorySize:'')}catch{console.log('')}})")
+          echo "size=$size" >> "$GITHUB_OUTPUT"
+          echo "live inventory: ${size:-unknown} notes"
+
       - name: Write the treasury keypair
+        id: keypair
         # ⚠️ The file, never an env var read by the app: the harness loads a
         # keypair path, and a key that only exists for this step is a key that
         # does not leak into a later one.
         env:
           TREASURY_KEYPAIR_JSON: ${{ secrets.P01_TREASURY_KEYPAIR_JSON }}
+          STOCK: ${{ steps.stock.outputs.size }}
+          P01_TREASURY_LOW_WATER: '7'
         run: |
-          test -n "$TREASURY_KEYPAIR_JSON" || { echo "::error::P01_TREASURY_KEYPAIR_JSON is unset"; exit 1; }
+          if [ -z "$TREASURY_KEYPAIR_JSON" ]; then
+            if [ -n "$STOCK" ] && [ "$STOCK" -ge "$P01_TREASURY_LOW_WATER" ]; then
+              echo "::warning::P01_TREASURY_KEYPAIR_JSON is unset, but the live inventory holds $STOCK notes (low water $P01_TREASURY_LOW_WATER): nothing to restock, skipping."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::P01_TREASURY_KEYPAIR_JSON is unset and the live inventory is ${STOCK:-unknown} (low water $P01_TREASURY_LOW_WATER): the pot cannot be refilled"
+            exit 1
+          fi
           printf '%s' "$TREASURY_KEYPAIR_JSON" > "$RUNNER_TEMP/treasury.json"
 
       - name: Restock
+        if: steps.keypair.outputs.skip != '1'
         working-directory: apps/web
         env:
           P01_RESTOCK: '1'
