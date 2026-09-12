@@ -552,6 +552,8 @@ export async function subscribePrivateStarkV4(
   signer: WalletSigner,
   connection: Connection,
   onProgress?: (step: string) => void,
+  /** [CLOSE-SWEEP 2026-09-13] sweep the signer's whole balance here in the SAME transaction as the buffer close. */
+  options?: { sweepTo?: PublicKey },
 ): Promise<{ txSig: string; vaultPDA: PublicKey }> {
   const { prepared, poolConfig } = params;
 
@@ -727,7 +729,7 @@ export async function subscribePrivateStarkV4(
     if (c7ProofBuffer) {
       try {
         onProgress?.('Closing proof buffer (rent recovery)...');
-        await closeStarkProofBuffer(c7ProofBuffer, signer, connection);
+        await closeStarkProofBuffer(c7ProofBuffer, signer, connection, { sweepTo: options?.sweepTo });
       } catch (closeErr: unknown) {
         console.warn(
           '[pool/subscribe-v4] closeStarkProofBuffer failed, rent recoverable later:',

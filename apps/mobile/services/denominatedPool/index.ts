@@ -13,6 +13,7 @@
  *   - If snarkjs WASM fails on RN, see PROVING_NOTES at bottom of file
  */
 
+import { getPoolHistoryStore, poolHistoryKey } from './poolHistoryCache';
 import {
   Connection,
   PublicKey,
@@ -690,10 +691,18 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
 export async function fetchPoolCommitments(
   connection: Connection,
   poolPDA: PublicKey,
-  options: { maxSignatures?: number; batchSize?: number; onProgress?: (scanned: number, total: number) => void } = {},
+  options: { maxSignatures?: number; batchSize?: number; onProgress?: (scanned: number, total: number) => void; incremental?: boolean } = {},
 ): Promise<Map<string, OnChainCommitment>> {
   const maxSignatures = options.maxSignatures ?? 1000;
   const batchSize = options.batchSize ?? 25;
+  // [HISTORY-CACHE 2026-09-13] Start from what an earlier walk decoded and ask
+  // the RPC only for signatures newer than the newest one it saw (see
+  // `poolHistoryCache.ts`). Pass `incremental: false` to force a full walk.
+  const incremental = options.incremental ?? true;
+  const historyStore = getPoolHistoryStore();
+  const cacheKey = poolHistoryKey(connection.rpcEndpoint, poolPDA.toBase58());
+  const snapshot = incremental ? await historyStore.load(cacheKey) : null;
+  const until = snapshot?.newestSignature ?? undefined;
 
   // Paginate — `getSignaturesForAddress` caps at 1000 per call on most RPCs.
   // We walk backwards in time using `before` until we reach `maxSignatures`
@@ -709,6 +718,7 @@ export async function fetchPoolCommitments(
     const page = await connection.getSignaturesForAddress(poolPDA, {
       limit: Math.min(PAGE, remaining),
       before,
+      until,
     });
     if (page.length === 0) break;
     sigs.push(...page);
@@ -717,13 +727,16 @@ export async function fetchPoolCommitments(
   }
 
   const out = new Map<string, OnChainCommitment>();
+  for (const e of snapshot?.entries ?? []) {
+    out.set(e.commitment, { commitment: BigInt(e.commitment), leafIndex: e.leafIndex });
+  }
 
   for (let i = 0; i < sigs.length; i += batchSize) {
     const batch = sigs.slice(i, i + batchSize);
     const txs = await Promise.all(
       batch.map((s) =>
         connection
-          .getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+          .getTransaction(s.signature, { maxSupportedTransactionVersion: 1, commitment: 'confirmed' })
           .catch(() => null),
       ),
     );
@@ -766,6 +779,15 @@ export async function fetchPoolCommitments(
     options.onProgress?.(Math.min(i + batchSize, sigs.length), sigs.length);
   }
 
+  if (incremental) {
+    await historyStore.save({
+      version: 1,
+      key: cacheKey,
+      newestSignature: sigs[0]?.signature ?? snapshot?.newestSignature ?? null,
+      entries: [...out.values()].map((c) => ({ commitment: c.commitment.toString(), leafIndex: c.leafIndex })),
+      savedAt: Date.now(),
+    });
+  }
   return out;
 }
 

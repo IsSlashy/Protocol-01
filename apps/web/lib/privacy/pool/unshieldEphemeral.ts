@@ -97,6 +97,7 @@ const UNSHIELD_EPHEMERAL_INFO = utf8ToBytes('p01:web:unshield-ephemeral:v1');
  * apart in silence — which is the defect being repaired.
  */
 import { E_TX_FEE_BUDGET, NULLIFIER_RENT } from './subscribeFloat';
+import nacl from 'tweetnacl';
 
 export { E_TX_FEE_BUDGET, NULLIFIER_RENT };
 
@@ -262,6 +263,8 @@ export async function executeUnshield(
 
   const eSigner: WalletSigner = {
     publicKey: ephemeral.publicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks (`txv1.ts`).
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, ephemeral.secretKey),
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
         const { blockhash } = await connection.getLatestBlockhash('finalized');
@@ -569,6 +572,8 @@ export async function executeUnshieldV4(
 
   const eSigner: WalletSigner = {
     publicKey: ephemeral.publicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks (`txv1.ts`).
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, ephemeral.secretKey),
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
         const { blockhash } = await connection.getLatestBlockhash('finalized');
@@ -609,6 +614,8 @@ export async function executeUnshieldV4(
       eSigner,
       connection,
       onProgress,
+      // [CLOSE-SWEEP] same destination the `finally` below sweeps to.
+      { sweepTo: sweepTo ?? ownerPubkey },
     );
     return { txSig };
   } finally {

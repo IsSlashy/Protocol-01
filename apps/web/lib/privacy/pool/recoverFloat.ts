@@ -70,9 +70,10 @@ import {
   type PoolConfig,
   type WalletSigner,
 } from './denominatedPool';
-import { closeStarkProofBuffer, getProofBufferPDA } from './stark';
+import { closeStarkProofBuffer, deriveProofBufferKeypair, getProofBufferPDA } from './stark';
 import { deriveShieldEphemeral, readTreeLeafCount } from './shieldEphemeral';
 import { deriveUnshieldEphemeral } from './unshieldEphemeral';
+import nacl from 'tweetnacl';
 
 /** Leave enough for the sweep transaction's own fee. */
 const SWEEP_FEE = 5_000;
@@ -220,12 +221,20 @@ export async function recoverStuckFloat(
     const signer = ephemeralSigner(ephemeral, connection);
 
     for (const circuitId of circuits) {
-      const [bufferPDA] = getProofBufferPDA(ephemeral.publicKey, circuitId);
-      const info = await connection.getAccountInfo(bufferPDA);
-      if (!info) continue;
-      opts.onProgress?.(`Closing a stranded proof buffer from leaf #${leafIndex}...`);
-      await closeStarkProofBuffer(bufferPDA, signer, connection);
-      closedBuffers += 1;
+      // [L2-CLIENT 2026-09-12] Two addresses per circuit: the pre-L2 PDA and
+      // the derived keypair `allocateProofBuffer` uses now (attempt 0; a later
+      // attempt is only reached when a stranger occupies the address first).
+      const candidates = [
+        getProofBufferPDA(ephemeral.publicKey, circuitId)[0],
+        deriveProofBufferKeypair(ephemeral.publicKey, circuitId).publicKey,
+      ];
+      for (const bufferAddress of candidates) {
+        const info = await connection.getAccountInfo(bufferAddress);
+        if (!info) continue;
+        opts.onProgress?.(`Closing a stranded proof buffer from leaf #${leafIndex}...`);
+        await closeStarkProofBuffer(bufferAddress, signer, connection);
+        closedBuffers += 1;
+      }
     }
 
     const balance = await connection.getBalance(ephemeral.publicKey, 'confirmed');
@@ -435,6 +444,8 @@ async function readInboundSources(
 function ephemeralSigner(ephemeral: Keypair, connection: Connection): WalletSigner {
   return {
     publicKey: ephemeral.publicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks (`txv1.ts`).
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, ephemeral.secretKey),
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
         const { blockhash } = await connection.getLatestBlockhash('finalized');

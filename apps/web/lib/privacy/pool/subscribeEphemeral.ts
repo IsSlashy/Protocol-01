@@ -80,6 +80,7 @@ import {
 import { goldilocksU64To32, isNullifierSpent } from './denominatedPool';
 import { jitterPrefund } from './prefundAmount';
 import { SUBSCRIPTION_VAULT_LEN, subscribeFloorLamports } from './subscribeFloat';
+import nacl from 'tweetnacl';
 import type {
   PoolConfig,
   PrepareUnshieldResult,
@@ -243,6 +244,8 @@ export async function executeSubscribe(
 
   const eSigner: WalletSigner = {
     publicKey: ephemeral.publicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks (`txv1.ts`).
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, ephemeral.secretKey),
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
         const { blockhash } = await connection.getLatestBlockhash('finalized');
@@ -553,6 +556,8 @@ export async function executeSubscribeV4(
 
   const eSigner: WalletSigner = {
     publicKey: ephemeral.publicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks (`txv1.ts`).
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, ephemeral.secretKey),
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
         const { blockhash } = await connection.getLatestBlockhash('finalized');
@@ -588,6 +593,8 @@ export async function executeSubscribeV4(
       eSigner,
       connection,
       onProgress,
+      // [CLOSE-SWEEP] same destination the `finally` below sweeps to.
+      { sweepTo: params.sweepTo ?? params.ownerPubkey },
     );
   } finally {
     try {

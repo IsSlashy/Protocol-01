@@ -183,6 +183,11 @@ export async function recoverNotes(
     candidates = candidates.filter((leaf) => leaf === opts.onlyLeaf);
   }
 
+  // [SCAN-EPOCH 2026-09-13] The leaf's own deposit slot, when the history walk
+  // carried it, bounds the legacy epoch search below to a handful of epochs.
+  const byLeaf = new Map<number, { depositSlot?: number | null }>();
+  for (const c of commitments.values()) byLeaf.set(c.leafIndex, c as { depositSlot?: number | null });
+
   for (const counter of candidates) {
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
@@ -204,7 +209,24 @@ export async function recoverNotes(
     // `blindedOnly` defers it — the caller runs a full pass afterwards — it
     // never replaces it.
     if (!hit && !opts.blindedOnly) {
-      for (let epoch = currentEpoch; epoch >= lowestEpoch; epoch--) {
+      // [SCAN-EPOCH 2026-09-13] A legacy note's epoch is the epoch of the slot
+      // the depositing client read just before it sent the shield, and the
+      // deposit transaction landed at most a few slots later -- so it is the
+      // epoch of the deposit slot, or the one before it. MEASURED 2026-09-13
+      // (`docs/BENCHMARK-2026-09-13.md` §5b): the full 6,000-epoch window on
+      // ~110 leaves cost ~53 s of Poseidon per scan, for a wallet that owned
+      // none of them. When the walk carried the deposit slot the search is
+      // [E - 2, E + 1]; a leaf without one keeps the full window, so nothing
+      // that was findable stops being findable.
+      const depositSlot = byLeaf.get(counter)?.depositSlot ?? null;
+      let hiEpoch = currentEpoch;
+      let loEpoch = lowestEpoch;
+      if (depositSlot !== null) {
+        const e = slotToEpoch(depositSlot);
+        hiEpoch = e + 1n < currentEpoch ? e + 1n : currentEpoch;
+        loEpoch = e >= 2n ? e - 2n : 0n;
+      }
+      for (let epoch = hiEpoch; epoch >= loEpoch; epoch--) {
         const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, tokenMintField);
         const onChain = commitments.get(commitment.toString());
         if (onChain && onChain.leafIndex === counter) {

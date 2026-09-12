@@ -62,7 +62,10 @@ const ROUTERS: Array<{ surface: string; rel: string; routesV4: boolean }> = [
   // doors: an epoch-blinded note, and a `V4Unprovable` from prepare. Both SPEND
   // on the C1 + C3 pair — they do not merely throw.
   { surface: 'apps/extension', rel: 'apps/extension/src/shared/store/denominatedPool.ts', routesV4: true },
-  { surface: 'apps/mobile', rel: 'apps/mobile/stores/denominatedPoolStore.ts', routesV4: false },
+  // [2026-09-13] flipped: apps/mobile has called the v4 spend since f8873d5d
+  // (`unshieldNoteStarkV4` / `prepareUnshieldNoteV4`, measured by CALLS_V4 below);
+  // this pin had gone stale. Its disclosure copy is the mobile screen's to re-check.
+  { surface: 'apps/mobile', rel: 'apps/mobile/stores/denominatedPoolStore.ts', routesV4: true },
 ];
 
 /** The file on each surface that DEFINES the v4 entry points, where one exists. */

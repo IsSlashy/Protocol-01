@@ -17,12 +17,16 @@
 import {
   ComputeBudgetProgram,
   type Connection,
+  Keypair,
   PublicKey,
   SystemProgram,
   Transaction,
   TransactionInstruction,
 } from '@solana/web3.js';
 import { Buffer } from 'buffer';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { compileV1ChunkMessage, encodeV1Wire, isTransactionV1Active, V1_CHUNK_SIZE } from './txv1';
+import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -53,6 +57,10 @@ const MAX_REALLOC_STEP = 10_240; // Solana MAX_PERMITTED_DATA_INCREASE per reall
 // Instruction discriminators (from Anchor IDL — must match mobile byte-for-byte)
 const DISCRIMINATORS = {
   initProofBuffer: Buffer.from([49, 27, 28, 88, 19, 99, 133, 194]),
+  // sha256("global:init_proof_buffer_v3")[..8] / sha256("global:reset_proof_buffer")[..8],
+  // the L2 pre-sized-buffer instructions deployed 2026-09-06 (slot 494130741).
+  initProofBufferV3: Buffer.from([239, 25, 230, 31, 173, 116, 84, 51]),
+  resetProofBuffer: Buffer.from([54, 87, 185, 180, 122, 35, 136, 127]),
   resizeProofBuffer: Buffer.from([187, 39, 46, 173, 247, 90, 178, 205]),
   writeProofChunk: Buffer.from([183, 3, 171, 138, 153, 138, 133, 147]),
   verifyStarkProof: Buffer.from([208, 216, 183, 38, 47, 69, 156, 138]),
@@ -88,6 +96,13 @@ export interface StarkVerificationResult {
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction: (tx: Transaction) => Promise<Transaction>;
+  /**
+   * [TX-V1 2026-09-13] Raw ed25519 over arbitrary message bytes. Optional: an
+   * ephemeral keypair signer provides it and gets 4,096-byte transaction-v1
+   * proof chunks (21 transactions instead of 80, see `txv1.ts`); a browser
+   * wallet signer that cannot sign raw bytes keeps the 1,000-byte legacy chunks.
+   */
+  signBytes?: (message: Uint8Array) => Promise<Uint8Array>;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +203,340 @@ function buildResizeProofBufferIx(
   });
 }
 
+// ---------------------------------------------------------------------------
+// [L2-CLIENT 2026-09-12] Pre-sized proof buffers: ONE transaction, not nine
+// ---------------------------------------------------------------------------
+//
+// `init_proof_buffer` allocates a PDA through a CPI, and a CPI allocation is
+// capped at 10,240 bytes, so an 80 KB proof cost one init plus seven or eight
+// `resize_proof_buffer` transactions, each confirmed before the next could be
+// sent (`docs/BENCHMARK-2026-09-02.md`: a third of the wall clock that is not
+// the devnet rate limit). `init_proof_buffer_v3` takes an account the CLIENT
+// allocated with a top-level `SystemProgram.createAccount`, which has no such
+// cap, and initialises it in the same transaction.
+//
+// The account is a keypair, not a PDA, and the keypair is DERIVED from public
+// data: sha256(domain ‖ authority ‖ circuit_id ‖ attempt). That keeps the
+// address as reproducible as a PDA — `recoverFloat` can find a stranded buffer
+// after a crash, and a rerun rearms its own buffer (`reset_proof_buffer`, one
+// transaction) instead of creating a second one — at a price that is stated:
+// the "secret" is public. What it authorises is exactly one thing, signing
+// `createAccount` for that address; once the account exists it is owned by the
+// verifier program and the system program lets nobody else touch it. Someone
+// who computes the key can only OCCUPY the address ahead of us, paying its
+// rent, and the `attempt` byte steps past that.
+const PROOF_BUFFER_KEY_DOMAIN = 'p01/stark-proof-buffer/v3';
+const PROOF_BUFFER_KEY_ATTEMPTS = 4;
+
+export function deriveProofBufferKeypair(
+  authority: PublicKey,
+  circuitId: number,
+  attempt = 0,
+): Keypair {
+  const seed = sha256(
+    concatBytes(
+      utf8ToBytes(PROOF_BUFFER_KEY_DOMAIN),
+      authority.toBytes(),
+      Uint8Array.of(circuitId & 0xff, attempt & 0xff),
+    ),
+  );
+  return Keypair.fromSeed(seed);
+}
+
+function buildInitProofBufferV3Ix(
+  proofSize: number,
+  circuitId: number,
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+): TransactionInstruction {
+  const data = Buffer.alloc(8 + 4 + 1);
+  DISCRIMINATORS.initProofBufferV3.copy(data, 0);
+  data.writeUInt32LE(proofSize, 8);
+  data.writeUInt8(circuitId, 12);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_PROGRAM_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data,
+  });
+}
+
+function buildResetProofBufferIx(
+  proofSize: number,
+  circuitId: number,
+  proofBuffer: PublicKey,
+  authority: PublicKey,
+): TransactionInstruction {
+  const data = Buffer.alloc(8 + 4 + 1);
+  DISCRIMINATORS.resetProofBuffer.copy(data, 0);
+  data.writeUInt32LE(proofSize, 8);
+  data.writeUInt8(circuitId, 12);
+  return new TransactionInstruction({
+    programId: STARK_VERIFIER_PROGRAM_ID,
+    keys: [
+      { pubkey: proofBuffer, isSigner: false, isWritable: true },
+      { pubkey: authority, isSigner: true, isWritable: false },
+    ],
+    data,
+  });
+}
+
+/** The `ProofBuffer` header as the verifier lays it out (83 bytes before the proof). */
+export interface ProofBufferState {
+  owner: PublicKey;
+  authority: PublicKey;
+  circuitId: number;
+  proofSize: number;
+  verified: boolean;
+  deepAliVerified: boolean;
+  /** Total account size, header included. */
+  space: number;
+}
+
+export function parseProofBufferState(owner: PublicKey, data: Uint8Array): ProofBufferState | null {
+  if (data.length < PROOF_DATA_OFFSET) return null;
+  const d = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  return {
+    owner,
+    authority: new PublicKey(d.subarray(8, 40)),
+    circuitId: d[40],
+    proofSize: d.readUInt32LE(41),
+    verified: d[49] === 1,
+    deepAliVerified: d[82] === 1,
+    space: data.length,
+  };
+}
+
+async function readProofBufferState(
+  connection: Connection,
+  proofBuffer: PublicKey,
+): Promise<ProofBufferState | null> {
+  const info = await connection.getAccountInfo(proofBuffer);
+  if (!info) return null;
+  return parseProofBufferState(info.owner ?? PublicKey.default, info.data);
+}
+
+/** Anchor's `InstructionFallbackNotFound` (101 = 0x65): the deployed program has no such instruction. */
+function isUnknownInstruction(e: unknown): boolean {
+  const msg = (e as Error)?.message ?? String(e);
+  return /InstructionFallbackNotFound|Fallback functions are not supported|custom program error: (0x65|101)\b/i.test(msg);
+}
+
+/**
+ * Allocate and initialise a buffer sized for the WHOLE proof in one transaction
+ * (`createAccount` + `init_proof_buffer_v3`), or rearm the one a previous run of
+ * this authority left at the same derived address (`reset_proof_buffer`, also
+ * one transaction). Returns the buffer address the caller hands to the pool
+ * instruction and later to `closeStarkProofBuffer`.
+ *
+ * Falls back to the PDA path (`init_proof_buffer` + resizes) only if the
+ * program answers that `init_proof_buffer_v3` does not exist, so a client
+ * built against a newer verifier still works against an older deployment.
+ */
+async function allocateProofBuffer(
+  connection: Connection,
+  signer: WalletSigner,
+  proofSize: number,
+  circuitId: number,
+  onProgress?: (step: string) => void,
+): Promise<PublicKey> {
+  const authority = signer.publicKey;
+  const space = PROOF_DATA_OFFSET + proofSize;
+  for (let attempt = 0; attempt < PROOF_BUFFER_KEY_ATTEMPTS; attempt++) {
+    const kp = deriveProofBufferKeypair(authority, circuitId, attempt);
+    const existing = await readProofBufferState(connection, kp.publicKey);
+    if (existing) {
+      const ours =
+        existing.owner.equals(STARK_VERIFIER_PROGRAM_ID) && existing.authority.equals(authority);
+      // Somebody else's account sits at this address (the derivation is
+      // public, see above): step to the next one.
+      if (!ours) continue;
+      if (existing.space >= space) {
+        onProgress?.('Rearming an existing proof buffer...');
+        const resetTx = new Transaction().add(
+          buildResetProofBufferIx(proofSize, circuitId, kp.publicKey, authority),
+        );
+        await audible('Rearming an existing proof buffer...', onProgress, () =>
+          signSendConfirm(connection, resetTx, signer),
+        );
+        return kp.publicKey;
+      }
+      // Ours, but too small for this proof: take the rent back and create fresh.
+      onProgress?.('Closing an undersized proof buffer...');
+      const closeTx = new Transaction().add(buildCloseProofBufferIx(kp.publicKey, authority));
+      await signSendConfirm(connection, closeTx, signer);
+    }
+    const lamports = await connection.getMinimumBalanceForRentExemption(space);
+    const createTx = new Transaction()
+      .add(
+        SystemProgram.createAccount({
+          fromPubkey: authority,
+          newAccountPubkey: kp.publicKey,
+          lamports,
+          space,
+          programId: STARK_VERIFIER_PROGRAM_ID,
+        }),
+      )
+      .add(buildInitProofBufferV3Ix(proofSize, circuitId, kp.publicKey, authority));
+    try {
+      await audible('Allocating proof buffer...', onProgress, () =>
+        signSendConfirm(connection, createTx, signer, { extraSigners: [kp] }),
+      );
+    } catch (e) {
+      if (!isUnknownInstruction(e)) throw e;
+      console.warn('[STARK] init_proof_buffer_v3 is not deployed here, using the PDA path');
+      return allocateProofBufferLegacy(connection, signer, proofSize, circuitId, onProgress);
+    }
+    return kp.publicKey;
+  }
+  throw new Error(
+    `Could not allocate a proof buffer: ${PROOF_BUFFER_KEY_ATTEMPTS} derived addresses are ` +
+      'occupied by accounts that are not ours.',
+  );
+}
+
+/**
+ * The pre-L2 sequence, kept as the fallback for a deployment without
+ * `init_proof_buffer_v3`: close a stale PDA, `init_proof_buffer`, then one
+ * `resize_proof_buffer` per 10,240 bytes, each confirmed in turn.
+ */
+async function allocateProofBufferLegacy(
+  connection: Connection,
+  signer: WalletSigner,
+  proofSize: number,
+  circuitId: number,
+  onProgress?: (step: string) => void,
+): Promise<PublicKey> {
+  const authority = signer.publicKey;
+  const [proofBuffer] = getProofBufferPDA(authority, circuitId);
+
+  const existing = await connection.getAccountInfo(proofBuffer);
+  if (existing) {
+    onProgress?.('Closing stale proof buffer...');
+    try {
+      const closeTx = new Transaction().add(buildCloseProofBufferIx(proofBuffer, authority));
+      await signSendConfirm(connection, closeTx, signer);
+    } catch {
+      await new Promise((r) => setTimeout(r, 2000));
+      const recheck = await connection.getAccountInfo(proofBuffer);
+      if (recheck) {
+        throw new Error(
+          'Stale STARK proof buffer exists and cannot be closed. ' +
+            'Please wait a few seconds and try again, or use a different wallet.',
+        );
+      }
+    }
+  }
+
+  onProgress?.('Initializing proof buffer...');
+  const initTx = new Transaction().add(
+    buildInitProofBufferIx(proofSize, circuitId, proofBuffer, authority),
+  );
+  await signSendConfirm(connection, initTx, signer);
+
+  // Anchor realloc grows by at most MAX_REALLOC_STEP (10KB) per call, so large
+  // proofs need several resize txs — a single resize leaves the buffer too
+  // small and a later chunk write aborts with ProgramFailedToComplete.
+  const resizeTarget = proofSize + PROOF_DATA_OFFSET;
+  if (resizeTarget > MAX_INIT_SIZE) {
+    const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
+    for (let r = 0; r < resizesNeeded; r++) {
+      const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
+      await audible(
+        `Resizing proof buffer (${r + 1}/${resizesNeeded})...`,
+        onProgress,
+        () => signSendConfirm(connection, resizeTx, signer),
+      );
+    }
+  }
+  return proofBuffer;
+}
+
+/**
+ * Circuits whose phase 1 + phase 2 fit ONE transaction, with the measured sum.
+ *
+ * MEASURED 2026-09-12 in litesvm (`cu_budget_real_circuits`, cargo-build-sbf
+ * 3.1.9, `.so` sha256 `ce2bba7e…`, `docs/UNIFORM-MASKING-2026-09-11.md` §4a):
+ *
+ *   C3  875,925 + 169,036 = 1,044,961     C4  853,785 + 365,696 = 1,219,481
+ *   C6  899,486 + 175,616 = 1,075,102     C7  887,641 + 193,042 = 1,080,683
+ *
+ * against the 1,400,000 CU a transaction may request. C2 (1,357,548) is 97% of
+ * the cap and is NOT merged; C1 (1,429,650) and C5 (1,416,705) exceed it; C0
+ * already runs both phases inside `verify_stark_proof`. A merged transaction
+ * is atomic: a miss costs one failed transaction and the two-transaction path
+ * runs instead, nothing half-verified is left behind.
+ */
+export const SINGLE_TX_VERIFY_CU: Readonly<Partial<Record<number, number>>> = {
+  [CIRCUIT_MERKLE_PATH]: 1_044_961,
+  [CIRCUIT_CONFIDENTIAL_BALANCE]: 1_219_481,
+  [CIRCUIT_MERKLE_UPDATE]: 1_075_102,
+  [CIRCUIT_SPEND]: 1_080_683,
+};
+
+/**
+ * Phase 1 (`verify_stark_proof_v2`) and, for circuits 1..=7, phase 2
+ * (`verify_deep_ali_phase2`) — in one transaction where `SINGLE_TX_VERIFY_CU`
+ * says they fit, in two otherwise. Returns the phase-1 signature (the merged
+ * transaction's, when merged).
+ */
+async function verifyUploadedProof(
+  connection: Connection,
+  signer: WalletSigner,
+  proof: GenericStarkProof,
+  proofBuffer: PublicKey,
+  onProgress?: (step: string) => void,
+): Promise<string> {
+  const authority = signer.publicKey;
+  const phase1 = buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority);
+  const needsPhase2 = proof.circuitId >= 1 && proof.circuitId <= 7;
+  const phase2 = needsPhase2
+    ? buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority)
+    : null;
+
+  if (phase2 && SINGLE_TX_VERIFY_CU[proof.circuitId] !== undefined) {
+    const merged = new Transaction()
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+      .add(phase1)
+      .add(phase2);
+    try {
+      return await audible(
+        'Verifying STARK proof (phase 1 + DEEP-ALI, one transaction)...',
+        onProgress,
+        () => signSendConfirm(connection, merged, signer),
+      );
+    } catch (e) {
+      const state = await readProofBufferState(connection, proofBuffer);
+      if (state?.verified && state.deepAliVerified) {
+        // It landed; only our confirmation was lost.
+        const recent = await connection.getSignaturesForAddress(proofBuffer, { limit: 1 });
+        return recent[0]?.signature ?? '';
+      }
+      console.warn(
+        '[STARK] merged verify did not land, falling back to two transactions:',
+        (e as Error).message,
+      );
+    }
+  }
+
+  onProgress?.('Verifying STARK proof phase 1...');
+  const verifyTx = new Transaction()
+    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+    .add(phase1);
+  const txSignature = await signSendConfirm(connection, verifyTx, signer);
+
+  if (phase2) {
+    onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
+    const deepAliTx = new Transaction()
+      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
+      .add(phase2);
+    await signSendConfirm(connection, deepAliTx, signer);
+  }
+  return txSignature;
+}
+
 function buildVerifyStarkProofV2Ix(
   publicInputs: bigint[],
   proofBuffer: PublicKey,
@@ -261,7 +610,7 @@ async function signSendConfirm(
   conn: Connection,
   tx: Transaction,
   signer: WalletSigner,
-  opts?: { skipPreflight?: boolean },
+  opts?: { skipPreflight?: boolean; extraSigners?: Keypair[] },
 ): Promise<string> {
   // 🚨 `finalized`, NOT `confirmed`, AND A RETRY. Both, because they answer two
   // different failures that produce the identical message.
@@ -295,6 +644,10 @@ async function signSendConfirm(
     // that reuses the old signature is rejected for a different reason and the
     // real one is never seen.
     const signed = await signer.signTransaction(tx);
+    // A buffer keypair co-signs `createAccount`; it signs AFTER the wallet so a
+    // wallet that rebuilds the transaction cannot drop its signature, and on
+    // every attempt because the signature covers the blockhash.
+    if (opts?.extraSigners?.length) signed.partialSign(...opts.extraSigners);
     try {
       sig = await conn.sendRawTransaction(signed.serialize(), {
         skipPreflight: opts?.skipPreflight ?? false,
@@ -353,6 +706,7 @@ async function confirmSignatures(
   sigs: string[],
   timeoutMs = CHUNK_CONFIRM_WINDOW_MS,
   onProgress?: (step: string) => void,
+  pollMs = 2500,
 ): Promise<number[]> {
   const pending = new Map<string, number>();
   sigs.forEach((sig, i) => pending.set(sig, i));
@@ -374,7 +728,7 @@ async function confirmSignatures(
     }
     if (pending.size === 0) break;
     onProgress?.(`Confirming chunk uploads (${pending.size} pending)...`);
-    await new Promise((r) => setTimeout(r, 2500));
+    await new Promise((r) => setTimeout(r, pollMs));
   }
   return [...pending.values()];
 }
@@ -399,6 +753,13 @@ const BLOCKHASH_SEND_ATTEMPTS = 3;
 // bound), so every transaction sent in a round gets the whole life of its
 // blockhash to land before we judge it lost.
 const CHUNK_CONFIRM_WINDOW_MS = 90_000;
+// [TX-V1 2026-09-13] With 21 chunks instead of 80 a lost chunk is cheap to
+// resend and expensive to wait for: MEASURED on Helius, one lost v1 chunk cost
+// a 90 s wait (5-run series, `docs/BENCHMARK-2026-09-13.md` §2b). An
+// offset-addressed write is idempotent, so the first v1 round waits 20 s and
+// polls every second; the legacy round keeps its window.
+const V1_CHUNK_CONFIRM_WINDOW_MS = 20_000;
+const V1_CHUNK_CONFIRM_POLL_MS = 1_000;
 
 // Resend budget. Round 0 sends everything; each later round re-signs ONLY the
 // unconfirmed chunks with a fresh blockhash and watches for one more full
@@ -408,6 +769,12 @@ const CHUNK_CONFIRM_WINDOW_MS = 90_000;
 // outage, not congestion, and more rounds would only spend more fees on a
 // dead link.
 const MAX_RESEND_ROUNDS = 3;
+// [L2-CLIENT 2026-09-12] Chunk transactions in flight at once. They are
+// independent (offset-addressed, idempotent, skipPreflight) and were sent one
+// round trip at a time: 80-107 chunks × one RPC latency each. Eight keeps a
+// public devnet endpoint under its per-IP rate limit; every caller signs with
+// a local ephemeral keypair, so concurrency costs no wallet prompts.
+const CHUNK_SEND_CONCURRENCY = 8;
 
 /** One upload unit. Chunk writes are offset-addressed on-chain
  * (`write_proof_chunk(offset, data)`), so resending a chunk is idempotent —
@@ -421,10 +788,10 @@ export interface ProofChunk {
 
 /** Split proof bytes into MAX_CHUNK_SIZE upload units. Pure, exported so the
  * torn-buffer tests can reason about the exact same chunk geometry. */
-export function splitProofIntoChunks(proofBytes: Uint8Array): ProofChunk[] {
+export function splitProofIntoChunks(proofBytes: Uint8Array, chunkSize: number = MAX_CHUNK_SIZE): ProofChunk[] {
   const chunks: ProofChunk[] = [];
-  for (let index = 0, offset = 0; offset < proofBytes.length; index++, offset += MAX_CHUNK_SIZE) {
-    const end = Math.min(offset + MAX_CHUNK_SIZE, proofBytes.length);
+  for (let index = 0, offset = 0; offset < proofBytes.length; index++, offset += chunkSize) {
+    const end = Math.min(offset + chunkSize, proofBytes.length);
     chunks.push({ index, offset, bytes: proofBytes.slice(offset, end) });
   }
   return chunks;
@@ -484,34 +851,78 @@ async function uploadProofChunks(
   proofBytes: Uint8Array,
   onProgress?: (step: string) => void,
 ): Promise<void> {
-  const chunks = splitProofIntoChunks(proofBytes);
+  // [TX-V1 2026-09-13] 3,840-byte chunks in 4,096-byte v1 transactions when the
+  // cluster has the feature gate AND the signer can sign raw bytes; 1,000-byte
+  // legacy chunks otherwise. Same readback gate, same resend policy either way.
+  const v1 = !!signer.signBytes && (await isTransactionV1Active(connection));
+  const chunks = splitProofIntoChunks(proofBytes, v1 ? V1_CHUNK_SIZE : MAX_CHUNK_SIZE);
 
   let chunkBlockhash = '';
+  let chunkLastValidBlockHeight = 0;
   let chunkBlockhashAt = 0;
   const refreshBlockhash = async () => {
     // `finalized` for the same reason as `signSendConfirm` above: every node
     // knows it. These chunks go out with skipPreflight, so a stale blockhash
     // does not fail here — it fails LATER, as chunks that never confirm and a
     // resend round that looks like congestion. Same cause, different mask.
-    chunkBlockhash = (await connection.getLatestBlockhash('finalized')).blockhash;
+    const bh = await connection.getLatestBlockhash('finalized');
+    chunkBlockhash = bh.blockhash;
+    chunkLastValidBlockHeight = bh.lastValidBlockHeight;
     chunkBlockhashAt = Date.now();
   };
 
+  // One refresh at a time: workers that find the blockhash stale share it.
+  let refreshing: Promise<void> | null = null;
+  const freshBlockhash = async () => {
+    if (Date.now() - chunkBlockhashAt <= CHUNK_BLOCKHASH_MAX_AGE_MS) return;
+    refreshing ??= refreshBlockhash().finally(() => {
+      refreshing = null;
+    });
+    await refreshing;
+  };
+
+  // `sigs[k]` is the signature of `toSend[k]` whatever order the sends finish
+  // in: `confirmSignatures` returns INDICES and the resend rounds index back.
   const sendChunks = async (toSend: ProofChunk[], label: string): Promise<string[]> => {
-    const sigs: string[] = [];
-    for (let k = 0; k < toSend.length; k++) {
-      const chunk = toSend[k];
-      onProgress?.(`${label} ${k + 1}/${toSend.length}...`);
-      if (Date.now() - chunkBlockhashAt > CHUNK_BLOCKHASH_MAX_AGE_MS) await refreshBlockhash();
-      const chunkTx = new Transaction().add(
-        buildWriteProofChunkIx(chunk.offset, chunk.bytes, proofBuffer, signer.publicKey),
-      );
-      chunkTx.recentBlockhash = chunkBlockhash;
-      chunkTx.feePayer = signer.publicKey;
-      const signed = await signer.signTransaction(chunkTx);
-      const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
-      sigs.push(sig);
-    }
+    const sigs: string[] = new Array<string>(toSend.length);
+    let next = 0;
+    let sent = 0;
+    const worker = async () => {
+      for (;;) {
+        const k = next++;
+        if (k >= toSend.length) return;
+        const chunk = toSend[k];
+        await freshBlockhash();
+        if (v1) {
+          const { messageBytes, payer } = compileV1ChunkMessage({
+            programId: STARK_VERIFIER_PROGRAM_ID,
+            proofBuffer,
+            authority: signer.publicKey,
+            offset: chunk.offset,
+            bytes: chunk.bytes,
+            blockhash: chunkBlockhash,
+            lastValidBlockHeight: chunkLastValidBlockHeight,
+            discriminator: DISCRIMINATORS.writeProofChunk,
+          });
+          const signature = await signer.signBytes!(messageBytes);
+          const wire = encodeV1Wire(messageBytes, payer, signature);
+          sigs[k] = await connection.sendRawTransaction(wire, { skipPreflight: true });
+        } else {
+          const chunkTx = new Transaction().add(
+            buildWriteProofChunkIx(chunk.offset, chunk.bytes, proofBuffer, signer.publicKey),
+          );
+          chunkTx.recentBlockhash = chunkBlockhash;
+          chunkTx.feePayer = signer.publicKey;
+          const signed = await signer.signTransaction(chunkTx);
+          sigs[k] = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: true });
+        }
+        sent += 1;
+        onProgress?.(`${label} ${sent}/${toSend.length}...`);
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(CHUNK_SEND_CONCURRENCY, toSend.length) }, worker),
+    );
     return sigs;
   };
 
@@ -521,11 +932,17 @@ async function uploadProofChunks(
   for (let round = 0; ; round++) {
     const label =
       round === 0
-        ? 'Uploading proof chunk'
+        ? (v1 ? 'Uploading proof chunk (tx v1)' : 'Uploading proof chunk')
         : `Resending chunk (round ${round}/${MAX_RESEND_ROUNDS})`;
     const sigs = await sendChunks(pendingChunks, label);
     onProgress?.('Confirming chunk uploads...');
-    const unconfirmed = await confirmSignatures(connection, sigs, CHUNK_CONFIRM_WINDOW_MS, onProgress);
+    const unconfirmed = await confirmSignatures(
+      connection,
+      sigs,
+      v1 && round === 0 ? V1_CHUNK_CONFIRM_WINDOW_MS : CHUNK_CONFIRM_WINDOW_MS,
+      onProgress,
+      v1 ? V1_CHUNK_CONFIRM_POLL_MS : 2500,
+    );
     if (unconfirmed.length === 0) break;
     if (round >= MAX_RESEND_ROUNDS) {
       throw new Error(
@@ -556,11 +973,20 @@ async function uploadProofChunks(
     // exactly the torn chunks and read back once more.
     onProgress?.(`Readback found ${holes.length} torn chunk(s), repairing...`);
     await refreshBlockhash();
+    // `holes` are 1,000-byte indices whatever the upload chunk size: resend
+    // every upload chunk that covers a torn byte range.
+    const torn = new Set<number>();
+    for (const i of holes) {
+      const start = i * MAX_CHUNK_SIZE;
+      chunks.forEach((c, k) => {
+        if (start < c.offset + c.bytes.length && start + MAX_CHUNK_SIZE > c.offset) torn.add(k);
+      });
+    }
     const repairSigs = await sendChunks(
-      holes.map((i) => chunks[i]),
+      [...torn].sort((a, b) => a - b).map((k) => chunks[k]),
       'Re-uploading torn chunk',
     );
-    await confirmSignatures(connection, repairSigs, CHUNK_CONFIRM_WINDOW_MS, onProgress);
+    await confirmSignatures(connection, repairSigs, CHUNK_CONFIRM_WINDOW_MS, onProgress, v1 ? V1_CHUNK_CONFIRM_POLL_MS : 2500);
   }
 }
 
@@ -579,37 +1005,14 @@ export async function submitStarkProof(
   onProgress?: (step: string) => void,
 ): Promise<StarkVerificationResult> {
   const authority = signer.publicKey;
-  const [proofBuffer] = getProofBufferPDA(authority);
-
-  const existing = await connection.getAccountInfo(proofBuffer);
-  if (existing) {
-    onProgress?.('Closing stale proof buffer...');
-    const closeTx = new Transaction().add(buildCloseProofBufferIx(proofBuffer, authority));
-    await signSendConfirm(connection, closeTx, signer);
-  }
-
-  onProgress?.('Initializing proof buffer...');
-  const initTx = new Transaction().add(
-    buildInitProofBufferIx(proof.proofSize, CIRCUIT_SUBSCRIBER_OWNERSHIP, proofBuffer, authority),
+  // [L2-CLIENT 2026-09-12] one transaction allocates and initialises the buffer.
+  const proofBuffer = await allocateProofBuffer(
+    connection,
+    signer,
+    proof.proofSize,
+    CIRCUIT_SUBSCRIBER_OWNERSHIP,
+    onProgress,
   );
-  await signSendConfirm(connection, initTx, signer);
-
-  // Grow the buffer to the FULL proof size. Anchor realloc grows by at most
-  // MAX_REALLOC_STEP (10KB) per call, so large proofs (e.g. circuit 6) need
-  // several resize txs — a single resize leaves the buffer too small and a
-  // later chunk write aborts with ProgramFailedToComplete.
-  const resizeTarget = proof.proofSize + PROOF_DATA_OFFSET;
-  if (resizeTarget > MAX_INIT_SIZE) {
-    const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
-    for (let r = 0; r < resizesNeeded; r++) {
-      const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
-      await audible(
-        `Resizing proof buffer (${r + 1}/${resizesNeeded})...`,
-        onProgress,
-        () => signSendConfirm(connection, resizeTx, signer),
-      );
-    }
-  }
 
   // Chunked upload with per-chunk resume and a byte-for-byte readback gate —
   // see uploadProofChunks for why confirmations alone cannot prove completeness.
@@ -722,74 +1125,23 @@ export async function submitAndVerifyStarkProof(
   onProgress?: (step: string) => void,
 ): Promise<{ proofBuffer: PublicKey; authority: PublicKey; txSignature: string }> {
   const authority = signer.publicKey;
-  const [proofBuffer] = getProofBufferPDA(authority, proof.circuitId);
 
-  const existing = await connection.getAccountInfo(proofBuffer);
-  if (existing) {
-    onProgress?.('Closing stale proof buffer...');
-    try {
-      const closeTx = new Transaction().add(buildCloseProofBufferIx(proofBuffer, authority));
-      await signSendConfirm(connection, closeTx, signer);
-    } catch {
-      await new Promise((r) => setTimeout(r, 2000));
-      const recheck = await connection.getAccountInfo(proofBuffer);
-      if (recheck) {
-        throw new Error(
-          'Stale STARK proof buffer exists and cannot be closed. ' +
-            'Please wait a few seconds and try again, or use a different wallet.',
-        );
-      }
-    }
-  }
-
-  onProgress?.('Initializing proof buffer...');
-  const initTx = new Transaction().add(
-    buildInitProofBufferIx(proof.proofSize, proof.circuitId, proofBuffer, authority),
+  // [L2-CLIENT 2026-09-12] One transaction allocates and initialises a buffer
+  // sized for the whole proof (or rearms this authority's earlier one); the
+  // chunks go out CHUNK_SEND_CONCURRENCY at a time; phase 1 and phase 2 share a
+  // transaction where the measured CU fits. See `allocateProofBuffer`,
+  // `uploadProofChunks`, `verifyUploadedProof`.
+  const proofBuffer = await allocateProofBuffer(
+    connection,
+    signer,
+    proof.proofSize,
+    proof.circuitId,
+    onProgress,
   );
-  await signSendConfirm(connection, initTx, signer);
 
-  // Grow the buffer to the FULL proof size. Anchor realloc grows by at most
-  // MAX_REALLOC_STEP (10KB) per call, so large proofs (e.g. circuit 6) need
-  // several resize txs — a single resize leaves the buffer too small and a
-  // later chunk write aborts with ProgramFailedToComplete.
-  const resizeTarget = proof.proofSize + PROOF_DATA_OFFSET;
-  if (resizeTarget > MAX_INIT_SIZE) {
-    const resizesNeeded = Math.ceil((resizeTarget - MAX_INIT_SIZE) / MAX_REALLOC_STEP);
-    for (let r = 0; r < resizesNeeded; r++) {
-      const resizeTx = new Transaction().add(buildResizeProofBufferIx(proofBuffer, authority));
-      await audible(
-        `Resizing proof buffer (${r + 1}/${resizesNeeded})...`,
-        onProgress,
-        () => signSendConfirm(connection, resizeTx, signer),
-      );
-    }
-  }
-
-  // Chunked upload with per-chunk resume and a byte-for-byte readback gate —
-  // see uploadProofChunks for why confirmations alone cannot prove completeness.
   await uploadProofChunks(connection, signer, proofBuffer, proof.proofBytes, onProgress);
 
-  onProgress?.('Verifying STARK proof phase 1...');
-  const verifyTx = new Transaction()
-    .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
-    .add(buildVerifyStarkProofV2Ix(proof.publicInputs, proofBuffer, authority));
-  const txSignature = await signSendConfirm(connection, verifyTx, signer);
-
-  // Phase 2 (DEEP-ALI at OOD) — mandatory for circuits 1–6. Circuit 0 runs
-  // DEEP-ALI inline in phase 1. Combined phase 1+2 exceeds the 1.4M CU per-ix
-  // budget, so we split across two transactions.
-  // [C7 2026-08-24] <= 7. Circuit 7 (spend) splits phase 1 / phase 2 like
-  // 1..6, and phase 2 is where ALL of its binding lives -- its per-query
-  // arm is vacuous and step 5 is gone. Left at <= 6 this branch skips
-  // phase 2 silently and the client reports SUCCESS on a proof whose six
-  // boundary assertions were never checked against the trace.
-  if (proof.circuitId >= 1 && proof.circuitId <= 7) {
-    onProgress?.('Verifying STARK proof phase 2 (DEEP-ALI)...');
-    const deepAliTx = new Transaction()
-      .add(ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }))
-      .add(buildVerifyDeepAliPhase2Ix(proof.publicInputs, proofBuffer, authority));
-    await signSendConfirm(connection, deepAliTx, signer);
-  }
+  const txSignature = await verifyUploadedProof(connection, signer, proof, proofBuffer, onProgress);
 
   onProgress?.('STARK proof verified (buffer retained for cross-program read)');
   return { proofBuffer, authority, txSignature };
@@ -803,7 +1155,36 @@ export async function closeStarkProofBuffer(
   proofBuffer: PublicKey,
   signer: WalletSigner,
   connection: Connection,
+  opts: { sweepTo?: PublicKey } = {},
 ): Promise<void> {
+  // [CLOSE-SWEEP 2026-09-13] With `sweepTo`, the buffer's rent and the
+  // signer's whole remaining balance leave in the SAME transaction as the
+  // close: `close_proof_buffer` credits the signer, then a system transfer
+  // moves everything to `sweepTo`. MEASURED 2026-09-13 (BENCHMARK §5b): the
+  // close and the sweep were two sequential confirmations, ~2 s each, on every
+  // shield, subscription and withdrawal. The amount is balance + rent - fee,
+  // computed before sending; if that transaction fails for any reason the plain
+  // close is sent instead and the caller's own sweep still finds the rent.
+  if (opts.sweepTo && !opts.sweepTo.equals(signer.publicKey)) {
+    try {
+      const [balance, info] = await Promise.all([
+        connection.getBalance(signer.publicKey, 'confirmed'),
+        connection.getAccountInfo(proofBuffer),
+      ]);
+      const rent = info?.lamports ?? 0;
+      const FEE = 5_000;
+      const amount = balance + rent - FEE;
+      if (amount > 0) {
+        const tx = new Transaction()
+          .add(buildCloseProofBufferIx(proofBuffer, signer.publicKey))
+          .add(SystemProgram.transfer({ fromPubkey: signer.publicKey, toPubkey: opts.sweepTo, lamports: amount }));
+        await signSendConfirm(connection, tx, signer);
+        return;
+      }
+    } catch (e) {
+      console.warn('[STARK] close + sweep did not land, closing alone:', (e as Error).message);
+    }
+  }
   const closeTx = new Transaction().add(
     buildCloseProofBufferIx(proofBuffer, signer.publicKey),
   );
@@ -833,10 +1214,13 @@ export const RELAY_PLACEHOLDER_BLOCKHASH = '11111111111111111111111111111111';
  * requires `c7_authority == payer`, so the whole upload has to be in the
  * relayer's name for the spend to be relayable at all.
  *
- * ⚠️ Kept next to `submitAndVerifyStarkProof` on purpose: these two are the same
- * sequence and they must stay the same sequence. A resize count computed
- * differently in the two places is a buffer too small and a chunk write that
- * aborts with ProgramFailedToComplete at the end of the upload.
+ * ⚠️ Kept next to `submitAndVerifyStarkProof` on purpose: the two were the same
+ * sequence. [L2-CLIENT 2026-09-12] They no longer are: the direct path
+ * allocates a keypair buffer in one transaction (`allocateProofBuffer`), which
+ * a relayer that REPLACES the blockhash before signing cannot use — the buffer
+ * keypair's signature covers the blockhash too. This batch therefore stays on
+ * the PDA path (`init_proof_buffer` + resizes, `allocateProofBufferLegacy`'s
+ * sequence), and its resize count must keep matching that function's.
  */
 export function buildStarkProofUploadBatch(
   proof: GenericStarkProof,
@@ -900,6 +1284,11 @@ export function buildStarkProofUploadBatch(
 export {
   getProofBufferPDA,
   buildCloseProofBufferIx,
+  buildInitProofBufferV3Ix,
+  buildResetProofBufferIx,
+  allocateProofBuffer,
+  readProofBufferState,
+  CHUNK_SEND_CONCURRENCY,
   STARK_VERIFIER_PROGRAM_ID,
   PROOF_DATA_OFFSET,
   MAX_CHUNK_SIZE,

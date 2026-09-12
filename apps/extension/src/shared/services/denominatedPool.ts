@@ -20,6 +20,7 @@
  * on-chain handler accepts the legacy buffer format for C6 and C1).
  */
 
+import { getPoolHistoryStore, poolHistoryKey } from './poolHistoryCache';
 import {
   Connection,
   PublicKey,
@@ -70,6 +71,7 @@ import { deriveNoteBlinding } from './noteBlinding';
 
 // Post-quantum note encryption (hybrid X25519 + ML-KEM-768) for transfers.
 import { encryptNote, isNoteEncryptionAddress } from './noteCrypto';
+import nacl from 'tweetnacl';
 
 // Deterministic ephemeral derivation + crash-recovery breadcrumbs. Phase 1 of
 // the sender-anonymity design: the transfer is authored by a per-transfer
@@ -1315,10 +1317,20 @@ export async function fetchPoolCommitments(
     maxSignatures?: number;
     batchSize?: number;
     onProgress?: (scanned: number, total: number) => void;
+    /** [HISTORY-CACHE] reuse the cached walk; default true. */
+    incremental?: boolean;
   } = {},
 ): Promise<Map<string, OnChainCommitment>> {
   const maxSignatures = options.maxSignatures ?? 1000;
   const batchSize = options.batchSize ?? 25;
+  // [HISTORY-CACHE 2026-09-13] Start from what an earlier walk decoded and ask
+  // the RPC only for signatures newer than the newest one it saw (see
+  // `poolHistoryCache.ts`). Pass `incremental: false` to force a full walk.
+  const incremental = options.incremental ?? true;
+  const historyStore = getPoolHistoryStore();
+  const cacheKey = poolHistoryKey(connection.rpcEndpoint, poolPDA.toBase58());
+  const snapshot = incremental ? await historyStore.load(cacheKey) : null;
+  const until = snapshot?.newestSignature ?? undefined;
   const PAGE = 1000;
   const MAX_LEAVES = 1 << MERKLE_DEPTH;
 
@@ -1329,6 +1341,7 @@ export async function fetchPoolCommitments(
     const page = await connection.getSignaturesForAddress(poolPDA, {
       limit: Math.min(PAGE, remaining),
       before,
+      until,
     });
     if (page.length === 0) break;
     sigs.push(...page);
@@ -1337,13 +1350,16 @@ export async function fetchPoolCommitments(
   }
 
   const out = new Map<string, OnChainCommitment>();
+  for (const e of snapshot?.entries ?? []) {
+    out.set(e.commitment, { commitment: BigInt(e.commitment), leafIndex: e.leafIndex });
+  }
 
   for (let i = 0; i < sigs.length; i += batchSize) {
     const batch = sigs.slice(i, i + batchSize);
     const txs = await Promise.all(
       batch.map((s) =>
         connection
-          .getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+          .getTransaction(s.signature, { maxSupportedTransactionVersion: 1, commitment: 'confirmed' })
           .catch(() => null),
       ),
     );
@@ -1384,6 +1400,15 @@ export async function fetchPoolCommitments(
     options.onProgress?.(Math.min(i + batchSize, sigs.length), sigs.length);
   }
 
+  if (incremental) {
+    await historyStore.save({
+      version: 1,
+      key: cacheKey,
+      newestSignature: sigs[0]?.signature ?? snapshot?.newestSignature ?? null,
+      entries: [...out.values()].map((c) => ({ commitment: c.commitment.toString(), leafIndex: c.leafIndex })),
+      savedAt: Date.now(),
+    });
+  }
   return out;
 }
 
@@ -2874,6 +2899,8 @@ export async function transferDenominatedStarkV3(
   const ephemeral = await deriveEphemeralForRelay(jobId);
   const eSigner: WalletSigner = {
     publicKey: ephemeral.publicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks.
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, ephemeral.secretKey),
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
         const { blockhash } = await connection.getLatestBlockhash('confirmed');

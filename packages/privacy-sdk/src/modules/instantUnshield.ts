@@ -1,4 +1,16 @@
 /**
+ * ⚠️ [LEGACY UPLOAD PROTOCOL — 2026-09-13] This module plans the PRE-L2 proof
+ * upload: `init_proof_buffer` + up to eight `resize_proof_buffer` transactions
+ * and 1,000-byte legacy chunks. The shipping path is `uploadAndVerify` in
+ * `@protocol-01/stark-prover` (one `createAccount` + `init_proof_buffer_v3`
+ * transaction, 4,096-byte transaction-v1 chunks where the cluster's gate is
+ * active, phase 1 + phase 2 merged where the measured CU fits), MEASURED on
+ * 2026-09-13 at 7.8 s for the STARK half of a withdrawal against 35 s on this
+ * plan's shape (`docs/BENCHMARK-2026-09-13.md` §2b, §3). No app calls this
+ * module today (only the roadmap page mentions it); it stays for SDK
+ * consumers that build and sign transactions themselves and is not the path
+ * to extend. New work goes to `stark-prover`.
+ *
  * InstantUnshieldFlow — high-level wrapper that bundles the full instant-unshield
  * orchestration into a single SDK-consumer-friendly API.
  *

@@ -27,6 +27,7 @@ import {
   TransactionInstruction,
   SystemProgram,
 } from '@solana/web3.js';
+import { getPoolHistoryStore, poolHistoryKey, type CachedCommitmentEntry } from './poolHistoryCache';
 import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountIdempotentInstruction,
@@ -1410,6 +1411,8 @@ export async function shieldV3(
   signer: WalletSigner,
   connection: Connection,
   onProgress?: (step: string) => void,
+  /** [CLOSE-SWEEP 2026-09-13] sweep the signer's whole balance here in the SAME transaction as the buffer close. */
+  options?: { sweepTo?: PublicKey },
 ): Promise<{ txSig: string; receipt: ShieldReceipt; c6ProofBuffer: PublicKey }> {
   let c6ProofBuffer!: PublicKey;
   try {
@@ -1518,7 +1521,7 @@ export async function shieldV3(
     if (c6ProofBuffer) {
       try {
         onProgress?.('Closing C6 proof buffer...');
-        await closeStarkProofBuffer(c6ProofBuffer, signer, connection);
+        await closeStarkProofBuffer(c6ProofBuffer, signer, connection, { sweepTo: options?.sweepTo });
       } catch (e: unknown) {
         console.warn('[DenomPool/V3] closeStarkProofBuffer failed:', e instanceof Error ? e.message : String(e));
       }
@@ -2021,12 +2024,23 @@ export async function fetchPoolCommitments(
     maxSignatures?: number;
     batchSize?: number;
     onProgress?: (scanned: number, total: number) => void;
+    /** [HISTORY-CACHE] Reuse the cached walk and fetch only newer signatures. Default true. */
+    incremental?: boolean;
   } = {},
 ): Promise<Map<string, OnChainCommitment>> {
   const maxSignatures = options.maxSignatures ?? 1000;
   const batchSize = options.batchSize ?? 25;
   const PAGE = 1000;
   const MAX_LEAVES = 1 << MERKLE_DEPTH;
+
+  // [HISTORY-CACHE 2026-09-13] Start from what an earlier walk decoded and ask
+  // the RPC only for signatures newer than the newest one it saw. See
+  // `poolHistoryCache.ts` for the measurement that motivates this.
+  const incremental = options.incremental ?? true;
+  const store = getPoolHistoryStore();
+  const cacheKey = poolHistoryKey(connection.rpcEndpoint, poolPDA.toBase58());
+  const snapshot = incremental ? await store.load(cacheKey) : null;
+  const until = snapshot?.newestSignature ?? undefined;
 
   const sigs: Array<{ signature: string }> = [];
   let before: string | undefined;
@@ -2035,6 +2049,7 @@ export async function fetchPoolCommitments(
     const page = await connection.getSignaturesForAddress(poolPDA, {
       limit: Math.min(PAGE, remaining),
       before,
+      until,
     });
     if (page.length === 0) break;
     sigs.push(...page);
@@ -2043,13 +2058,21 @@ export async function fetchPoolCommitments(
   }
 
   const out = new Map<string, OnChainCommitment>();
-
+  for (const e of snapshot?.entries ?? []) {
+    out.set(e.commitment, {
+      commitment: BigInt(e.commitment),
+      leafIndex: e.leafIndex,
+      depositPayer: e.depositPayer,
+      depositSlot: e.depositSlot,
+      signature: e.signature,
+    });
+  }
   for (let i = 0; i < sigs.length; i += batchSize) {
     const batch = sigs.slice(i, i + batchSize);
     const txs = await Promise.all(
       batch.map((s) =>
         connection
-          .getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' })
+          .getTransaction(s.signature, { maxSupportedTransactionVersion: 1, commitment: 'confirmed' })
           .catch(() => null),
       ),
     );
@@ -2099,7 +2122,24 @@ export async function fetchPoolCommitments(
 
     options.onProgress?.(Math.min(i + batchSize, sigs.length), sigs.length);
   }
-
+  if (incremental) {
+    // The newest signature of THIS walk (pages are newest-first), else the
+    // cached one; the map is public on-chain data, safe to keep.
+    const entries: CachedCommitmentEntry[] = [...out.values()].map((c) => ({
+      commitment: c.commitment.toString(),
+      leafIndex: c.leafIndex,
+      depositPayer: c.depositPayer,
+      depositSlot: c.depositSlot,
+      signature: c.signature,
+    }));
+    await store.save({
+      version: 1,
+      key: cacheKey,
+      newestSignature: sigs[0]?.signature ?? snapshot?.newestSignature ?? null,
+      entries,
+      savedAt: Date.now(),
+    });
+  }
   return out;
 }
 
@@ -2580,29 +2620,35 @@ export async function unshieldDenominatedStarkV3(
   let c3ProofBuffer: PublicKey | undefined;
 
   try {
-    // Step 1: C1 (pool_commitment)
-    onProgress?.('Submitting C1 (pool_commitment) proof on-chain...');
+    // Steps 1 + 2: C1 (pool_commitment) and C3 (merkle_path), TOGETHER.
+    // [L2-CLIENT 2026-09-12] The two proofs live in two buffers derived per
+    // circuit id and share nothing but the signer, so their uploads run side
+    // by side instead of one after the other. `allSettled` so that a buffer
+    // the surviving upload created is still registered for the cleanup below
+    // when the other one fails.
+    onProgress?.('Submitting C1 (pool_commitment) and C3 (merkle_path) proofs on-chain...');
     const c1Proof: GenericStarkProof = {
       proofBytes: c1ProofResult.proofBytes,
       circuitId: CIRCUIT_POOL_COMMITMENT,
       publicInputs: c1ProofResult.publicInputs,
       proofSize: c1ProofResult.proofSize,
     };
-    const c1Result = await submitAndVerifyStarkProof(c1Proof, signer, connection, onProgress);
-    c1ProofBuffer = c1Result.proofBuffer;
-    createdBuffers.push(c1ProofBuffer);
-
-    // Step 2: C3 (merkle_path)
-    onProgress?.('Submitting C3 (merkle_path) proof on-chain...');
     const c3Proof: GenericStarkProof = {
       proofBytes: c3ProofResult.proofBytes,
       circuitId: CIRCUIT_MERKLE_PATH,
       publicInputs: c3ProofResult.publicInputs,
       proofSize: c3ProofResult.proofSize,
     };
-    const c3Result = await submitAndVerifyStarkProof(c3Proof, signer, connection, onProgress);
-    c3ProofBuffer = c3Result.proofBuffer;
-    createdBuffers.push(c3ProofBuffer);
+    const [c1Settled, c3Settled] = await Promise.allSettled([
+      submitAndVerifyStarkProof(c1Proof, signer, connection, onProgress),
+      submitAndVerifyStarkProof(c3Proof, signer, connection, onProgress),
+    ]);
+    if (c1Settled.status === 'fulfilled') createdBuffers.push(c1Settled.value.proofBuffer);
+    if (c3Settled.status === 'fulfilled') createdBuffers.push(c3Settled.value.proofBuffer);
+    if (c1Settled.status === 'rejected') throw c1Settled.reason;
+    if (c3Settled.status === 'rejected') throw c3Settled.reason;
+    c1ProofBuffer = c1Settled.value.proofBuffer;
+    c3ProofBuffer = c3Settled.value.proofBuffer;
 
     // Step 3: Build + send unshield_denominated_stark_v3
     onProgress?.('Building V3 unshield transaction...');
@@ -3075,6 +3121,8 @@ export async function unshieldDenominatedStarkV4(
   signer: WalletSigner,
   connection: Connection,
   onProgress?: (step: string) => void,
+  /** [CLOSE-SWEEP 2026-09-13] sweep the signer's whole balance here in the SAME transaction as the buffer close. */
+  options?: { sweepTo?: PublicKey },
   /**
    * `relayed` routes to the sibling instruction that pays `signer` a reward
    * out of the note. It is what a RELAYER passes: the caller here is not the
@@ -3166,7 +3214,7 @@ export async function unshieldDenominatedStarkV4(
     if (c7ProofBuffer) {
       try {
         onProgress?.('Closing proof buffer (rent recovery)...');
-        await closeStarkProofBuffer(c7ProofBuffer, signer, connection);
+        await closeStarkProofBuffer(c7ProofBuffer, signer, connection, { sweepTo: options?.sweepTo });
       } catch (closeErr: unknown) {
         console.warn(
           '[DenomPool/v4] closeStarkProofBuffer failed:',

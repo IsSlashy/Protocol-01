@@ -15,14 +15,15 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
-    "@protocol-01/stark-prover": "workspace:*",
     "@coral-xyz/anchor": "^0.32.1",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "@protocol-01/rpc-config": "workspace:*",
     "@protocol-01/specter-sdk": "workspace:*",
+    "@protocol-01/stark-prover": "workspace:*",
     "@protocol-01/zkspl-sdk": "workspace:*",
+    "@solana/kit": "8.3.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "bip39": "^3.1.0",

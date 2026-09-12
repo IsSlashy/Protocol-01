@@ -68,6 +68,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { jitterPrefund } from './prefundAmount';
+import nacl from 'tweetnacl';
 
 // ---------------------------------------------------------------------------
 // Ephemeral derivation
@@ -466,6 +467,8 @@ export async function executeShield(
 
   const eSigner: WalletSigner = {
     publicKey: ephemeral.publicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks (`txv1.ts`).
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, ephemeral.secretKey),
     signTransaction: async (t: Transaction) => {
       if (!t.recentBlockhash) {
         const { blockhash } = await connection.getLatestBlockhash('finalized');
@@ -498,6 +501,9 @@ export async function executeShield(
       eSigner,
       connection,
       onProgress,
+      // [CLOSE-SWEEP] rent and residual leave with the buffer close; the sweep
+      // in the `finally` below then finds nothing to move and is skipped.
+      { sweepTo },
     );
     return { txSig, receipt };
   } finally {

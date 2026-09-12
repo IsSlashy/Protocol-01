@@ -67,3 +67,42 @@ class InProcessStarkWorker {
 if (typeof (globalThis as unknown as { Worker?: unknown }).Worker === 'undefined') {
   (globalThis as unknown as { Worker: unknown }).Worker = InProcessStarkWorker;
 }
+
+/**
+ * [HISTORY-CACHE] Persist the pool-history cache to a JSON file across live
+ * runs when `P01_LIVE_HISTORY_CACHE` names one, so a SECOND run measures the
+ * incremental walk. Off by default: a first run must measure the cold walk.
+ */
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { setPoolHistoryStore, type PoolHistorySnapshot } from './poolHistoryCache';
+
+const historyFile = process.env.P01_LIVE_HISTORY_CACHE;
+if (historyFile) {
+  const readAll = (): Record<string, PoolHistorySnapshot> =>
+    existsSync(historyFile) ? (JSON.parse(readFileSync(historyFile, 'utf8')) as Record<string, PoolHistorySnapshot>) : {};
+  setPoolHistoryStore({
+    async load(key) {
+      return readAll()[key] ?? null;
+    },
+    async save(snapshot) {
+      const all = readAll();
+      all[snapshot.key] = snapshot;
+      writeFileSync(historyFile, JSON.stringify(all));
+    },
+    async clear(key) {
+      const all = readAll();
+      delete all[key];
+      writeFileSync(historyFile, JSON.stringify(all));
+    },
+  });
+}
+
+/**
+ * [BENCH] Prefix every console line with the seconds since the harness loaded
+ * when `P01_LIVE_TIMESTAMPS=1`, so a live log can be read as a timeline.
+ */
+if (process.env.P01_LIVE_TIMESTAMPS === '1') {
+  const t0 = Date.now();
+  const orig = console.log.bind(console);
+  console.log = (...a: unknown[]) => orig(`[+${((Date.now() - t0) / 1000).toFixed(1)}s]`, ...a);
+}

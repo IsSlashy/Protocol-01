@@ -23,19 +23,28 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Keypair, PublicKey, Transaction, type Connection } from '@solana/web3.js';
+import { Keypair, PublicKey, SystemProgram, Transaction, type Connection } from '@solana/web3.js';
+import { decompileTransactionMessage, getCompiledTransactionMessageDecoder, getTransactionDecoder, type Address, type Instruction } from '@solana/kit';
+import nacl from 'tweetnacl';
+import { TX_V1_FEATURE_GATE, V1_CHUNK_SIZE, V1_MAX_WIRE_BYTES } from './txv1';
 import { Buffer } from 'buffer';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   submitStarkProof,
   submitAndVerifyStarkProof,
+  closeStarkProofBuffer,
   splitProofIntoChunks,
   findBufferHoles,
   PROOF_DATA_OFFSET,
   MAX_CHUNK_SIZE,
   STARK_VERIFIER_PROGRAM_ID,
   CIRCUIT_SPEND,
+  CIRCUIT_MERKLE_UPDATE,
+  CIRCUIT_POOL_COMMITMENT,
+  deriveProofBufferKeypair,
+  SINGLE_TX_VERIFY_CU,
+  CHUNK_SEND_CONCURRENCY,
   type WalletSigner,
   type GenericStarkProof,
   type CompactStarkProof,
@@ -58,6 +67,10 @@ const DISC = {
   init: Buffer.from([49, 27, 28, 88, 19, 99, 133, 194]),
   write: Buffer.from([183, 3, 171, 138, 153, 138, 133, 147]),
   verify: Buffer.from([208, 216, 183, 38, 47, 69, 156, 138]),
+  initV3: Buffer.from([239, 25, 230, 31, 173, 116, 84, 51]),
+  reset: Buffer.from([54, 87, 185, 180, 122, 35, 136, 127]),
+  resize: Buffer.from([187, 39, 46, 173, 247, 90, 178, 205]),
+  close: Buffer.from([130, 150, 6, 35, 193, 34, 243, 87]),
   verifyV2: Buffer.from([149, 18, 96, 15, 144, 68, 8, 233]),
   deepAli: Buffer.from([217, 239, 203, 65, 109, 182, 70, 115]),
 };
@@ -96,6 +109,27 @@ class FakeConn {
   deepAliInputs: bigint[][] = [];
   /** Every verifier instruction this connection saw, in send order. */
   ixOrder: string[] = [];
+  /** Instruction kinds per TRANSACTION, in send order — what shares a transaction with what. */
+  txs: string[][] = [];
+  owner = STARK_VERIFIER_PROGRAM_ID;
+  /** Peak number of chunk sends in flight at once. */
+  inFlight = 0;
+  peakInFlight = 0;
+  /** [TX-V1] whether the fake cluster reports the feature gate as activated. */
+  v1Active = false;
+  /** Largest raw transaction seen, in bytes. */
+  maxRawBytes = 0;
+  /** Lamports of every system transfer seen, in order. */
+  transferAmounts: number[] = [];
+  /** What `getBalance` answers for any address. */
+  balance = 1_000_000_000;
+  /** Lamports the proof-buffer account holds (its rent). */
+  bufferLamports = 500_000_000;
+  async getBalance(_pk: PublicKey, _c?: unknown) {
+    return this.balance;
+  }
+  /** Data length of every chunk write, in order. */
+  writeLens: number[] = [];
   getAccountInfoCalls = 0;
   /** bytesWritten snapshot at each getAccountInfo call, in call order. */
   bytesWrittenAtReadback: number[] = [];
@@ -106,31 +140,65 @@ class FakeConn {
   }
 
   async getAccountInfo(_pk: PublicKey) {
+    if (_pk.equals(TX_V1_FEATURE_GATE)) {
+      return this.v1Active
+        ? { data: Buffer.from([1, 0, 0, 0, 0, 0, 0, 0, 0]), owner: PublicKey.default }
+        : null;
+    }
     this.getAccountInfoCalls++;
     this.bytesWrittenAtReadback.push(this.bytesWritten);
     if (!this.exists) return null;
-    return { data: Buffer.from(this.account) };
+    return { data: Buffer.from(this.account), owner: this.owner, lamports: this.bufferLamports };
   }
 
+  async getMinimumBalanceForRentExemption(_space: number) {
+    return 1_000_000;
+  }
   async getLatestBlockhash(_commitment?: unknown) {
     return { blockhash: FIXED_BLOCKHASH, lastValidBlockHeight: 1_000 };
   }
 
   async sendRawTransaction(raw: Buffer | Uint8Array, _opts?: unknown) {
     const sig = `sig_${++this.n}`;
-    const tx = Transaction.from(raw);
-    for (const ix of tx.instructions) {
+    this.maxRawBytes = Math.max(this.maxRawBytes, raw.length);
+    const kinds: string[] = [];
+    this.txs.push(kinds);
+    for (const ix of decodeInstructions(raw)) {
+      if (ix.programId.equals(SystemProgram.programId)) {
+        // SystemInstruction::CreateAccount is tag 0.
+        if (ix.data.readUInt32LE(0) === 0) kinds.push('createAccount');
+        if (ix.data.readUInt32LE(0) === 2) {
+          kinds.push('transfer');
+          this.transferAmounts.push(Number(ix.data.readBigUInt64LE(4)));
+        }
+        continue;
+      }
       if (!ix.programId.equals(STARK_VERIFIER_PROGRAM_ID)) continue;
       const d = ix.data;
       const disc = d.subarray(0, 8);
-      if (disc.equals(DISC.init)) {
+      if (disc.equals(DISC.init) || disc.equals(DISC.initV3) || disc.equals(DISC.reset)) {
+        const kind = disc.equals(DISC.init) ? 'init' : disc.equals(DISC.initV3) ? 'initV3' : 'reset';
         this.exists = true;
-        this.ixOrder.push('init');
+        this.ixOrder.push(kind);
+        kinds.push(kind);
+        // The header as the program writes it: authority (keys[1]), circuit id,
+        // both flags cleared.
+        this.account.set(ix.keys[1].pubkey.toBytes(), 8);
+        this.account[40] = d.readUInt8(12);
+        this.account[49] = 0;
+        this.account[82] = 0;
         this.confirmedSigs.add(sig);
       } else if (disc.equals(DISC.write)) {
         this.ixOrder.push('write');
+        kinds.push('write');
+        this.inFlight += 1;
+        this.peakInFlight = Math.max(this.peakInFlight, this.inFlight);
+        // Sends resolve on a later tick, so concurrent senders overlap here.
+        await new Promise((r) => setTimeout(r, 0));
+        this.inFlight -= 1;
         const offset = d.readUInt32LE(8);
         const len = d.readUInt32LE(12);
+        this.writeLens.push(len);
         this.writesByOffset.set(offset, (this.writesByOffset.get(offset) ?? 0) + 1);
         const rule = this.drops.get(offset);
         if (rule && rule.times > 0) {
@@ -145,16 +213,27 @@ class FakeConn {
         }
       } else if (disc.equals(DISC.verify) || disc.equals(DISC.verifyV2)) {
         this.ixOrder.push('verify');
+        kinds.push('verify');
+        this.account[49] = 1;
         this.verifySigs.push(sig);
         if (disc.equals(DISC.verifyV2)) this.verifyInputs.push(decodePublicInputs(d));
         this.confirmedSigs.add(sig);
       } else if (disc.equals(DISC.deepAli)) {
         this.ixOrder.push('deepAli');
+        kinds.push('deepAli');
+        this.account[82] = 1;
         this.deepAliSigs.push(sig);
         this.deepAliInputs.push(decodePublicInputs(d));
         this.confirmedSigs.add(sig);
       } else {
-        // close / resize — always land.
+        if (disc.equals(DISC.close)) {
+          kinds.push('close');
+          this.exists = false;
+        } else if (disc.equals(DISC.resize)) {
+          kinds.push('resize');
+        } else {
+          kinds.push('other');
+        }
         this.confirmedSigs.add(sig);
       }
     }
@@ -186,7 +265,7 @@ class FakeConn {
 }
 /* eslint-enable @typescript-eslint/no-unused-vars */
 
-function makeSigner(): WalletSigner {
+function makeSigner(opts: { signBytes?: boolean } = {}): WalletSigner {
   const kp = Keypair.generate();
   return {
     publicKey: kp.publicKey,
@@ -194,7 +273,26 @@ function makeSigner(): WalletSigner {
       tx.sign(kp);
       return tx;
     },
+    ...(opts.signBytes === false
+      ? {}
+      : { signBytes: async (m: Uint8Array) => nacl.sign.detached(m, kp.secretKey) }),
   };
+}
+
+/** Instructions of a legacy OR a v1 wire transaction, in the shape the fake reads. */
+function decodeInstructions(raw: Buffer | Uint8Array): { programId: PublicKey; data: Buffer; keys: { pubkey: PublicKey }[] }[] {
+  try {
+    return Transaction.from(raw).instructions.map((ix) => ({ programId: ix.programId, data: Buffer.from(ix.data), keys: ix.keys }));
+  } catch {
+    const tx = getTransactionDecoder().decode(raw);
+    const msg = decompileTransactionMessage(getCompiledTransactionMessageDecoder().decode(tx.messageBytes));
+    const ixs = msg.instructions as readonly Instruction[];
+    return ixs.map((ix: Instruction) => ({
+      programId: new PublicKey(String(ix.programAddress)),
+      data: Buffer.from(ix.data ?? new Uint8Array()),
+      keys: (ix.accounts ?? []).map((a: { address: Address }) => ({ pubkey: new PublicKey(String(a.address)) })),
+    }));
+  }
 }
 
 /**
@@ -555,7 +653,11 @@ describe('🚨 DEEP-ALI phase 2 is sent for circuit 7', () => {
       ),
     );
     expect(result.txSignature).toBe(conn.verifySigs[0]);
-    expect(conn.deepAliSigs[0]).not.toBe(result.txSignature);
+    // [L2-CLIENT 2026-09-12] For C7 the two phases share ONE transaction (the
+    // measured sum fits, `SINGLE_TX_VERIFY_CU`), so the returned signature is
+    // also the phase-2 signature — and still says nothing about whether the
+    // phase-2 INSTRUCTION was in it.
+    expect(conn.deepAliSigs[0]).toBe(result.txSignature);
   });
 
   it('sends the phase-2 transaction, which is where ALL of C7 binding lives', async () => {
@@ -578,24 +680,43 @@ describe('🚨 DEEP-ALI phase 2 is sent for circuit 7', () => {
     ).toHaveLength(1);
   });
 
-  it('sends it AFTER phase 1 and in its own transaction, which is the only reason it is split', async () => {
+  it('sends it AFTER phase 1, in the SAME transaction for C7 (measured 1,080,683 CU) and in its own for C1 (1,429,650)', async () => {
     // Ordering is a program requirement, not a preference: phase 2 opens with
-    // `require!(buffer.verified)`. And they cannot be merged — the two together
-    // exceed the 1.4M CU per-instruction cap, which is the whole reason a second
-    // transaction exists.
-    const conn = new FakeConn(PROOF_SIZE);
+    // `require!(buffer.verified)`. [L2-CLIENT 2026-09-12] Whether they share a
+    // transaction is a MEASUREMENT: C7's two phases sum to 1,080,683 CU in
+    // litesvm, under the 1,400,000 a transaction may request, so they ride
+    // together; C1's sum to 1,429,650 and stay apart. `SINGLE_TX_VERIFY_CU`
+    // is the table, and this test reads it rather than hard-coding either.
+    expect(SINGLE_TX_VERIFY_CU[CIRCUIT_SPEND]).toBeLessThan(1_400_000);
+    expect(SINGLE_TX_VERIFY_CU[CIRCUIT_POOL_COMMITMENT]).toBeUndefined();
+
+    const c7 = new FakeConn(PROOF_SIZE);
     await drive(
       submitAndVerifyStarkProof(
         makeGenericProof(CIRCUIT_SPEND, C7_PUBLIC_INPUTS),
         makeSigner(),
-        conn.asConnection(),
+        c7.asConnection(),
       ),
     );
-    expect(conn.ixOrder.filter((k) => k === 'verify' || k === 'deepAli')).toEqual([
+    expect(c7.ixOrder.filter((k) => k === 'verify' || k === 'deepAli')).toEqual([
       'verify',
       'deepAli',
     ]);
-    expect(conn.deepAliSigs[0]).not.toBe(conn.verifySigs[0]);
+    const c7VerifyTxs = c7.txs.filter((k) => k.includes('verify') || k.includes('deepAli'));
+    expect(c7VerifyTxs).toEqual([['verify', 'deepAli']]);
+    expect(c7.deepAliSigs[0]).toBe(c7.verifySigs[0]);
+
+    const c1 = new FakeConn(PROOF_SIZE);
+    await drive(
+      submitAndVerifyStarkProof(
+        makeGenericProof(CIRCUIT_POOL_COMMITMENT, [1n, 2n, 3n]),
+        makeSigner(),
+        c1.asConnection(),
+      ),
+    );
+    const c1VerifyTxs = c1.txs.filter((k) => k.includes('verify') || k.includes('deepAli'));
+    expect(c1VerifyTxs).toEqual([['verify'], ['deepAli']]);
+    expect(c1.deepAliSigs[0]).not.toBe(c1.verifySigs[0]);
   });
 
   it('carries the SAME public inputs to both phases, or the program refuses phase 2', async () => {
@@ -613,6 +734,195 @@ describe('🚨 DEEP-ALI phase 2 is sent for circuit 7', () => {
     );
     expect(conn.verifyInputs[0]).toEqual(C7_PUBLIC_INPUTS);
     expect(conn.deepAliInputs[0]).toEqual(C7_PUBLIC_INPUTS);
+  });
+});
+
+describe('[L2-CLIENT 2026-09-12] pre-sized buffers, one transaction instead of nine', () => {
+  // 30,083 bytes of account: the PDA path needed init + two resizes here, the
+  // C7 proof (79,405 B) needed init + seven.
+  const BIG = 30_000;
+  const BIG_BYTES = Uint8Array.from({ length: BIG }, (_, i) => (i * 7) % 253);
+  const bigProof = (circuitId = CIRCUIT_MERKLE_UPDATE): GenericStarkProof => ({
+    proofBytes: BIG_BYTES,
+    circuitId,
+    publicInputs: [5n, 6n],
+    proofSize: BIG,
+  });
+
+  it('allocates the buffer with createAccount + init_proof_buffer_v3 in ONE transaction and never resizes', async () => {
+    const conn = new FakeConn(BIG);
+    await drive(submitAndVerifyStarkProof(bigProof(), makeSigner(), conn.asConnection()));
+    expect(conn.txs[0]).toEqual(['createAccount', 'initV3']);
+    expect(conn.ixOrder).not.toContain('init');
+    expect(conn.txs.flat()).not.toContain('resize');
+    // The whole proof landed in the buffer the one transaction allocated.
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('the buffer address is a pure function of (authority, circuit id, attempt), like a PDA', () => {
+    const a = Keypair.generate().publicKey;
+    const b = Keypair.generate().publicKey;
+    const k = (auth: PublicKey, cid: number, attempt = 0) =>
+      deriveProofBufferKeypair(auth, cid, attempt).publicKey.toBase58();
+    expect(k(a, 7)).toBe(k(a, 7));
+    expect(k(a, 7)).not.toBe(k(a, 6));
+    expect(k(a, 7)).not.toBe(k(b, 7));
+    expect(k(a, 7, 1)).not.toBe(k(a, 7, 0));
+  });
+
+  it('uses the derived address, so the buffer the pool instruction reads is the one that was allocated', async () => {
+    const conn = new FakeConn(BIG);
+    const signer = makeSigner();
+    const { proofBuffer } = await drive(
+      submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()),
+    );
+    expect(proofBuffer.toBase58()).toBe(
+      deriveProofBufferKeypair(signer.publicKey, CIRCUIT_MERKLE_UPDATE).publicKey.toBase58(),
+    );
+  });
+
+  it('rearms its OWN earlier buffer with reset_proof_buffer instead of allocating a second one', async () => {
+    const conn = new FakeConn(BIG);
+    const signer = makeSigner();
+    // A buffer from a previous run: exists, owned by the verifier, our authority,
+    // big enough, and already marked verified from that run.
+    conn.exists = true;
+    conn.account.set(signer.publicKey.toBytes(), 8);
+    conn.account[40] = CIRCUIT_MERKLE_UPDATE;
+    conn.account[49] = 1;
+    conn.account[82] = 1;
+    await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    expect(conn.txs[0]).toEqual(['reset']);
+    expect(conn.txs.flat()).not.toContain('createAccount');
+    expect(conn.txs.flat()).not.toContain('initV3');
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+  });
+
+  it("steps to the next derived address when the first is occupied by an account that is not ours", async () => {
+    const conn = new FakeConn(BIG);
+    const signer = makeSigner();
+    // Same shape, but somebody else's authority.
+    conn.exists = true;
+    conn.account.set(Keypair.generate().publicKey.toBytes(), 8);
+    // FakeConn answers every address with the same account, so make the
+    // occupant vanish once the client has looked at attempt 0.
+    const seen: PublicKey[] = [];
+    const orig = conn.getAccountInfo.bind(conn);
+    conn.getAccountInfo = async (pk: PublicKey) => {
+      seen.push(pk);
+      // Second look = attempt 1: nobody there. Later looks (the readback after
+      // the upload) see whatever the client wrote.
+      if (seen.length === 2) conn.exists = false;
+      return orig(pk);
+    };
+    const { proofBuffer } = await drive(
+      submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()),
+    );
+    expect(seen[0].toBase58()).toBe(
+      deriveProofBufferKeypair(signer.publicKey, CIRCUIT_MERKLE_UPDATE, 0).publicKey.toBase58(),
+    );
+    expect(proofBuffer.toBase58()).toBe(
+      deriveProofBufferKeypair(signer.publicKey, CIRCUIT_MERKLE_UPDATE, 1).publicKey.toBase58(),
+    );
+    expect(conn.txs[0]).toEqual(['createAccount', 'initV3']);
+  });
+
+  it('sends chunks CHUNK_SEND_CONCURRENCY at a time, and every chunk still lands exactly once', async () => {
+    const conn = new FakeConn(BIG);
+    await drive(submitAndVerifyStarkProof(bigProof(), makeSigner(), conn.asConnection()));
+    expect(CHUNK_SEND_CONCURRENCY).toBeGreaterThan(1);
+    expect(conn.peakInFlight).toBe(CHUNK_SEND_CONCURRENCY);
+    for (const { offset } of splitProofIntoChunks(BIG_BYTES)) {
+      expect(conn.writesByOffset.get(offset)).toBe(1);
+    }
+  });
+
+  it('merges phase 1 and phase 2 for exactly the circuits whose measured sum fits', () => {
+    for (const [cid, cu] of Object.entries(SINGLE_TX_VERIFY_CU)) {
+      expect(cu, `C${cid}`).toBeLessThan(1_400_000);
+    }
+    // C2 is 97% of the cap and C1 / C5 exceed it: none of the three may be merged.
+    expect(SINGLE_TX_VERIFY_CU[1]).toBeUndefined();
+    expect(SINGLE_TX_VERIFY_CU[2]).toBeUndefined();
+    expect(SINGLE_TX_VERIFY_CU[5]).toBeUndefined();
+  });
+});
+
+describe('[TX-V1 2026-09-13] 4,096-byte transaction-v1 proof chunks', () => {
+  const BIG = 30_000;
+  const BIG_BYTES = Uint8Array.from({ length: BIG }, (_, i) => (i * 11) % 251);
+  const bigProof = (): GenericStarkProof => ({
+    proofBytes: BIG_BYTES,
+    circuitId: CIRCUIT_MERKLE_UPDATE,
+    publicInputs: [5n, 6n],
+    proofSize: BIG,
+  });
+
+  it('sends 3,840-byte chunks in v1 transactions when the gate is active and the signer signs bytes', async () => {
+    const conn = new FakeConn(BIG);
+    conn.v1Active = true;
+    await drive(submitAndVerifyStarkProof(bigProof(), makeSigner(), conn.asConnection()));
+    const writes = conn.txs.filter((k) => k.includes('write'));
+    expect(writes).toHaveLength(Math.ceil(BIG / V1_CHUNK_SIZE)); // 8, not 30
+    expect(Math.max(...conn.writeLens)).toBe(V1_CHUNK_SIZE);
+    expect(conn.maxRawBytes).toBeLessThanOrEqual(V1_MAX_WIRE_BYTES);
+    expect(conn.maxRawBytes).toBeGreaterThan(1_232);
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('falls back to 1,000-byte legacy chunks when the feature gate is not activated', async () => {
+    const conn = new FakeConn(BIG);
+    conn.v1Active = false;
+    await drive(submitAndVerifyStarkProof(bigProof(), makeSigner(), conn.asConnection()));
+    expect(conn.txs.filter((k) => k.includes('write'))).toHaveLength(Math.ceil(BIG / 1_000));
+    expect(conn.maxRawBytes).toBeLessThanOrEqual(1_232);
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('falls back to legacy chunks for a signer that cannot sign raw bytes (a browser wallet)', async () => {
+    const conn = new FakeConn(BIG);
+    conn.v1Active = true;
+    await drive(submitAndVerifyStarkProof(bigProof(), makeSigner({ signBytes: false }), conn.asConnection()));
+    expect(conn.txs.filter((k) => k.includes('write'))).toHaveLength(Math.ceil(BIG / 1_000));
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('repairs a torn v1 chunk the signature statuses lied about (readback maps 1,000-byte holes to v1 chunks)', async () => {
+    const conn = new FakeConn(BIG);
+    conn.v1Active = true;
+    // The second v1 chunk (offset 3,840) is "confirmed" once but never written.
+    conn.drops.set(V1_CHUNK_SIZE, { times: 1, lieConfirmed: true });
+    await drive(submitAndVerifyStarkProof(bigProof(), makeSigner(), conn.asConnection()));
+    expect(conn.writesByOffset.get(V1_CHUNK_SIZE)).toBe(2);
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+    expect(conn.verifySigs).toHaveLength(1);
+  });
+});
+
+describe('[CLOSE-SWEEP 2026-09-13] the buffer close carries the rent sweep', () => {
+  it('closes the buffer and sweeps balance + rent - fee to `sweepTo` in ONE transaction', async () => {
+    const conn = new FakeConn(PROOF_SIZE);
+    conn.exists = true;
+    const signer = makeSigner();
+    const sweepTo = Keypair.generate().publicKey;
+    await drive(closeStarkProofBuffer(Keypair.generate().publicKey, signer, conn.asConnection(), { sweepTo }));
+    expect(conn.txs).toEqual([['close', 'transfer']]);
+    expect(conn.transferAmounts).toEqual([conn.balance + conn.bufferLamports - 5_000]);
+  });
+
+  it('without `sweepTo` it is the plain close, as before', async () => {
+    const conn = new FakeConn(PROOF_SIZE);
+    conn.exists = true;
+    await drive(closeStarkProofBuffer(Keypair.generate().publicKey, makeSigner(), conn.asConnection()));
+    expect(conn.txs).toEqual([['close']]);
+  });
+
+  it('never sweeps a signer to itself', async () => {
+    const conn = new FakeConn(PROOF_SIZE);
+    conn.exists = true;
+    const signer = makeSigner();
+    await drive(closeStarkProofBuffer(Keypair.generate().publicKey, signer, conn.asConnection(), { sweepTo: signer.publicKey }));
+    expect(conn.txs).toEqual([['close']]);
   });
 });
 

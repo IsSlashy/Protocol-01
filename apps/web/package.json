@@ -11,11 +11,12 @@
     "test:pool": "vitest run --config vitest.pool.config.mts"
   },
   "dependencies": {
-    "@protocol-01/stark-prover": "workspace:*",
     "@noble/hashes": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "@protocol-01/pay-core": "workspace:*",
     "@protocol-01/rpc-config": "workspace:*",
+    "@protocol-01/stark-prover": "workspace:*",
+    "@solana/kit": "8.3.0",
     "@solana/wallet-adapter-base": "^0.9.27",
     "@solana/wallet-adapter-react": "^0.15.39",
     "@solana/wallet-adapter-react-ui": "^0.9.39",

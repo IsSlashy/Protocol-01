@@ -48,6 +48,7 @@ import { noteMaturity } from '../services/maturity';
 import { useWalletStore } from './wallet';
 import { getConnection } from '../services/wallet';
 import type { WalletSigner } from '../services/stark';
+import nacl from 'tweetnacl';
 
 // ---------------------------------------------------------------------------
 // WHICH SPEND CIRCUIT A NOTE CAN USE — decided here, once, for the store and
@@ -508,6 +509,8 @@ function createWalletSigner(): { signer: WalletSigner; connection: ReturnType<ty
 
   const signer: WalletSigner = {
     publicKey: walletPublicKey,
+    // [TX-V1] raw ed25519 for 4,096-byte transaction-v1 proof chunks.
+    signBytes: async (message: Uint8Array) => nacl.sign.detached(message, keypair.secretKey),
     signTransaction: async (tx) => {
       const { blockhash } = await connection.getLatestBlockhash('confirmed');
       if (!tx.recentBlockhash) tx.recentBlockhash = blockhash;

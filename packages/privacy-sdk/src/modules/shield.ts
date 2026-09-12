@@ -697,7 +697,7 @@ export class ShieldModule {
     for (const sigInfo of signatures) {
       try {
         const txDetails = await this.connection.getTransaction(sigInfo.signature, {
-          maxSupportedTransactionVersion: 0,
+          maxSupportedTransactionVersion: 1,
         });
         if (!txDetails?.meta?.logMessages) continue;
 
@@ -1414,7 +1414,7 @@ export class ShieldModule {
   private async parseLeafIndexFromLogs(signature: string): Promise<number> {
     try {
       const txDetails = await this.connection.getTransaction(signature, {
-        maxSupportedTransactionVersion: 0,
+        maxSupportedTransactionVersion: 1,
         commitment: 'confirmed',
       });
 
