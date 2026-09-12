@@ -1134,11 +1134,14 @@ struct CuCeiling {
 /// for [B2], RE-MEASURED at the [B2-INT] integration head, and RE-MEASURED again
 /// for [ZK-BLIND 2026-08-31].
 ///
-/// Artifact: `target/cu-budget/p01_stark_verifier.so`, 782,000 B, sha256
-/// `6ad52031a7dd8d2a5fad0f6deb8fa57506a15c9ade4e643963e8445df4d8311b`, built by
-/// `solana-cargo-build-sbf 3.1.15 platform-tools v1.52`, build fp
-/// `d1b8990e7a9b6d7c`, at the commit that landed the last of the four lift
-/// columns.
+/// Artifact: `target/cu-budget/p01_stark_verifier.so`, sha256
+/// `ce2bba7e34c2bb7e5014de46f8d83adc1861a781fd9a81dc148fec13eedf1e6c`, built by
+/// `solana-cargo-build-sbf 3.1.9 platform-tools v1.52` on 2026-09-12, at the
+/// tree that masked all eight circuits ([ZK-MASK 2026-09-11]); C0, C2, C4 and
+/// C5 re-recorded, C1, C3, C6, C7 unchanged within the band.
+///
+/// The record before it: 782,000 B, sha256 `6ad52031...`, built by 3.1.15 at
+/// the commit that landed the last of the four lift columns.
 ///
 /// [ZK-BLIND 2026-08-31] THIS RECORD WAS STALE IN TWO WAYS AT ONCE AND BOTH ARE
 /// WORTH NAMING, because the block below spends four paragraphs on the rule it
@@ -1255,11 +1258,16 @@ struct CuCeiling {
 /// been the other option and it is the wrong one: it would have left every
 /// future regression up to 10% invisible.
 ///
-/// Worst absolute is C1 at 1,038,624 of 1,400,000 (74%); worst phase1+phase2 is
-/// C1 at 1,431,197. Worst phase 2 alone is C5 at 439,663. The smallest phase-1
-/// pin is C0 at 633,531. CU is still not the binding constraint on any single
-/// INSTRUCTION: the worst of the fifteen leaves 361,376 CU of headroom, and no
-/// phase is within 5% of the cap.
+/// Worst absolute is C2 at 1,048,005 of 1,400,000 (75%); worst phase1+phase2 is
+/// C1 at 1,433,601. Worst phase 2 alone is C5 at 437,960. The smallest phase-1
+/// pin is C4 at 856,703. CU is still not the binding constraint on any single
+/// INSTRUCTION: the worst of the fifteen leaves 351,995 CU of headroom, and no
+/// phase is within 5% of the cap. ([PERFECT-IOP 2026-09-13] every phase 1 grew
+/// by ~2,600-3,000 CU with the out-of-domain resampling; the 2026-09-12 rows
+/// read C2 1,045,369 / C1 1,431,197 / C4 853,785 / 354,631.) ([ZK-MASK 2026-09-12] re-derived from the
+/// masked rows; C1's two pins (1,038,624 + 392,573) did not move, so its sum is
+/// unchanged; the pre-mask sentence read C1 1,038,624 / C1 1,431,197 / C5
+/// 439,663 / C0 633,531 / 361,376.)
 ///
 /// ⛔ BUT THAT SECOND SENTENCE LOST A CLAUSE, AND THE LOSS IS A REAL
 /// PROPERTY, NOT A RE-WORDING. It used to end "still inside one instruction,
@@ -1454,7 +1462,16 @@ struct CuCeiling {
 /// separate measurement.
 ///
 const CU_CEILINGS: [CuCeiling; 8] = [
-    CuCeiling { circuit_id: 0, phase1_measured: 633531, phase1_max: 647000, phase2_measured: None,           phase2_max: None },
+    // [ZK-MASK-C0 2026-09-12] RE-RECORDED for the MASKED circuit 0 (width 5, 512 rows,
+    // 22 queries, ffps 32) whose phase 1 AND phase 2 run in ONE instruction:
+    // 633,531 -> 989,644, then 992,562 with the OOD resampling ([PERFECT-IOP]
+    // 2026-09-13), and the instruction still has ~407,000 CU of headroom under
+    // the 1.4M cap. The old figure was the 32-row legacy shape, phase 1 only.
+    // [PERFECT-IOP 2026-09-13] Every phase-1 row re-measured with the
+    // out-of-domain resampling in `verify_generic` step 1b (two exponentiations
+    // per candidate): +2,630 .. +2,994 CU on every circuit, phase 2 unchanged.
+    // cargo-build-sbf 3.1.9 / platform-tools v1.52, `cu_budget_319_resampled.log`.
+    CuCeiling { circuit_id: 0, phase1_measured: 992562, phase1_max: 1013000, phase2_measured: None,           phase2_max: None },
     // [C1-N256 2026-08-29] RE-RECORDED for n = 256, and C1 is the ONLY masked
     // circuit whose phase 1 moved materially. That is the whole difference
     // between a depth cut and a geometry change, in two numbers.
@@ -1485,7 +1502,7 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // ⛔ AND THE WIRE GREW, which no other masked circuit did: 68,881 ->
     // 80,577 bytes. C3, C6 and C7 all measured identical proof bytes before
     // and after.
-    CuCeiling { circuit_id: 1, phase1_measured: 1038624, phase1_max: 1060000, phase2_measured: Some(392573), phase2_max: Some(401000) },
+    CuCeiling { circuit_id: 1, phase1_measured: 1041028, phase1_max: 1062000, phase2_measured: Some(392573), phase2_max: Some(401000) },
     // [BIND-C2C4 2026-08-03] C2 and C4 phase-2 re-pinned UPWARD. The cause is the
     // public-input boundary fold: `verify_deep_ali_circuit_2` and `_4` now
     // reconstruct the boundary term of `Q` at `z` and fold it into the DEEP
@@ -1505,7 +1522,10 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // a step taken to make CI green. If a future change moves these again, the
     // question to answer first is what moved and why — never what number would
     // pass.
-    CuCeiling { circuit_id: 2, phase1_measured: 815771, phase1_max: 833000, phase2_measured: Some(112043), phase2_max: Some(115000) },
+    // [ZK-MASK-C2 2026-09-12] RE-RECORDED for the masked geometry (width 6, 512
+    // rows, 27 queries): phase 1 815,771 -> 1,045,369 (the trace quadrupled), phase 2
+    // 112,043 -> 312,179 (two dense 512-coefficient gates and the lift constraint).
+    CuCeiling { circuit_id: 2, phase1_measured: 1048005, phase1_max: 1069000, phase2_measured: Some(312179), phase2_max: Some(319000) },
     // [C3-D12 2026-08-29] RE-RECORDED for the depth-12 masked geometry, and the
     // two phases moved the same way C6's did an hour earlier -- but by very
     // different amounts, and that difference is the interesting part.
@@ -1530,14 +1550,19 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     // recorded, and the cause is not known without measuring. Leaving the wrong
     // explanation in place would be worse than leaving none: the next person to
     // change a periodic column would expect a phase-1 saving that is not there.
-    CuCeiling { circuit_id: 3, phase1_measured: 876520, phase1_max: 895000, phase2_measured: Some(169000), phase2_max: Some(173000) },
+    CuCeiling { circuit_id: 3, phase1_measured: 878738, phase1_max: 897000, phase2_measured: Some(169000), phase2_max: Some(173000) },
     // [BIND-C2C4 2026-08-03] see the note on C2 above — same cause, same band,
     // same recorded acceptance. C4 is the circuit that pays the most.
-    CuCeiling { circuit_id: 4, phase1_measured: 921430, phase1_max: 940000, phase2_measured: Some(207606), phase2_max: Some(212000) },
+    // [ZK-MASK-C4 2026-09-12] RE-RECORDED for the masked geometry (width 6, 512
+    // rows, 22 queries, ffps 32): phase 1 921,430 -> 853,785 (five fewer queries
+    // outweigh the longer trace), phase 2 207,606 -> 365,696 (the dense gates).
+    CuCeiling { circuit_id: 4, phase1_measured: 856703, phase1_max: 874000, phase2_measured: Some(365696), phase2_max: Some(374000) },
     // [LIVENESS 2026-08-01] phase1_measured re-recorded: C5 793_372 -> 793_355
     // (-17, the capture-edge compare) and C6 809_654 -> 809_658 (+4, the
     // active_rows bound). The CEILINGS are unchanged and neither was approached.
-    CuCeiling { circuit_id: 5, phase1_measured: 968025, phase1_max: 988000, phase2_measured: Some(439663), phase2_max: Some(449000) },
+    // [ZK-MASK-C5 2026-09-12] RE-RECORDED with the lift and randomizer columns
+    // (width 7 -> 9): phase 1 968,025 -> 978,745, phase 2 439,663 -> 437,960.
+    CuCeiling { circuit_id: 5, phase1_measured: 981739, phase1_max: 1002000, phase2_measured: Some(437960), phase2_max: Some(447000) },
     // [C6-D12 2026-08-29] RE-RECORDED for the depth-12 masked geometry, and the
     // two phases moved in OPPOSITE directions. That is the whole story of this
     // change in two numbers, so neither is worth flattening into "C6 got more
@@ -1570,13 +1595,13 @@ const CU_CEILINGS: [CuCeiling; 8] = [
     //
     // Against the 1,400,000 cap the deposit still fits in one instruction:
     // 888,250 + 175,269 = 1,063,519.
-    CuCeiling { circuit_id: 6, phase1_measured: 899341, phase1_max: 918000, phase2_measured: Some(175732), phase2_max: Some(180000) },
+    CuCeiling { circuit_id: 6, phase1_measured: 902314, phase1_max: 921000, phase2_measured: Some(175732), phase2_max: Some(180000) },
     // [C7 2026-08-25] C7 pinned for the first time. Until today the only C7
     // figure anywhere in this repo came from `tests/c7_probe/` -- a throwaway
     // program reproducing the arithmetic SHAPE of a phase-2 check that did not
     // exist yet, on a geometry C7 no longer has. This row is the verifier
     // itself, measured the same way as the seven above it.
-    CuCeiling { circuit_id: 7, phase1_measured: 888653, phase1_max: 907000, phase2_measured: Some(193093), phase2_max: Some(197000) },
+    CuCeiling { circuit_id: 7, phase1_measured: 890572, phase1_max: 909000, phase2_measured: Some(193093), phase2_max: Some(197000) },
 ];
 
 /// The band every `*_max` is computed with, as a percentage numerator over 100.
@@ -1600,7 +1625,9 @@ fn cu_band(measured: u64) -> u64 {
 /// It is the string in the provenance paragraph above, held as a constant so the
 /// harness can compare it to the compiler it is actually running rather than
 /// leaving a reader to notice.
-const CU_MEASURED_WITH: &str = "solana-cargo-build-sbf 3.1.15 platform-tools v1.52";
+// [ZK-MASK 2026-09-12] 3.1.15 -> 3.1.9: the machine that re-measured every row after
+// the uniform masks builds with 3.1.9, and the rows above are its numbers.
+const CU_MEASURED_WITH: &str = "solana-cargo-build-sbf 3.1.9 platform-tools v1.52";
 
 /// The toolchain gap between `CU_CEILINGS` and this run, or `None` when there is
 /// none.
@@ -1660,7 +1687,7 @@ fn toolchain_caveat_fires_only_when_the_compiler_differs() {
     };
     let note = toolchain_caveat(&other).expect("a different platform-tools must raise a caveat");
     assert!(note.contains("2.2.14"), "the caveat must name the compiler in use: {note}");
-    assert!(note.contains("3.1.15"), "the caveat must name the compiler measured: {note}");
+    assert!(note.contains("3.1.9"), "the caveat must name the compiler measured: {note}");
 
     let supplied = SoUnderTest::Supplied { path: PathBuf::from("/dev/null") };
     let note = toolchain_caveat(&supplied)
@@ -1920,7 +1947,7 @@ const THIS_FILE: &str = include_str!("cu_budget.rs");
 /// with the number quoted back at you. Entries are checked in BOTH directions:
 /// an entry that no longer appears in the prose is itself a failure, so this
 /// cannot rot into a list of numbers nobody wrote.
-const PROSE_FIGURES: [(u64, &str); 78] = [
+const PROSE_FIGURES: [(u64, &str); 100] = [
     // [ZK-BLIND 2026-08-31] The fifteen pins were re-measured for the blinding
     // wave, so every figure the PREVIOUS pins produced is now history. Each one
     // below is still quoted in prose AS the superseded value -- deleting them
@@ -1974,6 +2001,28 @@ const PROSE_FIGURES: [(u64, &str); 78] = [
     // directions. The AFTER values are the constants in CU_CEILINGS; these four
     // are the BEFORE values and the two deltas, which no constant produces.
     (892_107, "the PRE-mask C6 phase-1 pin, quoted beside the 888,250 that replaced it"),
+    (633_531, "the legacy 32-row C0 phase-1 pin, quoted beside the masked 989,644 that replaced it"),
+    (351_995, "1,400,000 minus the C2 phase-1 pin 1,048,005: the headroom sentence, derived by hand"),
+    (2_600, "the low end of the OOD-resampling cost per phase 1, rounded, [PERFECT-IOP 2026-09-13]"),
+    (3_000, "the high end of the OOD-resampling cost per phase 1, rounded"),
+    (2_630, "the smallest measured OOD-resampling delta (C1: 1,041,028 - 1,038,398)"),
+    (2_994, "the largest measured OOD-resampling delta (C5: 981,739 - 978,745)"),
+    (1_038_624, "the C1 phase-1 pin before the OOD resampling, quoted in the prose that explains its sum"),
+    (1_407_688, "a pre-mask C1+C3 phase-1 sum quoted in the C7 rationale, historical"),
+    (888_653, "the C7 phase-1 pin before the OOD resampling (now 890,572), quoted in the C7 rationale"),
+    (989_644, "the 2026-09-12 masked C0 phase-1 pin, before the OOD resampling (now 992,562)"),
+    (1_045_369, "the 2026-09-12 C2 phase-1 pin, before the OOD resampling (now 1,048,005)"),
+    (853_785, "the 2026-09-12 C4 phase-1 pin, before the OOD resampling (now 856,703)"),
+    (978_745, "the 2026-09-12 C5 phase-1 pin, before the OOD resampling (now 981,739)"),
+    (1_431_197, "the 2026-09-12 worst phase1+phase2 sentence, C1, before the OOD resampling"),
+    (354_631, "the 2026-09-12 headroom sentence, before the OOD resampling"),
+    (815_771, "the pre-mask C2 phase-1 pin, quoted beside the masked 1,045,369 that replaced it"),
+    (112_043, "the pre-mask C2 phase-2 pin, quoted beside the masked 312,179 that replaced it"),
+    (921_430, "the pre-mask C4 phase-1 pin, quoted beside the masked 853,785 that replaced it"),
+    (207_606, "the pre-mask C4 phase-2 pin, quoted beside the masked 365,696 that replaced it"),
+    (968_025, "the C5 phase-1 pin before the lift and randomizer columns, quoted beside 978,745"),
+    (439_663, "the C5 phase-2 pin before the lift and randomizer columns, quoted beside 437,960"),
+    (407_000, "the headroom the single-instruction masked C0 keeps under the 1,400,000 cap, rounded"),
     (3_857, "CU the depth cut SAVED in C6 phase 1 — the retired Lagrange correction"),
     (122_739, "the PRE-mask C6 phase-2 pin, quoted beside the 175,269 that replaced it"),
     (52_530, "CU the mask COST in C6 phase 2 — two dense 512-coeff gate columns"),
@@ -2341,7 +2390,18 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
 // inside the shared validator instead of trusting its callers — so the entry is
 // gone and the target runs in CI. That is the intended lifetime of an entry
 // here: written with the reason, deleted when the reason is.
-const CI_UNRUN_TEST_TARGETS: [(&str, &str); 3] = [
+const CI_UNRUN_TEST_TARGETS: [(&str, &str); 5] = [
+    (
+        "wasm_blob_parity",
+        "[RESHIP 2026-09-12] its one test is `#[ignore]` and reads proof files that only a wasm          prover blob can write (P01_WASM_PROOFS_DIR, produced by a Node driver through the          blob's own wasm-bindgen glue). It is the pre-ship check that a STAGED blob's proofs          verify under THIS verifier on all eight circuits; CI has no staged blob to check, and          the shipped one is covered by deployed-verifier-check.mjs and wireFormat.test.ts",
+    ),
+    (
+        "bench_all_circuits",
+        "[BENCH 2026-09-11] every test in it is `#[ignore]`: it is the prove / host-verify \
+         timing harness for the eight circuits, run by hand with `--ignored --nocapture` and \
+         pasted into the benchmark document with the machine and the date. A timing is not a \
+         gate, and CI runners are the one machine whose timings nobody should quote",
+    ),
     (
         "l2_presized_buffers",
         "[L2 2026-09-06] same reason as cu_budget, same artifact: it drives `init_proof_buffer_v3` \
@@ -4071,12 +4131,12 @@ fn all_cases() -> Vec<ProofCase> {
 
     // --- C0 subscriber_ownership --------------------------------------------
     // Args from `verify.rs:4890` (`c0_tampered_ood_current_rejected` uses 42).
-    let (p0, ms) = timed(|| p01_stark::compact::generate_compact_proof(42));
+    let (p0, ms) = timed(|| p01_stark::compact::generate_subscriber_ownership_proof(42, &p01_stark::compact::c0_deterministic_probe_mask()));
     cases.push(ProofCase {
         circuit_id: 0,
         label: "C0 subscriber_ownership",
-        public_inputs: vec![p0.commitment],
-        shape: Shape::LegacySinglePhase { commitment: p0.commitment },
+        public_inputs: vec![p0.public_inputs[0]],
+        shape: Shape::LegacySinglePhase { commitment: p0.public_inputs[0] },
         proof_bytes: p0.proof_bytes,
         prove_ms: ms,
     });
@@ -4089,7 +4149,7 @@ fn all_cases() -> Vec<ProofCase> {
     // --- C2 balance_proof ---------------------------------------------------
     // Args from `verify.rs:4165`
     // (`balance_proof_verify_generic_accepts_honest_proof`).
-    let (p2, ms) = timed(|| p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999));
+    let (p2, ms) = timed(|| p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask()));
     cases.push(generic_case(2, "C2 balance_proof", p2, ms));
 
     // --- C3 merkle_path -----------------------------------------------------
@@ -4107,8 +4167,7 @@ fn all_cases() -> Vec<ProofCase> {
     // Args from `verify.rs::c4_sample_proof` (verify.rs:4455).
     let (p4, ms) = timed(|| {
         p01_stark::compact::generate_confidential_balance_compact_proof(
-            42, 1000, 111, 800, 222, 200, 333, 999,
-        )
+            42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),)
     });
     cases.push(generic_case(4, "C4 confidential_balance", p4, ms));
 

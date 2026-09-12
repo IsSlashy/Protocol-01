@@ -68,7 +68,32 @@ use crate::poseidon;
 // Constants
 // ============================================================================
 
-pub const TRACE_WIDTH: usize = 7;
+/// Columns the AIR constrains: Poseidon state (0-2), owner carry (3),
+/// owner_mint carry (4), out_rm carry (5), signed amount accumulator (6), and
+/// the ZK lift column (7). The randomizer (8) is committed but never read.
+pub const CONSTRAINED_TRACE_WIDTH: usize = 8;
+
+/// [ZK-LIFT-C5 2026-09-11] The column that carries the blinding region into
+/// the quotient claims the row mask cannot reach. Twin of
+/// `air::spend::ZK_LIFT_COL`; the argument lives there. Gate:
+/// `chain_0_1(x) * nba(x)`, one-hot at row 31 where `nba` is 0, so it vanishes
+/// on the whole trace domain and all 1024 entries of the column are free.
+/// Degree 7 with two period-1024 factors, the shape the Poseidon rounds carry,
+/// so `quotient_segments` and the FRI rate do not move.
+///
+/// Until this date C5 had a row mask and NOTHING ELSE: `full_wire_ledger`
+/// printed its FRI/DEEP channel as `200 pub / 0 rnd SHORT`, and the lift
+/// column was the missing piece on the quotient side. Both land here.
+pub const ZK_LIFT_COL: usize = CONSTRAINED_TRACE_WIDTH - 1;
+
+/// [ZK-RANDOMIZER-C5 2026-09-11] Uniform on ALL rows, read by no constraint.
+/// 1024 coefficients against the ~250 functionals a 22-query wire publishes on
+/// the FRI/DEEP channel (MEASURED, `stark/tests/full_wire_ledger.rs`).
+pub const RANDOMIZER_COL: usize = CONSTRAINED_TRACE_WIDTH;
+
+/// 7 -> 9 on 2026-09-11. ⛔ HARD WIRE BREAK: `from_bytes` sizes every query
+/// block from this number.
+pub const TRACE_WIDTH: usize = CONSTRAINED_TRACE_WIDTH + 1;
 
 /// CHANGED 512 -> 1024 on 2026-08-29. C5 is the SECOND circuit that could not
 /// be fixed by a depth cut, and it could not for a different reason from C1's.
@@ -122,15 +147,28 @@ pub const FIRST_FREE_ROW: usize = FIRST_FREE_CYCLE * HASH_CYCLE_LEN; // 448
 /// ```
 pub const MASK_ROWS: usize = TRACE_LENGTH - FIRST_FREE_ROW; // 576
 
-/// Mask elements `build_transfer_trace` requires.
-pub const MASK_LEN: usize = MASK_ROWS * TRACE_WIDTH; // 4032
+/// Rows of the lift column outside the row mask, `0..FIRST_FREE_ROW`. All
+/// free: the gate of constraint [28] vanishes on the whole trace domain.
+pub const LIFT_EXTRA_ROWS: usize = FIRST_FREE_ROW; // 448
+
+/// Mask elements `build_transfer_trace` requires, in this order:
+///
+/// ```text
+///   [ 0 .. MASK_ROWS * CONSTRAINED_TRACE_WIDTH )   the row mask, row-major
+///   [ that .. that + TRACE_LENGTH )                the randomizer column
+///   [ that .. that + LIFT_EXTRA_ROWS )             the lift column, rows 0..448
+/// ```
+///
+/// 576 * 8 + 1024 + 448 = 6080 (was 4032 = 576 * 7 before the two columns).
+pub const MASK_LEN: usize = MASK_ROWS * CONSTRAINED_TRACE_WIDTH + TRACE_LENGTH + LIFT_EXTRA_ROWS;
 
 /// Number of transition constraints in the transfer AIR (circuit 5).
 ///
 /// 23 hashing/routing constraints (Poseidon rounds, chain edges, carries) plus
 /// 5 value-conservation constraints (4 signed amount captures into col 6 +
 /// 1 accumulator continuity) = 28.
-pub const TRANSFER_NUM_CONSTRAINTS: usize = 28;
+/// 28 -> 29 on 2026-09-11: [28] is the ZK degree lift. ORDER IS FROZEN.
+pub const TRANSFER_NUM_CONSTRAINTS: usize = 29;
 
 /// Number of periodic columns: rc0, rc1, rc2, round_flag, is_boundary,
 /// 7 direct chain flags, 4 carry-capture flags, 6 carry→right-input flags,
@@ -251,6 +289,8 @@ impl Air for TransferAir {
             TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
             // [27] acc continuity (every row except the 4 capture rows)
             TransitionConstraintDegree::with_cycles(1, vec![TRACE_LENGTH]),
+            // [28] ZK degree lift, col `ZK_LIFT_COL`: base 7, two period-n gates
+            TransitionConstraintDegree::with_cycles(7, vec![TRACE_LENGTH, TRACE_LENGTH]),
         ];
 
         // Assertions:
@@ -631,6 +671,13 @@ pub fn evaluate_transfer_transition<E: FieldElement<BaseField = BaseElement>>(
     result[25] = sub_out1 * (next[6] - current[6] - current[0]);
     result[26] = sub_out2 * (next[6] - current[6] - current[0]);
     result[27] = active * acc_continuity * (next[6] - current[6]);
+
+    // ── [28] ZK degree lift, col `ZK_LIFT_COL` (= 7). See the constant's doc.
+    //    Zero on the trace domain: `chain_0_1` is one-hot at row 31, where `nba`
+    //    is 0. Degree 1 in `v`, degree 7 overall, so the lift reaches every
+    //    quotient block. 🚨 THE BASE IS RAW `current[0]`, never `s0`.
+    let lift = current[0] * current[0] * current[0];
+    result[28] = chain_0_1 * nba * current[ZK_LIFT_COL] * lift * lift;
 }
 
 // ============================================================================
@@ -673,7 +720,7 @@ pub fn build_transfer_trace(
     assert_eq!(
         mask.len(),
         MASK_LEN,
-        "C5 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x {TRACE_WIDTH} columns), got {}",
+        "C5 needs {MASK_LEN} blinding elements ({MASK_ROWS} rows x {CONSTRAINED_TRACE_WIDTH} constrained columns, then {TRACE_LENGTH} for the randomizer column, then {LIFT_EXTRA_ROWS} for the lift column's rows 0..{FIRST_FREE_ROW}), got {}",
         mask.len(),
     );
     let mut trace = vec![vec![BaseElement::ZERO; TRACE_LENGTH]; TRACE_WIDTH];
@@ -828,10 +875,24 @@ pub fn build_transfer_trace(
     // unknown, so the count runs against the wire instead of with it: 4,032
     // unknowns against `R = 4*22 + 2 = 90` published openings per column.
     for row in FIRST_FREE_ROW..TRACE_LENGTH {
-        let base = (row - FIRST_FREE_ROW) * TRACE_WIDTH;
-        for col in 0..TRACE_WIDTH {
+        let base = (row - FIRST_FREE_ROW) * CONSTRAINED_TRACE_WIDTH;
+        for col in 0..CONSTRAINED_TRACE_WIDTH {
             trace[col][row] = mask[base + col];
         }
+    }
+
+    // [ZK-RANDOMIZER-C5 2026-09-11] Every row — what it masks is `D`, built
+    // from the whole LDE of every column.
+    let randomizer_base = MASK_ROWS * CONSTRAINED_TRACE_WIDTH;
+    for row in 0..TRACE_LENGTH {
+        trace[RANDOMIZER_COL][row] = mask[randomizer_base + row];
+    }
+
+    // [ZK-LIFT-C5] The lift column's rows inside the witness region; rows
+    // `FIRST_FREE_ROW..` were filled by the row mask above.
+    let lift_base = randomizer_base + TRACE_LENGTH;
+    for row in 0..FIRST_FREE_ROW {
+        trace[ZK_LIFT_COL][row] = mask[lift_base + row];
     }
 
     (trace, nullifier_1, nullifier_2, in_commitment_1, in_commitment_2,

@@ -82,8 +82,8 @@
     "",
     "Until then both sides were classified by scanning for panic and msg! literals that B1 introduced.",
     "Text is editable, and it was measured editable in four consecutive rounds. The last of them:",
-    "rewriting one byte inside each of the three B1 markers in the blob — four bytes of panic text,",
-    "identical 211,370-byte length, WebAssembly.validate still true, all seven controls still present —",
+    "rewriting one byte inside each of the three B1 markers in the blob \u2014 four bytes of panic text,",
+    "identical 211,370-byte length, WebAssembly.validate still true, all seven controls still present \u2014",
     "then `stark-wasm-twins.mjs --write` and this record pointed at the new hash, printed 'PASS - the",
     "shipped prover matches the devnet deployment, and the chain was asked and agreed' at exit 0 while",
     "devnet was still pre-B1 and the blob was still B1 in every way that reaches the chain.",
@@ -97,9 +97,9 @@
     "What replaced it: scripts/prover-behaviour.mjs generates seven proofs with the checked-in blob, one",
     "per shipping circuit, on seven fixed witnesses, and sha256s each. The generation is whichever column",
     "of its fixture table all seven digests match; a mixture, or a digest in neither column, refuses to",
-    "classify and fails. B1 is length-preserving on all seven circuits — MEASURED, the B1 blob and the",
+    "classify and fails. B1 is length-preserving on all seven circuits \u2014 MEASURED, the B1 blob and the",
     "last pre-B1 blob 5fe610c9 both emit 45,001 / 65,801 / 66,681 / 75,637 / 78,377 / 76,357 / 78,517",
-    "bytes — so length was never going to separate them and the content digests are the discriminator.",
+    "bytes \u2014 so length was never going to separate them and the content digests are the discriminator.",
     "MEASURED 2026-07-31 against the fixed gate: the identical doctored blob still emits all seven B1",
     "digests, so it classifies b1, and the run exits 1 with 'the blob PROVES one generation and its panic",
     "strings CLAIM another' plus the FriFoldCheckFailed interlock underneath. Renaming every literal in",
@@ -111,7 +111,7 @@
     "longer carry the same digests, so moving the reference is not a one-file edit either.",
     "",
     "What this does NOT prove: that the blob is B1 on every input. Seven witnesses is a sample. A blob",
-    "rigged to recognise those seven and replay pre-B1 proof bytes for them would read as pre-B1 — that",
+    "rigged to recognise those seven and replay pre-B1 proof bytes for them would read as pre-B1 \u2014 that",
     "is a second prover or ~486 KB of canned proofs inside an artifact whose byte count is recorded here",
     "and whose twins are hashed, not a four-byte edit, but it is not impossible.",
     "",
@@ -122,7 +122,7 @@
     "",
     "One more thing the gate did not check until then: it resolved the program id from Anchor.toml, and",
     "no client reads Anchor.toml. Every client resolves the verifier through PROGRAM_IDS in",
-    "packages/privacy-sdk/src/constants.ts, generated from Anchor.toml by scripts/sync-program-ids.ts —",
+    "packages/privacy-sdk/src/constants.ts, generated from Anchor.toml by scripts/sync-program-ids.ts \u2014",
     "and `pnpm check-program-ids`, which would catch those drifting apart, is NOT run by",
     ".github/workflows/ci.yml (MEASURED 2026-07-31). A second, B1 copy of the verifier deployed under a",
     "different id, with Anchor.toml pointed at it, would have satisfied the entire on-chain leg while",
@@ -207,16 +207,16 @@
   "deployed": {
     "_note": "The address, slot, size and hash fields here were MEASURED off the chain on the date below and are regenerated with --measure after a deploy; do not hand-edit them. Two exceptions --measure does not produce: the `_`-prefixed blocks are prose for a human, and `accepts_client_blob_sha256` is a human attestation no script can check. `cluster` IS in the --measure output, but it is only an echo of the --cluster the caller passed; see below for why it is checked rather than obeyed.",
     "_cluster_is_checked_not_obeyed": "cluster does NOT select anything. The caller passes --cluster, that label selects an RPC endpoint from the CLUSTERS table in deployed-verifier-check.mjs and a program id from Anchor.toml, and the two fields below are then checked against the caller's choice: a record that names a different cluster, or a different program id than Anchor.toml carries for it, fails the run. Two rounds of the same defect are why. First the endpoint lived here as rpc_url, and a record that names its own endpoint can name one that does not answer, which combined with an unreachable endpoint being a skip let a three-field edit pass --verify-onchain with exit code 0 and the chain never contacted. Deleting rpc_url was not enough: the LABEL was still this file's to write and localnet was one of the labels, so setting cluster to localnet, program_id to the id Anchor.toml [programs.localnet] genuinely carries, generation to b1 and accepts_client_blob_sha256 to the blob's own hash, then answering getAccountInfo on 127.0.0.1:8899 with 149 fabricated bytes, printed a full PASS at exit code 0 (MEASURED 2026-07-30), and killing the listener made the same record exit 1, so the pass came from the listener alone. The forgery was not even necessary, since a real solana-test-validator answers all of it honestly, but that variant was not run and is not claimed as measured. The gate now refuses localnet outright for any run that could be a shipping verdict.",
-    "_which_of_the_two_live_deployments_this_is": "It changed on 2026-08-02, and NOT by a deploy: this record used to describe EXmAQqm... (35Xxrn..., slot 456289287, elf c359ab53..., 780,249 B), which is the address Anchor.toml [programs.devnet] carried until that date. Anchor.toml now carries DGY37k3..., because that is what declare_id! in programs/p01_stark_verifier/src/lib.rs names and an Anchor program rejects every instruction with DeclaredProgramIdMismatch at any other address — so EXmAQqm... is an address a .so built from this tree can never execute at, and a record describing it was a record about a program this source cannot become. MEASURED 2026-08-02, read-only: `solana program dump` of both, then a byte search for each 32-byte pubkey, shows the 797,824 B image at EXmAQqm... embeds EXmAQqm... and not DGY37k3..., and the 840,168 B image at DGY37k3... the reverse. Commit 04885979 ('P6.5 E2E smoke green -- revert verifier declare_id to DGY37k') is the source moving off EXmAQqm.... NOTHING WAS DEPLOYED to produce this block; it is the same chain read pointed at the id the tree actually targets, and the verdict is unchanged because BOTH deployments are pre-B1.",
+    "_which_of_the_two_live_deployments_this_is": "It changed on 2026-08-02, and NOT by a deploy: this record used to describe EXmAQqm... (35Xxrn..., slot 456289287, elf c359ab53..., 780,249 B), which is the address Anchor.toml [programs.devnet] carried until that date. Anchor.toml now carries DGY37k3..., because that is what declare_id! in programs/p01_stark_verifier/src/lib.rs names and an Anchor program rejects every instruction with DeclaredProgramIdMismatch at any other address \u2014 so EXmAQqm... is an address a .so built from this tree can never execute at, and a record describing it was a record about a program this source cannot become. MEASURED 2026-08-02, read-only: `solana program dump` of both, then a byte search for each 32-byte pubkey, shows the 797,824 B image at EXmAQqm... embeds EXmAQqm... and not DGY37k3..., and the 840,168 B image at DGY37k3... the reverse. Commit 04885979 ('P6.5 E2E smoke green -- revert verifier declare_id to DGY37k') is the source moving off EXmAQqm.... NOTHING WAS DEPLOYED to produce this block; it is the same chain read pointed at the id the tree actually targets, and the verdict is unchanged because BOTH deployments are pre-B1.",
     "cluster": "devnet",
     "program_id": "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs",
     "programdata_address": "Dmndh5d1SMr54vjGMHVcvsfC1Dy3LXHfAhn58RM1eWJi",
     "loader": "BPFLoaderUpgradeab1e11111111111111111111111",
     "upgrade_authority": "7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU",
-    "last_deployed_slot": 494130741,
-    "elf_sha256": "245176e89bdbac3edbf26b95a1a38f0748a11c98f1cf16842380108492b6a44f",
-    "elf_bytes": 798881,
-    "elf_sha256_with_loader_padding": "843c6155ec75f161de62cc8376177a7b6a491062dd10c6317d96c27d14fdbc47",
+    "last_deployed_slot": 497235406,
+    "elf_sha256": "6cf414a60a0828b0909efb49e029ba657002c91ec3eb7741c491260eae2a0beb",
+    "elf_bytes": 801457,
+    "elf_sha256_with_loader_padding": "562c0abf28a3aa47f6f0b6a1cb8c10c2e441cc0806376fe7b5b0e6d6c579fcc7",
     "elf_bytes_with_loader_padding": 840168,
     "programdata_account_space": 840213,
     "proof_format_generation": "b2",
@@ -225,23 +225,31 @@
       "method": "The deployed ELF was dumped with `solana program dump` (D:/Protocol-01-HQ/Archive/deploy-2026-09-06/p01_stark_verifier.after.so) and compared BYTE FOR BYTE against target/deploy/p01_stark_verifier.so: the first 798,896 bytes of the programdata equal the built artifact (sha256 cdd91f30...), the remaining 41,272 bytes are zero padding. 2026-09-06. The previous comparison (2026-09-02, 782,072 bytes) is superseded.",
       "why_a_dump_and_not_a_client_check": "On 2026-08-18 the deployed pool binary was still routing `unshield` after the code had removed it. That was found on a dump, not deduced from a client that reported success. Identity of the artifact is the only thing a dump can settle and the only thing worth settling this way.",
       "circuit_7_is_live": "PROBE_ORDER in lib.rs carries [1, 6, 3, 5, 7] in this artifact, and the submission recorded below exercised verify phase 1 AND phase 2 for circuit 7 on this program.",
-      "_why_b2_and_not_the_scan_s_b1_plus": "`--measure` prints `b1+` because that is the strongest thing a byte scan of msg! literals can say: B2 added no literal to the verifier, so the scan cannot separate b1 from b2. `b1+` means \"B1 or newer, cannot say which\" and the record is supposed to carry the PRECISE generation -- `generationsAreCompatible` exists exactly to reconcile the two, and accepts b1+ against a b2 claim. ⚠️ Pasting --measure's block in verbatim therefore deadlocks the interlock at line 1655, which compares with `!==`. The claim here is b2 on DIRECT evidence, not on the scan: a b2-generation client's circuit-7 proof was accepted by this program in transaction 4yKg4gGm... All seven pre-C7 circuits in that client are byte-identical to the b2 column pinned in b1_deep_binding.rs and wireFormat.test.ts.",
-      "_supersedes_2026_09_06": "The 2026-09-02 evidence below described slot 491973056 (elf 75fa927d..., 782,057 B). DGY37k3J... was redeployed on 2026-09-06 at slot 494130741 (elf 245176e8..., 798,881 B; built artifact 798,896 B sha256 cdd91f30..., the 15-byte difference is trailing zero padding) to add init_proof_buffer_v3 and reset_proof_buffer (error BufferTooSmall 6008 appended last). The proof format, every circuit and every pre-existing instruction are byte-for-byte unchanged in source, and the generation claim b2 stands on DIRECT evidence taken the same day against this slot: c7-live-proof.ts honest proof from the shipped blob 36c1fd4e accepted through both phases in 33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i (slot 494131451, phase 2 193,165 CU)."
+      "_why_b2_and_not_the_scan_s_b1_plus": "`--measure` prints `b1+` because that is the strongest thing a byte scan of msg! literals can say: B2 added no literal to the verifier, so the scan cannot separate b1 from b2. `b1+` means \"B1 or newer, cannot say which\" and the record is supposed to carry the PRECISE generation -- `generationsAreCompatible` exists exactly to reconcile the two, and accepts b1+ against a b2 claim. \u26a0\ufe0f Pasting --measure's block in verbatim therefore deadlocks the interlock at line 1655, which compares with `!==`. The claim here is b2 on DIRECT evidence, not on the scan: a b2-generation client's circuit-7 proof was accepted by this program in transaction 4yKg4gGm... All seven pre-C7 circuits in that client are byte-identical to the b2 column pinned in b1_deep_binding.rs and wireFormat.test.ts.",
+      "_supersedes_2026_09_06": "The 2026-09-02 evidence below described slot 491973056 (elf 75fa927d..., 782,057 B). DGY37k3J... was redeployed on 2026-09-06 at slot 494130741 (elf 245176e8..., 798,881 B; built artifact 798,896 B sha256 cdd91f30..., the 15-byte difference is trailing zero padding) to add init_proof_buffer_v3 and reset_proof_buffer (error BufferTooSmall 6008 appended last). The proof format, every circuit and every pre-existing instruction are byte-for-byte unchanged in source, and the generation claim b2 stands on DIRECT evidence taken the same day against this slot: c7-live-proof.ts honest proof from the shipped blob 36c1fd4e accepted through both phases in 33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i (slot 494131451, phase 2 193,165 CU).",
+      "_supersedes_2026_09_12": "The 2026-09-06 evidence below described slot 494130741 (elf 245176e8..., 798,881 B). DGY37k3J... was redeployed on 2026-09-12 at slot 497235406 (elf 6cf414a6..., 801,457 B; built artifact 801,472 B sha256 e27317fa..., the 15-byte difference is trailing zero padding, as on 2026-09-06) for the UNIFORM MASKING of all eight circuits (three-part mask on C0/C2/C4/C5, the masked circuit 0 replacing the legacy 32-row shape, OOD point resampling on prover and verifier -- docs/UNIFORM-MASKING-2026-09-11.md). The wire of C0/C2/C4/C5 changed (74,365 / 95,777 / 75,085 / 91,261 B); C1/C3/C6/C7 keep their lengths but the OOD rule changed on all eight, so a proof from the previous blob 36c1fd4e is rejected by this deployment and must be. The generation claim b2 stands on DIRECT evidence taken the same day against this slot: c7-live-proof.ts honest proof from the reshipped blob 0ad6d7f1 accepted through both phases in 2H5p3dqE7XPbDDfT5n263bbMnWnRV9neqxLBnib6WEi2WywR7qtfLMkQNB9GvAYj5DZ9q125YYD3T88U5fopzx6C (slot 497236376, phase 1 + phase 2 in one transaction, 889,570 CU). Before the deploy, the staged .so ran the reshipped blob's proofs of all eight circuits on litesvm through the real instruction path, 8/8 (programs/p01_stark_verifier/tests/wasm_blob_parity.rs)."
     },
     "measured_at": {
-      "date_utc": "2026-09-06",
-      "observed_slot": 494132496,
+      "date_utc": "2026-09-12",
+      "observed_slot": 497235428,
       "method": "deployed-verifier-check.mjs --measure --cluster devnet",
-      "corroboration": "Independently dumped the same day (`solana program dump`) and byte-compared against the local artifact: the first 798,896 bytes of the programdata equal target/deploy/p01_stark_verifier.so (sha256 cdd91f30...), the tail is zero padding; the padded dump hashes to 843c6155..., the same value --measure printed. The acceptance below was read back off the chain by the script, not assumed.",
+      "corroboration": "The deploy was run from this tree (`solana program deploy --program-id DGY37k3J... --use-rpc`, signature 3gt9vfoQ1NtwVZ9sjmuTKZXuxtD2njcM1CeZg2SUsFXGQsBhdDfjwsJrxf2RMZ8oKmjgFbMQ5BP3no8Y8zyjYS2F) with the artifact copied to target/deploy/p01_stark_verifier.so (801,472 B, sha256 e27317fa...); --measure read back 801,457 ELF bytes plus zero padding to the unchanged 840,168-byte programdata. The acceptance below was read back off the chain by c7-live-proof.ts, not assumed.",
       "_previous": {
         "date_utc": "2026-09-02",
         "observed_slot": 491973202,
         "last_deployed_slot": 491973056,
         "elf_sha256": "75fa927d5a3efcc73dada1e746547be922d294fae2afef92b0400dcb4db9838c",
         "elf_bytes": 782057
+      },
+      "_previous_2026_09_06": {
+        "date_utc": "2026-09-06",
+        "observed_slot": 494132496,
+        "last_deployed_slot": 494130741,
+        "elf_sha256": "245176e89bdbac3edbf26b95a1a38f0748a11c98f1cf16842380108492b6a44f",
+        "elf_bytes": 798881
       }
     },
-    "accepts_client_blob_sha256": "36c1fd4e0fa9f718d4a3ecdbdf06ff91cea9f9e0fbe21a85a20bc9da307e1984",
+    "accepts_client_blob_sha256": "0ad6d7f1eaed14a8bea12626c1e65f0737ba592b8f31205f8017228d29fa6cd7",
     "accepts_client_blob_sha256_note": [
       "UNKNOWN, and deliberately left null rather than guessed.",
       "",
@@ -262,14 +270,14 @@
     ],
     "accepts_client_blob_evidence": {
       "_note": "This is the only field in this record that cannot be measured from artifacts alone. It required sending a proof and reading the answer.",
-      "transaction": "33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i",
-      "slot": 494131451,
+      "transaction": "2H5p3dqE7XPbDDfT5n263bbMnWnRV9neqxLBnib6WEi2WywR7qtfLMkQNB9GvAYj5DZ9q125YYD3T88U5fopzx6C",
+      "slot": 497236376,
       "cluster": "devnet",
       "circuit_id": 7,
       "proof_bytes": 79405,
-      "phases_verified": "phase 1 (FRI/Merkle) and phase 2 (DEEP-ALI)",
-      "phase2_compute_units": 193165,
-      "cost_sol": 0.000455,
+      "phases_verified": "phase 1 (FRI/Merkle) and phase 2 (DEEP-ALI), merged in one transaction",
+      "phase2_compute_units": null,
+      "cost_sol": 0.000146,
       "rent": "recovered -- the proof buffer is a PDA of (authority, circuit_id), so close_proof_buffer needs only the authority. NOT true of the 45 orphaned ProofBuffer accounts holding 20.50 SOL on devnet, which predate the PDA scheme and want an ephemeral key nobody kept.",
       "reproduce": "npx tsx packages/stark-prover/scripts/c7-live-proof.ts",
       "what_it_does_not_prove": "Nothing about the pool. zk_shielded reads the verified buffer cross-program and applies its own checks; a spend landing end to end is a separate measurement.",
@@ -307,7 +315,7 @@
         "`node verify/p01-verify.mjs --spend 2aUofJQZ... --wallet BRop3akx...` reports P3 as proven over",
         "94/94 transactions, 80 proof chunks, 79,405 bytes, and P1/P2/P4 proven with it.",
         "",
-        "⚠ What it does NOT establish: P11 is OPEN on that same run. The spend's fee payer is an",
+        "\u26a0 What it does NOT establish: P11 is OPEN on that same run. The spend's fee payer is an",
         "ephemeral funded by the float, and the float's own history names the buyer's wallet. That is a",
         "linkage question, not a verifier-compatibility one, and this field is only about the latter."
       ],
@@ -340,14 +348,12 @@
         "what_it_shows": "lib.rs maps every VerifyError to InvalidProof (6003); the failing step is only readable from the last `[verify] stepN ok` log line, which the script reports. Rejections are all phase 1: the DEEP-ALI binding of phase 2 is NOT what these exercise."
       },
       "_supersedes_2026_09_06": [
-        "The previous entry was 5hdDAz6X... at slot 491973951 (phase 2 193,200 CU), taken against the verifier at slot",
-        "491973056. Only the VERIFIER half moved on 2026-09-06 (slot 494130741, two additive instructions, see",
-        "generation_evidence._supersedes_2026_09_06); the blob is still 36c1fd4e and the wire is still 79,405 bytes in",
-        "80 chunks. This entry is the first acceptance of the blob by the new deployment: c7-live-proof.ts, both phases,",
-        "buffer closed and read back as absent.",
-        "",
-        "Same day, same blob, same deployment, the two additive instructions were exercised end to end by",
-        "packages/stark-prover/scripts/c7-live-proof-v3.ts (keypair-owned buffer): see presized_buffer_evidence_2026_09_06."
+        "The previous entry was 33RgEF7C... at slot 494131451: the blob 36c1fd4e against the verifier deployed at slot 494130741.",
+        "Both halves moved on 2026-09-12 [UNIFORM-MASK]: the verifier was redeployed at slot 497235406 and the blob",
+        "reshipped to 0ad6d7f1 (265,324 B). This entry is the first acceptance of the new pair, taken by",
+        "c7-live-proof.ts the same day; phase 1 and phase 2 landed in ONE transaction of 889,570 CU (the script",
+        "merges them since [L2]), so phase2_compute_units alone is not observable here and is left null.",
+        "The 2026-09-06 entry is kept below for the record."
       ],
       "presized_buffer_evidence_2026_09_06": {
         "_note": "init_proof_buffer_v3 + reset_proof_buffer against the DEPLOYED program, keypair buffer AdnyPAUMkgT21SpMgc35YFx41XHN86MLzbWYFFANJgRX, authority 7gWpzS.... Reproduce: npx tsx packages/stark-prover/scripts/c7-live-proof-v3.ts",
@@ -403,6 +409,17 @@
           "compute_units": 26843,
           "result": "REJECTED at step 3 (Merkle), InvalidProof 6003, after step2 ok"
         }
+      },
+      "compute_units_both_phases": 889570,
+      "_superseded_2026_09_06_entry": {
+        "transaction": "33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i",
+        "slot": 494131451,
+        "cluster": "devnet",
+        "circuit_id": 7,
+        "proof_bytes": 79405,
+        "phases_verified": "phase 1 (FRI/Merkle) and phase 2 (DEEP-ALI)",
+        "phase2_compute_units": 193165,
+        "cost_sol": 0.000455
       }
     }
   },
@@ -419,7 +436,7 @@
       "  node packages/stark-prover/scripts/deployed-verifier-check.mjs   -> blob 211,749 B, sha 2a962ca9...",
       "",
       "NOTHING IN THE `deployed` BLOCK WAS TOUCHED. That block is about the chain, devnet is still pre-B1,",
-      "and the interlock is still RED — see interlock_status_when_this_record_was_written. Reconciling the",
+      "and the interlock is still RED \u2014 see interlock_status_when_this_record_was_written. Reconciling the",
       "client half does not and must not green anything."
     ],
     "_RESHIPPED_2026_08_03": [
@@ -442,8 +459,8 @@
       "still RED. Reshipping the client blob does not and must not green anything on the chain side."
     ],
     "path": "packages/stark-prover/wasm/p01_stark_bg.wasm",
-    "sha256": "36c1fd4e0fa9f718d4a3ecdbdf06ff91cea9f9e0fbe21a85a20bc9da307e1984",
-    "bytes": 274224,
+    "sha256": "0ad6d7f1eaed14a8bea12626c1e65f0737ba592b8f31205f8017228d29fa6cd7",
+    "bytes": 265324,
     "proof_format_generation": "b2",
     "generation_evidence": {
       "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node THROUGH THE GENERATED GLUE (initSync) and generates one proof per shipping circuit on eight fixed witnesses. The three unmasked circuits (C0, C2, C4) are judged by proof sha256; the five masked circuits (C1, C3, C5, C6, C7) draw a fresh CSPRNG mask per proof and are judged by exact proof LENGTH, pinned in src/wireFormat.test.ts. The generation is the column that ALL EIGHT rows match; a mixture, an unrecognised digest, a refusal or a wrong length is UNCLASSIFIABLE and fails the gate.",
@@ -458,10 +475,10 @@
         "C7 spend": "79405 B  masked, length only"
       },
       "_previous_b1_digests": "The eight rows above are the B2 column (three digests, five lengths). The B1 column this block used to carry, for whoever needs to recognise the older artifact: C0 45001 B e4aad105..., C1 65801 B 935d918c..., C2 66681 B 063d86a1..., C3 75637 B 2d97f56f..., C4 78377 B f8778367..., C5 76357 B 78afe9bb..., C6 78517 B 8e1166f5.... All seven are still pinned as the `b1` column of the fixture table in scripts/prover-behaviour.mjs, so the gate can still name a B1 blob rather than merely refusing to classify it.",
-      "why_not_length": "B1 changed WHAT FRI FOLDS without adding or removing a byte. MEASURED 2026-07-31 by driving both blobs: the pre-B1 blob 5fe610c9 and the B1 blob emit the SAME SEVEN LENGTHS, to the byte (45,001 / 65,801 / 66,681 / 75,637 / 78,377 / 76,357 / 78,517), and SEVEN DIFFERENT DIGESTS. Between those two generations content is the only discriminator there is. B2 is different — it widens three wire fields, so the seven lengths DID move (to the numbers above) — but that is not licence to classify on length: a blob can be given any length and only content is expensive to fake, so the verdict stays on the digest and the length stays an observation.",
+      "why_not_length": "B1 changed WHAT FRI FOLDS without adding or removing a byte. MEASURED 2026-07-31 by driving both blobs: the pre-B1 blob 5fe610c9 and the B1 blob emit the SAME SEVEN LENGTHS, to the byte (45,001 / 65,801 / 66,681 / 75,637 / 78,377 / 76,357 / 78,517), and SEVEN DIFFERENT DIGESTS. Between those two generations content is the only discriminator there is. B2 is different \u2014 it widens three wire fields, so the seven lengths DID move (to the numbers above) \u2014 but that is not licence to classify on length: a blob can be given any length and only content is expensive to fake, so the verdict stays on the digest and the length stays an observation.",
       "corroboration": "The three B2 digests and five masked lengths above are pinned independently in packages/stark-prover/src/wireFormat.test.ts (Pin.sha256, driving this blob) and in programs/p01_stark_verifier/tests/b1_deep_binding.rs (FIXTURE_C*_SHA256, computed from the Rust prover over the same seven witnesses). The gate reads both files and refuses to classify if either stops carrying them, so the reference cannot be moved in one file.",
       "string_scan_kept_as_corroboration": {
-        "method": "byte scan of the blob for panic and assert message literals, split by ERA, controlled by domain-separation tags present in every generation. This DECIDES NOTHING. It is kept because it catches two things the digests are silent about — a string-stripped artifact, and an artifact that was not built from the source in this tree — and because a blob that proves one generation while its strings claim another is the measured four-byte edit and gets named as such.",
+        "method": "byte scan of the blob for panic and assert message literals, split by ERA, controlled by domain-separation tags present in every generation. This DECIDES NOTHING. It is kept because it catches two things the digests are silent about \u2014 a string-stripped artifact, and an artifact that was not built from the source in this tree \u2014 and because a blob that proves one generation while its strings claim another is the measured four-byte edit and gets named as such.",
         "_era_split_2026_08_02": "The four literals used to be ONE list called BLOB_B1_MARKERS, with the scan returning 'b1' if ANY of them hit. Two of the four are [B2]-only strings, so on a correct B2 tree the scan said 'b1' while the blob proved 'b2' and the check named 'the blob PROVES one generation and its panic strings CLAIM another' fired on an honest artifact, with a remedy ('reship the blob from this tree') that could never clear it. Now BLOB_MARKERS_B1 and BLOB_MARKERS_B2 are separate and the scan is a real three-way discriminator: pre-B1 carries neither, B1 carries the first, B2 carries both.",
         "b1_era_markers_present": [
           "B1 TERMINAL DEGREE BOUND VIOLATED",
@@ -496,7 +513,7 @@
   },
   "interlock_status_when_this_record_was_written": [
     "RED, and correctly so. Re-measured 2026-08-02; it was RED before the client half was reconciled and",
-    "it is RED after, which is the point — reconciling the client block moves no verdict.",
+    "it is RED after, which is the point \u2014 reconciling the client block moves no verdict.",
     "",
     "  client blob  : b2      (2613ffed..., 213,254 B, this tree, reshipped 2026-08-03 with the C2/C4 fold)",
     "  deployed     : pre-b1  (c1a26c17..., 817,617 B, devnet slot 469197514)",
@@ -512,14 +529,14 @@
     "merge either, and the verdict is unchanged: both deployments are pre-B1.",
     "",
     "ONE THING THE ON-CHAIN LEG CANNOT CHECK, and it became load-bearing with B2. The deployed side is",
-    "classified by scanning the ELF for msg! literals, and B2 ADDED NO LITERAL TO THE VERIFIER — measured",
+    "classified by scanning the ELF for msg! literals, and B2 ADDED NO LITERAL TO THE VERIFIER \u2014 measured",
     "2026-08-02 across programs/p01_stark_verifier/src/: no new msg!, no new #[error_code] variant, no new",
     "b\"...\" domain tag. So that scan cannot separate B1 from B2. It now returns the explicit label 'b1+'",
     "('B1 or newer, and this method cannot say which') instead of silently reading 'b1', and the record's",
     "exact label is only checked for COMPATIBILITY with it. Consequence, stated so it is not discovered",
     "later: once this record says 'b2', a deployment that is really B1 passes the on-chain leg. Closing",
     "that needs either a B2-only literal in the verifier, or a behavioural classifier for the deployed",
-    "bytes — litesvm can execute a fetched programdata payload, which tests/cu_budget.rs already does for",
+    "bytes \u2014 litesvm can execute a fetched programdata payload, which tests/cu_budget.rs already does for",
     "a locally built .so, so it is known-possible in this repo, just not from a build script.",
     "",
     "Shipping apps/web, apps/extension, apps/mobile or packages/react-native-zk from this tree makes",

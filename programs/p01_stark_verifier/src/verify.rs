@@ -808,9 +808,11 @@ mod domain_generator_tests {
         };
         use p01_stark::{BaseElement, FieldElement, StarkField};
 
-        assert_eq!(TRANSFER_NUM_CONSTRAINTS, 28);
+        // [ZK-MASK-C5 2026-09-11] 28 -> 29 constraints (the lift) and 7 -> 9
+        // committed columns (lift + randomizer). The periodic count is unchanged.
+        assert_eq!(TRANSFER_NUM_CONSTRAINTS, 29);
         assert_eq!(TRANSFER_NUM_PERIODIC, 30, "28 columns plus the two gates");
-        assert_eq!(TRACE_WIDTH, 7);
+        assert_eq!(TRACE_WIDTH, 9);
 
         let w = TRACE_WIDTH;
         let np = TRANSFER_NUM_PERIODIC;
@@ -835,8 +837,9 @@ mod domain_generator_tests {
                 pw *= alpha_air;
             }
 
-            let mut cur_v = [Felt::ZERO; 7];
-            let mut nxt_v = [Felt::ZERO; 7];
+            // [ZK-MASK-C5 2026-09-11] 7 -> 9 committed columns.
+            let mut cur_v = [Felt::ZERO; 9];
+            let mut nxt_v = [Felt::ZERO; 9];
             let mut per_v = [Felt::ZERO; 30];
             for i in 0..w {
                 cur_v[i] = Felt::new(raw[i]);
@@ -1704,14 +1707,10 @@ pub fn verify_generic(
     public_inputs: &[u64],
     config: &CircuitConfig,
 ) -> Result<(), VerifyError> {
-    // Step 0: C0 hard gate. Must come before everything — the point is that the
-    // generic path never touches a C0 proof, not that it fails late.
-    if circuit_id == crate::CIRCUIT_SUBSCRIBER_OWNERSHIP {
-        anchor_lang::prelude::msg!(
-            "[verify] circuit 0 is legacy-only; use verify_stark_proof, not the generic path"
-        );
-        return Err(VerifyError::CircuitZeroIsLegacyOnly);
-    }
+    // [ZK-MASK-C0 2026-09-11] The step-0 gate that refused circuit 0 is GONE.
+    // It existed because the legacy 32-row C0 could not be verified generically
+    // (wrong vanishing polynomial, no boundary fold). The masked C0 is a generic
+    // circuit like the other seven, and `verify_stark_proof` routes it here.
 
     // Step 1: Field range check on OOD values
     verify_ood_range(proof)?;
@@ -1721,7 +1720,10 @@ pub fn verify_generic(
     // [P1.1] quotient_root is folded into the transcript before OOD so the
     // prover cannot choose quotient values after seeing the OOD challenge.
     let pub_bytes = public_inputs_to_bytes(public_inputs);
-    let expected_ood_z = derive_ood_point(&proof.trace_root, &proof.quotient_root, &pub_bytes);
+    // [PERFECT-IOP 2026-09-12] Generic circuits resample `z` out of the trace
+    // domain and the LDE coset; see `derive_ood_point_generic`.
+    let expected_ood_z =
+        derive_ood_point_generic(&proof.trace_root, &proof.quotient_root, &pub_bytes, config);
     if proof.ood_z.as_u64() != expected_ood_z {
         anchor_lang::prelude::msg!("[verify] OOD z mismatch: got {} want {}", proof.ood_z.as_u64(), expected_ood_z);
         return Err(VerifyError::OodConstraintFailed);
@@ -1769,11 +1771,8 @@ pub fn verify_generic(
 
     // Step 4: Circuit-specific transition constraint + quotient verification
     match circuit_id {
-        // 0 is unreachable — the step-0 gate above returned already. Left as an
-        // explicit arm so the refusal is visible at the dispatch too, and so a
-        // future edit that deletes the gate does not silently re-enable a path
-        // that cannot verify honest C0 proofs.
-        0 => Err(VerifyError::CircuitZeroIsLegacyOnly),
+        // [ZK-MASK-C0 2026-09-11] The masked circuit 0, generic like the rest.
+        0 => verify_constraints_subscriber_ownership(proof, config, public_inputs),
         1 => verify_constraints_pool_commitment(proof, config, public_inputs),
         2 => verify_constraints_balance_proof(proof, config, public_inputs),
         3 => verify_constraints_merkle_path(proof, config, public_inputs),
@@ -1884,6 +1883,58 @@ fn public_inputs_to_bytes(inputs: &[u64]) -> Vec<u8> {
 /// Post-P1.1: binds `quotient_root` alongside `trace_root` so the OOD challenge
 /// depends on the quotient commitment — the prover cannot pick quotient values
 /// after seeing the OOD point.
+/// [PERFECT-IOP 2026-09-12] The generic twin of the prover's
+/// `derive_ood_point_generic`: hash the two roots and the public inputs, then
+/// REJECT and re-hash while the candidate is zero, in the trace domain
+/// (`z^n = 1`: `Z_T(z) = 0`, the quotient claim is undefined) or on the LDE
+/// coset (`z^lde = h^lde`: a DEEP denominator vanishes at an opened position).
+/// Two exponentiations per candidate, and a second candidate is needed once in
+/// ~2^51 proofs. With it the honest prover never emits an unverifiable proof
+/// and the simulator of `docs/zk-simulation-argument.md` has no failure event
+/// left. `ood_point_from_transcript_hash` is the shared rule, `pub` so the
+/// cross-crate test `ood_resampling_parity.rs` can hold both sides together.
+/// The legacy circuit-0 path keeps `derive_ood_point` unchanged.
+fn derive_ood_point_generic(
+    trace_root: &[u8; 32],
+    quotient_root: &[u8; 32],
+    pub_bytes: &[u8],
+    config: &CircuitConfig,
+) -> u64 {
+    let hash = hashv(&[trace_root, quotient_root, pub_bytes]).to_bytes();
+    ood_point_from_transcript_hash(hash, config.trace_length, config.lde_size)
+}
+
+/// [PERFECT-IOP] One candidate; `None` when it is zero, a trace-domain point or
+/// an LDE-coset point.
+pub fn ood_point_from_hash(hash: &[u8; 32], trace_length: usize, lde_size: usize) -> Option<u64> {
+    let z = u64::from_le_bytes(hash[0..8].try_into().unwrap()) % GOLDILOCKS_PRIME;
+    if z == 0 {
+        return None;
+    }
+    let zf = Felt::new(z);
+    if zf.exp(trace_length as u64).as_u64() == 1 {
+        return None;
+    }
+    let coset_marker = Felt::new(LDE_COSET_SHIFT).exp(lde_size as u64).as_u64();
+    if zf.exp(lde_size as u64).as_u64() == coset_marker {
+        return None;
+    }
+    Some(z)
+}
+
+/// [PERFECT-IOP] The resampling chain, identical to the prover's.
+pub fn ood_point_from_transcript_hash(mut hash: [u8; 32], trace_length: usize, lde_size: usize) -> u64 {
+    loop {
+        if let Some(z) = ood_point_from_hash(&hash, trace_length, lde_size) {
+            return z;
+        }
+        hash = hashv(&[&hash]).to_bytes();
+    }
+}
+
+/// The LEGACY circuit-0 derivation (retired 32-row shape): no resampling, zero
+/// clamped to one. Kept byte-for-byte because the legacy prover emits it and
+/// the recovery harnesses keep that shape as their positive control.
 fn derive_ood_point(
     trace_root: &[u8; 32],
     quotient_root: &[u8; 32],
@@ -3796,6 +3847,101 @@ pub fn verify_deep_ali_circuit_0(proof: &GenericCompactProof) -> Result<(), Veri
     Ok(())
 }
 
+/// [ZK-MASK-C0 2026-09-11] Phase 2 for the MASKED circuit 0: the DEEP-ALI
+/// identity with the four masked constraints, the six periodic tables, the
+/// `rlc-c0` RLC challenge and the `bnd-c0` boundary fold -- the same tag the
+/// legacy path used, so the public input is bound the way every consumer
+/// hashes it. Mirrors `verify_deep_ali_circuit_2` in shape.
+///
+/// `verify_stark_proof` runs this in the SAME instruction as phase 1 for
+/// circuit 0, so the pool program's `pause_private_stark` /
+/// `resume_private_stark`, which read only `verified`, do not move.
+#[inline(never)]
+pub fn verify_deep_ali_circuit_0_masked(
+    proof: &GenericCompactProof,
+    public_inputs: &[u64],
+) -> Result<(), VerifyError> {
+    use crate::periodic_consts::{
+        C0M_HOLD31_COEFFS, C0M_NOT_BOUNDARY_ACTIVE_COEFFS, C0M_RC0_COEFFS, C0M_RC1_COEFFS,
+        C0M_RC2_COEFFS, C0M_ROUND_FLAG_COEFFS,
+    };
+
+    let z = proof.ood_z;
+
+    // Six periodic columns at z: four stride-16 sparse Poseidon tables (32
+    // Horner steps each), one dense gate (512), one one-hot (512).
+    let rc0 = eval_periodic_stride_at_z(&C0M_RC0_COEFFS, z, 16);
+    let rc1 = eval_periodic_stride_at_z(&C0M_RC1_COEFFS, z, 16);
+    let rc2 = eval_periodic_stride_at_z(&C0M_RC2_COEFFS, z, 16);
+    let flag = eval_periodic_stride_at_z(&C0M_ROUND_FLAG_COEFFS, z, 16);
+    let nba = eval_periodic_at_z(&C0M_NOT_BOUNDARY_ACTIVE_COEFFS, z);
+    let hold31 = eval_periodic_at_z(&C0M_HOLD31_COEFFS, z);
+
+    // Circuit 0 (masked) is width-5.
+    let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
+    let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
+    if ood_current_vec.len() != 5 || ood_next_vec.len() != 5 {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let cur = &ood_current_vec;
+    let nxt = &ood_next_vec;
+
+    let pub_bytes = public_inputs_to_bytes(public_inputs);
+    let alpha = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"rlc-c0\0\0");
+
+    // -- The four constraints, mirroring
+    //    `air::subscriber_ownership::evaluate_subscriber_ownership_transition`.
+    let three = Felt::new(3);
+    let s0 = cur[0].add(rc0);
+    let s1 = cur[1].add(rc1);
+    let s2 = cur[2].add(rc2);
+    let s0_7 = s0.pow7();
+    let s1_7 = s1.pow7();
+    let s2_7 = s2.pow7();
+    let ro0 = three.mul(s0_7).add(s1_7).add(s2_7);
+    let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
+    let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
+    let mut cs = [Felt::ZERO; 4];
+    cs[0] = nba.mul(nxt[0].sub(cur[0]).sub(flag.mul(ro0.sub(cur[0]))));
+    cs[1] = nba.mul(nxt[1].sub(cur[1]).sub(flag.mul(ro1.sub(cur[1]))));
+    cs[2] = nba.mul(nxt[2].sub(cur[2]).sub(flag.mul(ro2.sub(cur[2]))));
+    // [3] ZK degree lift, col 3. THE BASE IS RAW `cur[0]`, never `s0`.
+    let lb3 = cur[0].mul(cur[0]).mul(cur[0]);
+    cs[3] = hold31.mul(nba).mul(cur[3]).mul(lb3).mul(lb3);
+    let mut c_at_z = Felt::ZERO;
+    let mut alpha_pow = Felt::ONE;
+    for c in cs.iter() {
+        c_at_z = c_at_z.add(c.mul(alpha_pow));
+        alpha_pow = alpha_pow.mul(alpha);
+    }
+
+    // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 512.
+    const TRACE_LENGTH_C0M: usize = 512;
+    let z_d = vanishing_poly(z, TRACE_LENGTH_C0M);
+    let g = Felt::new(GENERATOR_512);
+    let last_row_x = g.exp((TRACE_LENGTH_C0M - 1) as u64);
+    let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
+    let z_minus_last = z.add(neg_last);
+    if z_minus_last == Felt::ZERO {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    let z_t = z_d.mul(z_minus_last.inv());
+
+    // Boundary public-input binding at z: the same three assertions and the
+    // same `bnd-c0` tag the legacy path folded.
+    let assertions = get_boundary_assertions(0, public_inputs)?;
+    let alpha_bnd = derive_rlc_alpha_with_tag(&proof.trace_root, &pub_bytes, b"bnd-c0\0\0");
+    let c_bnd = boundary_fold_at_ood(&ood_current_vec, &assertions, z, z_t, g, alpha_bnd)
+        .ok_or(VerifyError::DeepAliFailed)?;
+    let c_total = c_at_z.add(c_bnd);
+
+    let rhs = proof.ood_quotient_recombined(TRACE_LENGTH_C0M).mul(z_t);
+    if c_total != rhs {
+        return Err(VerifyError::DeepAliFailed);
+    }
+    Ok(())
+}
+
 // ============================================================================
 // [P2.2a] DEEP-ALI quotient check at OOD for circuit 6 (merkle_update)
 // ============================================================================
@@ -4383,9 +4529,15 @@ pub fn verify_deep_ali_circuit_1(
 /// cycle 1 (row 63) and cycle 3 (row 95).
 #[inline(never)]
 fn evaluate_transition_at_ood_circuit_2(
-    ood_current: &[Felt; 4],
-    ood_next: &[Felt; 4],
-    periodic_at_z: &[Felt; 8],
+    // [ZK-MASK-C2 2026-09-11] 4 -> 6. Index 4 is the ZK lift column, read by
+    // constraint [7] alone; index 5 is the randomizer, read by nothing and
+    // carried because the DEEP recombination sums a gamma power over every
+    // committed column.
+    ood_current: &[Felt; 6],
+    ood_next: &[Felt; 6],
+    // [ZK-MASK-C2 2026-09-11] 8 -> 10: `active` (8) and `not_boundary_active`
+    // (9) appended. Slot 7 (`is_boundary`) is carried and not read.
+    periodic_at_z: &[Felt; 10],
     alpha: Felt,
 ) -> Felt {
     let rc0 = periodic_at_z[0];
@@ -4395,14 +4547,15 @@ fn evaluate_transition_at_ood_circuit_2(
     let chain_01 = periodic_at_z[4];
     let carry_capture = periodic_at_z[5];
     let chain_carry = periodic_at_z[6];
-    let is_boundary = periodic_at_z[7];
+    let _is_boundary = periodic_at_z[7];
+    let active = periodic_at_z[8];
+    let nba = periodic_at_z[9];
 
     let one = Felt::ONE;
     let three = Felt::new(3);
-    let not_boundary = one.sub(is_boundary);
     let not_capture = one.sub(carry_capture);
 
-    // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──
+    // -- Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) --
     let s0 = ood_current[0].add(rc0);
     let s1 = ood_current[1].add(rc1);
     let s2 = ood_current[2].add(rc2);
@@ -4413,34 +4566,52 @@ fn evaluate_transition_at_ood_circuit_2(
     let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
     let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
 
-    // c_i = not_boundary · (next[i] − current[i] − round_flag · (ro_i − current[i]))
-    //     for i ∈ {0,1,2}. Matches evaluate_balance_proof_transition exactly:
-    //     when round_flag=1 → next=ro (active round), when round_flag=0 →
-    //     next=current (padding), when is_boundary=1 → free transition.
-    let mut cs = [Felt::ZERO; 7];
-    cs[0] = not_boundary.mul(
+    // c_i = nba * (next[i] - current[i] - round_flag * (ro_i - current[i]))
+    //
+    // `nba`, NOT `one.sub(is_boundary)`. The two agree on every row of the
+    // four hash cycles and differ only across rows 128..511, so the
+    // substitution rejects NO honest proof and passes every existing test --
+    // while re-imposing `next[i] - current[i] = 0` on the 384 blinding rows,
+    // which is the degenerate form that pins each column to a single unknown.
+    let mut cs = [Felt::ZERO; 8];
+    cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_flag.mul(ro0.sub(ood_current[0])))
     );
-    cs[1] = not_boundary.mul(
+    cs[1] = nba.mul(
         ood_next[1].sub(ood_current[1]).sub(round_flag.mul(ro1.sub(ood_current[1])))
     );
-    cs[2] = not_boundary.mul(
+    cs[2] = nba.mul(
         ood_next[2].sub(ood_current[2]).sub(round_flag.mul(ro2.sub(ood_current[2])))
     );
 
-    // [c3] chain_01 @ row 31: cycle 0 output (current[0]) → cycle 1 left input (next[0]).
+    // [c3] chain_01 @ row 31: cycle 0 output (current[0]) -> cycle 1 left input (next[0]).
     cs[3] = chain_01.mul(ood_next[0].sub(ood_current[0]));
 
-    // [c4] carry_capture @ row 63: cycle 1 output (current[0]) → carry col (next[3]).
+    // [c4] carry_capture @ row 63: cycle 1 output (current[0]) -> carry col (next[3]).
     cs[4] = carry_capture.mul(ood_next[3].sub(ood_current[0]));
 
-    // [c5] carry_continuity: at non-capture rows, carry col holds its value.
-    cs[5] = not_capture.mul(ood_next[3].sub(ood_current[3]));
+    // [c5] carry_continuity: at non-capture rows INSIDE the witness region the
+    // carry col holds its value. `active` is what switches it off across the
+    // blinding rows; without it every masked carry cell would be forced equal
+    // to `owner_mint` and the column would collapse to one unknown again.
+    cs[5] = active.mul(not_capture).mul(ood_next[3].sub(ood_current[3]));
 
-    // [c6] chain_carry @ row 95: carry value (current[3]) → cycle 3 right input (next[1]).
+    // [c6] chain_carry @ row 95: carry value (current[3]) -> cycle 3 right input (next[1]).
     cs[6] = chain_carry.mul(ood_next[1].sub(ood_current[3]));
 
-    // Horner-style RLC: Σ α^i · cs[i].
+    // -- [7] ZK degree lift, col `ZK_LIFT_COL` (= 4) --
+    //
+    // Prover twin: `air::balance_proof::evaluate_balance_proof_transition`,
+    // result[7]. Zero on the trace domain, because `chain_01` is one-hot at
+    // row 31 where `nba` is 0; its job is to be degree 1 in the lift column so
+    // the blinding region reaches every quotient block.
+    //
+    // THE BASE IS RAW `ood_current[0]`, never `s0`.
+    let lift_base = ood_current[0];
+    let lb3 = lift_base.mul(lift_base).mul(lift_base);
+    cs[7] = chain_01.mul(nba).mul(ood_current[4]).mul(lb3).mul(lb3);
+
+    // Horner-style RLC: sum alpha^i * cs[i].
     let mut combined = Felt::ZERO;
     let mut alpha_pow = Felt::ONE;
     for c in cs.iter() {
@@ -4472,45 +4643,52 @@ pub fn verify_deep_ali_circuit_2(
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
     use crate::periodic_consts::{
-        C2_RC0_COEFFS, C2_RC1_COEFFS, C2_RC2_COEFFS, C2_ROUND_FLAG_COEFFS,
-        C2_CHAIN_01_COEFFS, C2_CARRY_CAPTURE_COEFFS, C2_CHAIN_CARRY_COEFFS,
-        C2_IS_BOUNDARY_COEFFS,
+        C2_ACTIVE_COEFFS, C2_CARRY_CAPTURE_COEFFS, C2_CHAIN_01_COEFFS, C2_CHAIN_CARRY_COEFFS,
+        C2_NOT_BOUNDARY_ACTIVE_COEFFS, C2_RC0_COEFFS, C2_RC1_COEFFS, C2_RC2_COEFFS,
+        C2_ROUND_FLAG_COEFFS,
     };
 
     let z = proof.ood_z;
 
-    // Evaluate the 8 periodic columns at z.
-    let mut periodic_at_z: [Felt; 8] = [
-        // A3: RC0/RC1/RC2/ROUND_FLAG are stride-4 sparse (measured: 32 of 128
-        // coefficients non-zero). 128 Horner steps -> 32, four times over.
-        eval_periodic_stride_at_z(&C2_RC0_COEFFS, z, 4),
-        eval_periodic_stride_at_z(&C2_RC1_COEFFS, z, 4),
-        eval_periodic_stride_at_z(&C2_RC2_COEFFS, z, 4),
-        eval_periodic_stride_at_z(&C2_ROUND_FLAG_COEFFS, z, 4),
+    // Evaluate the 10 periodic columns at z.
+    //
+    // [ZK-MASK-C2 2026-09-11] The four Poseidon tables are tiled 32-periodic
+    // over the whole 512-row trace, so their interpolants are stride-16 sparse:
+    // 32 Horner steps each instead of 512. `periodic_stride.rs` pins the
+    // sparsity in release mode. The two gates are genuinely dense (512 steps
+    // each), which is the same price C1, C3, C6 and C7 pay for theirs.
+    //
+    // RETURNING EIGHT WOULD BE A SILENT PRIVACY REGRESSION. It rejects no
+    // honest proof: drop the two gates and the verifier re-imposes
+    // `next[i] - current[i] = 0` on the 384 blinding rows.
+    let periodic_at_z: [Felt; 10] = [
+        eval_periodic_stride_at_z(&C2_RC0_COEFFS, z, 16),
+        eval_periodic_stride_at_z(&C2_RC1_COEFFS, z, 16),
+        eval_periodic_stride_at_z(&C2_RC2_COEFFS, z, 16),
+        eval_periodic_stride_at_z(&C2_ROUND_FLAG_COEFFS, z, 16),
         eval_periodic_at_z(&C2_CHAIN_01_COEFFS, z),
         eval_periodic_at_z(&C2_CARRY_CAPTURE_COEFFS, z),
         eval_periodic_at_z(&C2_CHAIN_CARRY_COEFFS, z),
-        // A3: IS_BOUNDARY is coefficient-wise exactly CHAIN_01 + CARRY_CAPTURE
-        // + CHAIN_CARRY (verified over all 128 coefficients), so evaluating it
-        // is two field adds instead of 128 Horner steps. Filled in below, once
-        // the three summands exist.
+        // `is_boundary`: read by no constraint since the mask (the prover twin
+        // binds it as `_is_boundary`). Not evaluated, so no Horner cost.
         Felt::ZERO,
+        eval_periodic_at_z(&C2_ACTIVE_COEFFS, z),
+        eval_periodic_at_z(&C2_NOT_BOUNDARY_ACTIVE_COEFFS, z),
     ];
-    periodic_at_z[7] = periodic_at_z[4].add(periodic_at_z[5]).add(periodic_at_z[6]);
 
-    // Collect OOD trace values. Circuit 2 is width-4.
+    // Collect OOD trace values. Circuit 2 is width-6 since the mask.
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    if ood_current_vec.len() != 4 || ood_next_vec.len() != 4 {
+    if ood_current_vec.len() != 6 || ood_next_vec.len() != 6 {
         return Err(VerifyError::DeepAliFailed);
     }
     let ood_current = [
-        ood_current_vec[0], ood_current_vec[1],
-        ood_current_vec[2], ood_current_vec[3],
+        ood_current_vec[0], ood_current_vec[1], ood_current_vec[2],
+        ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
     ];
     let ood_next = [
-        ood_next_vec[0], ood_next_vec[1],
-        ood_next_vec[2], ood_next_vec[3],
+        ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
+        ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
     ];
 
     // Derive α exactly like the prover (C2-specific domain tag).
@@ -4521,10 +4699,11 @@ pub fn verify_deep_ali_circuit_2(
         &ood_current, &ood_next, &periodic_at_z, alpha,
     );
 
-    // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 128.
-    const TRACE_LENGTH_C2: usize = 128;
+    // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 512.
+    // [ZK-MASK-C2 2026-09-11] 128 -> 512, and the generator MOVES with it.
+    const TRACE_LENGTH_C2: usize = 512;
     let z_d = vanishing_poly(z, TRACE_LENGTH_C2);
-    let g = Felt::new(GENERATOR_128);
+    let g = Felt::new(GENERATOR_512);
     let last_row_x = g.exp((TRACE_LENGTH_C2 - 1) as u64);
     let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
     let z_minus_last = z.add(neg_last);
@@ -4917,28 +5096,33 @@ pub fn verify_deep_ali_circuit_3(
 ///   [c9]    chain_carry_6 · (next[1] − current[3])  — carry → cycle 6 right input
 #[inline(never)]
 fn evaluate_transition_at_ood_circuit_4(
-    ood_current: &[Felt; 4],
-    ood_next: &[Felt; 4],
-    periodic_at_z: &[Felt; 11],
+    // [ZK-MASK-C4 2026-09-11] 4 -> 6. Index 4 is the ZK lift column, read by
+    // constraint [10] alone; index 5 is the randomizer, read by nothing.
+    ood_current: &[Felt; 6],
+    ood_next: &[Felt; 6],
+    // [ZK-MASK-C4 2026-09-11] 11 -> 13: `active` (11) and `not_boundary_active`
+    // (12) appended. Slot 4 (`is_boundary`) is carried and not read.
+    periodic_at_z: &[Felt; 13],
     alpha: Felt,
 ) -> Felt {
     let rc0 = periodic_at_z[0];
     let rc1 = periodic_at_z[1];
     let rc2 = periodic_at_z[2];
     let round_flag = periodic_at_z[3];
-    let is_boundary = periodic_at_z[4];
+    let _is_boundary = periodic_at_z[4];
     let chain_01 = periodic_at_z[5];
     let chain_34 = periodic_at_z[6];
     let chain_56 = periodic_at_z[7];
     let carry_capture = periodic_at_z[8];
     let chain_carry_4 = periodic_at_z[9];
     let chain_carry_6 = periodic_at_z[10];
+    let active = periodic_at_z[11];
+    let nba = periodic_at_z[12];
 
     let one = Felt::ONE;
     let three = Felt::new(3);
-    let not_boundary = one.sub(is_boundary);
 
-    // ── Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) ──
+    // -- Poseidon round on cols 0-2 (MDS = circulant [[3,1,1],[1,3,1],[1,1,3]]) --
     let s0 = ood_current[0].add(rc0);
     let s1 = ood_current[1].add(rc1);
     let s2 = ood_current[2].add(rc2);
@@ -4949,35 +5133,44 @@ fn evaluate_transition_at_ood_circuit_4(
     let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
     let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
 
-    let mut cs = [Felt::ZERO; 10];
+    let mut cs = [Felt::ZERO; 11];
 
-    // [c0-c2] Poseidon state transition (active round when round_flag=1,
-    // identity when round_flag=0, unconstrained at cycle boundary).
-    cs[0] = not_boundary.mul(
+    // [c0-c2] Poseidon state transition, gated by `nba` (NOT `one - is_boundary`:
+    // that form agrees on the seven hash cycles and re-imposes `next = current`
+    // across the 288 blinding rows).
+    cs[0] = nba.mul(
         ood_next[0].sub(ood_current[0]).sub(round_flag.mul(ro0.sub(ood_current[0])))
     );
-    cs[1] = not_boundary.mul(
+    cs[1] = nba.mul(
         ood_next[1].sub(ood_current[1]).sub(round_flag.mul(ro1.sub(ood_current[1])))
     );
-    cs[2] = not_boundary.mul(
+    cs[2] = nba.mul(
         ood_next[2].sub(ood_current[2]).sub(round_flag.mul(ro2.sub(ood_current[2])))
     );
 
-    // [c3-c5] Chain edges: when the flag is 1 the next cycle's state[0] must
-    // equal the current cycle's output (state[0] at end-of-cycle).
+    // [c3-c5] Chain edges.
     cs[3] = chain_01.mul(ood_next[0].sub(ood_current[0]));
     cs[4] = chain_34.mul(ood_next[0].sub(ood_current[0]));
     cs[5] = chain_56.mul(ood_next[0].sub(ood_current[0]));
 
     // [c6] Capture owner_mint into carry column at cycle-1 boundary.
     cs[6] = carry_capture.mul(ood_next[3].sub(ood_current[0]));
-    // [c7] Carry continuity everywhere else.
-    cs[7] = one.sub(carry_capture).mul(ood_next[3].sub(ood_current[3]));
-    // [c8-c9] Chain carry → right input of cycle 4 / cycle 6.
+    // [c7] Carry continuity INSIDE the witness region only. `active` is what
+    // keeps the 288 masked carry cells free.
+    cs[7] = active.mul(one.sub(carry_capture)).mul(ood_next[3].sub(ood_current[3]));
+    // [c8-c9] Chain carry -> right input of cycle 4 / cycle 6.
     cs[8] = chain_carry_4.mul(ood_next[1].sub(ood_current[3]));
     cs[9] = chain_carry_6.mul(ood_next[1].sub(ood_current[3]));
 
-    // Horner RLC: Σ α^i · cs[i].
+    // -- [10] ZK degree lift, col `ZK_LIFT_COL` (= 4). Prover twin:
+    //    `air::confidential_balance::evaluate_confidential_balance_transition`,
+    //    result[10]. Zero on the trace domain (chain_01 is one-hot at row 31,
+    //    where nba = 0). THE BASE IS RAW `ood_current[0]`, never `s0`.
+    let lift_base = ood_current[0];
+    let lb3 = lift_base.mul(lift_base).mul(lift_base);
+    cs[10] = chain_01.mul(nba).mul(ood_current[4]).mul(lb3).mul(lb3);
+
+    // Horner RLC: sum alpha^i * cs[i].
     let mut combined = Felt::ZERO;
     let mut alpha_pow = Felt::ONE;
     for c in cs.iter() {
@@ -5014,50 +5207,58 @@ pub fn verify_deep_ali_circuit_4(
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
     use crate::periodic_consts::{
-        C4_CARRY_CAPTURE_COEFFS, C4_CHAIN_01_COEFFS, C4_CHAIN_34_COEFFS,
+        C4_ACTIVE_COEFFS, C4_CARRY_CAPTURE_COEFFS, C4_CHAIN_01_COEFFS, C4_CHAIN_34_COEFFS,
         C4_CHAIN_56_COEFFS, C4_CHAIN_CARRY_4_COEFFS, C4_CHAIN_CARRY_6_COEFFS,
-        C4_IS_BOUNDARY_COEFFS, C4_RC0_COEFFS, C4_RC1_COEFFS, C4_RC2_COEFFS,
+        C4_NOT_BOUNDARY_ACTIVE_COEFFS, C4_RC0_COEFFS, C4_RC1_COEFFS, C4_RC2_COEFFS,
         C4_ROUND_FLAG_COEFFS,
     };
 
     let z = proof.ood_z;
 
-    // Evaluate the 11 periodic columns at z via Horner (~256 muls each).
-    // A3: CHAIN_34 and CHAIN_CARRY_4 are the SAME table, as are CHAIN_56 and
-    // CHAIN_CARRY_6 (verified coefficient-wise). Evaluate each once and reuse —
-    // 512 duplicate Horner steps removed for free.
+    // Evaluate the 13 periodic columns at z.
+    // [ZK-MASK-C4 2026-09-11] The four Poseidon tables are tiled 32-periodic
+    // over the whole 512-row trace, so their interpolants are stride-16 sparse
+    // (32 Horner steps each; `periodic_stride.rs` pins the sparsity). CHAIN_34
+    // == CHAIN_CARRY_4 and CHAIN_56 == CHAIN_CARRY_6 coefficient-wise, so each
+    // pair is evaluated once. `is_boundary` is read by no constraint since the
+    // mask and is not evaluated. The two gates are dense, 512 steps each.
+    //
+    // RETURNING ELEVEN WOULD BE A SILENT PRIVACY REGRESSION: drop the gates and
+    // the verifier re-imposes `next = current` on the 288 blinding rows.
     let chain_34_z = eval_periodic_at_z(&C4_CHAIN_34_COEFFS, z);
     let chain_56_z = eval_periodic_at_z(&C4_CHAIN_56_COEFFS, z);
     debug_assert_eq!(C4_CHAIN_34_COEFFS[..], C4_CHAIN_CARRY_4_COEFFS[..]);
     debug_assert_eq!(C4_CHAIN_56_COEFFS[..], C4_CHAIN_CARRY_6_COEFFS[..]);
 
-    let periodic_at_z: [Felt; 11] = [
-        // A3: stride-8 sparse (measured: 32 of 256 coefficients non-zero).
-        // 256 Horner steps -> 32, four times over.
-        eval_periodic_stride_at_z(&C4_RC0_COEFFS, z, 8),
-        eval_periodic_stride_at_z(&C4_RC1_COEFFS, z, 8),
-        eval_periodic_stride_at_z(&C4_RC2_COEFFS, z, 8),
-        eval_periodic_stride_at_z(&C4_ROUND_FLAG_COEFFS, z, 8),
-        eval_periodic_at_z(&C4_IS_BOUNDARY_COEFFS, z),
+    let periodic_at_z: [Felt; 13] = [
+        eval_periodic_stride_at_z(&C4_RC0_COEFFS, z, 16),
+        eval_periodic_stride_at_z(&C4_RC1_COEFFS, z, 16),
+        eval_periodic_stride_at_z(&C4_RC2_COEFFS, z, 16),
+        eval_periodic_stride_at_z(&C4_ROUND_FLAG_COEFFS, z, 16),
+        Felt::ZERO, // is_boundary: not read since 2026-09-11
         eval_periodic_at_z(&C4_CHAIN_01_COEFFS, z),
         chain_34_z,
         chain_56_z,
         eval_periodic_at_z(&C4_CARRY_CAPTURE_COEFFS, z),
         chain_34_z,
         chain_56_z,
+        eval_periodic_at_z(&C4_ACTIVE_COEFFS, z),
+        eval_periodic_at_z(&C4_NOT_BOUNDARY_ACTIVE_COEFFS, z),
     ];
 
-    // Collect OOD trace values. Circuit 4 is width-4.
+    // Collect OOD trace values. Circuit 4 is width-6 since the mask.
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    if ood_current_vec.len() != 4 || ood_next_vec.len() != 4 {
+    if ood_current_vec.len() != 6 || ood_next_vec.len() != 6 {
         return Err(VerifyError::DeepAliFailed);
     }
     let ood_current = [
-        ood_current_vec[0], ood_current_vec[1], ood_current_vec[2], ood_current_vec[3],
+        ood_current_vec[0], ood_current_vec[1], ood_current_vec[2],
+        ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
     ];
     let ood_next = [
-        ood_next_vec[0], ood_next_vec[1], ood_next_vec[2], ood_next_vec[3],
+        ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
+        ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
     ];
 
     // Derive α exactly like the prover (C4-specific domain tag).
@@ -5068,10 +5269,11 @@ pub fn verify_deep_ali_circuit_4(
         &ood_current, &ood_next, &periodic_at_z, alpha,
     );
 
-    // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 256.
-    const TRACE_LENGTH_C4: usize = 256;
+    // Z_T(z) = (z^n - 1) / (z - g^(n-1)) with n = 512.
+    // [ZK-MASK-C4 2026-09-11] 256 -> 512, and the generator MOVES with it.
+    const TRACE_LENGTH_C4: usize = 512;
     let z_d = vanishing_poly(z, TRACE_LENGTH_C4);
-    let g = Felt::new(GENERATOR_256);
+    let g = Felt::new(GENERATOR_512);
     let last_row_x = g.exp((TRACE_LENGTH_C4 - 1) as u64);
     let neg_last = Felt::new(crate::goldilocks::MODULUS - last_row_x.as_u64());
     let z_minus_last = z.add(neg_last);
@@ -5159,8 +5361,10 @@ pub fn verify_deep_ali_circuit_4(
 /// already carry it; C5 is the heaviest AIR so the margin vanishes fastest.
 #[inline(never)]
 fn evaluate_transition_at_ood_circuit_5(
-    ood_current: &[Felt; 7],
-    ood_next: &[Felt; 7],
+    // [ZK-MASK-C5 2026-09-11] 7 -> 9. Index 7 is the ZK lift column, read by
+    // constraint [28] alone; index 8 is the randomizer, read by nothing.
+    ood_current: &[Felt; 9],
+    ood_next: &[Felt; 9],
     periodic_at_z: &[Felt; 30],
     alpha: Felt,
 ) -> Felt {
@@ -5245,7 +5449,7 @@ fn evaluate_transition_at_ood_circuit_5(
     let ro1 = s0_7.add(three.mul(s1_7)).add(s2_7);
     let ro2 = s0_7.add(s1_7).add(three.mul(s2_7));
 
-    let mut cs = [Felt::ZERO; 28];
+    let mut cs = [Felt::ZERO; 29];
 
     // [0-2] Poseidon state transition.
     cs[0] = nba.mul(
@@ -5305,6 +5509,14 @@ fn evaluate_transition_at_ood_circuit_5(
     cs[25] = sub_out1.mul(ood_next[6].sub(ood_current[6]).sub(ood_current[0]));
     cs[26] = sub_out2.mul(ood_next[6].sub(ood_current[6]).sub(ood_current[0]));
     cs[27] = active.mul(acc_continuity.mul(ood_next[6].sub(ood_current[6])));
+
+    // -- [28] ZK degree lift, col `ZK_LIFT_COL` (= 7). Prover twin:
+    //    `air::transfer::evaluate_transfer_transition`, result[28]. Zero on the
+    //    trace domain (`chain_0_1`, periodic slot 5, is one-hot at row 31 where
+    //    `nba` is 0). THE BASE IS RAW `ood_current[0]`, never `s0`.
+    let lift_base = ood_current[0];
+    let lb3 = lift_base.mul(lift_base).mul(lift_base);
+    cs[28] = periodic_at_z[5].mul(nba).mul(ood_current[7]).mul(lb3).mul(lb3);
 
     // Horner RLC: Σ α^i · cs[i].
     let mut combined = Felt::ZERO;
@@ -5507,18 +5719,20 @@ pub fn verify_deep_ali_circuit_5(
     // conservation rebake (col 6 = signed amount accumulator).
     let ood_current_vec: Vec<Felt> = proof.ood_current_iter().collect();
     let ood_next_vec: Vec<Felt> = proof.ood_next_iter().collect();
-    if ood_current_vec.len() != 7 || ood_next_vec.len() != 7 {
+    // [ZK-MASK-C5 2026-09-11] 7 -> 9. This guard sits BEFORE the frame is
+    // built, so left behind it rejects every honest proof with `DeepAliFailed`.
+    if ood_current_vec.len() != 9 || ood_next_vec.len() != 9 {
         return Err(VerifyError::DeepAliFailed);
     }
     let ood_current = [
         ood_current_vec[0], ood_current_vec[1], ood_current_vec[2],
         ood_current_vec[3], ood_current_vec[4], ood_current_vec[5],
-        ood_current_vec[6],
+        ood_current_vec[6], ood_current_vec[7], ood_current_vec[8],
     ];
     let ood_next = [
         ood_next_vec[0], ood_next_vec[1], ood_next_vec[2],
         ood_next_vec[3], ood_next_vec[4], ood_next_vec[5],
-        ood_next_vec[6],
+        ood_next_vec[6], ood_next_vec[7], ood_next_vec[8],
     ];
 
     // Derive α exactly like the prover (C5-specific domain tag).
@@ -5895,25 +6109,16 @@ fn verify_constraints_spend(
 // Circuit 0: subscriber_ownership
 // ============================================================================
 
-/// [C0 GATE] Unreachable from `verify_generic` — both the step-0 gate and the
-/// step-4 dispatch arm refuse `circuit_id == 0` before this can run.
-///
-/// It is kept, and kept compiling, for one reason: it is the evidence for the
-/// refusal. `c0_generic_path_cannot_verify_an_honest_c0_proof` calls it directly
-/// on an honest C0 proof and records the failure, so the claim "the generic path
-/// rejects honest C0 proofs" is a measurement in the test suite rather than a
-/// comment. Delete it and the gate becomes an unargued assertion.
-#[allow(dead_code)]
+/// [ZK-MASK-C0 2026-09-11] Phase-1 step 4 for the MASKED circuit 0, reached
+/// from `verify_generic` like every other circuit. The per-query arm is dead
+/// since B7 (coset LDE), exactly as on C1..C7; the binding is the boundary
+/// fold and phase 2 (`verify_deep_ali_circuit_0_masked`), which
+/// `verify_stark_proof` runs in the same instruction.
 pub(crate) fn verify_constraints_subscriber_ownership(
     proof: &GenericCompactProof,
     config: &CircuitConfig,
     _public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
-    // [P2.2d] DEEP-ALI: bind Q to the AIR via `C(z) == Q(z) · Z_D(z)` at OOD.
-    // Without this, a malicious prover could supply any low-degree Q (FRI
-    // passes) and only the trace-aligned queries (1/blowup of total) would
-    // catch it — 27 queries × 1/16 ≈ 1.7 transition checks per proof.
-    verify_deep_ali_circuit_0(proof)?;
 
     for (query_idx, query) in proof.queries.iter().enumerate() {
         let pos = query.position as usize;
@@ -7051,7 +7256,7 @@ mod merkle_update_e2e {
     /// and `p01_quantum_wallet/src/stark.rs:42` all hard-require `circuit_id == 0`).
     #[test]
     fn route_c_trace_commitment_is_checked_c0_legacy() {
-        use crate::compact_proof::{CompactStarkProof, CONFIG_SUBSCRIBER_OWNERSHIP};
+        use crate::compact_proof::{CircuitConfig, CompactStarkProof, CONFIG_SUBSCRIBER_OWNERSHIP};
 
         let pd = p01_stark::compact::generate_compact_proof(42);
         let commitment = crate::goldilocks::Felt::new(pd.commitment);
@@ -7061,8 +7266,24 @@ mod merkle_update_e2e {
         verify_subscriber_ownership(&honest, commitment)
             .expect("honest C0 proof must verify — otherwise the negative half is vacuous");
 
-        let (base, row_len) =
-            route_c_trace_block(&CONFIG_SUBSCRIBER_OWNERSHIP, &pd.proof_bytes, 0);
+        // [ZK-MASK-C0 2026-09-11] `CONFIG_SUBSCRIBER_OWNERSHIP` now describes the
+        // MASKED circuit 0. This probe drives the retired legacy generator, whose
+        // bytes carry the legacy geometry; spell it out rather than borrow a
+        // config that no longer matches it.
+        let legacy = CircuitConfig {
+            trace_width: 3,
+            trace_length: 32,
+            blowup: 16,
+            lde_size: 512,
+            merkle_depth: 9,
+            num_rounds: 30,
+            fri_final_poly_size: 16,
+            fri_final_poly_degree_bound: 1,
+            quotient_segments: 7,
+            num_queries: 27,
+        };
+        let _ = &CONFIG_SUBSCRIBER_OWNERSHIP;
+        let (base, row_len) = route_c_trace_block(&legacy, &pd.proof_bytes, 0);
 
         for (label, slot) in [("mirror", 1usize), ("next-mirror", 3usize)] {
             let mut tampered = pd.proof_bytes.clone();
@@ -7264,8 +7485,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_balance_compact_proof(
-            42u64, 1000u64, 777u64, 999u64,
-        );
+            42u64, 1000u64, 777u64, 999u64, &p01_stark::compact::c2_deterministic_probe_mask(),);
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7285,8 +7505,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_balance_compact_proof(
-            42u64, 17u64, 7u64, 11u64,
-        );
+            42u64, 17u64, 7u64, 11u64, &p01_stark::compact::c2_deterministic_probe_mask(),);
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7305,8 +7524,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_balance_compact_proof(
-            1u64, 2u64, 3u64, 4u64,
-        );
+            1u64, 2u64, 3u64, 4u64, &p01_stark::compact::c2_deterministic_probe_mask(),);
 
         let mut tampered = proof_data.proof_bytes.clone();
         tampered[64] ^= 0x01;
@@ -7330,11 +7548,12 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_balance_compact_proof(
-            5u64, 6u64, 7u64, 8u64,
-        );
+            5u64, 6u64, 7u64, 8u64, &p01_stark::compact::c2_deterministic_probe_mask(),);
 
         let mut tampered = proof_data.proof_bytes.clone();
-        tampered[136] ^= 0x02;
+        // [ZK-MASK-C2 2026-09-11] 136 -> 168: two roots (64) + ood_current and
+        // ood_next at six columns (96) + ood_z (8).
+        tampered[168] ^= 0x02;
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7356,8 +7575,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_balance_compact_proof(
-            9u64, 10u64, 11u64, 12u64,
-        );
+            9u64, 10u64, 11u64, 12u64, &p01_stark::compact::c2_deterministic_probe_mask(),);
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7584,8 +7802,7 @@ mod merkle_update_e2e {
 
     fn c4_sample_proof() -> p01_stark::compact::GenericCompactProofData {
         p01_stark::compact::generate_confidential_balance_compact_proof(
-            42, 1000, 111, 800, 222, 200, 333, 999,
-        )
+            42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),)
     }
 
     /// [P2.2d-C4] Positive: `verify_generic` accepts an honest confidential-
@@ -7615,8 +7832,7 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_confidential_balance_compact_proof(
-            13, 500, 77, 400, 88, 100, 99, 1234,
-        );
+            13, 500, 77, 400, 88, 100, 99, 1234, &p01_stark::compact::c4_deterministic_probe_mask(),);
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7658,11 +7874,11 @@ mod merkle_update_e2e {
         use crate::compact_proof::get_circuit_config;
 
         let proof_data = p01_stark::compact::generate_confidential_balance_compact_proof(
-            1, 2, 3, 4, 5, 6, 7, 8,
-        );
+            1, 2, 3, 4, 5, 6, 7, 8, &p01_stark::compact::c4_deterministic_probe_mask(),);
 
         let mut tampered = proof_data.proof_bytes.clone();
-        tampered[136] ^= 0x02;
+        // [ZK-MASK-C4 2026-09-11] 136 -> 168 (six columns in the OOD frames).
+        tampered[168] ^= 0x02;
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -7811,7 +8027,8 @@ mod merkle_update_e2e {
             1, 2, 3, 4, 5, 6, 2, 8, 9, 6, 11, 12, 0, &p01_stark::compact::c5_deterministic_probe_mask());
 
         let mut tampered = proof_data.proof_bytes.clone();
-        tampered[184] ^= 0x02;
+        // [ZK-MASK-C5 2026-09-11] 184 -> 216 (nine columns in the OOD frames).
+        tampered[216] ^= 0x02;
 
         let config = get_circuit_config(proof_data.circuit_id).expect("config");
         let parsed = crate::compact_proof::GenericCompactProof::from_bytes(
@@ -8153,7 +8370,7 @@ mod merkle_update_e2e {
             "C2 balance_proof",
             &crate::compact_proof::CONFIG_BALANCE_PROOF,
             None, // all four cycles hash
-            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask()),
             verify_constraints_balance_proof,
         );
     }
@@ -8180,8 +8397,7 @@ mod merkle_update_e2e {
             None,
             |s| {
                 p01_stark::compact::generate_confidential_balance_compact_proof(
-                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
-                )
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),)
             },
             verify_constraints_confidential_balance,
         );
@@ -8418,7 +8634,7 @@ mod merkle_update_e2e {
             2,
             &crate::compact_proof::CONFIG_BALANCE_PROOF,
             8,
-            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask()),
         );
     }
 
@@ -8431,8 +8647,7 @@ mod merkle_update_e2e {
             8,
             |s| {
                 p01_stark::compact::generate_confidential_balance_compact_proof(
-                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
-                )
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),)
             },
         );
     }
@@ -8591,10 +8806,9 @@ mod merkle_update_e2e {
             24,
             |s, idx, v| {
                 p01_stark::compact::generate_balance_compact_proof_claiming(
-                    42 + s, 1000, 777, 999, idx, v,
-                )
+                    42 + s, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask(), idx, v,)
             },
-            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999),
+            |s| p01_stark::compact::generate_balance_compact_proof(42 + s, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask()),
             |p, pi| verify_deep_ali_circuit_2(p, pi),
         );
     }
@@ -8610,13 +8824,11 @@ mod merkle_update_e2e {
             12,
             |s, idx, v| {
                 p01_stark::compact::generate_confidential_balance_compact_proof_claiming(
-                    42 + s, 1000, 111, 800, 222, 200, 333, 999, idx, v,
-                )
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(), idx, v,)
             },
             |s| {
                 p01_stark::compact::generate_confidential_balance_compact_proof(
-                    42 + s, 1000, 111, 800, 222, 200, 333, 999,
-                )
+                    42 + s, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),)
             },
             |p, pi| verify_deep_ali_circuit_4(p, pi),
         );
@@ -8736,65 +8948,51 @@ mod boundary_c0_tests {
         );
     }
 
-    /// [C0 GATE] The generic dispatch REFUSES circuit 0, explicitly.
-    ///
-    /// An honest C0 proof parses cleanly as a `GenericCompactProof` (same header
-    /// layout, tw=3, md=9, 4 committed FRI layers), so nothing about the bytes
-    /// stops it reaching `verify_generic`. The gate is what stops it, and it must
-    /// return the named error rather than something that reads like a bad proof.
+    /// [ZK-MASK-C0 2026-09-11] Formerly `c0_generic_path_cannot_verify_an_honest_c0_proof`,
+    /// which recorded WHY the generic path refused circuit 0: the legacy 32-row
+    /// shape could not be verified generically. The gate is gone and the sentence
+    /// is inverted, both measured here:
+    ///   * a LEGACY C0 proof does not even parse under today's `CONFIG_SUBSCRIBER_OWNERSHIP`
+    ///     (a hard wire break, on purpose), while it still verifies on its own
+    ///     legacy path -- the retired shape stays measurable as the positive control;
+    ///   * a MASKED C0 proof verifies through `verify_generic` AND the masked
+    ///     phase 2, which is the pair `verify_stark_proof` runs for circuit 0.
     #[test]
-    fn c0_generic_dispatch_refuses_circuit_zero() {
-        let pd = p01_stark::compact::generate_compact_proof(42);
+    fn masked_c0_verifies_generically_and_the_legacy_shape_no_longer_parses() {
         let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
-        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
-            .expect("an honest C0 proof does parse under the generic parser");
-        let res = verify_generic(&parsed, 0, &[pd.commitment], cfg);
+
+        let legacy = p01_stark::compact::generate_compact_proof(42);
         assert!(
-            matches!(res, Err(VerifyError::CircuitZeroIsLegacyOnly)),
-            "generic path must refuse circuit 0 by name, got {res:?}"
+            GenericCompactProof::from_bytes(&legacy.proof_bytes, cfg).is_none(),
+            "a legacy 32-row C0 proof must NOT parse under the masked config",
         );
-    }
+        let parsed_legacy = crate::compact_proof::CompactStarkProof::from_bytes(&legacy.proof_bytes)
+            .expect("the legacy parser still reads the legacy shape");
+        verify_subscriber_ownership(&parsed_legacy, Felt::new(legacy.commitment))
+            .expect("the legacy shape still verifies on its own retired path");
 
-    /// [C0 GATE] …and the refusal is not merely tidy: the generic path CANNOT
-    /// verify an honest C0 proof. This calls the C0 constraint body directly,
-    /// bypassing the gate, and records the failure.
-    ///
-    /// Two independent reasons, both structural:
-    ///   * `verify_deep_ali_circuit_0` is reached through generic machinery that
-    ///     divides by `Z_D(x) = x^n - 1`; C0's constraint is only divisible by
-    ///     `Z_T(x) = (x^n - 1)/(x - g^(n-1))` because the row-(n-1) wrap does not
-    ///     vanish.
-    ///   * C0's committed quotient carries a folded boundary term (`bnd-c0` tag)
-    ///     that the generic path never recomputes.
-    ///
-    /// If this test ever goes green-accepting, the gate above stops being a
-    /// safety property and becomes a policy choice — and this comment becomes a
-    /// lie. That is the point of asserting it.
-    #[test]
-    fn c0_generic_path_cannot_verify_an_honest_c0_proof() {
-        let pd = p01_stark::compact::generate_compact_proof(42);
-        let cfg = crate::compact_proof::get_circuit_config(0).expect("C0 has a config");
-        let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
-            .expect("parse honest C0 proof as generic");
+        let masked = p01_stark::compact::generate_subscriber_ownership_proof(
+            42, &p01_stark::compact::c0_deterministic_probe_mask(),
+        );
+        assert_eq!(masked.public_inputs, vec![legacy.commitment], "same secret, same commitment");
+        let parsed = GenericCompactProof::from_bytes(&masked.proof_bytes, cfg)
+            .expect("the masked C0 proof parses under its config");
+        verify_generic(&parsed, 0, &masked.public_inputs, cfg)
+            .expect("phase 1 accepts an honest masked C0 proof");
+        verify_deep_ali_circuit_0_masked(&parsed, &masked.public_inputs)
+            .expect("phase 2 accepts an honest masked C0 proof");
 
-        // Sanity: the legacy path DOES verify this proof, so any failure below is
-        // about the generic path, not about the proof.
-        let legacy = crate::compact_proof::CompactStarkProof::from_bytes(&pd.proof_bytes)
-            .expect("parse honest C0 proof as legacy");
-        verify_subscriber_ownership(&legacy, Felt::new(pd.commitment))
-            .expect("honest C0 proof must verify on its own legacy path");
-
-        let res = verify_constraints_subscriber_ownership(&parsed, cfg, &[pd.commitment]);
+        // And the binding: a lie about the commitment is refused at z.
+        let mut wrong = masked.public_inputs.clone();
+        wrong[0] ^= 0xBEEF;
         assert!(
-            res.is_err(),
-            "the generic C0 constraint path accepted an honest C0 proof — the \
-             CircuitZeroIsLegacyOnly gate is then a policy choice, not a \
-             necessity, and its doc comment is wrong"
+            matches!(verify_deep_ali_circuit_0_masked(&parsed, &wrong), Err(VerifyError::DeepAliFailed)),
+            "a wrong commitment must fail the masked C0 boundary fold",
         );
-        println!(
-            "[C0 GATE] MEASURED: generic C0 constraint path on an HONEST C0 proof -> {:?}",
-            res.unwrap_err()
-        );
+        let mut tampered = masked.proof_bytes.clone();
+        tampered[64] ^= 0x01; // ood_current[0]
+        let t = GenericCompactProof::from_bytes(&tampered, cfg).expect("still parses");
+        assert!(matches!(verify_deep_ali_circuit_0_masked(&t, &masked.public_inputs), Err(VerifyError::DeepAliFailed)));
     }
 }
 

@@ -51,7 +51,14 @@ and that transcript is distributed identically to an honest prover's on every
 value the wire carries.
 
 Two words in that sentence are load-bearing and neither is decoration.
-**Statistical**, not perfect: `S` fails with probability about `2^-54`.
+**Statistical**, in the random-oracle model, and with no failure event of its
+own since 2026-09-12: the one case in which `S` used to fail (probability about
+`2^-54`) was the out-of-domain point `z` landing in the trace domain or on the
+LDE coset, and both prover and verifier now resample `z` out of that set
+(`[PERFECT-IOP]`, `ood_point_from_transcript_hash` on both sides,
+`ood_resampling_parity.rs`). What remains statistical is the random-oracle step
+on the leaves a proof never opens, bounded by `q_H · 2^-(w·63)` and measured
+by X5 (`unopened_leaves_stay_uniform_given_every_opening_on_every_circuit`).
 **In the random-oracle model**: the argument assumes SHA-256 behaves as a random
 oracle.
 
@@ -113,7 +120,10 @@ oracle.
    vacuous — every layer has more coefficients than opened points — which is
    why §3.1's two-query run never met them.
 
-The verifier accepts `S`'s transcript with probability about `1 - 2^-54`.
+The verifier accepts `S`'s transcript with probability 1: the `2^-54` event
+(`Z_T(z) = 0` or a vanishing DEEP denominator) no longer exists, because `z` is
+resampled out of the trace domain and the LDE coset on both sides
+(`[PERFECT-IOP 2026-09-12]`).
 
 ---
 
@@ -341,12 +351,20 @@ Three assumptions, named rather than buried.
 
 ## 5. What is NOT claimed
 
-- ⛔ **Not perfect zero-knowledge.** `S` fails with probability about `2^-54`.
-  No STARK of this shape is perfect ZK, and saying otherwise would be false.
-- ⛔ **Not claimed for C0, C2 or C4.** They have no blinding region at all.
-- ⛔ **Not claimed for C5.** It has neither a lift column nor a randomizer
-  column, and both of its on-chain instructions are disabled — it proves no
-  Merkle membership, which is a soundness defect, not a privacy one.
+- ⛔ **Not perfect zero-knowledge of the proof string.** The simulated VIEW is
+  identically distributed since the `z` resampling of 2026-09-12 (no failure
+  event left), but the Merkle roots are deterministic functions of leaves that
+  are not all uniform, so their hiding is the random-oracle step, statistical
+  with advantage at most `q_H · 2^-(w·63)` (X5). No hash-based STARK is perfect
+  ZK, and saying otherwise would be false; the only perfectly hiding commitments
+  known are Pedersen-style and not post-quantum.
+- ✅ **Claimed for all eight circuits since 2026-09-11.** C0 (masked shape, 512
+  rows), C2, C4 and C5 now carry the same row mask, lift column and randomizer
+  column as C1/C3/C6/C7, with verifier twins; X1/X2/X5 and the recovery
+  harnesses run on all eight (`docs/UNIFORM-MASKING-2026-09-11.md`). ⛔ On
+  devnet the DEPLOYED verifier still runs the pre-mask C0/C2/C4 until the
+  redeploy; C5's on-chain instructions remain disabled (it proves no Merkle
+  membership, a soundness defect, not a privacy one).
 - ⛔ **Not a claim about what a transaction reveals on chain.** The proof hides
   the witness. It does not hide which program was called, which accounts were
   touched, or what the fee payer was. Those are separate properties with

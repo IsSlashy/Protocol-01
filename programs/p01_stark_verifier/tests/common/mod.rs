@@ -320,6 +320,12 @@ pub fn prove0(w: &W0) -> p01_stark::compact::CompactProofData {
     p01_stark::compact::generate_compact_proof(w.subscriber_secret)
 }
 
+/// [ZK-MASK-C0 2026-09-11] The SHIPPING circuit-0 proof: masked, generic.
+pub fn prove0_masked(w: &W0) -> p01_stark::compact::GenericCompactProofData {
+    p01_stark::compact::generate_subscriber_ownership_proof(
+        w.subscriber_secret, &p01_stark::compact::c0_deterministic_probe_mask())
+}
+
 pub fn prove1(w: &W1) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_pool_commitment_proof(
         w.nullifier_preimage, w.secret, w.deposit_epoch, w.token_mint, &p01_stark::compact::c1_deterministic_probe_mask())
@@ -327,8 +333,7 @@ pub fn prove1(w: &W1) -> p01_stark::compact::GenericCompactProofData {
 
 pub fn prove2(w: &W2) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_balance_compact_proof(
-        w.spending_key, w.balance, w.salt, w.token_mint,
-    )
+        w.spending_key, w.balance, w.salt, w.token_mint, &p01_stark::compact::c2_deterministic_probe_mask(),)
 }
 
 pub fn prove3(w: &W3) -> p01_stark::compact::GenericCompactProofData {
@@ -339,8 +344,7 @@ pub fn prove3(w: &W3) -> p01_stark::compact::GenericCompactProofData {
 pub fn prove4(w: &W4) -> p01_stark::compact::GenericCompactProofData {
     p01_stark::compact::generate_confidential_balance_compact_proof(
         w.spending_key, w.old_balance, w.old_salt, w.new_balance, w.new_salt, w.amount,
-        w.amount_salt, w.token_mint,
-    )
+        w.amount_salt, w.token_mint, &p01_stark::compact::c4_deterministic_probe_mask(),)
 }
 
 pub fn prove5(w: &W5) -> p01_stark::compact::GenericCompactProofData {
@@ -452,6 +456,25 @@ pub fn check_semantics_0(w: &W0, data: &p01_stark::compact::CompactProofData) {
     assert_eq!(trace[0][31], trace[0][30], "C0: row 31 must be the padding copy of row 30");
 }
 
+/// [ZK-MASK-C0 2026-09-11] The masked shape carries the legacy witness rows
+/// verbatim; its single public input is the same commitment.
+pub fn check_semantics_0_masked(w: &W0, data: &p01_stark::compact::GenericCompactProofData) {
+    use p01_stark::air::subscriber_ownership as c0;
+    let secret = f(w.subscriber_secret);
+    let expected = poseidon::hash1(secret);
+    assert_eq!(data.public_inputs.len(), 1, "C0 masked: one public input");
+    assert_eq!(f(data.public_inputs[0]), expected, "C0 masked: commitment is not Poseidon(secret)");
+    let mask: Vec<BaseElement> = p01_stark::compact::c0_deterministic_probe_mask()
+        .iter().map(|&v| BaseElement::new(v)).collect();
+    let (trace, commitment) = c0::build_masked_trace(secret, &mask);
+    assert_eq!(commitment, expected);
+    assert_eq!(trace[1][0], ZERO(), "C0 masked: row 0 col 1 must be 0");
+    assert_eq!(trace[2][0], ZERO(), "C0 masked: capacity at row 0 must be 0");
+    assert_eq!(trace[0][30], expected, "C0 masked: trace row 30 col 0 must carry the commitment");
+    assert_eq!(trace[0][31], trace[0][30], "C0 masked: row 31 must be the padding copy of row 30");
+    assert_eq!(trace.len(), c0::MASKED_TRACE_WIDTH);
+}
+
 pub fn check_semantics_1(w: &W1, data: &p01_stark::compact::GenericCompactProofData) {
     let nullifier = poseidon::hash2(f(w.nullifier_preimage), f(w.secret));
     let epoch_hash = poseidon::hash2(f(w.deposit_epoch), f(w.token_mint));
@@ -491,8 +514,10 @@ pub fn check_semantics_2(w: &W2, data: &p01_stark::compact::GenericCompactProofD
     assert_eq!(f(data.public_inputs[0]), commitment, "C2: commitment != the reference Poseidon chain");
     assert_eq!(data.public_inputs[1], w.token_mint, "C2: token_mint public input");
 
+    let mask: Vec<BaseElement> = p01_stark::compact::c2_deterministic_probe_mask()
+        .iter().map(|&v| BaseElement::new(v)).collect();
     let (trace, _) = balance_proof::build_balance_proof_trace(
-        f(w.spending_key), f(w.balance), f(w.salt), f(w.token_mint),
+        f(w.spending_key), f(w.balance), f(w.salt), f(w.token_mint), &mask,
     );
     assert_eq!(trace[0][126], commitment, "C2: boundary row 126 (commitment)");
     assert_eq!(trace[1][32], f(w.token_mint), "C2: cycle-1 right input must be token_mint");
@@ -590,34 +615,40 @@ pub fn check_semantics_4(w: &W4, data: &p01_stark::compact::GenericCompactProofD
     let (trace, _, _, _) = confidential_balance::build_confidential_balance_trace(
         f(w.spending_key), f(w.old_balance), f(w.old_salt), f(w.new_balance), f(w.new_salt),
         f(w.amount), f(w.amount_salt), f(w.token_mint),
+        &p01_stark::compact::c4_deterministic_probe_mask().iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
     );
     assert_eq!(trace[0][94], amount_hash, "C4: boundary row 94 (amount_hash)");
     assert_eq!(trace[0][158], old_commitment, "C4: boundary row 158 (old_commitment)");
     assert_eq!(trace[0][222], new_commitment, "C4: boundary row 222 (new_commitment)");
     assert_eq!(trace[1][32], f(w.token_mint), "C4: cycle-1 right input must be token_mint");
 
-    // [C4 INACTIVE-CYCLE CLASS] Cycle 7 (rows 224..=255) is documented as
-    // "padding", and `verify_constraints_confidential_balance` has NO
-    // `active_rows` bound — unlike C3 and C6, whose padding rows are frozen and
-    // which therefore need one. The reason is that C4's cycle 7 is a REAL
-    // Poseidon(0, 0), not a freeze: `build_confidential_balance_trace` calls
-    // `run_hash(trace, 7, ZERO(), ZERO())`, and `round_flag` is 1 across all eight
-    // cycles. So the rows ARE constrained and the honest trace satisfies them.
-    // Pinned here so a future "optimisation" that freezes cycle 7 to save prover
-    // time turns this red instead of turning honest C4 proofs into
-    // `TransitionConstraintFailed` on chain.
-    assert_eq!(
-        trace[0][224], ZERO(),
-        "C4: cycle 7 must START at Poseidon(0,0) — if this row is no longer zero the padding \
-         cycle has been changed and verify_constraints_confidential_balance now needs the \
-         active_rows bound that C3 and C6 carry",
-    );
-    assert_eq!(trace[1][224], ZERO(), "C4: cycle 7 right input must be 0");
-    assert_ne!(
-        trace[0][225], trace[0][224],
-        "C4: cycle 7 must be a REAL hash, not a frozen copy — phase 1 demands \
-         next == poseidon_round(current) on rows 224..=253 with no active_rows bound",
-    );
+    // [ZK-MASK-C4 2026-09-11] Rows 224..=511 are the BLINDING REGION now, not
+    // a Poseidon(0, 0) padding cycle: `FIRST_FREE_ROW = 224`, the trace is 512
+    // rows, and every constrained column from that row on is the caller's mask
+    // verbatim. `verify_constraints_confidential_balance` still carries no
+    // `active_rows` bound and still needs none, for a new reason: every
+    // transition constraint is gated by the periodic `not_boundary_active` /
+    // `active` columns, which are zero from row 223 on (a transition at row i
+    // reads row i + 1). Pinned so that a "cleanup" that writes zeros or a real
+    // hash over the free rows -- handing the Lagrange solver 288 known rows --
+    // turns red here instead of on the recovery harness.
+    let mask = p01_stark::compact::c4_deterministic_probe_mask();
+    let cw = confidential_balance::CONSTRAINED_TRACE_WIDTH;
+    let ffr = confidential_balance::FIRST_FREE_ROW;
+    for col in 0..cw {
+        assert_eq!(
+            trace[col][ffr],
+            BaseElement::new(mask[col]),
+            "C4: row {ffr} of column {col} must be that column's first mask element -- the \
+             blinding region starts at FIRST_FREE_ROW and is the mask verbatim",
+        );
+    }
+    assert_ne!(trace[0][ffr], ZERO(), "C4: the free region must not be zero-filled");
+    // Rows 224 and 225 are two different MASK rows now, not a hash state and
+    // its successor: the "cycle 7 right input is 0" and "real hash, not a
+    // frozen copy" pins of the pre-mask C4 are retired with the padding cycle.
+    assert_eq!(trace[1][ffr], BaseElement::new(mask[1]), "C4: row 224 col 1 is the mask, not a zero right input");
+    assert_eq!(trace[0][ffr + 1], BaseElement::new(mask[cw]), "C4: row 225 is the second mask row, verbatim");
 
     sweep_transitions(
         "C4",

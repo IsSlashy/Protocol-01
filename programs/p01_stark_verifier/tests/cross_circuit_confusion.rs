@@ -44,7 +44,7 @@
 mod common;
 
 use p01_stark_verifier::compact_proof::{
-    get_circuit_config, CompactStarkProof, GenericCompactProof,
+    get_circuit_config, CircuitConfig, CompactStarkProof, GenericCompactProof,
 };
 
 /// The uniform envelope the mobile client pads every proof to before upload.
@@ -63,7 +63,8 @@ const PROBE_ORDER: [u8; 5] = [1, 6, 3, 5, 7];
 
 fn genuine_proof_bytes(circuit_id: u8) -> Vec<u8> {
     match circuit_id {
-        0 => common::prove0(&common::w0(0)).proof_bytes,
+        // [ZK-MASK-C0 2026-09-11] The SHIPPING (masked, generic) circuit 0.
+        0 => common::prove0_masked(&common::w0(0)).proof_bytes,
         1 => common::prove1(&common::w1(0)).proof_bytes,
         2 => common::prove2(&common::w2(0)).proof_bytes,
         3 => common::prove3(&common::w3(0)).proof_bytes,
@@ -120,8 +121,12 @@ fn recorded_proof_sizes_hold() {
     // (80,577 -> 94,017): its trace doubled to 512 rows AND the randomizer
     // column widened it to 4. C5 grew on the trace alone (1024 rows). C3, C6
     // and C7 each grew by one randomizer column, net of the depth cut.
+    // [ZK-MASK 2026-09-11] C2 69,761 -> 95,777 (n 512, width 6, 27 queries)
+    // C4 81,457 -> 75,085 (n 512, width 6, 22 queries, ffps 32) and C5 89,821 -> 91,261
+    // (lift + randomizer columns, width 9), MEASURED. Keep the declaration below
+    // free of comments: `apps/web/lib/privacy/pool/subscribeFloat.test.ts` parses it.
     const RECORDED: [usize; 8] =
-        [47_641, 94_897, 69_761, 79_597, 81_457, 89_821, 82_477, 79_405];
+        [74_365, 94_897, 95_777, 79_597, 75_085, 91_261, 82_477, 79_405];
     let proofs = all_genuine();
     let mut measured = [0usize; 8];
     for (i, p) in proofs.iter().enumerate() {
@@ -297,8 +302,12 @@ fn no_two_configs_share_the_tuple_the_parser_can_observe() {
         }
     }
     assert_eq!(
-        collisions, 1,
-        "the number of config pairs separated by trace_width alone changed (was 1: C3/C6, and a number going UP is the dangerous direction; it was 4: C1/C2, \
+        collisions, 5,
+        "the number of config pairs separated by trace_width alone changed (was 4 since \
+         2026-09-11: C3/C6, C1/C2, C4/C7, C0/C4 and C0/C7 -- C2 took C1's geometry, C4 and the \
+         masked C0 took C7's terminal shape at 22 queries for their masks, and none of C0, \
+         C2, C4 is in PROBE_ORDER, see `probe_order_members_are_separated_by_a_wire_field`; before \
+         the mask it was 1: C3/C6, and a number going UP is the dangerous direction; it was 4: C1/C2, \
          C3/C5, C3/C6, C5/C6). Re-read `cross_circuit_parse_matrix_uniform_padded` before \
          accepting the new number — a pair that becomes separated by nothing else is a pair \
          whose separation is a byte-offset coincidence.",
@@ -378,7 +387,9 @@ fn parser_length_check_is_a_minimum_not_an_equality() {
 /// "the two parsers agree" is worth an assertion of its own.
 #[test]
 fn legacy_parser_length_check_is_a_minimum_too() {
-    let bytes = genuine_proof_bytes(0);
+    // [ZK-MASK-C0 2026-09-11] The LEGACY shape, explicitly: `genuine_proof_bytes(0)`
+    // is the masked circuit 0 now, which the legacy parser must refuse.
+    let bytes = common::prove0(&common::w0(0)).proof_bytes;
     assert!(CompactStarkProof::from_bytes(&bytes).is_some(), "genuine C0 must parse");
     for extra in [1usize, 1_000, 97_359] {
         let mut longer = bytes.clone();
@@ -569,30 +580,36 @@ fn the_22_query_circuits_do_not_parse_as_c1_which_is_probed_first() {
 // 5. C0 ↔ generic, both directions
 // ============================================================================
 
-/// C0's wire format is byte-for-byte the generic format at
-/// `CONFIG_SUBSCRIBER_OWNERSHIP` (tw=3, md=9, k=7, 4 FRI layers). So a C0 proof
-/// DOES parse through the generic parser — the refusal is behavioural, not
-/// structural. Pinned in both directions so a future edit that drops the
-/// `CircuitZeroIsLegacyOnly` gates cannot be mistaken for safe on the grounds
-/// that "the parser would reject it anyway".
+/// [ZK-MASK-C0 2026-09-11] Formerly "C0 bytes parse through the generic parser,
+/// so the gate is load-bearing". The gate is gone with the legacy shape: the
+/// SHIPPING circuit 0 is masked and generic, so the two directions now read:
+///   * the masked C0 proof parses under `CONFIG_SUBSCRIBER_OWNERSHIP` and the
+///     generic verifier ACCEPTS it with its real public input;
+///   * the legacy 32-row C0 proof does NOT parse under that config -- the wire
+///     break that retires the shape whose secret plain interpolation recovered.
 #[test]
-fn c0_bytes_parse_through_the_generic_parser_so_the_gate_is_load_bearing() {
-    let c0 = genuine_proof_bytes(0);
-    assert!(
-        parses_as(&c0, 0),
-        "if this ever goes false the C0 gates are belt-and-braces; today they are the only \
-         thing standing between a C0 proof and the generic verifier",
-    );
-
-    // Behavioural refusal: the generic verifier says no to circuit 0 before it
-    // touches a single byte.
+fn masked_c0_is_a_generic_circuit_and_the_legacy_shape_is_refused() {
     let config = get_circuit_config(0).unwrap();
-    let proof = GenericCompactProof::from_bytes(&c0, config).unwrap();
+
+    let masked = common::prove0_masked(&common::w0(0));
+    let proof = GenericCompactProof::from_bytes(&masked.proof_bytes, config)
+        .expect("the masked C0 proof parses under its config");
+    p01_stark_verifier::verify::verify_generic(&proof, 0, &masked.public_inputs, config)
+        .expect("the generic verifier accepts an honest masked C0 proof");
+    p01_stark_verifier::verify::verify_deep_ali_circuit_0_masked(&proof, &masked.public_inputs)
+        .expect("phase 2 accepts an honest masked C0 proof");
     let err = p01_stark_verifier::verify::verify_generic(&proof, 0, &[1], config).unwrap_err();
     assert!(
-        matches!(err, p01_stark_verifier::verify::VerifyError::CircuitZeroIsLegacyOnly),
-        "generic path must refuse circuit 0 by name, got {err:?}",
+        !matches!(err, p01_stark_verifier::verify::VerifyError::CircuitZeroIsLegacyOnly),
+        "the C0 gate must be gone; a wrong public input is refused on its merits, got {err:?}",
     );
+
+    let legacy = common::prove0(&common::w0(0)).proof_bytes;
+    assert!(
+        !parses_as(&legacy, 0),
+        "a legacy 32-row C0 proof must not parse under the masked config",
+    );
+    assert!(CompactStarkProof::from_bytes(&legacy).is_some(), "the legacy parser still reads it");
 }
 
 /// The other direction: no C1..C6 proof may parse through the LEGACY parser.
@@ -698,11 +715,12 @@ fn every_circuit_id_dispatch_fails_closed_on_unknown_ids() {
         "a C3 proof presented as circuit 7 was refused as {err:?}, not by the arity guard",
     );
 
-    // Circuit 0 must fail closed at get_boundary_assertions' CALLERS too — but
-    // 0 itself is a listed id there, so the refusal lives in verify_generic.
+    // [ZK-MASK-C0 2026-09-11] Circuit 0 is generic now, so a C3 proof presented
+    // as circuit 0 is refused by the same arity guard as every other mismatch:
+    // C0 takes ONE public input and C3 hands it three.
     assert!(matches!(
         p01_stark_verifier::verify::verify_generic(&proof, 0, public_inputs, config3),
-        Err(p01_stark_verifier::verify::VerifyError::CircuitZeroIsLegacyOnly),
+        Err(p01_stark_verifier::verify::VerifyError::PublicInputCountMismatch),
     ));
 }
 
@@ -727,8 +745,30 @@ struct Layout {
     k: usize,
 }
 
+/// [ZK-MASK-C0 2026-09-11] The RETIRED 32-row circuit 0, which no config
+/// describes any more: `CONFIG_SUBSCRIBER_OWNERSHIP` is the masked shape. The
+/// legacy pipeline tests below still drive the legacy generator, and this is
+/// the geometry its bytes carry.
+const LEGACY_C0: CircuitConfig = CircuitConfig {
+    trace_width: 3,
+    trace_length: 32,
+    blowup: 16,
+    lde_size: 512,
+    merkle_depth: 9,
+    num_rounds: 30,
+    fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 1,
+    quotient_segments: 7,
+    num_queries: 27,
+};
+const LEGACY_C0_LEN: usize = 47_641;
+
 fn layout(circuit_id: u8, proof_len: usize) -> Layout {
-    let c = get_circuit_config(circuit_id).expect("0..=7 has a config");
+    let c = if circuit_id == 0 && proof_len == LEGACY_C0_LEN {
+        &LEGACY_C0
+    } else {
+        get_circuit_config(circuit_id).expect("0..=7 has a config")
+    };
     let k = c.quotient_segments;
     let nq = c.num_queries;
     let folds = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize;
@@ -1100,4 +1140,36 @@ fn a_wire_query_count_that_disagrees_with_the_config_does_not_parse() {
             }
         }
     }
+}
+
+/// [ZK-MASK-C2 2026-09-11] The invariant that carries `verify_uniform`'s
+/// correctness is narrower than "no two configs collapse": only the members of
+/// `PROBE_ORDER` are ever probed, so only THEY must be told apart by a field the
+/// wire carries. Masking C2 (and later C0/C4/C5) puts more circuits on the
+/// n = 512 geometry and necessarily creates more `trace_width`-only pairs; this
+/// test says which of those pairs would actually matter.
+#[test]
+fn probe_order_members_are_separated_by_a_wire_field() {
+    let wire_tuple = |cid: u8| {
+        let c = get_circuit_config(cid).unwrap();
+        let nfl = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize - 1;
+        (c.merkle_depth, c.quotient_segments, c.num_queries, nfl, c.fri_final_poly_size)
+    };
+    let mut width_only: Vec<(u8, u8)> = Vec::new();
+    for (i, &a) in PROBE_ORDER.iter().enumerate() {
+        for &b in PROBE_ORDER[i + 1..].iter() {
+            if wire_tuple(a) == wire_tuple(b) {
+                width_only.push((a, b));
+            }
+        }
+    }
+    println!("PROBE_ORDER pairs separated by trace_width alone: {width_only:?}");
+    assert_eq!(
+        width_only,
+        vec![(6u8, 3u8)],
+        "the set of PROBE_ORDER pairs separated by trace_width alone moved. C6/C3 is the \
+         one known such pair (documented in lib.rs above PROBE_ORDER). A NEW pair here \
+         means a circuit joined the probe list, or changed geometry, without a wire-visible \
+         field to tell it from another probed circuit.",
+    );
 }

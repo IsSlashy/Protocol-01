@@ -90,6 +90,7 @@ pub use air::transfer::{
 };
 pub use prover::{prove_subscriber_ownership, StarkProofBytes};
 pub use compact::{
+    generate_subscriber_ownership_proof,
     generate_pool_commitment_proof, generate_balance_compact_proof,
     generate_merkle_path_compact_proof, generate_merkle_update_compact_proof,
     generate_confidential_balance_compact_proof,
@@ -170,7 +171,7 @@ mod wasm_api {
     use crate::draw_blinding_mask;
 
     use crate::compact::{
-        generate_compact_proof, generate_pool_commitment_proof,
+        generate_subscriber_ownership_proof, generate_pool_commitment_proof,
         generate_balance_compact_proof, generate_merkle_path_compact_proof,
         generate_merkle_update_compact_proof,
         generate_confidential_balance_compact_proof, generate_transfer_compact_proof,
@@ -179,16 +180,32 @@ mod wasm_api {
 
     /// Generate a compact STARK proof for subscriber_ownership.
     /// Returns JSON: { commitment: string, proof_hex: string, proof_size: number }
+    ///
+    /// [ZK-MASK-C0 2026-09-11] The MASKED shape on the generic pipeline. The JSON
+    /// shape is unchanged so no client parser moves; the bytes are a different
+    /// wire (width 5, n 512) that only a verifier deployed with
+    /// `CONFIG_SUBSCRIBER_OWNERSHIP` at that geometry accepts.
     #[wasm_bindgen]
     pub fn generate_stark_proof(subscriber_secret: u64) -> String {
-        let proof_data = generate_compact_proof(subscriber_secret);
+        // ⛔ REFUSES RATHER THAN FALLING BACK. The legacy C0 gave up the note
+        // secret to plain interpolation; a zero-filled mask would do the same.
+        let mask = match draw_blinding_mask(crate::air::subscriber_ownership::MASK_LEN) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C0 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+        let proof_data = generate_subscriber_ownership_proof(subscriber_secret, &mask);
         let proof_hex = proof_data.proof_bytes.iter()
             .map(|b| format!("{:02x}", b))
             .collect::<String>();
 
         format!(
             r#"{{"commitment":"{}","proof_hex":"{}","proof_size":{}}}"#,
-            proof_data.commitment,
+            proof_data.public_inputs[0],
             proof_hex,
             proof_data.proof_bytes.len()
         )
@@ -255,8 +272,23 @@ mod wasm_api {
         salt: u64,
         token_mint: u64,
     ) -> String {
+        // [ZK-MASK-C2 2026-09-11] The blinding region, drawn fresh for THIS
+        // proof. ⛔ REFUSES RATHER THAN FALLING BACK, for the reason every
+        // other masked entry states: no proof fails loudly, a weak mask
+        // succeeds and leaks. A zero-filled default would leave rows 128..511
+        // predictable and the carry column would give up `owner_mint` again.
+        let mask = match draw_blinding_mask(crate::air::balance_proof::MASK_LEN) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C2 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+
         let proof_data = generate_balance_compact_proof(
-            spending_key, balance, salt, token_mint,
+            spending_key, balance, salt, token_mint, &mask,
         );
         let proof_hex = proof_data.proof_bytes.iter()
             .map(|b| format!("{:02x}", b))
@@ -285,9 +317,23 @@ mod wasm_api {
         amount_salt: u64,
         token_mint: u64,
     ) -> String {
+        // [ZK-MASK-C4 2026-09-11] The blinding region, drawn fresh for THIS
+        // proof. REFUSES RATHER THAN FALLING BACK: a zero-filled default would
+        // leave rows 224..511 predictable and the carry column would give up
+        // `owner_mint` again, exactly as the 2026-09-03 audit measured.
+        let mask = match draw_blinding_mask(crate::air::confidential_balance::MASK_LEN) {
+            Ok(m) => m,
+            Err(e) => {
+                return format!(
+                    r#"{{"error":"no CSPRNG available, refusing to build a C4 proof: {}"}}"#,
+                    e,
+                );
+            }
+        };
+
         let proof_data = generate_confidential_balance_compact_proof(
             spending_key, old_balance, old_salt, new_balance, new_salt,
-            amount, amount_salt, token_mint,
+            amount, amount_salt, token_mint, &mask,
         );
         let proof_hex = proof_data.proof_bytes.iter()
             .map(|b| format!("{:02x}", b))

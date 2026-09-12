@@ -51,17 +51,23 @@
 //!
 //! ```text
 //!  id | B1 conj | B2 conj | gain | B1 uncond | B2 uncond | gain
-//!  C0 |      48 |      52 |   +4 |        28 |        46 |  +18
+//!  C0 |      48 |      47 |   -1 |        28 |        42 |  +14
 //!  C1 |      43 |      47 |   +4 |        27 |        46 |  +19
-//!  C2 |      43 |      50 |   +7 |        27 |        46 |  +19
+//!  C2 |      43 |      47 |   +4 |        27 |        46 |  +19
 //!  C3 |      38 |      47 |   +9 |        25 |        42 |  +17
-//!  C4 |      43 |      48 |   +5 |        27 |        46 |  +19
+//!  C4 |      43 |      47 |   +4 |        27 |        42 |  +15
 //!  C5 |      38 |      46 |   +8 |        25 |        42 |  +17
 //!  C6 |      38 |      47 |   +9 |        25 |        42 |  +17
 //! ```
 //!
+//! (Regenerated 2026-09-11 after the uniform masks [ZK-MASK]: the "B2" column is
+//! today's shipped geometry, in which C0, C2 and C4 grew to n = 512 and C0, C4
+//! dropped to 22 queries. C0's conjectured figure is now one bit BELOW its B1
+//! figure: the field floor moved with the LDE size, which is the price of a
+//! hidden 512-row trace. The B1 column is frozen at `0235c624`.)
+//!
 //! The per-query rate went from 1.000 to 4.000 bits and the query term gained 72
-//! to 87 bits — and the ANSWER gained 4 to 9, because the base-field Fiat-Shamir
+//! to 87 bits — and the ANSWER gained -1 to 9, because the base-field Fiat-Shamir
 //! floor absorbed the rest. That gap is the headline, and it is asserted below
 //! rather than described: pre-B2 the conjectured column was QUERY-bound on every
 //! circuit; post-B2 it is FLOOR-bound on every circuit. B2 did not buy a security
@@ -168,10 +174,12 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
     let f = OodForgery::Coordinated { col: 0, delta: 1 };
     let t = TerminalPoly::Honest;
     match id {
-        0 => p01_stark::compact::generate_compact_proof_with_forgery(42, f, t).proof_bytes,
+        // [ZK-MASK-C0 2026-09-11] the masked, generic circuit 0.
+        0 => p01_stark::compact::generate_subscriber_ownership_proof_with_forgery(
+            42, &p01_stark::compact::c0_deterministic_probe_mask(), f, t).proof_bytes,
         1 => p01_stark::compact::generate_pool_commitment_proof_with_forgery(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask(), f, t)
             .proof_bytes,
-        2 => p01_stark::compact::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, f, t)
+        2 => p01_stark::compact::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask(), f, t)
             .proof_bytes,
         3 => {
             let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
@@ -180,8 +188,7 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
                 .proof_bytes
         }
         4 => p01_stark::compact::generate_confidential_balance_compact_proof_with_forgery(
-            42, 1000, 111, 800, 222, 200, 333, 999, f, t,
-        )
+            42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(), f, t,)
         .proof_bytes,
         5 => p01_stark::compact::generate_transfer_compact_proof_with_forgery(
             13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask(), f, t)
@@ -200,15 +207,19 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
 /// Query positions of an HONEST proof on circuit `id`, seeded by `s`.
 fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
     match id {
+        // [ZK-MASK-C0 2026-09-11] The masked circuit 0 is generic; the legacy
+        // shape no longer parses under `CONFIG_SUBSCRIBER_OWNERSHIP`.
         0 => {
-            let d = p01_stark::compact::generate_compact_proof(s);
-            let p = CompactStarkProof::from_bytes(&d.proof_bytes).expect("C0 parses");
+            let d = p01_stark::compact::generate_subscriber_ownership_proof(
+                s, &p01_stark::compact::c0_deterministic_probe_mask());
+            let cfg = get_circuit_config(0).unwrap();
+            let p = GenericCompactProof::from_bytes(&d.proof_bytes, cfg).expect("masked C0 parses");
             p.queries.iter().map(|q| q.position).collect()
         }
         _ => {
             let d = match id {
                 1 => p01_stark::compact::generate_pool_commitment_proof(s, s + 1, s + 2, s + 3, &p01_stark::compact::c1_deterministic_probe_mask()),
-                2 => p01_stark::compact::generate_balance_compact_proof(s, 1000 + s, 777, 999 + s),
+                2 => p01_stark::compact::generate_balance_compact_proof(s, 1000 + s, 777, 999 + s, &p01_stark::compact::c2_deterministic_probe_mask()),
                 3 => {
                     let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i + s).collect();
                     let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| ((i as u64 + s) % 2) as u8).collect();
@@ -222,8 +233,7 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
                     222,
                     200,
                     333 + s,
-                    999,
-                ),
+                    999, &p01_stark::compact::c4_deterministic_probe_mask(),),
                 5 => p01_stark::compact::generate_transfer_compact_proof(
                     13 + s,
                     500,
@@ -421,8 +431,10 @@ fn terminal_query_indices_cover_the_whole_terminal_domain() {
 // `b1_deep_binding.rs::B2_CONJECTURED_FORGERY_BITS` holds. Both had to move,
 // and the test below is what makes that a check rather than a chore: if only
 // one of them had been edited, the disagreement would have said so by name.
-const B2_CONJECTURED: [u32; 7] = [52, 47, 50, 47, 48, 46, 47];
-const B2_UNCONDITIONAL: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
+// [ZK-MASK 2026-09-11] re-derived for the masked geometries (C0/C2/C4 at n 512,
+// C0/C4 at 22 queries); see the note on the arrays in `b1_deep_binding.rs`.
+const B2_CONJECTURED: [u32; 7] = [47, 47, 47, 47, 47, 46, 47];
+const B2_UNCONDITIONAL: [u32; 7] = [42, 46, 46, 42, 42, 42, 42];
 
 /// The B1-era columns, derived from constants transcribed out of git at
 /// `0235c624` (the commit B2 was built on):
@@ -515,15 +527,29 @@ fn b2_columns(id: u8) -> Columns {
 /// `num_queries` or `trace_length` cannot make the subtraction compare two
 /// different circuits.
 fn b1_columns(id: u8) -> Columns {
-    let c = get_circuit_config(id).unwrap();
+    // [ZK-MASK 2026-09-11] The B1-era geometry is FROZEN here rather than read
+    // off today's config: the masks moved `num_queries`, `trace_length` and
+    // `lde_size` on C0, C2, C4 (and C1, C5 earlier), and a B1 column derived
+    // from a post-mask geometry is a number that describes no commit. These are
+    // the values at `0235c624`: (fps, num_queries, trace_length, trace_width, lde).
+    const PRE_B2_GEOMETRY: [(usize, usize, usize, usize, usize); 7] = [
+        (16, 27, 32, 3, 512),
+        (16, 27, 128, 3, 2048),
+        (16, 27, 128, 4, 2048),
+        (16, 22, 512, 6, 8192),
+        (16, 27, 256, 4, 4096),
+        (16, 22, 512, 7, 8192),
+        (16, 22, 512, 10, 8192),
+    ];
+    let (fps, nq, n, w, lde) = PRE_B2_GEOMETRY[id as usize];
     columns(
         PRE_B2_TERMINAL_BOUND[id as usize],
-        c.fri_final_poly_size,
-        c.num_queries,
-        c.trace_length,
-        c.trace_width,
+        fps,
+        nq,
+        n,
+        w,
         PRE_B2_QUOTIENT_SEGMENTS,
-        c.lde_size,
+        lde,
         PRE_B2_GRINDING_BITS,
     )
 }
@@ -578,7 +604,16 @@ fn what_b2_bought_in_bits_is_a_subtraction_that_runs() {
             gain_vs_pin,
         );
 
-        assert!(gain_conj > 0 && gain_uncond > 0, "C{id}: B2 must not have LOST bits");
+        assert!(gain_uncond > 0, "C{id}: B2 must not have LOST unconditional bits");
+        // [ZK-MASK 2026-09-11] C0's conjectured column is floor-bound, and the
+        // floor moved with the LDE (512 -> 8192) when its trace was hidden:
+        // 48 -> 47. That is the cost of the mask, not of B2, and it is pinned
+        // here as EXACTLY one bit so it cannot grow unnoticed.
+        if id == 0 {
+            assert_eq!(gain_conj, -1, "C0: the masked circuit 0 is pinned at one conjectured bit below its B1 figure");
+        } else {
+            assert!(gain_conj > 0, "C{id}: B2 must not have LOST conjectured bits");
+        }
 
         // The headline. The query term gained 72-87 bits; the answer gained 4-9.
         let query_gain = b2.query_conjectured - b1.query_conjectured;

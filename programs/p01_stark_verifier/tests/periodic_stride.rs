@@ -325,19 +325,28 @@ fn a4_periodic_extension_identity() {
     }
 }
 
-/// C2's IS_BOUNDARY is computed as CHAIN_01 + CARRY_CAPTURE + CHAIN_CARRY
-/// instead of being evaluated. That is only valid if the identity holds on the
-/// coefficients, which it does — pin it.
+/// [ZK-MASK-C2 2026-09-11] Formerly `c2_is_boundary_identity`, which pinned
+/// `IS_BOUNDARY == CHAIN_01 + CARRY_CAPTURE + CHAIN_CARRY` on the 128-row table.
+/// The masked C2 no longer READS an is-boundary column: the AIR names slot 7
+/// `_is_boundary` and `verify_deep_ali_circuit_2` hands `Felt::ZERO` to it, so
+/// the identity is not an equation of the verifier any more and pinning it
+/// would pin dead data. Pinned instead: the verifier source does not read the
+/// table, and the three gate tables it does read are the 512-row masked ones.
 #[test]
-fn c2_is_boundary_identity() {
-    for i in 0..C2_IS_BOUNDARY_COEFFS.len() {
-        let sum = ((C2_CHAIN_01_COEFFS[i] as u128)
-            + (C2_CARRY_CAPTURE_COEFFS[i] as u128)
-            + (C2_CHAIN_CARRY_COEFFS[i] as u128))
-            % MODULUS;
-        assert_eq!(
-            sum, C2_IS_BOUNDARY_COEFFS[i] as u128,
-            "C2 IS_BOUNDARY identity fails at coefficient {i}"
-        );
+fn c2_is_boundary_table_is_dead_and_the_gate_tables_are_512_rows() {
+    let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/verify.rs"))
+        .expect("verify.rs");
+    assert!(
+        !src.contains("C2_IS_BOUNDARY_COEFFS"),
+        "verify.rs reads C2_IS_BOUNDARY_COEFFS again; if the masked C2 grew an is-boundary \
+         gate, re-derive its identity here instead of leaving this test dead",
+    );
+    for (name, t) in [
+        ("C2_CHAIN_01_COEFFS", &C2_CHAIN_01_COEFFS[..]),
+        ("C2_CARRY_CAPTURE_COEFFS", &C2_CARRY_CAPTURE_COEFFS[..]),
+        ("C2_CHAIN_CARRY_COEFFS", &C2_CHAIN_CARRY_COEFFS[..]),
+        ("C2_IS_BOUNDARY_COEFFS (unused)", &C2_IS_BOUNDARY_COEFFS[..]),
+    ] {
+        assert_eq!(t.len(), 512, "{name}: the masked C2 periodic tables are 512 rows");
     }
 }

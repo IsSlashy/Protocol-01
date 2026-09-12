@@ -48,11 +48,16 @@ use p01_stark_verifier::compact_proof::{
 fn fixture_c0() -> Vec<u8> {
     p01_stark::compact::generate_compact_proof(42).proof_bytes
 }
+/// [ZK-MASK-C0 2026-09-11] The SHIPPING circuit 0, masked and generic. The
+/// legacy fixture above is the retired shape, kept for the legacy parser.
+fn fixture_c0_masked() -> Vec<u8> {
+    p01_stark::compact::generate_subscriber_ownership_proof(42, &p01_stark::compact::c0_deterministic_probe_mask()).proof_bytes
+}
 fn fixture_c1() -> Vec<u8> {
     p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()).proof_bytes
 }
 fn fixture_c2() -> Vec<u8> {
-    p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes
+    p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask()).proof_bytes
 }
 fn fixture_c3() -> Vec<u8> {
     let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
@@ -61,8 +66,7 @@ fn fixture_c3() -> Vec<u8> {
 }
 fn fixture_c4() -> Vec<u8> {
     p01_stark::compact::generate_confidential_balance_compact_proof(
-        42, 1000, 111, 800, 222, 200, 333, 999,
-    )
+        42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),)
     .proof_bytes
 }
 fn fixture_c5() -> Vec<u8> {
@@ -111,7 +115,8 @@ type Circuit = (u8, &'static str, fn() -> Vec<u8>);
 /// (Said "six" until 2026-08-26. The array grew to seven when C7 landed and the
 /// sentence above it did not, which is the smallest possible version of the
 /// thing `c7_pin_coverage.rs` exists to catch.)
-const GENERIC: [Circuit; 7] = [
+const GENERIC: [Circuit; 8] = [
+    (0, "C0 subscriber_ownership (masked)", fixture_c0_masked),
     (1, "C1 pool_commitment", fixture_c1),
     (2, "C2 balance_proof", fixture_c2),
     (3, "C3 merkle_path", fixture_c3),
@@ -429,49 +434,12 @@ fn every_wire_field_agrees_with_the_config_that_declares_it() {
             proof.fri_final_poly_iter().count(),
             bytes.len()
         );
-        diff(
-            "C0",
-            &bytes,
-            proof.queries.len(),
-            proof.num_fri_layers(),
-            proof.fri_final_poly_iter().count(),
-            max_position,
-            &CONFIG_SUBSCRIBER_OWNERSHIP,
-            &mut drift,
-        );
-
-        // The legacy parser does NOT read its geometry from `CircuitConfig`; it
-        // reads it from `TRACE_WIDTH` / `MERKLE_DEPTH` / `LEGACY_QUOTIENT_SEGMENTS`
-        // / `FRI_FINAL_POLY_SIZE`. Those four are a SECOND declaration of C0's
-        // geometry and nothing tied them to `CONFIG_SUBSCRIBER_OWNERSHIP`.
-        if TRACE_WIDTH != CONFIG_SUBSCRIBER_OWNERSHIP.trace_width {
-            drift.push(format!(
-                "C0: compact_proof::TRACE_WIDTH is {TRACE_WIDTH} but \
-                 CONFIG_SUBSCRIBER_OWNERSHIP.trace_width is {}",
-                CONFIG_SUBSCRIBER_OWNERSHIP.trace_width
-            ));
-        }
-        if MERKLE_DEPTH != CONFIG_SUBSCRIBER_OWNERSHIP.merkle_depth {
-            drift.push(format!(
-                "C0: compact_proof::MERKLE_DEPTH is {MERKLE_DEPTH} but \
-                 CONFIG_SUBSCRIBER_OWNERSHIP.merkle_depth is {}",
-                CONFIG_SUBSCRIBER_OWNERSHIP.merkle_depth
-            ));
-        }
-        if LEGACY_QUOTIENT_SEGMENTS != CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments {
-            drift.push(format!(
-                "C0: LEGACY_QUOTIENT_SEGMENTS is {LEGACY_QUOTIENT_SEGMENTS} but \
-                 CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments is {}",
-                CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments
-            ));
-        }
-        if FRI_FINAL_POLY_SIZE != CONFIG_SUBSCRIBER_OWNERSHIP.fri_final_poly_size {
-            drift.push(format!(
-                "C0: FRI_FINAL_POLY_SIZE is {FRI_FINAL_POLY_SIZE} but \
-                 CONFIG_SUBSCRIBER_OWNERSHIP.fri_final_poly_size is {}",
-                CONFIG_SUBSCRIBER_OWNERSHIP.fri_final_poly_size
-            ));
-        }
+        // [ZK-MASK-C0 2026-09-11] The legacy shape is no longer described by any
+        // `CircuitConfig`: `CONFIG_SUBSCRIBER_OWNERSHIP` now declares the MASKED
+        // circuit 0, which is measured through GENERIC below like the others.
+        // The legacy parser keeps its own four constants and only ever reads
+        // the retired shape, so there is nothing left to tie them to.
+        let _ = max_position;
     }
 
     for (cid, label, build) in GENERIC.iter() {
@@ -525,13 +493,12 @@ fn every_wire_field_agrees_with_the_config_that_declares_it() {
 #[test]
 fn the_parser_does_not_check_length_this_test_does() {
     // Leg 1: the exact closed form reproduces every shipped proof size.
-    let sizes: Vec<(&str, usize, usize)> = std::iter::once(("C0", fixture_c0().len(), {
-        expected_wire_size(&CONFIG_SUBSCRIBER_OWNERSHIP)
-    }))
-    .chain(GENERIC.iter().map(|(cid, label, build)| {
+    // [ZK-MASK-C0 2026-09-11] C0 is in GENERIC now (masked shape); the legacy
+    // fixture matches no config and is not a shipped size any more.
+    let sizes: Vec<(&str, usize, usize)> = GENERIC.iter().map(|(cid, label, build)| {
         let config = get_circuit_config(*cid).unwrap();
         (*label, build().len(), expected_wire_size(config))
-    }))
+    })
     .collect();
     for (label, actual, closed_form) in sizes.iter() {
         println!("[LEN] {label} actual {actual} closed-form {closed_form}");

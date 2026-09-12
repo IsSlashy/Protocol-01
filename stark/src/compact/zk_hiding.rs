@@ -2907,8 +2907,19 @@ fn the_affine_free_claims_are_jointly_uniform() {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Circ {
+    /// [ZK-MASK-C0 2026-09-11] The masked circuit 0 on the generic pipeline.
+    C0,
     C1,
+    /// [ZK-MASK-C2 2026-09-11] The fifth masked circuit, measured with the
+    /// same instrument the day it was masked rather than argued from C1.
+    C2,
     C3,
+    /// [ZK-MASK-C4 2026-09-11] The sixth masked circuit.
+    C4,
+    /// [ZK-MASK-C5 2026-09-11] The seventh: C5 had a row mask since 2026-08-29
+    /// and gains the lift and randomizer columns here. n = 1024, the one
+    /// circuit not on the 512-row geometry.
+    C5,
     C6,
     C7,
 }
@@ -2927,8 +2938,56 @@ struct Geom {
 }
 
 fn geom(c: Circ) -> Geom {
-    use crate::air::{denominated_pool as c1, merkle_path as c3, merkle_update as c6, spend as c7};
+    use crate::air::{
+        balance_proof as c2, confidential_balance as c4, denominated_pool as c1,
+        merkle_path as c3, merkle_update as c6, spend as c7, subscriber_ownership as c0,
+        transfer as c5,
+    };
     match c {
+        Circ::C0 => Geom {
+            name: "C0 subscriber_ownership (masked)",
+            id: 0,
+            n: c0::MASKED_TRACE_LENGTH,
+            lde: c0::MASKED_TRACE_LENGTH * GENERIC_BLOWUP,
+            k: GENERIC_QUOTIENT_SEGMENTS,
+            cw: c0::MASKED_CONSTRAINED_TRACE_WIDTH,
+            mask_rows: c0::MASK_ROWS,
+            mask_len: c0::MASK_LEN,
+            lift: c0::ZK_LIFT_COL,
+        },
+        Circ::C5 => Geom {
+            name: "C5 transfer",
+            id: 5,
+            n: c5::TRACE_LENGTH,
+            lde: c5::TRACE_LENGTH * GENERIC_BLOWUP,
+            k: GENERIC_QUOTIENT_SEGMENTS,
+            cw: c5::CONSTRAINED_TRACE_WIDTH,
+            mask_rows: c5::MASK_ROWS,
+            mask_len: c5::MASK_LEN,
+            lift: c5::ZK_LIFT_COL,
+        },
+        Circ::C4 => Geom {
+            name: "C4 confidential_balance",
+            id: 4,
+            n: c4::TRACE_LENGTH,
+            lde: c4::TRACE_LENGTH * GENERIC_BLOWUP,
+            k: GENERIC_QUOTIENT_SEGMENTS,
+            cw: c4::CONSTRAINED_TRACE_WIDTH,
+            mask_rows: c4::MASK_ROWS,
+            mask_len: c4::MASK_LEN,
+            lift: c4::ZK_LIFT_COL,
+        },
+        Circ::C2 => Geom {
+            name: "C2 balance_proof",
+            id: 2,
+            n: c2::TRACE_LENGTH,
+            lde: c2::TRACE_LENGTH * GENERIC_BLOWUP,
+            k: GENERIC_QUOTIENT_SEGMENTS,
+            cw: c2::CONSTRAINED_TRACE_WIDTH,
+            mask_rows: c2::MASK_ROWS,
+            mask_len: c2::MASK_LEN,
+            lift: c2::ZK_LIFT_COL,
+        },
         Circ::C1 => Geom {
             name: "C1 pool_commitment",
             id: 1,
@@ -2993,7 +3052,17 @@ fn public_inputs_for(c: Circ) -> Vec<u64> {
     let g = geom(c);
     let m = base_mask_len(0x9001, g.mask_len);
     match c {
+        Circ::C0 => cc::generate_subscriber_ownership_proof(4242, &m).public_inputs,
         Circ::C1 => cc::generate_pool_commitment_proof(111, 222, 333, 444, &m).public_inputs,
+        Circ::C2 => cc::generate_balance_compact_proof(42, 1000, 777, 999, &m).public_inputs,
+        Circ::C4 => cc::generate_confidential_balance_compact_proof(
+            42, 1000, 111, 800, 222, 200, 333, 999, &m,
+        )
+        .public_inputs,
+        Circ::C5 => cc::generate_transfer_compact_proof(
+            13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &m,
+        )
+        .public_inputs,
         Circ::C3 => {
             let d = crate::air::merkle_path::CANONICAL_DEPTH;
             let pe: Vec<u64> = (0..d as u64).map(|i| 1000 + i).collect();
@@ -3033,6 +3102,47 @@ fn base_mask_len(seed: u64, len: usize) -> Vec<u64> {
 fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
     use crate::air::{merkle_path as c3, merkle_update as c6};
     match c {
+        Circ::C0 => {
+            crate::air::subscriber_ownership::build_masked_trace(BaseElement::new(4242), &mask_f).0
+        }
+        Circ::C5 => {
+            use crate::air::transfer::{TransferInput, TransferOutput};
+            let f = BaseElement::new;
+            crate::air::transfer::build_transfer_trace(
+                f(13),
+                f(500),
+                &TransferInput { amount: f(77), randomness: f(400) },
+                &TransferInput { amount: f(88), randomness: f(100) },
+                &TransferOutput { amount: f(150), recipient: f(1234), randomness: f(555) },
+                &TransferOutput { amount: f(65), recipient: f(2222), randomness: f(333) },
+                &mask_f,
+            )
+            .0
+        }
+        Circ::C4 => {
+            crate::air::confidential_balance::build_confidential_balance_trace(
+                BaseElement::new(42),
+                BaseElement::new(1000),
+                BaseElement::new(111),
+                BaseElement::new(800),
+                BaseElement::new(222),
+                BaseElement::new(200),
+                BaseElement::new(333),
+                BaseElement::new(999),
+                &mask_f,
+            )
+            .0
+        }
+        Circ::C2 => {
+            crate::air::balance_proof::build_balance_proof_trace(
+                BaseElement::new(42),
+                BaseElement::new(1000),
+                BaseElement::new(777),
+                BaseElement::new(999),
+                &mask_f,
+            )
+            .0
+        }
         Circ::C1 => {
             crate::air::denominated_pool::build_pool_commitment_trace(
                 BaseElement::new(111),
@@ -3100,7 +3210,11 @@ fn ood_claims_for(c: Circ, mask: &[u64], pub_inputs: &[u64]) -> Vec<u64> {
     let trace_g = get_domain_generator_generic(g.n);
 
     let mut q_poly = match c {
+        Circ::C0 => compute_quotient_lde_circuit_0(&lde, GENERIC_BLOWUP, g.n, alpha),
         Circ::C1 => compute_quotient_lde_circuit_1(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C2 => compute_quotient_lde_circuit_2(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C4 => compute_quotient_lde_circuit_4(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C5 => compute_quotient_lde_circuit_5(&lde, GENERIC_BLOWUP, g.n, alpha),
         Circ::C3 => compute_quotient_lde_circuit_3(
             &lde,
             GENERIC_BLOWUP,
@@ -3151,7 +3265,7 @@ fn the_lift_column_reaches_every_free_claim_on_every_circuit() {
     println!();
 
     let mut bad: Vec<String> = Vec::new();
-    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+    for c in [Circ::C0, Circ::C1, Circ::C2, Circ::C3, Circ::C4, Circ::C5, Circ::C6, Circ::C7] {
         let g = geom(c);
         let pubs = public_inputs_for(c);
         let slot = g.lift; // blinding row 0, lift column: row-major over `cw`
@@ -3202,7 +3316,7 @@ fn the_free_claims_are_jointly_uniform_on_every_circuit() {
     println!();
 
     let mut bad: Vec<String> = Vec::new();
-    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+    for c in [Circ::C0, Circ::C1, Circ::C2, Circ::C3, Circ::C4, Circ::C5, Circ::C6, Circ::C7] {
         let g = geom(c);
         let free = g.k - 1;
         assert!(
@@ -3266,7 +3380,7 @@ fn quotient_leaves_are_exactly_uniform_on_every_circuit() {
     let xs: Vec<u64> = (1..=10u64).map(|i| i * 1_000_003 + 17).collect();
     let mut bad: Vec<String> = Vec::new();
 
-    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+    for c in [Circ::C0, Circ::C1, Circ::C2, Circ::C3, Circ::C4, Circ::C5, Circ::C6, Circ::C7] {
         let g = geom(c);
         let pubs = public_inputs_for(c);
         // EXHAUSTIVE across all four production circuits. The docs quoted this
@@ -3348,7 +3462,11 @@ fn quotient_lde_for(
     let trace_g = get_domain_generator_generic(g.n);
 
     let mut q_poly = match c {
+        Circ::C0 => compute_quotient_lde_circuit_0(&lde, GENERIC_BLOWUP, g.n, alpha),
         Circ::C1 => compute_quotient_lde_circuit_1(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C2 => compute_quotient_lde_circuit_2(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C4 => compute_quotient_lde_circuit_4(&lde, GENERIC_BLOWUP, g.n, alpha),
+        Circ::C5 => compute_quotient_lde_circuit_5(&lde, GENERIC_BLOWUP, g.n, alpha),
         Circ::C3 => {
             compute_quotient_lde_circuit_3(&lde, GENERIC_BLOWUP, g.n, c3::CANONICAL_DEPTH, alpha)
         }
@@ -3401,7 +3519,7 @@ fn the_lde_domain_never_meets_the_trace_domain_on_any_circuit() {
     println!();
     println!("X2 / structural — the LDE coset against each circuit's trace domain (h = {h})");
     println!();
-    for c in [Circ::C1, Circ::C3, Circ::C6, Circ::C7] {
+    for c in [Circ::C0, Circ::C1, Circ::C2, Circ::C3, Circ::C4, Circ::C5, Circ::C6, Circ::C7] {
         let g = geom(c);
         let lde_g = get_domain_generator_generic(g.lde).as_int();
         let hn = fpow(h, g.n as u64);
@@ -3432,4 +3550,161 @@ fn the_lde_domain_never_meets_the_trace_domain_on_any_circuit() {
     println!("  => on every circuit each trace-column leaf value is affine in that column's");
     println!("     blinding rows with ALL coefficients non-zero, at EVERY committed position,");
     println!("     so an unopened trace leaf preimage is uniform and cannot be guessed.");
+}
+
+
+// ============================================================================
+// X5 / all circuits -- the leaves a proof never opens, GIVEN everything it does
+// ============================================================================
+
+/// Montgomery batch inversion: `n` inversions for one `finv` and `3(n-1)` mults.
+fn batch_inv(vals: &[u64]) -> Vec<u64> {
+    let n = vals.len();
+    let mut prefix = vec![1u64; n + 1];
+    for i in 0..n {
+        prefix[i + 1] = fmul(prefix[i], vals[i]);
+    }
+    let mut inv_all = finv(prefix[n]);
+    let mut out = vec![0u64; n];
+    for i in (0..n).rev() {
+        out[i] = fmul(inv_all, prefix[i]);
+        inv_all = fmul(inv_all, vals[i]);
+    }
+    out
+}
+
+/// `(L_r(x))_{r in rows}` for the trace domain of size `n`: the slope of every
+/// published evaluation of a column in that column's value at row `r`.
+/// `L_r(x) = (x^n - 1) . g^r / (n . (x - g^r))`; `x` must be off the domain.
+fn lagrange_row_slopes(n: usize, rows: std::ops::Range<usize>, x: u64) -> Vec<u64> {
+    let g = get_domain_generator_generic(n).as_int();
+    let xn_minus_1 = fsub(fpow(x, n as u64), 1);
+    let scale = fmul(xn_minus_1, finv(n as u64));
+    let gr: Vec<u64> = rows.clone().map(|r| fpow(g, r as u64)).collect();
+    let denoms: Vec<u64> = gr.iter().map(|&gr| fsub(x, gr)).collect();
+    let inv = batch_inv(&denoms);
+    gr.iter().zip(inv.iter()).map(|(&gr, &d)| fmul(fmul(scale, gr), d)).collect()
+}
+
+/// Query positions spread over an LDE of size `lde`, no two in one FRI pair.
+fn spread_queries_for(lde: usize, q: usize) -> Vec<usize> {
+    let half = lde / 2;
+    let mut out: Vec<usize> = Vec::new();
+    let mut i = 0usize;
+    while out.len() < q {
+        let pos = (137 + i * 367) % lde;
+        if !out.iter().any(|&p| (p & (half - 1)) == (pos & (half - 1))) {
+            out.push(pos);
+        }
+        i += 1;
+    }
+    out
+}
+
+/// X5 on every circuit: an UNOPENED committed trace value stays exactly uniform
+/// after conditioning on every value the proof publishes about its column.
+///
+/// This is the ingredient of the random-oracle step of
+/// `docs/zk-simulation-argument.md`. The simulator programs the oracle for the
+/// Merkle roots and authentication paths; what a distinguisher could still do
+/// is QUERY the oracle on the preimage of a leaf the proof did not open. Its
+/// advantage is `q_H . 2^(-H_inf)` where `H_inf` is the min-entropy of that
+/// leaf GIVEN the whole wire -- and "given the whole wire" is the clause every
+/// earlier measurement skipped: `every_committed_trace_value_is_exactly_uniform_in_one_blinding_element`
+/// is unconditional.
+///
+/// For a constrained column the published values are `T(z)`, `T(z.g)` and the
+/// four rows of every opened pair (`x`, `x.g`, `-x`, `-x.g`), each an affine
+/// function of the column's free rows `[FIRST_FREE_ROW, n)` with slope vector
+/// `(L_r(pt))_r`. The unopened value at `x*` is affine in the same coordinates
+/// with slope `(L_r(x*))_r`, so, conditioned on the published values, it is
+/// exactly uniform IF AND ONLY IF its slope vector lies outside their span
+/// (an affine image of uniform coordinates is uniform on every fibre; a vector
+/// inside the span is a fixed function of the conditioning). This test builds
+/// the span (RREF over the free coordinates) and reduces the slope vector of
+/// EVERY unopened LDE position against it, on all eight circuits, counting the
+/// dependent ones. The count must be zero.
+///
+/// Query count: 27 everywhere, which is >= every shipped `num_queries` (22 or
+/// 27); conditioning on a superset of the published values only strengthens
+/// the statement. The lift and randomizer columns are run with all `n` rows
+/// free (they are), against the same trace-side functionals; their quotient
+/// and FRI channels are measured by X2 and by the C7 joint-transcript test.
+///
+/// What it buys: with `w` constrained columns each contributing one uniform
+/// coordinate per unopened row, and independent masks per column, the
+/// conditional min-entropy of an unopened leaf is >= `w . 63` bits, i.e. the
+/// distinguisher's advantage is at most `q_H . 2^(-w.63)` -- 2^-252 at w = 4.
+#[test]
+fn unopened_leaves_stay_uniform_given_every_opening_on_every_circuit() {
+    println!();
+    println!("X5 / all circuits -- unopened trace values, conditioned on every published value of the column");
+    println!();
+    const Q: usize = 27;
+    let mut bad: Vec<String> = Vec::new();
+    for c in [Circ::C0, Circ::C1, Circ::C2, Circ::C3, Circ::C4, Circ::C5, Circ::C6, Circ::C7] {
+        let g = geom(c);
+        let (n, lde) = (g.n, g.lde);
+        let blowup = lde / n;
+        let half = lde / 2;
+        let trace_g = get_domain_generator_generic(n);
+        let lde_g = get_domain_generator_generic(lde);
+        let h = lde_coset_shift();
+        // An out-of-domain point, off the trace domain and off the coset, as the
+        // resampled derivation guarantees for a real proof.
+        let z = BaseElement::new(0x5EED_0000_0000_0101 + g.id as u64);
+        assert_ne!(z.exp(n as u64), BaseElement::ONE);
+        assert_ne!(z.exp(lde as u64), h.exp(lde as u64));
+
+        let queries = spread_queries_for(lde, Q);
+        let mut opened: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        let mut points: Vec<u64> = vec![z.as_int(), (z * trace_g).as_int()];
+        for &pos in queries.iter() {
+            for p in [pos, (pos + blowup) % lde, (pos + half) % lde, (pos + half + blowup) % lde] {
+                opened.insert(p);
+                points.push((h * lde_g.exp(p as u64)).as_int());
+            }
+        }
+
+        for (label, first_free) in [("constrained columns", n - g.mask_rows), ("lift / randomizer (all rows free)", 0usize)] {
+            let rows = first_free..n;
+            let free = rows.len();
+            let m: Vec<Vec<u64>> = points.iter().map(|&pt| lagrange_row_slopes(n, rows.clone(), pt)).collect();
+            let (a, pivots) = rref(&m, free);
+            let rank = a.len();
+            let mut dependent = 0usize;
+            let mut tested = 0usize;
+            for p in 0..lde {
+                if opened.contains(&p) {
+                    continue;
+                }
+                let x = (h * lde_g.exp(p as u64)).as_int();
+                let v = lagrange_row_slopes(n, rows.clone(), x);
+                let rem = reduce_against(&v, &a, &pivots);
+                tested += 1;
+                if rem.iter().all(|&e| e == 0) {
+                    dependent += 1;
+                }
+            }
+            println!(
+                "  {:<32} {:<34} free rows {free:>4}  published {:>3} (rank {rank:>3})  unopened {tested:>5}  inside the span {dependent}",
+                g.name, label, points.len(),
+            );
+            if rank != points.len() {
+                bad.push(format!("{} / {label}: the published functionals are not independent (rank {rank} of {})", g.name, points.len()));
+            }
+            if dependent != 0 {
+                bad.push(format!("{} / {label}: {dependent} unopened positions are determined by the published values", g.name));
+            }
+        }
+    }
+    println!();
+    assert!(
+        bad.is_empty(),
+        "an unopened value is a fixed function of the published ones on: {bad:?}. Its leaf preimage \
+         is then guessable from the wire and the random-oracle step of the simulation argument \
+         does not go through for that circuit."
+    );
+    println!("  => on every circuit, every unopened committed trace value is exactly uniform GIVEN every");
+    println!("     published value of its column; a leaf's conditional min-entropy is >= (columns) x 63 bits.");
 }

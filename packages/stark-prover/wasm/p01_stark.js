@@ -187,6 +187,11 @@ export function generate_spend_stark_proof(nullifier_preimage, secret, blinding,
 /**
  * Generate a compact STARK proof for subscriber_ownership.
  * Returns JSON: { commitment: string, proof_hex: string, proof_size: number }
+ *
+ * [ZK-MASK-C0 2026-09-11] The MASKED shape on the generic pipeline. The JSON
+ * shape is unchanged so no client parser moves; the bytes are a different
+ * wire (width 5, n 512) that only a verifier deployed with
+ * `CONFIG_SUBSCRIBER_OWNERSHIP` at that geometry accepts.
  * @param {bigint} subscriber_secret
  * @returns {string}
  */

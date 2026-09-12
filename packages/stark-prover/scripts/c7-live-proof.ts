@@ -287,7 +287,7 @@ async function fetchTransaction(
   for (let attempt = 0; attempt < 8; attempt++) {
     const tx = await connection.getTransaction(signature, {
       commitment: 'confirmed',
-      maxSupportedTransactionVersion: 0,
+      maxSupportedTransactionVersion: 1,
     });
     if (tx) return tx;
     await new Promise((r) => setTimeout(r, 1500));
@@ -485,7 +485,7 @@ async function main(): Promise<void> {
   // on a half-verified proof. Ask the chain what happened.
   const tx = await connection.getTransaction(result.signature, {
     commitment: 'confirmed',
-    maxSupportedTransactionVersion: 0,
+    maxSupportedTransactionVersion: 1,
   });
   if (!tx) {
     console.error(`\nFAIL — the chain has no record of ${result.signature}.`);

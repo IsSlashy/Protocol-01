@@ -76,7 +76,7 @@ use p01_stark::compact::{OodForgery, TerminalPoly};
 use p01_stark_verifier::compact_proof::{
     get_circuit_config, CircuitConfig, CompactStarkProof, GenericCompactProof,
     CONFIG_BALANCE_PROOF, CONFIG_CONFIDENTIAL_BALANCE, CONFIG_MERKLE_PATH, CONFIG_MERKLE_UPDATE,
-    CONFIG_POOL_COMMITMENT, CONFIG_TRANSFER, LEGACY_QUOTIENT_SEGMENTS,
+    CONFIG_POOL_COMMITMENT, CONFIG_SUBSCRIBER_OWNERSHIP, CONFIG_TRANSFER, LEGACY_QUOTIENT_SEGMENTS,
 };
 use p01_stark_verifier::goldilocks::Felt;
 use p01_stark_verifier::verify::{
@@ -182,14 +182,13 @@ fn generic_case(
     use p01_stark::compact as c;
     match id {
         1 => c::generate_pool_commitment_proof_with_forgery(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask(), ood, term),
-        2 => c::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, ood, term),
+        2 => c::generate_balance_compact_proof_with_forgery(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask(), ood, term),
         3 => {
             let (pe, pi) = merkle_witness();
             c::generate_merkle_path_compact_proof_with_forgery(777, &pe, &pi, &c::c3_deterministic_probe_mask(pe.len()), ood, term)
         }
         4 => c::generate_confidential_balance_compact_proof_with_forgery(
-            42, 1000, 111, 800, 222, 200, 333, 999, ood, term,
-        ),
+            42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(), ood, term,),
         5 => c::generate_transfer_compact_proof_with_forgery(
             13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50, &p01_stark::compact::c5_deterministic_probe_mask(), ood, term),
         6 => {
@@ -202,6 +201,8 @@ fn generic_case(
 
 fn config_for(id: u8) -> &'static CircuitConfig {
     match id {
+        // [ZK-MASK-C0 2026-09-11] the masked circuit 0 is a generic circuit.
+        0 => &CONFIG_SUBSCRIBER_OWNERSHIP,
         1 => &CONFIG_POOL_COMMITMENT,
         2 => &CONFIG_BALANCE_PROOF,
         3 => &CONFIG_MERKLE_PATH,
@@ -534,11 +535,18 @@ fn final_poly_of(bytes: &[u8], w: usize, k: usize) -> Vec<u64> {
 /// on index 0, and every terminal index reachable.
 #[test]
 fn s3_terminal_index_distribution_on_honest_proofs() {
-    for id in 1u8..=6 {
+    for id in 0u8..=6 {
         let cfg = config_for(id);
         let mut hist = vec![0usize; cfg.fri_final_poly_size];
         let mut total = 0usize;
-        for seed in 0..4u64 {
+        // [ZK-MASK 2026-09-11] The draw count follows the geometry instead of
+        // being a flat 4: C0 and C4 now sit at ffps 32 with 22 queries, and
+        // 4 x 22 = 88 draws over 32 indices leave an index empty about twice
+        // in three runs by chance alone (expected 2.75 per index). Six expected
+        // hits per index keeps the "every index reached" clause a statement
+        // about the distribution and not about the sample size.
+        let seeds = ((6 * cfg.fri_final_poly_size).div_ceil(cfg.num_queries) as u64).max(4);
+        for seed in 0..seeds {
             let honest = honest_variant(id, seed);
             let parsed = GenericCompactProof::from_bytes(&honest.proof_bytes, cfg)
                 .unwrap_or_else(|| panic!("C{id} seed {seed} parses"));
@@ -569,8 +577,10 @@ fn s3_terminal_index_distribution_on_honest_proofs() {
 fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofData {
     use p01_stark::compact as c;
     match id {
+        // [ZK-MASK-C0 2026-09-11] the masked, generic circuit 0.
+        0 => c::generate_subscriber_ownership_proof(42 + seed, &p01_stark::compact::c0_deterministic_probe_mask()),
         1 => c::generate_pool_commitment_proof(111 + seed, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask()),
-        2 => c::generate_balance_compact_proof(42 + seed, 1000, 777, 999),
+        2 => c::generate_balance_compact_proof(42 + seed, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask()),
         3 => {
             let (mut pe, pi) = merkle_witness();
             pe[0] += seed;
@@ -584,8 +594,7 @@ fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofD
             222,
             200,
             333,
-            999,
-        ),
+            999, &p01_stark::compact::c4_deterministic_probe_mask(),),
         5 => c::generate_transfer_compact_proof(
             13 + seed,
             500,
@@ -846,25 +855,27 @@ fn s6_segments_cannot_be_mixed_across_proofs() {
     println!("[S6] header + tail segment {SEG} from another statement -> {err}");
 }
 
-/// C0's `LEGACY_QUOTIENT_SEGMENTS` and `CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments`
-/// are two independent constants for one number, on the path that verifies four
-/// shipped instructions. They are also the only `k = 7` in the tree, so a
-/// confusion with the generic `k = 8` is the one cross-circuit shape mismatch
-/// that could go unnoticed.
+/// [ZK-MASK-C0 2026-09-11] Formerly `s4b_c0_is_the_only_k_seven_and_its_two_constants_agree`.
+/// The shipping circuit 0 is now the masked GENERIC shape and carries `k = 8`
+/// like every other circuit; `LEGACY_QUOTIENT_SEGMENTS = 7` describes only the
+/// retired 32-row parser that the recovery harnesses keep as a positive
+/// control. What this test now pins: every shipped config is k = 8, the legacy
+/// constant is still 7 (so a legacy proof cannot be mistaken for a shipped
+/// one on segment count), and `CONFIG_SUBSCRIBER_OWNERSHIP` no longer quotes it.
 #[test]
-fn s4b_c0_is_the_only_k_seven_and_its_two_constants_agree() {
-    let c0 = get_circuit_config(0).expect("C0 config");
-    assert_eq!(
-        c0.quotient_segments, LEGACY_QUOTIENT_SEGMENTS,
-        "C0's config and the legacy parser's constant must be the same number — the \
-         legacy parser hard-codes LEGACY_QUOTIENT_SEGMENTS and never reads the config",
-    );
-    assert_eq!(LEGACY_QUOTIENT_SEGMENTS, 7);
-    for id in 1u8..=6 {
+fn s4b_every_shipped_circuit_is_k_eight_and_the_legacy_seven_is_retired() {
+    for id in 0u8..=7 {
         assert_eq!(
             get_circuit_config(id).unwrap().quotient_segments,
             8,
-            "C{id}: every generic circuit is k=8; C0 alone is 7",
+            "C{id}: every shipped circuit, the masked C0 included, is k=8",
         );
     }
+    assert_eq!(LEGACY_QUOTIENT_SEGMENTS, 7);
+    assert_ne!(
+        get_circuit_config(0).unwrap().quotient_segments,
+        LEGACY_QUOTIENT_SEGMENTS,
+        "the masked C0 must not share the legacy segment count, or a legacy proof's \
+         terminal shape would be indistinguishable from a shipped one",
+    );
 }

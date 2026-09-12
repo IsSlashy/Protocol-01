@@ -669,13 +669,60 @@ fn derive_ood_point(
     ood_z
 }
 
-/// [H10] Derive OOD evaluation point from Fiat-Shamir transcript (generic version).
+/// [H10] Derive the OOD evaluation point from the Fiat-Shamir transcript
+/// (generic pipeline).
+///
+/// [PERFECT-IOP 2026-09-12] The candidate is REJECTED and re-hashed while it is
+/// zero, in the trace domain (`z^n = 1`, where `Z_T(z) = 0` and the quotient
+/// claim is undefined) or on the LDE coset (`z^lde = h^lde`, where a DEEP
+/// denominator `x - z` or `x - z.g` vanishes at an opened position). Before
+/// this the honest prover produced an unverifiable proof with probability
+/// `(n + lde + 1) / p` -- about 2^-51 at n = 512 -- and that same event was the
+/// simulator's only failure in `docs/zk-simulation-argument.md`. With the
+/// resampling, completeness is exact and the simulated view is identically
+/// distributed to the honest one; the verifier's twin is
+/// `verify::derive_ood_point_generic`, and `ood_point_from_transcript_hash` is
+/// the shared rule both sides expose so a test can hold them side by side.
 fn derive_ood_point_generic(
     trace_root: &[u8; 32],
     quotient_root: &[u8; 32],
     pub_input_bytes: &[u8],
+    trace_length: usize,
+    lde_size: usize,
 ) -> u64 {
-    derive_ood_point(trace_root, quotient_root, pub_input_bytes)
+    let mut data = Vec::with_capacity(64 + pub_input_bytes.len());
+    data.extend_from_slice(trace_root);
+    data.extend_from_slice(quotient_root);
+    data.extend_from_slice(pub_input_bytes);
+    ood_point_from_transcript_hash(sha256(&data), trace_length, lde_size)
+}
+
+/// [PERFECT-IOP] One candidate: `None` when the first eight bytes, reduced mod
+/// p, give zero, a trace-domain point or an LDE-coset point.
+pub fn ood_point_from_hash(hash: &[u8; 32], trace_length: usize, lde_size: usize) -> Option<u64> {
+    let z = u64::from_le_bytes(hash[0..8].try_into().unwrap()) % GOLDILOCKS_PRIME;
+    if z == 0 {
+        return None;
+    }
+    let zf = BaseElement::new(z);
+    if zf.exp(trace_length as u64) == BaseElement::ONE {
+        return None;
+    }
+    if zf.exp(lde_size as u64) == lde_coset_shift().exp(lde_size as u64) {
+        return None;
+    }
+    Some(z)
+}
+
+/// [PERFECT-IOP] The resampling chain: hash, test, re-hash the 32 bytes until a
+/// candidate is usable. Deterministic, so the verifier reproduces it exactly.
+pub fn ood_point_from_transcript_hash(mut hash: [u8; 32], trace_length: usize, lde_size: usize) -> u64 {
+    loop {
+        if let Some(z) = ood_point_from_hash(&hash, trace_length, lde_size) {
+            return z;
+        }
+        hash = sha256(&hash);
+    }
 }
 
 // derive_query_positions_with_ood removed in PR 2 — query positions now derived
@@ -827,6 +874,20 @@ fn assert_air_agrees_with_trace_generic(trace: &[Vec<BaseElement>], spec: Quotie
     let trace_length = trace[0].len();
     let width = trace.len();
     match spec {
+        QuotientSpec::Circuit0 => {
+            use crate::air::subscriber_ownership::{build_subscriber_ownership_periodic_columns, evaluate_subscriber_ownership_transition, SUBSCRIBER_OWNERSHIP_NUM_CONSTRAINTS, SUBSCRIBER_OWNERSHIP_NUM_PERIODIC};
+            let periodic = build_subscriber_ownership_periodic_columns(trace_length);
+            let mut constraints = vec![BaseElement::ZERO; SUBSCRIBER_OWNERSHIP_NUM_CONSTRAINTS];
+            for row in 0..(trace_length - 1) {
+                let current: Vec<BaseElement> = (0..width).map(|c| trace[c][row]).collect();
+                let next: Vec<BaseElement> = (0..width).map(|c| trace[c][row + 1]).collect();
+                let prow: Vec<BaseElement> = (0..SUBSCRIBER_OWNERSHIP_NUM_PERIODIC).map(|k| periodic[k][row % periodic[k].len()]).collect();
+                evaluate_subscriber_ownership_transition(&current, &next, &prow, &mut constraints);
+                for (k, c) in constraints.iter().enumerate() {
+                    assert_eq!(*c, BaseElement::ZERO, "masked C0 AIR DISAGREES WITH ITS OWN TRACE at row {row}, constraint {k}: non-zero on an honestly built trace. Fail here, not on chain.");
+                }
+            }
+        }
         QuotientSpec::Circuit1 => {
             use crate::air::denominated_pool::{build_pool_commitment_periodic_columns, evaluate_pool_commitment_transition, POOL_COMMITMENT_NUM_CONSTRAINTS, POOL_COMMITMENT_NUM_PERIODIC};
             let periodic = build_pool_commitment_periodic_columns(trace_length);
@@ -1163,6 +1224,70 @@ fn compute_quotient_lde_circuit_6(
 ///
 /// `periodic` layout matches `build_pool_commitment_periodic_columns`:
 /// `[rc0, rc1, rc2, round_flag, chain_flag, is_boundary]`.
+/// [ZK-MASK-C0 2026-09-11] The RLC-combined quotient for the MASKED circuit 0
+/// on the generic pipeline. Same shape as `compute_quotient_lde_circuit_2`:
+/// six periodic columns interpolated onto the coset LDE, four constraints
+/// evaluated at every position, RLC with `alpha`, INTT, `(x - g^(n-1))`
+/// multiply, exact division by `x^n - 1`.
+fn compute_quotient_lde_circuit_0(
+    trace_lde: &[Vec<BaseElement>],
+    blowup: usize,
+    trace_length: usize,
+    alpha: BaseElement,
+) -> Vec<BaseElement> {
+    use crate::air::subscriber_ownership::{
+        build_subscriber_ownership_periodic_columns, evaluate_subscriber_ownership_transition,
+        MASKED_TRACE_WIDTH, SUBSCRIBER_OWNERSHIP_NUM_CONSTRAINTS,
+        SUBSCRIBER_OWNERSHIP_NUM_PERIODIC,
+    };
+
+    let trace_width = trace_lde.len();
+    assert_eq!(trace_width, MASKED_TRACE_WIDTH, "masked circuit 0 committed trace width is {MASKED_TRACE_WIDTH}");
+    let lde_size = trace_length * blowup;
+    assert_eq!(trace_lde[0].len(), lde_size);
+
+    let trace_g = get_domain_generator_generic(trace_length);
+    let lde_g = get_domain_generator_generic(lde_size);
+
+    let periodic_trace = build_subscriber_ownership_periodic_columns(trace_length);
+    assert_eq!(periodic_trace.len(), SUBSCRIBER_OWNERSHIP_NUM_PERIODIC);
+    let mut periodic_lde: Vec<Vec<BaseElement>> =
+        vec![vec![BaseElement::ZERO; lde_size]; SUBSCRIBER_OWNERSHIP_NUM_PERIODIC];
+    for (k, col) in periodic_trace.iter().enumerate() {
+        let poly = inverse_ntt(col, trace_g);
+        for i in 0..lde_size {
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
+            periodic_lde[k][i] = evaluate_poly(&poly, x);
+        }
+    }
+
+    let mut c_lde = vec![BaseElement::ZERO; lde_size];
+    let mut constraints = vec![BaseElement::ZERO; SUBSCRIBER_OWNERSHIP_NUM_CONSTRAINTS];
+    let mut current = vec![BaseElement::ZERO; trace_width];
+    let mut next = vec![BaseElement::ZERO; trace_width];
+    let mut periodic_row = vec![BaseElement::ZERO; SUBSCRIBER_OWNERSHIP_NUM_PERIODIC];
+    for pos in 0..lde_size {
+        let next_pos = (pos + blowup) % lde_size;
+        for col in 0..trace_width {
+            current[col] = trace_lde[col][pos];
+            next[col] = trace_lde[col][next_pos];
+        }
+        for k in 0..SUBSCRIBER_OWNERSHIP_NUM_PERIODIC {
+            periodic_row[k] = periodic_lde[k][pos];
+        }
+        evaluate_subscriber_ownership_transition(&current, &next, &periodic_row, &mut constraints);
+        c_lde[pos] = rlc_combine(&constraints, alpha);
+    }
+
+    let c_poly = coset_inverse_ntt(&c_lde, lde_g, lde_coset_shift_inv());
+    let g_nm1 = trace_g.exp((trace_length - 1) as u64);
+    let c_poly_ext = multiply_by_x_minus_a(&c_poly, g_nm1);
+    assert!(c_poly_ext.len() > trace_length);
+    let q_poly = divide_by_vanishing(&c_poly_ext, trace_length);
+    assert!(q_poly.len() <= lde_size, "quotient polynomial has {} coefficients, LDE is {}", q_poly.len(), lde_size);
+    q_poly
+}
+
 fn compute_quotient_lde_circuit_1(
     trace_lde: &[Vec<BaseElement>],
     blowup: usize,
@@ -1286,7 +1411,9 @@ fn compute_quotient_lde_circuit_2(
     };
 
     let trace_width = trace_lde.len();
-    assert_eq!(trace_width, TRACE_WIDTH, "circuit 2 trace width is 4");
+    // [ZK-MASK-C2 2026-09-11] 4 -> 6: carry, lift and randomizer beside the
+    // three Poseidon columns. Read off the AIR so it cannot drift.
+    assert_eq!(trace_width, TRACE_WIDTH, "circuit 2 committed trace width is {TRACE_WIDTH}");
     let lde_size = trace_length * blowup;
     assert_eq!(trace_lde[0].len(), lde_size);
 
@@ -1521,7 +1648,8 @@ fn compute_quotient_lde_circuit_4(
     };
 
     let trace_width = trace_lde.len();
-    assert_eq!(trace_width, TRACE_WIDTH, "circuit 4 trace width is 4");
+    // [ZK-MASK-C4 2026-09-11] 4 -> 6. Read off the AIR so it cannot drift.
+    assert_eq!(trace_width, TRACE_WIDTH, "circuit 4 committed trace width is {TRACE_WIDTH}");
     let lde_size = trace_length * blowup;
     assert_eq!(trace_lde[0].len(), lde_size);
 
@@ -1630,7 +1758,8 @@ fn compute_quotient_lde_circuit_5(
     };
 
     let trace_width = trace_lde.len();
-    assert_eq!(trace_width, TRACE_WIDTH, "circuit 5 trace width is 7");
+    // [ZK-MASK-C5 2026-09-11] 7 -> 9: lift and randomizer. Read off the AIR.
+    assert_eq!(trace_width, TRACE_WIDTH, "circuit 5 committed trace width is {TRACE_WIDTH}");
     let lde_size = trace_length * blowup;
     assert_eq!(trace_lde[0].len(), lde_size);
 
@@ -2826,11 +2955,11 @@ mod tests {
     fn test_wire_size_confidential_balance_circuit_4() {
         // Circuit 4: tw=4, trace=256, blowup=16, md=12 (LDE=4096), num_queries=27
         let proof = generate_confidential_balance_compact_proof(
-            42, 1000, 111, 800, 222, 200, 333, 999,
-        );
+            42, 1000, 111, 800, 222, 200, 333, 999, &c4_deterministic_probe_mask(),);
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(4, 12, 27, 4096, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
+            // [ZK-MASK-C4 2026-09-11] tw 6, n 512 (md 13), 22 queries, ffps 32.
+            expected_wire_size(crate::air::confidential_balance::TRACE_WIDTH, 13, 22, 8192, SPEND_FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "confidential_balance wire size drift",
         );
     }
@@ -2882,7 +3011,8 @@ mod tests {
             42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &c5_deterministic_probe_mask());
         assert_eq!(
             proof.proof_bytes.len(),
-            expected_wire_size(7, 14, 22, 16384, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
+            // [ZK-MASK-C5 2026-09-11] tw 9: lift and randomizer beside the seven.
+            expected_wire_size(crate::air::transfer::TRACE_WIDTH, 14, 22, 16384, FRI_FINAL_POLY_SIZE, GENERIC_QUOTIENT_SEGMENTS),
             "transfer wire size drift",
         );
     }
@@ -3110,7 +3240,7 @@ mod tests {
 
     #[test]
     fn test_balance_compact_proof() {
-        let proof = generate_balance_compact_proof(42, 1000, 777, 999);
+        let proof = generate_balance_compact_proof(42, 1000, 777, 999, &c2_deterministic_probe_mask());
         assert!(!proof.proof_bytes.is_empty());
         assert!(proof.proof_bytes.len() < 500_000, "Balance proof too large: {}", proof.proof_bytes.len());
         println!("Balance proof size: {} bytes", proof.proof_bytes.len());
@@ -3130,8 +3260,7 @@ mod tests {
     #[test]
     fn test_confidential_balance_compact_proof() {
         let proof = generate_confidential_balance_compact_proof(
-            42, 1000, 111, 800, 222, 200, 333, 999,
-        );
+            42, 1000, 111, 800, 222, 200, 333, 999, &c4_deterministic_probe_mask(),);
         assert_eq!(proof.circuit_id, CIRCUIT_CONFIDENTIAL_BALANCE);
         assert_eq!(proof.public_inputs.len(), 4);
         assert!(!proof.proof_bytes.is_empty());
@@ -3409,38 +3538,92 @@ mod tests {
     #[test]
     fn circuit_2_periodic_coeffs_match_verifier_constants() {
         use crate::air::balance_proof::{
-            build_balance_proof_periodic_columns, TRACE_LENGTH as BAL_TRACE_LENGTH,
+            build_balance_proof_periodic_columns, BALANCE_PROOF_NUM_PERIODIC,
+            TRACE_LENGTH as BAL_TRACE_LENGTH,
         };
 
         let trace_length = BAL_TRACE_LENGTH;
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_balance_proof_periodic_columns(trace_length);
+        assert_eq!(periodic.len(), BALANCE_PROOF_NUM_PERIODIC, "ten columns since the mask");
+        assert_eq!(trace_length, 512, "C2's trace grew 128 -> 512 on 2026-09-11");
 
-        let rc0: Vec<u64> = inverse_ntt(&periodic[0], trace_g).iter().map(|f| f.as_int()).collect();
-        let rc1: Vec<u64> = inverse_ntt(&periodic[1], trace_g).iter().map(|f| f.as_int()).collect();
-        let rc2: Vec<u64> = inverse_ntt(&periodic[2], trace_g).iter().map(|f| f.as_int()).collect();
-        let round_flag: Vec<u64> = inverse_ntt(&periodic[3], trace_g).iter().map(|f| f.as_int()).collect();
-        let chain_01: Vec<u64> = inverse_ntt(&periodic[4], trace_g).iter().map(|f| f.as_int()).collect();
-        let carry_capture: Vec<u64> = inverse_ntt(&periodic[5], trace_g).iter().map(|f| f.as_int()).collect();
-        let chain_carry: Vec<u64> = inverse_ntt(&periodic[6], trace_g).iter().map(|f| f.as_int()).collect();
-        let is_boundary: Vec<u64> = inverse_ntt(&periodic[7], trace_g).iter().map(|f| f.as_int()).collect();
+        let coeffs = |i: usize| -> Vec<u64> {
+            inverse_ntt(&periodic[i], trace_g).iter().map(|f| f.as_int()).collect()
+        };
+        let rc0 = coeffs(0);
+        let rc1 = coeffs(1);
+        let rc2 = coeffs(2);
+        let round_flag = coeffs(3);
+        let chain_01 = coeffs(4);
+        let carry_capture = coeffs(5);
+        let chain_carry = coeffs(6);
+        let is_boundary = coeffs(7);
+        let active = coeffs(8);
+        let nba = coeffs(9);
 
+        // [ZK-MASK-C2 2026-09-11] The four Poseidon tables are 32-periodic over
+        // the WHOLE trace, so their interpolants are stride-16 sparse -- the
+        // SHAPE the verifier's `eval_periodic_stride_at_z(.., 16)` relies on. A
+        // dense one here means the AIR truncated the tiling again, which both
+        // costs ~100k CU per table on chain and re-imposes Poseidon rounds
+        // across the blinding rows.
+        for (name, col) in [("rc0", &rc0), ("rc1", &rc1), ("rc2", &rc2), ("round_flag", &round_flag)] {
+            for (k, c) in col.iter().enumerate() {
+                if k % 16 != 0 {
+                    assert_eq!(*c, 0, "C2 {name} lost its stride-16 sparsity at coefficient {k}");
+                }
+            }
+        }
+        // The same first coefficients every circuit's 32-periodic tables share
+        // (they are the same round constants on the same tiling).
         assert_eq!(rc0[0], 0xC1A9FC17AFE6859A);
-        assert_eq!(rc0[127], 0x0000000000000000);
         assert_eq!(rc1[0], 0x8ADEDD292D895B59);
-        assert_eq!(rc1[127], 0x0000000000000000);
         assert_eq!(rc2[0], 0xAC5D8A4EEAC6C386);
-        assert_eq!(rc2[127], 0x0000000000000000);
         assert_eq!(round_flag[0], 0x0FFFFFFFF0000001);
-        assert_eq!(round_flag[127], 0x0000000000000000);
-        assert_eq!(chain_01[0], 0xFDFFFFFF02000001);
-        assert_eq!(chain_01[127], 0xE0001FFF20000001);
-        assert_eq!(carry_capture[0], 0xFDFFFFFF02000001);
-        assert_eq!(carry_capture[127], 0x20001FFFE0000000);
-        assert_eq!(chain_carry[0], 0xFDFFFFFF02000001);
-        assert_eq!(chain_carry[127], 0x1FFFDFFFE0000000);
-        assert_eq!(is_boundary[0], 0xF9FFFFFF06000001);
-        assert_eq!(is_boundary[127], 0x20001FFFE0000000);
+
+        // The two gates are DENSE -- a sparse one is not the gate the verifier
+        // bakes -- and they are ON inside the witness region.
+        for (name, col) in [("active", &active), ("not_boundary_active", &nba)] {
+            assert!(
+                col.iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0),
+                "C2 {name} must be DENSE",
+            );
+        }
+        assert_eq!(periodic[8][0], BaseElement::ONE, "active is ON at row 0");
+        assert_eq!(periodic[8][126], BaseElement::ONE, "active is ON at row 126");
+        assert_eq!(periodic[8][127], BaseElement::ZERO, "active is OFF at the last witness row");
+        assert_eq!(periodic[8][128], BaseElement::ZERO, "active is OFF across the mask");
+        assert_eq!(periodic[9][31], BaseElement::ZERO, "nba is OFF on a cycle boundary");
+        assert_eq!(periodic[9][30], BaseElement::ONE, "nba is ON inside a cycle");
+
+        // One-hots stay where the witness put them.
+        assert_eq!(periodic[4][31], BaseElement::ONE);
+        assert_eq!(periodic[5][63], BaseElement::ONE);
+        assert_eq!(periodic[6][95], BaseElement::ONE);
+        assert_eq!(periodic[7][127], BaseElement::ONE);
+        assert_eq!(chain_01.len(), 512);
+        assert_eq!(carry_capture.len(), 512);
+        assert_eq!(chain_carry.len(), 512);
+        assert_eq!(is_boundary.len(), 512);
+
+        // Value pins against `periodic_consts.rs`, RE-PINNED 2026-09-11 from
+        // the emitter run whose output was spliced VERBATIM into the verifier
+        // in the same change. They are a DRIFT detector between two files that
+        // are synchronised at this instant; the shape checks above verify the
+        // emitter.
+        assert_eq!(chain_01[0], 0xFF7FFFFF00800001);
+        assert_eq!(chain_01[511], 0xC92185B3E3406959);
+        assert_eq!(carry_capture[0], 0xFF7FFFFF00800001);
+        assert_eq!(carry_capture[511], 0x31CBF96A4AC61EF1);
+        assert_eq!(chain_carry[0], 0xFF7FFFFF00800001);
+        assert_eq!(chain_carry[511], 0x4B539E10A7C92186);
+        assert_eq!(is_boundary[0], 0xFDFFFFFF02000001);
+        assert_eq!(is_boundary[511], 0xDBC48B16E50175C9);
+        assert_eq!(active[0], 0xC07FFFFF3F800001);
+        assert_eq!(active[511], 0xFC11D74645BE10F8);
+        assert_eq!(nba[0], 0xC1FFFFFF3E000001);
+        assert_eq!(nba[511], 0xB5D0BA166FEE6729);
     }
 
     /// [P2.2d-C3] THE C3 LOCK-STEP MARKER.
@@ -3547,47 +3730,61 @@ mod tests {
     #[test]
     fn circuit_4_periodic_coeffs_match_verifier_constants() {
         use crate::air::confidential_balance::{
-            build_confidential_balance_periodic_columns, TRACE_LENGTH as CB_TRACE_LENGTH,
+            build_confidential_balance_periodic_columns, CONFIDENTIAL_BALANCE_NUM_PERIODIC,
+            TRACE_LENGTH as CB_TRACE_LENGTH,
         };
-
-        let trace_length = CB_TRACE_LENGTH; // 256
+        let trace_length = CB_TRACE_LENGTH;
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_confidential_balance_periodic_columns();
-
-        let rc0: Vec<u64> = inverse_ntt(&periodic[0], trace_g).iter().map(|f| f.as_int()).collect();
-        let rc1: Vec<u64> = inverse_ntt(&periodic[1], trace_g).iter().map(|f| f.as_int()).collect();
-        let rc2: Vec<u64> = inverse_ntt(&periodic[2], trace_g).iter().map(|f| f.as_int()).collect();
-        let round_flag: Vec<u64> = inverse_ntt(&periodic[3], trace_g).iter().map(|f| f.as_int()).collect();
-        let is_boundary: Vec<u64> = inverse_ntt(&periodic[4], trace_g).iter().map(|f| f.as_int()).collect();
-        let chain_01: Vec<u64> = inverse_ntt(&periodic[5], trace_g).iter().map(|f| f.as_int()).collect();
-        let chain_34: Vec<u64> = inverse_ntt(&periodic[6], trace_g).iter().map(|f| f.as_int()).collect();
-        let chain_56: Vec<u64> = inverse_ntt(&periodic[7], trace_g).iter().map(|f| f.as_int()).collect();
-        let carry_capture: Vec<u64> = inverse_ntt(&periodic[8], trace_g).iter().map(|f| f.as_int()).collect();
-        let chain_carry_4: Vec<u64> = inverse_ntt(&periodic[9], trace_g).iter().map(|f| f.as_int()).collect();
-        let chain_carry_6: Vec<u64> = inverse_ntt(&periodic[10], trace_g).iter().map(|f| f.as_int()).collect();
-
-        assert_eq!(rc0[0], 0xC1A9FC17AFE6859A);
-        assert_eq!(rc0[255], 0x0000000000000000);
-        assert_eq!(rc1[0], 0x8ADEDD292D895B59);
-        assert_eq!(rc1[255], 0x0000000000000000);
-        assert_eq!(rc2[0], 0xAC5D8A4EEAC6C386);
-        assert_eq!(rc2[255], 0x0000000000000000);
-        assert_eq!(round_flag[0], 0x0FFFFFFFF0000001);
-        assert_eq!(round_flag[255], 0x0000000000000000);
-        assert_eq!(is_boundary[0], 0xF8FFFFFF07000001);
-        assert_eq!(is_boundary[255], 0xAFE29D1C405B5B12);
-        assert_eq!(chain_01[0], 0xFEFFFFFF01000001);
-        assert_eq!(chain_01[255], 0x1CF03DF811501D63);
-        assert_eq!(chain_34[0], 0xFEFFFFFF01000001);
-        assert_eq!(chain_34[255], 0xAFE29D1C405B5B12);
-        assert_eq!(chain_56[0], 0xFEFFFFFF01000001);
-        assert_eq!(chain_56[255], 0xF82E405A62E30FC3);
-        assert_eq!(carry_capture[0], 0xFEFFFFFF01000001);
-        assert_eq!(carry_capture[255], 0x07D1BFA49D1CF03E);
-        assert_eq!(chain_carry_4[0], 0xFEFFFFFF01000001);
-        assert_eq!(chain_carry_4[255], 0xAFE29D1C405B5B12);
-        assert_eq!(chain_carry_6[0], 0xFEFFFFFF01000001);
-        assert_eq!(chain_carry_6[255], 0xF82E405A62E30FC3);
+        assert_eq!(periodic.len(), CONFIDENTIAL_BALANCE_NUM_PERIODIC, "thirteen columns since the mask");
+        assert_eq!(trace_length, 512, "C4's trace grew 256 -> 512 on 2026-09-11");
+        let coeffs = |i: usize| -> Vec<u64> {
+            inverse_ntt(&periodic[i], trace_g).iter().map(|f| f.as_int()).collect()
+        };
+        // Stride-16 sparse Poseidon tables (32-periodic over the whole trace).
+        for (name, i) in [("rc0", 0), ("rc1", 1), ("rc2", 2), ("round_flag", 3)] {
+            let col = coeffs(i);
+            for (k, c) in col.iter().enumerate() {
+                if k % 16 != 0 {
+                    assert_eq!(*c, 0, "C4 {name} lost its stride-16 sparsity at coefficient {k}");
+                }
+            }
+        }
+        assert_eq!(coeffs(0)[0], 0xC1A9FC17AFE6859A);
+        assert_eq!(coeffs(1)[0], 0x8ADEDD292D895B59);
+        assert_eq!(coeffs(2)[0], 0xAC5D8A4EEAC6C386);
+        assert_eq!(coeffs(3)[0], 0x0FFFFFFFF0000001);
+        // Dense gates, ON inside the witness region, OFF from the last witness row.
+        for (name, i) in [("active", 11), ("not_boundary_active", 12)] {
+            assert!(coeffs(i).iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0), "C4 {name} must be DENSE");
+        }
+        assert_eq!(periodic[11][0], BaseElement::ONE);
+        assert_eq!(periodic[11][222], BaseElement::ONE);
+        assert_eq!(periodic[11][223], BaseElement::ZERO, "active is OFF at the last witness row");
+        assert_eq!(periodic[11][224], BaseElement::ZERO);
+        assert_eq!(periodic[12][31], BaseElement::ZERO);
+        assert_eq!(periodic[12][30], BaseElement::ONE);
+        // One-hots where the witness put them.
+        assert_eq!(periodic[5][31], BaseElement::ONE);
+        assert_eq!(periodic[6][127], BaseElement::ONE);
+        assert_eq!(periodic[7][191], BaseElement::ONE);
+        assert_eq!(periodic[8][63], BaseElement::ONE);
+        assert_eq!(periodic[9][127], BaseElement::ONE);
+        assert_eq!(periodic[10][191], BaseElement::ONE);
+        assert_eq!(periodic[4][223], BaseElement::ONE, "is_boundary at the seventh cycle end");
+        assert_eq!(periodic[4][255], BaseElement::ZERO, "no eighth cycle any more");
+        // Value pins against `periodic_consts.rs`, a drift detector between two
+        // files synchronised at this instant (2026-09-11).
+        assert_eq!(coeffs(5)[0], 0xFF7FFFFF00800001);
+        assert_eq!(coeffs(5)[511], 0xC92185B3E3406959);
+        assert_eq!(coeffs(8)[0], 0xFF7FFFFF00800001);
+        assert_eq!(coeffs(8)[511], 0x31CBF96A4AC61EF1);
+        assert_eq!(coeffs(4)[0], 0xFC7FFFFF03800001);
+        assert_eq!(coeffs(4)[511], 0xA2C360E6C7D159B8);
+        assert_eq!(coeffs(11)[0], 0x907FFFFF6F800001);
+        assert_eq!(coeffs(11)[511], 0xB5F02996084C9D5D);
+        assert_eq!(coeffs(12)[0], 0x937FFFFF6C800001);
+        assert_eq!(coeffs(12)[511], 0xD2C37077A26A5089);
     }
 
     /// [P2.2d-C5] Circuit 5 parity: re-emitting periodic coefficients via
@@ -4026,10 +4223,12 @@ mod tests {
                 bytes.len(),
             );
             let fps = u16::from_le_bytes([bytes[c], bytes[c + 1]]) as usize;
-            assert_eq!(
-                fps, FRI_FINAL_POLY_SIZE,
+            // [ZK-MASK 2026-09-11] Two terminal sizes ship now: 16 on C1/C2/C3/C5/C6
+            // and 32 on the masked C0, C4 and C7. Anything else is a cursor error.
+            assert!(
+                fps == FRI_FINAL_POLY_SIZE || fps == SPEND_FRI_FINAL_POLY_SIZE,
                 "{label}: read fri_final_poly_size = {fps} at offset {c}, expected \
-                 {FRI_FINAL_POLY_SIZE}. The header cursor is wrong.",
+                 {FRI_FINAL_POLY_SIZE} or {SPEND_FRI_FINAL_POLY_SIZE}. The header cursor is wrong.",
             );
             let c = c + 2;
             assert!(
@@ -4049,22 +4248,24 @@ mod tests {
         // so no literal here can be stale.
         let mut rows: Vec<(&str, usize, usize, Vec<u8>)> = Vec::new();
 
-        rows.push(("C0 subscriber_ownership", TRACE_WIDTH, LEGACY_QUOTIENT_SEGMENTS,
+        rows.push(("C0 subscriber_ownership (legacy)", TRACE_WIDTH, LEGACY_QUOTIENT_SEGMENTS,
                    generate_compact_proof(42).proof_bytes));
+        rows.push(("C0 subscriber_ownership (masked)", crate::air::subscriber_ownership::MASKED_TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
+                   generate_subscriber_ownership_proof(42, &c0_deterministic_probe_mask()).proof_bytes));
         rows.push(("C1 pool_commitment", crate::air::denominated_pool::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
                    generate_pool_commitment_proof(111, 222, 333, 444, &c1_deterministic_probe_mask()).proof_bytes));
-        rows.push(("C2 balance_proof", 4, GENERIC_QUOTIENT_SEGMENTS,
-                   generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes));
+        rows.push(("C2 balance_proof", crate::air::balance_proof::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
+                   generate_balance_compact_proof(42, 1000, 777, 999, &c2_deterministic_probe_mask()).proof_bytes));
         {
             let path_elements: Vec<u64> = (0..3).map(|i| 100 + i).collect();
             // [ZK-RANDOMIZER] The COMMITTED width, read from the circuit.
             rows.push(("C3 merkle_path", crate::air::merkle_path::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
                        generate_merkle_path_compact_proof(42, &path_elements, &[0u8, 1, 0], &c3_deterministic_probe_mask(path_elements.len())).proof_bytes));
         }
-        rows.push(("C4 confidential_balance", 4, GENERIC_QUOTIENT_SEGMENTS,
-                   generate_confidential_balance_compact_proof(42, 1000, 111, 800, 222, 200, 333, 999)
+        rows.push(("C4 confidential_balance", crate::air::confidential_balance::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
+                   generate_confidential_balance_compact_proof(42, 1000, 111, 800, 222, 200, 333, 999, &c4_deterministic_probe_mask())
                        .proof_bytes));
-        rows.push(("C5 transfer", 7, GENERIC_QUOTIENT_SEGMENTS,
+        rows.push(("C5 transfer", crate::air::transfer::TRACE_WIDTH, GENERIC_QUOTIENT_SEGMENTS,
                    generate_transfer_compact_proof(42, 999, 100, 111, 50, 222, 80, 555, 333, 70, 666, 444, 0, &c5_deterministic_probe_mask())
                        .proof_bytes));
         {
@@ -4219,6 +4420,80 @@ mod tests {
     /// `cargo test -p p01-stark --lib emit_circuit_2_periodic_coeffs -- --ignored --nocapture`
     ///
     /// Paste output into the verifier crate under `C2_*_COEFFS`.
+    /// [ZK-MASK-C0 2026-09-11] One-off generator for the MASKED C0 tables
+    /// (`C0M_*_COEFFS`, 512 coefficients each). The legacy `C0_*_COEFFS` stay
+    /// for the retired legacy verifier path.
+    ///
+    /// Run with:
+    /// `cargo test -p p01-stark --release --lib emit_circuit_0_masked_periodic_coeffs -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn emit_circuit_0_masked_periodic_coeffs() {
+        use crate::air::subscriber_ownership::{
+            build_subscriber_ownership_periodic_columns, MASKED_TRACE_LENGTH,
+            SUBSCRIBER_OWNERSHIP_NUM_PERIODIC,
+        };
+        let trace_length = MASKED_TRACE_LENGTH;
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic = build_subscriber_ownership_periodic_columns(trace_length);
+        let names = [
+            "C0M_RC0_COEFFS",
+            "C0M_RC1_COEFFS",
+            "C0M_RC2_COEFFS",
+            "C0M_ROUND_FLAG_COEFFS",
+            "C0M_NOT_BOUNDARY_ACTIVE_COEFFS",
+            "C0M_HOLD31_COEFFS",
+        ];
+        assert_eq!(names.len(), SUBSCRIBER_OWNERSHIP_NUM_PERIODIC);
+        for (i, col) in periodic.iter().enumerate() {
+            let poly = inverse_ntt(col, trace_g);
+            println!("pub const {}: [u64; {}] = [", names[i], trace_length);
+            for c in &poly {
+                println!("    0x{:016X},", c.as_int());
+            }
+            println!("];");
+            println!();
+        }
+    }
+
+    /// [ZK-MASK-C0 2026-09-11] THE MASKED-C0 LOCK-STEP MARKER: shape checks on
+    /// the six tables, and value pins against `periodic_consts.rs`.
+    #[test]
+    fn circuit_0_masked_periodic_coeffs_match_verifier_constants() {
+        use crate::air::subscriber_ownership::{
+            build_subscriber_ownership_periodic_columns, MASKED_TRACE_LENGTH,
+            SUBSCRIBER_OWNERSHIP_NUM_PERIODIC,
+        };
+        let trace_length = MASKED_TRACE_LENGTH;
+        let trace_g = get_domain_generator_generic(trace_length);
+        let periodic = build_subscriber_ownership_periodic_columns(trace_length);
+        assert_eq!(periodic.len(), SUBSCRIBER_OWNERSHIP_NUM_PERIODIC);
+        assert_eq!(trace_length, 512);
+        let coeffs = |i: usize| -> Vec<u64> {
+            inverse_ntt(&periodic[i], trace_g).iter().map(|f| f.as_int()).collect()
+        };
+        for (name, i) in [("rc0", 0), ("rc1", 1), ("rc2", 2), ("round_flag", 3)] {
+            let col = coeffs(i);
+            for (k, c) in col.iter().enumerate() {
+                if k % 16 != 0 {
+                    assert_eq!(*c, 0, "C0 masked {name} lost its stride-16 sparsity at coefficient {k}");
+                }
+            }
+        }
+        assert_eq!(coeffs(0)[0], 0xC1A9FC17AFE6859A);
+        assert_eq!(coeffs(1)[0], 0x8ADEDD292D895B59);
+        assert_eq!(coeffs(2)[0], 0xAC5D8A4EEAC6C386);
+        assert_eq!(coeffs(3)[0], 0x0FFFFFFFF0000001);
+        assert!(coeffs(4).iter().enumerate().any(|(k, c)| k % 16 != 0 && *c != 0), "nba must be DENSE");
+        assert_eq!(periodic[4][0], BaseElement::ONE);
+        assert_eq!(periodic[4][30], BaseElement::ONE);
+        assert_eq!(periodic[4][31], BaseElement::ZERO, "nba is OFF at the last witness row");
+        assert_eq!(periodic[4][32], BaseElement::ZERO);
+        assert_eq!(periodic[5][31], BaseElement::ONE, "hold31 is the one-hot at row 31");
+        assert_eq!(periodic[5][30], BaseElement::ZERO);
+        // C0M_PIN_MARKER
+    }
+
     #[test]
     #[ignore]
     fn emit_circuit_2_periodic_coeffs() {
@@ -4226,9 +4501,11 @@ mod tests {
             build_balance_proof_periodic_columns, TRACE_LENGTH as BAL_TRACE_LENGTH,
         };
 
-        let trace_length = BAL_TRACE_LENGTH; // 128
+        let trace_length = BAL_TRACE_LENGTH; // 512 since 2026-09-11
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_balance_proof_periodic_columns(trace_length);
+        // [ZK-MASK-C2 2026-09-11] 8 -> 10, appended: `active` and
+        // `not_boundary_active`. Tied to the AIR's count below.
         let names = [
             "C2_RC0_COEFFS",
             "C2_RC1_COEFFS",
@@ -4238,7 +4515,14 @@ mod tests {
             "C2_CARRY_CAPTURE_COEFFS",
             "C2_CHAIN_CARRY_COEFFS",
             "C2_IS_BOUNDARY_COEFFS",
+            "C2_ACTIVE_COEFFS",
+            "C2_NOT_BOUNDARY_ACTIVE_COEFFS",
         ];
+        assert_eq!(
+            names.len(),
+            crate::air::balance_proof::BALANCE_PROOF_NUM_PERIODIC,
+            "the emitter names every periodic column the AIR builds, or it emits a stale table",
+        );
         for (i, col) in periodic.iter().enumerate() {
             let poly = inverse_ntt(col, trace_g);
             println!("pub const {}: [u64; {}] = [", names[i], trace_length);
@@ -4555,7 +4839,7 @@ mod tests {
             build_confidential_balance_periodic_columns, TRACE_LENGTH as CB_TRACE_LENGTH,
         };
 
-        let trace_length = CB_TRACE_LENGTH; // 256
+        let trace_length = CB_TRACE_LENGTH; // 512 since 2026-09-11
         let trace_g = get_domain_generator_generic(trace_length);
         let periodic = build_confidential_balance_periodic_columns();
         let names = [
@@ -4570,7 +4854,14 @@ mod tests {
             "C4_CARRY_CAPTURE_COEFFS",
             "C4_CHAIN_CARRY_4_COEFFS",
             "C4_CHAIN_CARRY_6_COEFFS",
+            "C4_ACTIVE_COEFFS",
+            "C4_NOT_BOUNDARY_ACTIVE_COEFFS",
         ];
+        assert_eq!(
+            names.len(),
+            crate::air::confidential_balance::CONFIDENTIAL_BALANCE_NUM_PERIODIC,
+            "the emitter names every periodic column the AIR builds, or it emits a stale table",
+        );
         for (i, col) in periodic.iter().enumerate() {
             let poly = inverse_ntt(col, trace_g);
             println!("pub const {}: [u64; {}] = [", names[i], trace_length);
@@ -4915,7 +5206,7 @@ mod tests {
             TRACE_LENGTH as BAL_TRACE_LENGTH, TRACE_WIDTH as BAL_TRACE_WIDTH,
         };
 
-        let proof = generate_balance_compact_proof(42, 1000, 777, 999);
+        let proof = generate_balance_compact_proof(42, 1000, 777, 999, &c2_deterministic_probe_mask());
         assert_eq!(proof.circuit_id, CIRCUIT_BALANCE_PROOF);
         assert_eq!(proof.public_inputs.len(), 2);
 
@@ -5142,8 +5433,7 @@ mod tests {
         };
 
         let proof = generate_confidential_balance_compact_proof(
-            42, 1000, 111, 800, 222, 200, 333, 999,
-        );
+            42, 1000, 111, 800, 222, 200, 333, 999, &c4_deterministic_probe_mask(),);
         assert_eq!(proof.circuit_id, CIRCUIT_CONFIDENTIAL_BALANCE);
         assert_eq!(proof.public_inputs.len(), 4);
 
@@ -7098,7 +7388,18 @@ fn solve_ood_quotient_for_spec(
             evaluate_spend_transition(&current, &next, &p, &mut constraints);
             (rlc_combine(&constraints, alpha), CIRCUIT_SPEND, b"bnd-c7\0\0")
         }
-        // Only C0's pipeline uses `LegacyGeneric`, and it re-solves inline.
+        QuotientSpec::Circuit0 => {
+            use crate::air::subscriber_ownership::{
+                build_subscriber_ownership_periodic_columns,
+                evaluate_subscriber_ownership_transition, SUBSCRIBER_OWNERSHIP_NUM_CONSTRAINTS,
+            };
+            let alpha = derive_rlc_alpha_with_tag(trace_root, pub_bytes, b"rlc-c0\0\0");
+            let p = periodic_at_z(&build_subscriber_ownership_periodic_columns(trace_length));
+            let mut constraints = [BaseElement::ZERO; SUBSCRIBER_OWNERSHIP_NUM_CONSTRAINTS];
+            evaluate_subscriber_ownership_transition(&current, &next, &p, &mut constraints);
+            (rlc_combine(&constraints, alpha), CIRCUIT_SUBSCRIBER_OWNERSHIP, b"bnd-c0\0\0")
+        }
+        // Only the LEGACY C0 pipeline uses `LegacyGeneric`, and it re-solves inline.
         QuotientSpec::LegacyGeneric => return None,
     };
 
@@ -8337,6 +8638,10 @@ fn derive_positions_from_seed(
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum QuotientSpec {
     LegacyGeneric,
+    /// [ZK-MASK-C0 2026-09-11] Circuit 0 on the GENERIC pipeline: the masked
+    /// `subscriber_ownership` shape, width 5, length 512. `LegacyGeneric` is
+    /// the retired 32-row shape, kept as the positive control.
+    Circuit0,
     /// Circuit 1 (denominated pool commitment), trace width 3, length 128.
     Circuit1,
     /// Circuit 2 (balance proof), trace width 4, length 128.
@@ -8363,6 +8668,9 @@ pub(crate) enum QuotientSpec {
 /// boundary section, so the per-assertion `alpha_bnd^j` powers are identical.
 fn boundary_spec_for_quotient(spec: &QuotientSpec) -> Option<(u8, [u8; 8])> {
     match spec {
+        // [ZK-MASK-C0 2026-09-11] The SAME tag the legacy path folds with, so the
+        // public-input binding is byte-for-byte the one every consumer hashes.
+        QuotientSpec::Circuit0 => Some((0, *b"bnd-c0\0\0")),
         QuotientSpec::Circuit1 => Some((1, *b"bnd-c1\0\0")),
         // [BIND-C2C4 2026-08-03] C2 and C4 used to return `None` here — "deferred,
         // no live exploit". Measured (verify.rs `step5_binding_must_fire`): the
@@ -8459,6 +8767,10 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
             let alpha = derive_rlc_alpha(&root, pub_input_bytes);
             compute_quotient_lde_circuit_6(&lde, blowup, trace_length, depth, alpha)
         }
+        QuotientSpec::Circuit0 => {
+            let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c0\0\0");
+            compute_quotient_lde_circuit_0(&lde, blowup, trace_length, alpha)
+        }
         QuotientSpec::Circuit1 => {
             let alpha = derive_rlc_alpha_with_tag(&root, pub_input_bytes, b"rlc-c1\0\0");
             compute_quotient_lde_circuit_1(&lde, blowup, trace_length, alpha)
@@ -8539,7 +8851,7 @@ fn generate_compact_proof_from_trace_with_pair_indexing(
         build_pair_merkle_tree_multi(&q_segs.lde, pair_indexing.quotient());
 
     // 4. [H10] Derive OOD point from transcript (trace_root || quotient_root || pub_bytes)
-    let ood_z = derive_ood_point_generic(&root, &quotient_root, pub_input_bytes);
+    let ood_z = derive_ood_point_generic(&root, &quotient_root, pub_input_bytes, trace_length, lde_size);
 
     // 5. Compute OOD evaluations by evaluating trace polynomials at ood_z
     let ood_z_felt = BaseElement::new(ood_z);
@@ -8917,6 +9229,87 @@ const SPEND_FRI_FINAL_POLY_DEGREE_BOUND: usize = 2;
 ///
 /// Proves: nullifier = Poseidon(np, secret), commitment = Poseidon(nullifier, Poseidon(epoch, mint))
 /// Public inputs: nullifier, commitment
+/// A DETERMINISTIC, PUBLICLY REPRODUCIBLE mask for the MASKED C0. Test
+/// scaffolding only. HIDES NOTHING; cannot reach a shipped binary
+/// (`test-probes` is off in `default`).
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c0_deterministic_probe_mask() -> Vec<u64> {
+    let mut z: u64 = 0xC0_5EED_0001;
+    (0..crate::air::subscriber_ownership::MASK_LEN)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
+/// [ZK-MASK-C0 2026-09-11] The SHIPPING circuit-0 proof: the masked
+/// `subscriber_ownership` shape on the generic pipeline.
+///
+/// Public inputs: `[commitment]`, the same single value the legacy path
+/// exposed, hashed the same way by every consumer. `mask` is the blinding
+/// region, exactly `air::subscriber_ownership::MASK_LEN` fresh uniform
+/// elements; the wasm entry draws it from the OS CSPRNG and refuses without.
+///
+/// Geometry: width 5, n 512, 22 queries, ffps 32 / bound 2 (C7's terminal
+/// shape) -- see `CONFIG_SUBSCRIBER_OWNERSHIP` in the verifier for why those
+/// two fields, and not `num_queries` alone, are what tell it from C1.
+pub fn generate_subscriber_ownership_proof(subscriber_secret: u64, mask: &[u64]) -> GenericCompactProofData {
+    generate_subscriber_ownership_proof_inner(subscriber_secret, mask, DeepProbe::HONEST)
+}
+
+/// [B2 probe] The masked circuit 0 with a chosen OOD forgery / terminal
+/// polynomial, for the soundness measurements in `b2_bits_measured.rs`. Same
+/// pipeline as `generate_subscriber_ownership_proof`, only `DeepProbe` differs.
+/// Compiled only under `test-probes`.
+#[cfg(any(test, feature = "test-probes"))]
+#[doc(hidden)]
+pub fn generate_subscriber_ownership_proof_with_forgery(
+    subscriber_secret: u64,
+    mask: &[u64],
+    ood_forgery: OodForgery,
+    terminal_poly: TerminalPoly,
+) -> GenericCompactProofData {
+    generate_subscriber_ownership_proof_inner(subscriber_secret, mask, DeepProbe { ood_forgery, terminal_poly })
+}
+
+fn generate_subscriber_ownership_proof_inner(
+    subscriber_secret: u64,
+    mask: &[u64],
+    probe: DeepProbe,
+) -> GenericCompactProofData {
+    let secret = BaseElement::new(subscriber_secret);
+    let (trace, commitment) = crate::air::subscriber_ownership::build_masked_trace(
+        secret,
+        &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+    );
+    let public_inputs = vec![commitment.as_int()];
+    let pub_bytes = commitment.as_int().to_le_bytes().to_vec();
+
+    let (proof_bytes, root) = generate_compact_proof_from_trace_with_pair_indexing(
+        &trace,
+        &pub_bytes,
+        GENERIC_BLOWUP,
+        HEAVY_GENERIC_NUM_QUERIES,
+        SPEND_FRI_FINAL_POLY_SIZE,
+        SPEND_FRI_FINAL_POLY_DEGREE_BOUND,
+        GENERIC_QUOTIENT_SEGMENTS,
+        QuotientSpec::Circuit0,
+        PairIndexing::Canonical,
+        TraceLeaf::Canonical,
+        probe,
+    );
+
+    GenericCompactProofData {
+        proof_bytes,
+        circuit_id: CIRCUIT_SUBSCRIBER_OWNERSHIP,
+        public_inputs,
+        root,
+    }
+}
+
 /// A DETERMINISTIC, PUBLICLY REPRODUCIBLE C1 mask. Test scaffolding only.
 ///
 /// ⛔ THIS MASK HIDES NOTHING. Every value is a pure function of nothing at all,
@@ -9155,14 +9548,42 @@ fn generate_pool_commitment_proof_with_layout_and_claim(
 ///
 /// Proves: commitment = Poseidon(Poseidon(balance, salt), Poseidon(Poseidon(sk, 0), mint))
 /// Public inputs: commitment, token_mint
+/// A DETERMINISTIC, PUBLICLY REPRODUCIBLE C2 mask. Test scaffolding only.
+///
+/// ⛔ THIS MASK HIDES NOTHING. Every value is a pure function of nothing at all,
+/// so an observer who reads this file reconstructs the whole blinding region and
+/// the 384 free rows stop being free. Adequate for trace SHAPE and for a RANK
+/// measurement; adequate for nothing else.
+///
+/// ✅ IT CANNOT REACH A SHIPPED BINARY, by construction: `test-probes` is off in
+/// `default`, so calling it from a production path is a COMPILE ERROR in the
+/// shipping configuration. Twins: `c1_`, `c3_`, `c5_`, `c6_deterministic_probe_mask`.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c2_deterministic_probe_mask() -> Vec<u64> {
+    let mut z: u64 = 0xC2_5EED_0001;
+    (0..crate::air::balance_proof::MASK_LEN)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
+/// [ZK-MASK-C2 2026-09-11] `mask` is the blinding region, exactly
+/// `air::balance_proof::MASK_LEN` fresh uniform elements. The wasm entry draws
+/// it from the OS CSPRNG and refuses to build without one; tests pass
+/// `c2_deterministic_probe_mask()`.
 pub fn generate_balance_compact_proof(
     spending_key: u64,
     balance: u64,
     salt: u64,
     token_mint: u64,
+    mask: &[u64],
 ) -> GenericCompactProofData {
     generate_balance_compact_proof_inner(
-        spending_key, balance, salt, token_mint, DeepProbe::HONEST,
+        spending_key, balance, salt, token_mint, mask, DeepProbe::HONEST,
     )
 }
 
@@ -9182,6 +9603,7 @@ pub fn generate_balance_compact_proof_with_forgery(
     balance: u64,
     salt: u64,
     token_mint: u64,
+    mask: &[u64],
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9190,6 +9612,7 @@ pub fn generate_balance_compact_proof_with_forgery(
         balance,
         salt,
         token_mint,
+        mask,
         DeepProbe { ood_forgery, terminal_poly },
     )
 }
@@ -9225,11 +9648,12 @@ pub fn generate_balance_compact_proof_claiming(
     balance: u64,
     salt: u64,
     token_mint: u64,
+    mask: &[u64],
     claim_index: usize,
     claimed_value: u64,
 ) -> GenericCompactProofData {
     generate_balance_compact_proof_with_claim(
-        spending_key, balance, salt, token_mint, DeepProbe::HONEST,
+        spending_key, balance, salt, token_mint, mask, DeepProbe::HONEST,
         Some((claim_index, claimed_value)),
     )
 }
@@ -9239,9 +9663,10 @@ fn generate_balance_compact_proof_inner(
     balance: u64,
     salt: u64,
     token_mint: u64,
+    mask: &[u64],
     probe: DeepProbe,
 ) -> GenericCompactProofData {
-    generate_balance_compact_proof_with_claim(spending_key, balance, salt, token_mint, probe, None)
+    generate_balance_compact_proof_with_claim(spending_key, balance, salt, token_mint, mask, probe, None)
 }
 
 fn generate_balance_compact_proof_with_claim(
@@ -9249,6 +9674,7 @@ fn generate_balance_compact_proof_with_claim(
     balance: u64,
     salt: u64,
     token_mint: u64,
+    mask: &[u64],
     probe: DeepProbe,
     // `Some((i, v))` replaces public input `i` with `v` BEFORE the transcript is
     // built, leaving the trace honest. `None` on every production path.
@@ -9260,7 +9686,13 @@ fn generate_balance_compact_proof_with_claim(
     let mint = BaseElement::new(token_mint);
 
     let (trace, commitment) =
-        crate::air::balance_proof::build_balance_proof_trace(sk, bal, s, mint);
+        crate::air::balance_proof::build_balance_proof_trace(
+            sk,
+            bal,
+            s,
+            mint,
+            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+        );
 
     let mut public_inputs = vec![commitment.as_int(), token_mint];
     if let Some((i, v)) = claim_override {
@@ -9418,6 +9850,26 @@ fn generate_merkle_path_compact_proof_inner(
 ///
 /// Proves: commitments are correctly formed from private balances, salts, and spending key.
 /// Public inputs: old_commitment, new_commitment, amount_hash, token_mint
+/// A DETERMINISTIC, PUBLICLY REPRODUCIBLE C4 mask. Test scaffolding only.
+/// HIDES NOTHING; cannot reach a shipped binary (`test-probes` is off in
+/// `default`). Twins: `c1_`, `c2_`, `c3_`, `c5_`, `c6_deterministic_probe_mask`.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c4_deterministic_probe_mask() -> Vec<u64> {
+    let mut z: u64 = 0xC4_5EED_0001;
+    (0..crate::air::confidential_balance::MASK_LEN)
+        .map(|_| {
+            z ^= z << 13;
+            z ^= z >> 7;
+            z ^= z << 17;
+            z % 0xFFFF_FFFF_0000_0001
+        })
+        .collect()
+}
+
+/// [ZK-MASK-C4 2026-09-11] `mask` is the blinding region, exactly
+/// `air::confidential_balance::MASK_LEN` fresh uniform elements. The wasm entry
+/// draws it from the OS CSPRNG and refuses to build without one.
+#[allow(clippy::too_many_arguments)]
 pub fn generate_confidential_balance_compact_proof(
     spending_key: u64,
     old_balance: u64,
@@ -9427,10 +9879,11 @@ pub fn generate_confidential_balance_compact_proof(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
+    mask: &[u64],
 ) -> GenericCompactProofData {
     generate_confidential_balance_compact_proof_inner(
         spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
-        token_mint, TraceLeaf::Canonical, DeepProbe::HONEST,
+        token_mint, mask, TraceLeaf::Canonical, DeepProbe::HONEST,
     )
 }
 
@@ -9454,12 +9907,13 @@ pub fn generate_confidential_balance_compact_proof_with_forgery(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
+    mask: &[u64],
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
     generate_confidential_balance_compact_proof_inner(
         spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
-        token_mint, TraceLeaf::Canonical, DeepProbe { ood_forgery, terminal_poly },
+        token_mint, mask, TraceLeaf::Canonical, DeepProbe { ood_forgery, terminal_poly },
     )
 }
 
@@ -9484,11 +9938,12 @@ pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
+    mask: &[u64],
     trace_leaf: TraceLeaf,
 ) -> GenericCompactProofData {
     generate_confidential_balance_compact_proof_inner(
         spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
-        token_mint, trace_leaf, DeepProbe::HONEST,
+        token_mint, mask, trace_leaf, DeepProbe::HONEST,
     )
 }
 
@@ -9511,12 +9966,13 @@ pub fn generate_confidential_balance_compact_proof_claiming(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
+    mask: &[u64],
     claim_index: usize,
     claimed_value: u64,
 ) -> GenericCompactProofData {
     generate_confidential_balance_compact_proof_with_claim(
         spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
-        token_mint, TraceLeaf::Canonical, DeepProbe::HONEST,
+        token_mint, mask, TraceLeaf::Canonical, DeepProbe::HONEST,
         Some((claim_index, claimed_value)),
     )
 }
@@ -9531,12 +9987,13 @@ fn generate_confidential_balance_compact_proof_inner(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
+    mask: &[u64],
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     generate_confidential_balance_compact_proof_with_claim(
         spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
-        token_mint, trace_leaf, probe, None,
+        token_mint, mask, trace_leaf, probe, None,
     )
 }
 
@@ -9550,6 +10007,7 @@ fn generate_confidential_balance_compact_proof_with_claim(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
+    mask: &[u64],
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
     // `Some((i, v))` replaces public input `i` with `v` BEFORE the transcript is
@@ -9568,6 +10026,7 @@ fn generate_confidential_balance_compact_proof_with_claim(
     let (trace, oc, nc, ah) =
         crate::air::confidential_balance::build_confidential_balance_trace(
             sk, ob, os, nb, ns, a, as_, mint,
+            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
         );
 
     let mut public_inputs = vec![oc.as_int(), nc.as_int(), ah.as_int(), token_mint];
@@ -9590,9 +10049,21 @@ fn generate_confidential_balance_compact_proof_with_claim(
         &trace,
         &pub_bytes,
         GENERIC_BLOWUP,
-        GENERIC_NUM_QUERIES,
-        FRI_FINAL_POLY_SIZE,
-        GENERIC_FRI_FINAL_POLY_DEGREE_BOUND,
+        // [ZK-MASK-C4 2026-09-11] 27 -> 22, the count C3/C5/C6/C7 ship at.
+        // Soundness is field-floor-bound on every circuit, and 22 keeps C4's
+        // parser tuple distinct from C2's (same width, same length).
+        HEAVY_GENERIC_NUM_QUERIES,
+        // [ZK-MASK-C4 2026-09-11] ffps 32 / bound 2, C7's terminal shape, NOT
+        // 16 / 1. C2 and C4 share width 6, length 512 and k = 8, so with the
+        // same ffps the only wire-visible difference would be `num_queries`,
+        // and `cross_circuit_confusion::surplus_query_splices_do_not_parse_as_
+        // another_circuit` MEASURED that a C4 proof spliced with five surplus
+        // queries then parses as C2. One fewer FRI layer separates them by a
+        // field a re-count cannot forge, and drops one committed layer from
+        // the wire. The bound is 2 for the reason C7 documents: one fewer fold
+        // leaves one more degree.
+        SPEND_FRI_FINAL_POLY_SIZE,
+        SPEND_FRI_FINAL_POLY_DEGREE_BOUND,
         GENERIC_QUOTIENT_SEGMENTS,
         QuotientSpec::Circuit4,
         PairIndexing::Canonical,
@@ -10102,3 +10573,90 @@ fn generate_spend_compact_proof_inner(
 /// entirety: no feature flag, so it cannot reach a shipped blob.
 #[cfg(test)]
 mod zk_hiding;
+
+
+/// [PERFECT-IOP 2026-09-12] The resampling rule, on the prover side.
+#[cfg(test)]
+mod ood_resampling_tests {
+    use super::*;
+
+    fn hash_with_z(z: u64) -> [u8; 32] {
+        let mut h = [0x5Au8; 32];
+        h[..8].copy_from_slice(&z.to_le_bytes());
+        h
+    }
+
+    #[test]
+    fn the_bad_set_is_rejected_and_everything_else_is_kept() {
+        for (n, lde) in [(512usize, 8192usize), (1024, 16384)] {
+            let g = get_domain_generator_generic(n);
+            let lde_g = get_domain_generator_generic(lde);
+            let h = lde_coset_shift();
+            // zero, the trace domain (1, g, g^17) and the coset (h, h.lde_g^5)
+            for bad in [
+                0u64,
+                1,
+                g.as_int(),
+                g.exp(17).as_int(),
+                h.as_int(),
+                (h * lde_g.exp(5)).as_int(),
+                // `p` itself reduces to zero
+                GOLDILOCKS_PRIME,
+            ] {
+                assert_eq!(
+                    ood_point_from_hash(&hash_with_z(bad), n, lde),
+                    None,
+                    "n {n}: candidate {bad} must be rejected"
+                );
+            }
+            // a point that is in neither: 3 is not a 2^k-th root of unity times 1 or h
+            for good in [3u64, 0x1234_5678_9abc_def1, GOLDILOCKS_PRIME - 2] {
+                assert_eq!(ood_point_from_hash(&hash_with_z(good), n, lde), Some(good), "n {n}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_chain_steps_past_a_bad_candidate_and_never_returns_one() {
+        for (n, lde) in [(512usize, 8192usize), (1024, 16384)] {
+            let g = get_domain_generator_generic(n);
+            let h = lde_coset_shift();
+            let hn = h.exp(lde as u64);
+            for bad in [0u64, 1, g.as_int(), h.as_int()] {
+                let start = hash_with_z(bad);
+                let z = ood_point_from_transcript_hash(start, n, lde);
+                assert_ne!(z, bad);
+                // exactly the second candidate, unless that one is bad too
+                let second = ood_point_from_hash(&sha256(&start), n, lde);
+                if let Some(s2) = second {
+                    assert_eq!(z, s2, "the chain re-hashes the 32 bytes once and takes the next usable candidate");
+                }
+                let zf = BaseElement::new(z);
+                assert_ne!(z, 0);
+                assert_ne!(zf.exp(n as u64), BaseElement::ONE);
+                assert_ne!(zf.exp(lde as u64), hn);
+            }
+        }
+    }
+
+    /// The honest pipeline on every circuit now draws a `z` outside the bad set --
+    /// it always did with probability 1 - 2^-51, and this pins that the shipped
+    /// proofs' `ood_z` is what the shared rule produces from the transcript roots.
+    #[test]
+    fn a_shipped_proof_carries_the_resampled_point() {
+        let d = generate_subscriber_ownership_proof(42, &c0_deterministic_probe_mask());
+        let b = &d.proof_bytes;
+        let trace_root: [u8; 32] = b[0..32].try_into().unwrap();
+        let quotient_root: [u8; 32] = b[32..64].try_into().unwrap();
+        let tw = crate::air::subscriber_ownership::MASKED_TRACE_WIDTH;
+        let ood_z_off = 64 + tw * 8 * 2;
+        let ood_z = u64::from_le_bytes(b[ood_z_off..ood_z_off + 8].try_into().unwrap());
+        let pub_bytes = d.public_inputs[0].to_le_bytes();
+        let n = crate::air::subscriber_ownership::MASKED_TRACE_LENGTH;
+        assert_eq!(
+            ood_z,
+            derive_ood_point_generic(&trace_root, &quotient_root, &pub_bytes, n, n * GENERIC_BLOWUP),
+            "the wire's ood_z is the resampled derivation of its own roots"
+        );
+    }
+}

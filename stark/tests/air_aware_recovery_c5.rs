@@ -105,7 +105,9 @@ const COSET_SHIFT: u64 = 7;
 // A harness that re-derives the circuit's geometry is a second source of truth
 // for a number that has exactly one. Read the circuit.
 const TRACE_LEN: usize = 1024;
-const TRACE_WIDTH: usize = 7;
+// [ZK-MASK-C5 2026-09-11] 7 -> 9 (lift + randomizer), READ OFF THE AIR: the literal
+// 7 stood here and the wire moved under it, exactly the drift the comment above warns of.
+const TRACE_WIDTH: usize = p01_stark::air::transfer::TRACE_WIDTH;
 const LDE_SIZE: u64 = 16384;
 const BLOWUP: u64 = 16;
 const NUM_QUERIES: usize = 22;
@@ -445,7 +447,7 @@ fn the_mask_closes_the_accumulator_that_gave_up_four_amounts() {
     // and then the `None` above would mean nothing.
     let mask = test_mask(0xC5_5EED_0003);
     let known: Vec<(usize, u64)> = (FIRST_FREE_ROW..TRACE_LEN)
-        .map(|row| (row, mask[(row - FIRST_FREE_ROW) * 7 + 6]))
+        .map(|row| (row, mask[(row - FIRST_FREE_ROW) * p01_stark::air::transfer::CONSTRAINED_TRACE_WIDTH + 6]))
         .collect();
     let walk = vec![
         seg(0, 65), seg(65, 161), seg(161, 289), seg(289, 385),

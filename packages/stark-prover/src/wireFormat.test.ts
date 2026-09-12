@@ -151,12 +151,18 @@ const PINS: Pin[] = [
   {
     label: 'C0 subscriber_ownership',
     circuitId: STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP,
-    traceWidth: 3,
-    numQueries: 27,
-    preRouteC: 45_433,
-    quotientSegments: 7,
-    absolute: 47_641,
-    sha256: '157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e',
+    // [UNIFORM-MASK 2026-09-12] The MASKED circuit 0: width 3 -> 5 (lift +
+    // randomizer), n 32 -> 512, 22 queries, the legacy 32-row shape retired.
+    traceWidth: 5,
+    numQueries: 22,
+    // preRouteC: RETIRED 2026-09-12 — this geometry no longer exists.
+    quotientSegments: 8,
+    // 47,641 -> 74,365 (`cross_circuit_confusion.rs` RECORDED[0]).
+    absolute: 74_365,
+    // sha256: RETIRED 2026-09-12 — C0 draws a fresh mask per proof. Its last
+    // deterministic digest, 157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e
+    // (47,641 B), is what `b1_deep_binding.rs` FIXTURE_C0_SHA256 still pins for
+    // the LEGACY prover path, on purpose. See `Pin.sha256`.
     inputs: { subscriberSecret: '42' },
   },
   {
@@ -179,16 +185,18 @@ const PINS: Pin[] = [
   {
     label: 'C2 balance_proof',
     circuitId: STARK_CIRCUITS.BALANCE_PROOF,
-    traceWidth: 4,
+    // [UNIFORM-MASK 2026-09-12] width 4 -> 6 (lift + randomizer), n 512.
+    traceWidth: 6,
     numQueries: 27,
-    preRouteC: 66_681,
+    // preRouteC: RETIRED 2026-09-12 — this geometry no longer exists.
     quotientSegments: 8,
-    absolute: 69_761,
-    // [BIND-C2C4 2026-08-03] MOVED by the C2 boundary fold. Copied from the RUST
-    // pin (b1_deep_binding.rs FIXTURE_C2_SHA256), not out of the WASM run this
-    // file drives — the reshipped blob then reproduced it independently, which is
-    // the cross-language agreement this pin exists to assert.
-    sha256: 'c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c',
+    // 69,761 -> 95,777.
+    absolute: 95_777,
+    // sha256: RETIRED 2026-09-12 — C2 draws a fresh mask per proof. The
+    // [BIND-C2C4] digest c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c
+    // (69,761 B) described the deterministic shape; `b1_deep_binding.rs`
+    // FIXTURE_C2_SHA256 pins the masked shape with a FIXED probe mask, which the
+    // shipped prover never uses. See `Pin.sha256`.
     inputs: { spendingKey: '42', balance: '1000', salt: '777', tokenMint: '999' },
   },
   {
@@ -212,14 +220,16 @@ const PINS: Pin[] = [
   {
     label: 'C4 confidential_balance',
     circuitId: STARK_CIRCUITS.CONFIDENTIAL_BALANCE,
-    traceWidth: 4,
-    numQueries: 27,
-    preRouteC: 78_377,
+    // [UNIFORM-MASK 2026-09-12] width 4 -> 6, n 512, queries 27 -> 22.
+    traceWidth: 6,
+    numQueries: 22,
+    // preRouteC: RETIRED 2026-09-12 — this geometry no longer exists.
     quotientSegments: 8,
-    absolute: 81_457,
-    // [BIND-C2C4 2026-08-03] MOVED by the C4 boundary fold, same cause and same
-    // provenance as C2 above: from FIXTURE_C4_SHA256, reproduced by the new blob.
-    sha256: '6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0',
+    // 81,457 -> 75,085 (five fewer queries outweigh the two columns).
+    absolute: 75_085,
+    // sha256: RETIRED 2026-09-12 — C4 draws a fresh mask per proof. The
+    // [BIND-C2C4] digest 6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0
+    // (81,457 B) described the deterministic shape. See C2 and `Pin.sha256`.
     inputs: {
       spendingKey: '42',
       oldBalance: '1000',
@@ -234,11 +244,12 @@ const PINS: Pin[] = [
   {
     label: 'C5 transfer',
     circuitId: STARK_CIRCUITS.TRANSFER,
-    traceWidth: 7,
+    // [UNIFORM-MASK 2026-09-12] width 7 -> 9 (lift + randomizer), 89,821 -> 91,261.
+    traceWidth: 9,
     numQueries: 22,
     // preRouteC: RETIRED 2026-08-31 — this geometry no longer exists.
     quotientSegments: 8,
-    absolute: 89_821,
+    absolute: 91_261,
     // sha256: RETIRED 2026-08-31 — C5 draws a fresh mask per proof.
     // `stark/src/lib.rs:425` calls `draw_blinding_mask(transfer::MASK_LEN)`, so
     // two proofs over the same witness differ. ⛔ DO NOT re-pin this to the Rust
@@ -292,13 +303,15 @@ describe('checked-in WASM prover — Route C wire format', () => {
   }, 60_000);
 
   // The single most load-bearing assertion in this file, called out separately
-  // so a failure names the artifact rather than a table row. 47_641 is the same
-  // literal `route_c_trace_pair.rs` pins against the Rust prover.
-  it('circuit 0 serializes to exactly 47,641 bytes — the Rust prover’s size', () => {
+  // so a failure names the artifact rather than a table row. 74_365 is the same
+  // literal `route_c_trace_pair.rs` and `cross_circuit_confusion.rs` pin against
+  // the Rust prover for the MASKED circuit 0 ([UNIFORM-MASK 2026-09-12];
+  // 47,641 was the legacy 32-row shape).
+  it('circuit 0 serializes to exactly 74,365 bytes — the Rust prover’s size', () => {
     const { proofBytes } = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
       subscriberSecret: '42',
     });
-    expect(proofBytes.length).toBe(47_641);
+    expect(proofBytes.length).toBe(74_365);
   }, 60_000);
 
   it('every shipping circuit exists in the bundled WASM', () => {
@@ -381,10 +394,11 @@ describe('checked-in WASM prover — Route C wire format', () => {
   // reshipped from the same stale blob.
   //
   // A content digest is the only cross-language check that catches prover /
-  // verifier semantic skew at constant length. EVERY circuit now carries one:
-  // `Pin.sha256` in the table above covers C0, C2, C4 and C5 and is asserted in
-  // the loop. C1, C3 and C6 joined C7 as masked circuits on 2026-08-29 and are
-  // covered by the freshness assertion instead.
+  // verifier semantic skew at constant length. NO circuit carries one any more:
+  // C1, C3 and C6 joined C7 as masked circuits on 2026-08-29, C5 on 2026-08-31,
+  // and C0, C2, C4 on 2026-09-12 [UNIFORM-MASK], so all eight are covered by the
+  // freshness assertion in the loop and the B1-class gap is closed only by the
+  // on-chain acceptance recorded in `deployed-verifier.json`.
   // The two constants below are the C0 and C1 digests called out by name
   // because they are the SAME two pinned on the Rust side in
   // `programs/p01_stark_verifier/tests/b1_deep_binding.rs`
@@ -405,17 +419,23 @@ describe('checked-in WASM prover — Route C wire format', () => {
   // JSON`, i.e. the JSON read started partway into a proof_hex value.
   // -------------------------------------------------------------------------
 
-  const FIXTURE_C0_SHA256 =
-    '157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e';
+  // [UNIFORM-MASK 2026-09-12] FIXTURE_C0_SHA256 (157f45be…, 47,641 B) is gone
+  // from here: it was the digest of the LEGACY circuit 0, and the shipped prover
+  // now emits the masked shape with a fresh mask per proof. `b1_deep_binding.rs`
+  // keeps that constant for the legacy Rust path only.
   const FIXTURE_C1_SHA256 =
     'b41897fa3cb7b1f091e33fa89961d94124f56b3f944454e0a3f6b139487302ed';
 
-  it('C0 proof bytes hash to the digest the Rust prover produces', () => {
-    const { proofBytes } = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
+  it('C0 proof bytes have the masked length and differ between two proofs', () => {
+    const a = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
       subscriberSecret: '42',
-    });
-    expect(proofBytes.length).toBe(47_641);
-    expect(sha256Hex(proofBytes)).toBe(FIXTURE_C0_SHA256);
+    }).proofBytes;
+    const b = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
+      subscriberSecret: '42',
+    }).proofBytes;
+    expect(a.length).toBe(74_365);
+    expect(b.length).toBe(74_365);
+    expect(sha256Hex(a)).not.toBe(sha256Hex(b));
   }, 60_000);
 
   it('C1 proof bytes hash to the digest the Rust prover produces', () => {
@@ -539,13 +559,17 @@ describe('checked-in WASM prover — Route C wire format', () => {
     }, 60_000);
   });
 
-  it('is deterministic — the same witness twice gives the same bytes', () => {
+  // [UNIFORM-MASK 2026-09-12] This used to assert C0 was DETERMINISTIC. Since
+  // the masked circuit 0 shipped, no circuit is; the property that holds for
+  // all eight is the opposite one, and it is asserted per row in the loop above.
+  it('is NOT deterministic — every circuit draws a fresh mask, so two C0 proofs differ', () => {
     const a = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
       subscriberSecret: '42',
     }).proofBytes;
     const b = generateProofBytes(exports, STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP, {
       subscriberSecret: '42',
     }).proofBytes;
-    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(true);
+    expect(a.length).toBe(b.length);
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
   }, 60_000);
 });

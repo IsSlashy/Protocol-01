@@ -96,23 +96,37 @@ pub struct CircuitConfig {
     /// floor of `64 - log2(8n + w + k + 1 + folds*lde_size)` that grinding cannot
     /// lift (the nonce is absorbed after z, gamma and every alpha). On all seven
     /// circuits the query term OVERSHOOTS that floor, so the honest figure is the
-    /// floor: 47-52 bits conjectured, 42-46 unconditional. Both columns are
+    /// floor: 46-47 bits conjectured, 42-46 unconditional. Both columns are
     /// derived from this struct and asserted in `tests/b1_deep_binding.rs`.
     pub num_queries: usize,
 }
 
-/// subscriber_ownership: 3 cols, 32 rows
+/// subscriber_ownership: 5 cols, 512 rows -- the MASKED shape.
+///
+/// [ZK-MASK-C0 2026-09-11] This config now describes the masked circuit 0 on
+/// the GENERIC pipeline (`stark/src/air/subscriber_ownership.rs`,
+/// `SubscriberOwnershipMaskedAir`): columns 0-2 Poseidon state, column 3 the
+/// ZK lift, column 4 the randomizer; rows 32..511 the blinding region. The
+/// retired 32-row legacy shape is still parsed by `CompactStarkProof` with its
+/// own constants (`TRACE_WIDTH`, `MERKLE_DEPTH`, `LEGACY_QUOTIENT_SEGMENTS`)
+/// and is kept only as the positive control of the leak it had
+/// (`stark/tests/witness_recovery_positive_control.rs`).
+///
+/// 22 queries and C7's terminal shape (ffps 32, bound 2), so the parser tuple
+/// `(5, 13, 8, 22, 7, 32)` differs from C1's `(5, 13, 8, 27, 8, 16)` in
+/// `num_fri_layers` and `fri_final_poly_size`, two fields a query re-count
+/// cannot forge. HARD WIRE BREAK with every legacy C0 proof, by design.
 pub const CONFIG_SUBSCRIBER_OWNERSHIP: CircuitConfig = CircuitConfig {
-    trace_width: 3,
-    trace_length: 32,
+    trace_width: 5,
+    trace_length: 512,
     blowup: 16,
-    lde_size: 512,
-    merkle_depth: 9,   // log2(512) = 9
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
-    fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
-    quotient_segments: 7,           // [B2] ceil(218 / 32), MEASURED
-    num_queries: NUM_QUERIES,
+    fri_final_poly_size: 32,
+    fri_final_poly_degree_bound: 2, // MEASURED on C7's identical geometry
+    quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
+    num_queries: 22,
 };
 
 /// pool_commitment: 3 cols, 128 rows
@@ -156,13 +170,22 @@ pub const CONFIG_POOL_COMMITMENT: CircuitConfig = CircuitConfig {
     num_queries: NUM_QUERIES,
 };
 
-/// balance_proof: 4 cols, 128 rows
+/// balance_proof: 6 cols, 512 rows
+///
+/// [ZK-MASK-C2 2026-09-11] 4 -> 6 columns and 128 -> 512 rows. Column 4 is the
+/// ZK lift (read by constraint [7] alone), column 5 the randomizer (read by
+/// nothing). The row mask needs `R = 4 * 27 + 2 = 110` free rows and the
+/// randomizer column needs more coefficients than the 328 functionals a
+/// 27-query wire publishes on the FRI/DEEP channel (MEASURED,
+/// `stark/tests/full_wire_ledger.rs`), so 256 rows would be SHORT and 512 is
+/// the floor. HARD WIRE BREAK in both directions: `num_fri_layers` 6 -> 8
+/// and `from_bytes` sizes every query block from `trace_width`.
 pub const CONFIG_BALANCE_PROOF: CircuitConfig = CircuitConfig {
-    trace_width: 4,
-    trace_length: 128,
+    trace_width: 6,
+    trace_length: 512,
     blowup: 16,
-    lde_size: 2048,
-    merkle_depth: 11,  // log2(2048) = 11
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
     fri_final_poly_size: 16,
     fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
@@ -216,18 +239,33 @@ pub const CONFIG_MERKLE_PATH: CircuitConfig = CircuitConfig {
     num_queries: 22,
 };
 
-/// confidential_balance: 4 cols, 256 rows (7 hash cycles of 32 + 1 padding cycle)
+/// confidential_balance: 6 cols, 512 rows (7 hash cycles of 32, then the mask)
+///
+/// [ZK-MASK-C4 2026-09-11] 4 -> 6 columns, 256 -> 512 rows, 27 -> 22 queries.
+/// Column 4 is the ZK lift (read by constraint [10] alone), column 5 the
+/// randomizer (read by nothing). The dummy eighth hash cycle is gone; rows
+/// 224..511 are the blinding region (288 against `R = 4 * 22 + 2 = 90`), and
+/// the randomizer column's 512 coefficients cover the ~268 functionals a
+/// 22-query wire publishes on the FRI/DEEP channel (MEASURED,
+/// `stark/tests/full_wire_ledger.rs`). 22 queries keeps C4's parser tuple
+/// distinct from C2's, which shares its width and length. HARD WIRE BREAK in
+/// both directions.
 pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
-    trace_width: 4,
-    trace_length: 256,
+    trace_width: 6,
+    trace_length: 512,
     blowup: 16,
-    lde_size: 4096,
-    merkle_depth: 12,  // log2(4096) = 12
+    lde_size: 8192,
+    merkle_depth: 13,  // log2(8192) = 13
     num_rounds: 30,
-    fri_final_poly_size: 16,
-    fri_final_poly_degree_bound: 1, // [B2] MEASURED post-segmentation
+    // [ZK-MASK-C4 2026-09-11] 16 -> 32 and 1 -> 2, C7's terminal shape. C2
+    // and C4 share width, length and k; with ffps 16 their only wire-visible
+    // difference was `num_queries`, and a C4 proof spliced with five surplus
+    // queries PARSED as C2 (`surplus_query_splices_do_not_parse_as_another_
+    // circuit`). `num_fri_layers` 8 -> 7 is a field a re-count cannot forge.
+    fri_final_poly_size: 32,
+    fri_final_poly_degree_bound: 2, // MEASURED on C7's identical geometry
     quotient_segments: 8,           // [B2] ceil((8n-7)/n), MEASURED
-    num_queries: NUM_QUERIES,
+    num_queries: 22,
 };
 
 /// transfer: 7 cols, 512 rows (14 hash cycles of 32 + 2 padding cycles)
@@ -252,7 +290,11 @@ pub const CONFIG_CONFIDENTIAL_BALANCE: CircuitConfig = CircuitConfig {
 /// baked `C5_*_COEFFS` set in `periodic_consts.rs`) were rebaked to the
 /// width-7 / 28-constraint format and re-validated under the 1.4M-CU SBF cap.
 pub const CONFIG_TRANSFER: CircuitConfig = CircuitConfig {
-    trace_width: 7,
+    // [ZK-MASK-C5 2026-09-11] 7 -> 9. Column 7 is the ZK lift (read by
+    // constraint [28] alone), column 8 the randomizer (read by nothing). C5
+    // had a row mask since 2026-08-29 and nothing on the quotient or FRI
+    // channel; this completes it. HARD WIRE BREAK in both directions.
+    trace_width: 9,
     // [C5-N1024 2026-08-29] 512 -> 1024, and a HARD WIRE BREAK in both
     // directions: `num_fri_layers` goes 8 -> 9 and the parser checks it.
     //
@@ -425,14 +467,19 @@ pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
 // proximity lottery wins with zero grinding. Post-B2 the query term OVERSHOOTS
 // the floor on all seven circuits, so the honest conjectured figure IS the floor:
 //
-//     conjectured  52 / 47 / 50 / 47 / 48 / 46 / 47   (C0..C6)
+//     conjectured  47 / 47 / 47 / 47 / 47 / 46 / 47   (C0..C6)
 //
 //     [C1-N256 2026-08-29] C1: 50 -> 48. Its LDE doubled with its trace, and the
 //     field floor is `64 - log2(8n + w+k+1 + folds*lde)`, so the conjectured
 //     column lost two bits. That is a real cost of freeing C1's blinding region
-//     and it is recorded here rather than absorbed. The unconditional column
-//     below is unmoved.
-//     unconditional 46 / 46 / 46 / 42 / 46 / 42 / 42
+//     and it is recorded here rather than absorbed.
+//     [ZK-MASK 2026-09-11] C0 52 -> 47, C2 50 -> 47, C4 48 -> 47 conjectured:
+//     the uniform masks put every circuit on n = 512 / LDE 8192, so the field
+//     floor is the same 47.x on all of them (C5 keeps 46 from its width). C0
+//     and C4 also went 27 -> 22 queries, so their unconditional figure moved
+//     46 -> 42 like C3, C5, C6 at 22 queries. Those are the costs of hiding the
+//     trace and they are recorded here, not absorbed.
+//     unconditional 42 / 46 / 46 / 42 / 42 / 42 / 42
 //
 // The unconditional column is unique-decoding (`log2(2/(1+rho))` = 0.913 bits per
 // query, a theorem); the conjectured column is list-decoding to capacity
@@ -485,7 +532,10 @@ pub const LEGACY_FRI_FINAL_POLY_DEGREE_BOUND: usize = 1;
 /// [B2] Legacy circuit-0 twin of `CircuitConfig.quotient_segments`.
 ///
 /// `ceil((deg(Q) + 1) / n) = ceil(218 / 32) = 7`. Must equal the prover's
-/// `LEGACY_QUOTIENT_SEGMENTS` and `CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments`.
+/// `LEGACY_QUOTIENT_SEGMENTS`. [ZK-MASK-C0 2026-09-11] It no longer equals
+/// `CONFIG_SUBSCRIBER_OWNERSHIP.quotient_segments`: the shipping circuit 0 is
+/// the masked, generic shape (8 segments); this constant describes only the
+/// retired 32-row legacy shape that the recovery harnesses keep as a control.
 pub const LEGACY_QUOTIENT_SEGMENTS: usize = 7;
 
 /// [B1] Is `raw` a canonical Goldilocks encoding?

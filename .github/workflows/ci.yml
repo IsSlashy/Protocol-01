@@ -303,7 +303,7 @@ jobs:
             b2_bits_measured b2_segment_binding b7_coset_shift_pairing
             c5_conservation_probe c6_padding_rows liveness_fix_attack
             merkle_domain_sep ood_column_probe route_c_trace_pair
-            phase_binding_seam c7_pin_coverage
+            phase_binding_seam c7_pin_coverage ood_resampling_parity
           SLOW_PINS: honest_liveness c6_padding_rows
         run: |
           set -euo pipefail
@@ -464,7 +464,7 @@ jobs:
             b2_bits_measured b2_segment_binding b7_coset_shift_pairing
             c5_conservation_probe c6_padding_rows liveness_fix_attack
             merkle_domain_sep ood_column_probe route_c_trace_pair
-            phase_binding_seam c7_pin_coverage
+            phase_binding_seam c7_pin_coverage ood_resampling_parity
           SLOW_PINS: honest_liveness c6_padding_rows
         run: |
           set -euo pipefail

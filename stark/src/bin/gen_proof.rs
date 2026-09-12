@@ -51,7 +51,9 @@ fn main() {
             let salt: u64 = args[4].parse().expect("Invalid salt");
             let mint: u64 = args[5].parse().expect("Invalid mint");
 
-            let proof = p01_stark::compact::generate_balance_compact_proof(sk, balance, salt, mint);
+            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::balance_proof::MASK_LEN)
+                .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
+            let proof = p01_stark::compact::generate_balance_compact_proof(sk, balance, salt, mint, &mask);
             println!("{{");
             println!("  \"circuit_id\": {},", proof.circuit_id);
             println!("  \"public_inputs\": [{}, {}],", proof.public_inputs[0], proof.public_inputs[1]);
@@ -128,8 +130,11 @@ fn main() {
             let amt_salt: u64 = args[8].parse().expect("Invalid amt_salt");
             let mint: u64 = args[9].parse().expect("Invalid mint");
 
+            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::confidential_balance::MASK_LEN)
+                .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_confidential_balance_compact_proof(
                 sk, old_bal, old_salt, new_bal, new_salt, amount, amt_salt, mint,
+            &mask,
             );
             println!("{{");
             println!("  \"circuit_id\": {},", proof.circuit_id);
@@ -184,10 +189,12 @@ fn main() {
                 .parse()
                 .expect("Invalid secret number");
 
-            let proof_data = p01_stark::compact::generate_compact_proof(secret);
+            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::subscriber_ownership::MASK_LEN)
+                .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
+            let proof_data = p01_stark::compact::generate_subscriber_ownership_proof(secret, &mask);
             println!("{{");
             println!("  \"secret\": \"{}\",", secret);
-            println!("  \"commitment\": \"{}\",", proof_data.commitment);
+            println!("  \"commitment\": \"{}\",", proof_data.public_inputs[0]);
             println!("  \"proof_size\": {},", proof_data.proof_bytes.len());
             println!("  \"proof_hex\": \"{}\"", hex::encode(&proof_data.proof_bytes));
             println!("}}");

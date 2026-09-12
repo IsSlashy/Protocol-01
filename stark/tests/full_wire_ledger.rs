@@ -152,6 +152,21 @@ impl Geometry {
 fn geometries() -> Vec<Geometry> {
     vec![
         Geometry {
+            // [ZK-MASK-C0 2026-09-11] The masked circuit 0: n 512, 22 queries,
+            // width 5, C7's terminal shape.
+            name: "C0 subscriber_ownership (masked)",
+            trace_width: p01_stark::air::subscriber_ownership::MASKED_TRACE_WIDTH,
+            trace_length: 512,
+            lde_size: 8192,
+            merkle_depth: 13,
+            quotient_segments: 8,
+            num_queries: 22,
+            fri_final_poly_size: 32,
+            mask_rows: p01_stark::air::subscriber_ownership::MASK_ROWS,
+            constrained_width: p01_stark::air::subscriber_ownership::MASKED_CONSTRAINED_TRACE_WIDTH,
+            mask_len: p01_stark::air::subscriber_ownership::MASK_LEN,
+        },
+        Geometry {
             name: "C1 pool_commitment",
             trace_width: p01_stark::air::denominated_pool::TRACE_WIDTH,
             // [ZK-RANDOMIZER 2026-08-30] 256 -> 512, so lde 4096 -> 8192 and
@@ -166,6 +181,35 @@ fn geometries() -> Vec<Geometry> {
             mask_rows: p01_stark::air::denominated_pool::MASK_ROWS,
             constrained_width: p01_stark::air::denominated_pool::CONSTRAINED_TRACE_WIDTH,
             mask_len: p01_stark::air::denominated_pool::MASK_LEN,
+        },
+        Geometry {
+            // [ZK-MASK-C2 2026-09-11] Same geometry as C1 (n 512, 27 queries),
+            // one column wider: carry, lift, randomizer beside the Poseidon state.
+            name: "C2 balance_proof",
+            trace_width: p01_stark::air::balance_proof::TRACE_WIDTH,
+            trace_length: 512,
+            lde_size: 8192,
+            merkle_depth: 13,
+            quotient_segments: 8,
+            num_queries: 27,
+            fri_final_poly_size: 16,
+            mask_rows: p01_stark::air::balance_proof::MASK_ROWS,
+            constrained_width: p01_stark::air::balance_proof::CONSTRAINED_TRACE_WIDTH,
+            mask_len: p01_stark::air::balance_proof::MASK_LEN,
+        },
+        Geometry {
+            // [ZK-MASK-C4 2026-09-11] n 512, 22 queries, width 6.
+            name: "C4 confidential_balance",
+            trace_width: p01_stark::air::confidential_balance::TRACE_WIDTH,
+            trace_length: 512,
+            lde_size: 8192,
+            merkle_depth: 13,
+            quotient_segments: 8,
+            num_queries: 22,
+            fri_final_poly_size: 32,
+            mask_rows: p01_stark::air::confidential_balance::MASK_ROWS,
+            constrained_width: p01_stark::air::confidential_balance::CONSTRAINED_TRACE_WIDTH,
+            mask_len: p01_stark::air::confidential_balance::MASK_LEN,
         },
         Geometry {
             name: "C3 merkle_path",
@@ -216,9 +260,8 @@ fn geometries() -> Vec<Geometry> {
             num_queries: 22,
             fri_final_poly_size: 16,
             mask_rows: p01_stark::air::transfer::MASK_ROWS,
-            // C5 has no randomizer column: its committed width IS its
-            // constrained width.
-            constrained_width: p01_stark::air::transfer::TRACE_WIDTH,
+            // [ZK-MASK-C5 2026-09-11] C5 now has a lift and a randomizer column.
+            constrained_width: p01_stark::air::transfer::CONSTRAINED_TRACE_WIDTH,
             mask_len: p01_stark::air::transfer::MASK_LEN,
         },
     ]
@@ -431,9 +474,19 @@ fn proof_for(g: &Geometry) -> Vec<u8> {
     // these symbols. A ledger of COUNTS does not care which mask was drawn.
     let mask = xorshift_mask(0x5EED_0000 ^ (g.mask_rows as u64), g.mask_len);
     match g.name {
+        "C0 subscriber_ownership (masked)" => {
+            c::generate_subscriber_ownership_proof(4242, &mask).proof_bytes
+        }
         "C1 pool_commitment" => {
             c::generate_pool_commitment_proof(42, 17, 7, 11, &mask).proof_bytes
         }
+        "C2 balance_proof" => {
+            c::generate_balance_compact_proof(42, 1000, 777, 999, &mask).proof_bytes
+        }
+        "C4 confidential_balance" => c::generate_confidential_balance_compact_proof(
+            42, 1000, 111, 800, 222, 200, 333, 999, &mask,
+        )
+        .proof_bytes,
         "C3 merkle_path" => {
             let d = p01_stark::air::merkle_path::CANONICAL_DEPTH;
             let pe: Vec<u64> = (0..d as u64).map(|i| 1000 + i * 37).collect();
@@ -914,10 +967,9 @@ fn the_split_that_decides_per_channel() {
     println!("   impossibility; it does not exhibit a simulator, and it does not measure");
     println!("   whether the available randomness has full RANK against what is published.");
 
-    // C5 is deliberately NOT asserted on channel B: it has no randomizer column
-    // and no on-chain consumer (`zk_shielded/src/lib.rs` has transfer and
-    // unshield commented out). It is printed SHORT so the gap stays visible, and
-    // it must be closed before C5 is ever put back in service.
+    // [ZK-MASK-C5 2026-09-11] C5 used to be exempt from the channel-B assertion
+    // (no randomizer column, printed SHORT). It has one now, so the `has_randomizer`
+    // branch above asserts it like every other circuit.
     assert!(
         short_on_a.is_empty(),
         "channel A is SHORT on: {:?}. The row mask does not cover the constrained \

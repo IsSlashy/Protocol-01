@@ -94,15 +94,17 @@ const BLOB = join(here, '..', 'wasm', 'p01_stark_bg.wasm');
  * the opposite: a deliberate reship, and the blob was verified by driving it, not
  * by trusting the file. `wireFormat.test.ts` generates real proofs from THIS blob
  * and reproduces the Rust prover's byte counts on all eight circuits
- * ([47641, 94897, 69761, 79597, 81457, 89821, 82477, 79405]).
+ * ([74365, 94897, 95777, 79597, 75085, 91261, 82477, 79405] since the 2026-09-12
+ * uniform-mask reship; [47641, 94897, 69761, 79597, 81457, 89821, 82477, 79405] before).
  *
- * \u26a0 WHAT IS STILL OWED: acceptance. `deployed-verifier.json` still records
- * the OLD blob under `accepts_client_blob_sha256`, and only a real spend against
- * the redeployed verifier can move it. Until then this pin says "this is the
- * artifact we ship", not "this is the artifact the chain has taken".
+ * Acceptance: `deployed-verifier.json` records this blob under
+ * `accepts_client_blob_sha256` on the evidence of a circuit-7 proof from it
+ * accepted by the verifier redeployed at slot 497235406 (transaction
+ * 2H5p3dqE..., slot 497236376, 2026-09-12). A pin that moves without that
+ * evidence says "this is the artifact we ship", not "the chain has taken it".
  */
-const SHIPPED_SHA256 = '36c1fd4e0fa9';
-const SHIPPED_BYTES = 274_224;
+const SHIPPED_SHA256 = '0ad6d7f1eaed';
+const SHIPPED_BYTES = 265_324;
 
 /**
  * The pre-C7 coset build. NOT "rejected": it was the shipped artifact until
@@ -150,7 +152,7 @@ describe('the shipped STARK prover blob', () => {
     expect(
       actual,
       `The prover blob shipped by @protocol-01/stark-prover changed.\n\n` +
-        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, the 2026-08-31 lift-column reship)\n` +
+        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, the 2026-09-12 uniform-mask reship)\n` +
         `  found    ${actual} (${statSync(BLOB).size} bytes)\n\n` +
         `If this is the 4ace8913 / 192,732-byte build, or the 72a8c700 / 267,610-byte one, a\n` +
         `wasm-pack run overwrote the shipped prover with an older local build. Every proof it\n` +

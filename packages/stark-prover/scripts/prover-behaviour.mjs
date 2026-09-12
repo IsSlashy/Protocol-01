@@ -75,11 +75,13 @@
  * So the table now has two kinds of row, the verdict is reached differently on
  * each, and every row SAYS which it is rather than letting one label cover both:
  *
- *   DIGEST rows  C0, C2, C4. Deterministic. The proof's sha256 must equal the
- *                column of one generation, exactly as before. Content is the
- *                discriminator; length is an observation.
+ *   DIGEST rows  none since 2026-09-12 (C0, C2, C4 until then). Deterministic:
+ *                the proof's sha256 must equal the column of one generation.
+ *                Content is the discriminator; length is an observation. The
+ *                `b1` / `preB1` columns of C0, C2, C4 and C5 still classify an
+ *                OLD blob this way.
  *
- *   MASKED rows  C1, C3, C5, C6, C7. The proof is driven and decoded and its
+ *   MASKED rows  all eight since 2026-09-12. The proof is driven and decoded and its
  *                LENGTH must equal what the current generation emits — the
  *                same number `wireFormat.test.ts` (`absolute`),
  *                `b1_deep_binding.rs` (`len`) and `cross_circuit_confusion.rs`
@@ -276,13 +278,23 @@ const LENGTH_PINS_C7 = [PIN_WIRE_FORMAT, PIN_CROSS_CIRCUIT];
 const FIXTURES = [
   {
     label: 'C0 subscriber_ownership',
-    bytes: 47_641,
+    masked: true,
+    // [UNIFORM-MASK 2026-09-12] 47,641 -> 74,365: the masked circuit 0 (three-part
+    // mask, generic pipeline) replaced the legacy 32-row shape, whose last
+    // deterministic b2 digest was 157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e
+    // (47,641 B) -- recorded for a bisect and deliberately given NO column: the
+    // shipped prover draws a fresh mask and can never emit it again, and the
+    // deployed verifier refuses that shape at the parser. `b1` and `preB1` stay:
+    // those generations were deterministic on C0 and were measured.
+    // The length is pinned in wireFormat.test.ts and cross_circuit_confusion.rs;
+    // b1_deep_binding.rs keeps the LEGACY C0 fixture (47,641) on purpose.
+    bytes: 74_365,
     bytesPreB2: 45_001,
-    b2: '157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e',
     b1: 'e4aad1058b8cdb5aa7fd488e0e7dce29820566d934e8b9cf56ef2e09a397efa7',
     preB1: 'baf01d179f166d8f38729ac4e6dc1a766e089ba1e98665dea4b981fafd488986',
     entry: 'generate_stark_proof',
     drive: () => [42n],
+    lengthPinnedIn: LENGTH_PINS_C7,
   },
   {
     label: 'C1 pool_commitment',
@@ -298,7 +310,11 @@ const FIXTURES = [
   },
   {
     label: 'C2 balance_proof',
-    bytes: 69_761,
+    masked: true,
+    // [UNIFORM-MASK 2026-09-12] 69,761 -> 95,777 (n 512, width 6): the three-part
+    // mask. The b2 digest that sat here, c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c
+    // (69,761 B), is recorded for a bisect and given NO column -- see C0.
+    bytes: 95_777,
     bytesPreB2: 66_681,
     // [BIND-C2C4 2026-08-03] MOVED by the C2 boundary fold, and the blob was
     // reshipped in the SAME commit, so this column still describes the artifact on
@@ -309,11 +325,11 @@ const FIXTURES = [
     // bisect: 6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8.
     // It is deliberately NOT given a column: a pre-fold blob must refuse to classify,
     // because this tree's verifier rejects every proof it emits.
-    b2: 'c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c',
     b1: '063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f',
     preB1: '5171c80e65ba6ed63c0b5a58f58b0bad11a060a60445be483f797d4777cc7d33',
     entry: 'generate_balance_stark_proof',
     drive: () => [42n, 1000n, 777n, 999n],
+    lengthPinnedIn: LENGTH_PINS,
   },
   {
     label: 'C3 merkle_path',
@@ -327,17 +343,22 @@ const FIXTURES = [
   },
   {
     label: 'C4 confidential_balance',
-    bytes: 81_457,
+    masked: true,
+    // [UNIFORM-MASK 2026-09-12] 81,457 -> 75,085 (n 512, width 6, 22 queries):
+    // the three-part mask. The b2 digest that sat here,
+    // 6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0 (81,457 B),
+    // is recorded for a bisect and given NO column -- see C0.
+    bytes: 75_085,
     bytesPreB2: 78_377,
     // [BIND-C2C4 2026-08-03] MOVED by the C4 boundary fold, same cause and same
     // reshipped-in-the-same-commit rule as C2 above. MEASURED off the freshly built
     // blob, equal to b1_deep_binding.rs FIXTURE_C4_SHA256. Superseded pre-fold B2
     // digest: f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a.
-    b2: '6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0',
     b1: 'f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7',
     preB1: 'fbb631a3146225798360fcf80defb748664b2848ae0e59c88e6c9ec6342b2818',
     entry: 'generate_confidential_balance_stark_proof',
     drive: () => [42n, 1000n, 111n, 800n, 222n, 200n, 333n, 999n],
+    lengthPinnedIn: LENGTH_PINS,
   },
   {
     label: 'C5 transfer',
@@ -354,7 +375,8 @@ const FIXTURES = [
     //
     // `b1` and `preB1` stay: those generations were deterministic on C5 and were
     // measured, so an old blob's C5 row is still named in the table.
-    bytes: 89_821,
+    // [UNIFORM-MASK 2026-09-12] 89,821 -> 91,261: two more columns (width 9).
+    bytes: 91_261,
     bytesPreB2: 76_357,
     b1: '78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125',
     preB1: '373f74ccff5a6a1ff5cbbb284f670e1df66f6909ca5c7eb46d78aa872a5ff574',
@@ -392,8 +414,13 @@ const FIXTURES = [
 ];
 
 /** The rows the table MUST have, by kind. Named so nobody quietly moves one. */
-const EXPECTED_DIGEST_ROWS = ['C0', 'C2', 'C4'];
-const EXPECTED_MASKED_ROWS = ['C1', 'C3', 'C5', 'C6', 'C7'];
+// [UNIFORM-MASK 2026-09-12] No digest row is left: C0, C2 and C4 took the
+// three-part mask, so every shipping circuit is classified by LENGTH and the
+// freshness assertion in wireFormat.test.ts. The B1-class gap named in [MASK]
+// above is now open on all eight, and closed only by the record
+// (`accepts_client_blob_sha256`) and the on-chain acceptance behind it.
+const EXPECTED_DIGEST_ROWS = [];
+const EXPECTED_MASKED_ROWS = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'];
 
 const HEX64 = /^[0-9a-f]{64}$/;
 

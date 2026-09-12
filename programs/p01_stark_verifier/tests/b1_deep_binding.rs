@@ -138,7 +138,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
     // C1..C6, generic path.
     let generic: Vec<(&str, usize, p01_stark::compact::GenericCompactProofData)> = vec![
         ("C1", p01_stark::air::denominated_pool::TRACE_WIDTH, p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask())),
-        ("C2", p01_stark::air::balance_proof::TRACE_WIDTH, p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)),
+        ("C2", p01_stark::air::balance_proof::TRACE_WIDTH, p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask())),
         (
             "C3",
             p01_stark::air::merkle_path::TRACE_WIDTH,
@@ -154,8 +154,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
             "C4",
             p01_stark::air::confidential_balance::TRACE_WIDTH,
             p01_stark::compact::generate_confidential_balance_compact_proof(
-                42, 1000, 111, 800, 222, 200, 333, 999,
-            ),
+                42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),),
         ),
         (
             "C5",
@@ -388,8 +387,13 @@ fn terminal_degree_bound_check_in_isolation() {
 /// ~21-26 bits post-B2. Nothing here is publishable as a security level. Lifting
 /// the floor needs the challenges drawn from an extension field, which is a
 /// separate change and another wire break.
-const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [52, 47, 50, 47, 48, 46, 47];
-const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [46, 46, 46, 42, 46, 42, 42];
+// [ZK-MASK 2026-09-11] RE-DERIVED for the masked geometries. C0 (n 32 -> 512, 27 -> 22
+// queries) 52/46 -> 47/42; C2 (n 128 -> 512) 50 -> 47 conjectured; C4 (n 256 -> 512,
+// 27 -> 22 queries) 48/46 -> 47/42. The field floor moved with the LDE size and the
+// unconditional column with the query count; every value below is asserted equal to
+// `soundness_bits_are_derived_from_the_config`'s derivation, no literal survives alone.
+const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [47, 47, 47, 47, 47, 46, 47];
+const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [42, 46, 46, 42, 42, 42, 42];
 
 /// The DERIVED twin of the two arrays above.
 ///
@@ -892,23 +896,21 @@ fn run_generic_forgery_case(
 #[test]
 fn t1_t2_t3_c2_coordinated_forgery() {
     let config = &CONFIG_BALANCE_PROOF;
-    let honest = p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999);
+    let honest = p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask());
     let forged = p01_stark::compact::generate_balance_compact_proof_with_forgery(
         42,
         1000,
         777,
-        999,
+        999, &p01_stark::compact::c2_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest,);
     let aliased = p01_stark::compact::generate_balance_compact_proof_with_forgery(
         42,
         1000,
         777,
-        999,
+        999, &p01_stark::compact::c2_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::AliasedFold,
-    );
+        TerminalPoly::AliasedFold,);
     run_generic_forgery_case("C2", config, &honest, &forged, &aliased);
 }
 
@@ -950,8 +952,7 @@ fn t1_t2_t3_c3_coordinated_forgery() {
 fn t1_t2_t3_c4_coordinated_forgery() {
     let config = &CONFIG_CONFIDENTIAL_BALANCE;
     let honest = p01_stark::compact::generate_confidential_balance_compact_proof(
-        42, 1000, 111, 800, 222, 200, 333, 999,
-    );
+        42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),);
     let forged = p01_stark::compact::generate_confidential_balance_compact_proof_with_forgery(
         42,
         1000,
@@ -960,10 +961,9 @@ fn t1_t2_t3_c4_coordinated_forgery() {
         222,
         200,
         333,
-        999,
+        999, &p01_stark::compact::c4_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::Honest,
-    );
+        TerminalPoly::Honest,);
     let aliased = p01_stark::compact::generate_confidential_balance_compact_proof_with_forgery(
         42,
         1000,
@@ -972,10 +972,9 @@ fn t1_t2_t3_c4_coordinated_forgery() {
         222,
         200,
         333,
-        999,
+        999, &p01_stark::compact::c4_deterministic_probe_mask(),
         OodForgery::Coordinated { col: 0, delta: 1 },
-        TerminalPoly::AliasedFold,
-    );
+        TerminalPoly::AliasedFold,);
     run_generic_forgery_case("C4", config, &honest, &forged, &aliased);
 }
 
@@ -1282,7 +1281,10 @@ fn quotient_segmentation_is_measured_not_assumed() {
         bytes: fixture_c0(),
     });
     for (label, id, build) in [
-        ("C1", 1u8, fixture_c1 as fn() -> Vec<u8>),
+        // [ZK-MASK-C0 2026-09-11] The masked circuit 0 rides the generic config
+        // like the others; the legacy row above stays as the retired control.
+        ("C0 (masked)", 0u8, fixture_c0_masked as fn() -> Vec<u8>),
+        ("C1", 1, fixture_c1),
         ("C2", 2, fixture_c2),
         ("C3", 3, fixture_c3),
         ("C4", 4, fixture_c4),
@@ -1367,11 +1369,10 @@ fn quotient_segmentation_is_measured_not_assumed() {
             c.fri_final_poly_size / c.fri_final_poly_degree_bound,
         );
         // And the segment count has to be the one the DEEP composition needs.
-        assert_eq!(
-            c.quotient_segments,
-            if id == 0 { LEGACY_QUOTIENT_SEGMENTS } else { 8 },
-            "C{id}: quotient_segments",
-        );
+        // [ZK-MASK-C0 2026-09-11] Circuit 0 included: the masked shape is a
+        // generic circuit and carries GENERIC_QUOTIENT_SEGMENTS like the rest;
+        // `LEGACY_QUOTIENT_SEGMENTS` (7) now describes only the retired shape.
+        assert_eq!(c.quotient_segments, 8, "C{id}: quotient_segments");
     }
 }
 
@@ -1873,8 +1874,12 @@ const FIXTURE_C0_SHA256: &str =
 /// (6541e57b… C2, f4918f36… C4) are recorded in `prover-behaviour.mjs` as comments
 /// and given no classifier column on purpose: a pre-fold blob must refuse to
 /// classify, because this tree rejects every proof it emits.
+// [ZK-MASK 2026-09-11] C2 and C4 MOVED again (masks: n 512, width 6; C4 at 22
+// queries). The wasm blob has NOT been reshipped yet, so the TS twins in
+// `packages/stark-prover/src/wireFormat.test.ts` still pin the deployed blob;
+// they move with the verifier redeploy, not before.
 const FIXTURE_C2_SHA256: &str =
-    "c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c";
+    "09711bf9f7d2f82d919a8c10477c2ea1a61db10dcdb7ac875986093e2f025df5";
 // ⛔ FIXTURE_C3_SHA256 IS GONE, AND IT MUST NOT COME BACK. Retired 2026-08-29,
 // for the same reason as C6's an hour earlier.
 //
@@ -1895,13 +1900,13 @@ const FIXTURE_C2_SHA256: &str =
 /// above: C4's boundary fold changes its committed quotient. 81,457 bytes
 /// unchanged.
 const FIXTURE_C4_SHA256: &str =
-    "6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0";
+    "9b34cd82a543e7f1ec9f0cbf139286b78e1152c69041bea7db49cc2f869be358";
 /// [ZK-MASK 2026-08-30] MOVED with the C5 row mask: the blinding region is now
 /// committed, so the wire grew from 78,877 to 89,821 bytes and every byte after
 /// the trace root changed. The digest still pins because `fixture_c5` feeds a
 /// FIXED mask -- the shipped prover draws a fresh one and is not reproducible.
 const FIXTURE_C5_SHA256: &str =
-    "b892fa78dee24fd75678ffa80000ad6bc4fab8a31f70c4313957b42b8e3f2715";
+    "8743c572fe1011ca5bb8f86882312a26aa89725c5d88bed2e2f0290d339fb31f";
 // ⛔ FIXTURE_C6_SHA256 IS GONE, AND IT MUST NOT COME BACK. Retired 2026-08-29.
 //
 // C6 draws a fresh CSPRNG blinding region for every proof
@@ -1928,6 +1933,12 @@ fn hex32(bytes: &[u8]) -> String {
     s
 }
 
+/// [ZK-MASK-C0 2026-09-11] The SHIPPING circuit 0: masked, generic. `fixture_c0`
+/// below is the retired legacy shape, kept for the probes that drive the legacy
+/// pipeline as the positive control.
+fn fixture_c0_masked() -> Vec<u8> {
+    p01_stark::compact::generate_subscriber_ownership_proof(42, &p01_stark::compact::c0_deterministic_probe_mask()).proof_bytes
+}
 fn fixture_c0() -> Vec<u8> {
     p01_stark::compact::generate_compact_proof(42).proof_bytes
 }
@@ -1937,7 +1948,7 @@ fn fixture_c1() -> Vec<u8> {
 }
 
 fn fixture_c2() -> Vec<u8> {
-    p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999).proof_bytes
+    p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask()).proof_bytes
 }
 
 fn fixture_c3() -> Vec<u8> {
@@ -1948,8 +1959,7 @@ fn fixture_c3() -> Vec<u8> {
 
 fn fixture_c4() -> Vec<u8> {
     p01_stark::compact::generate_confidential_balance_compact_proof(
-        42, 1000, 111, 800, 222, 200, 333, 999,
-    )
+        42, 1000, 111, 800, 222, 200, 333, 999, &p01_stark::compact::c4_deterministic_probe_mask(),)
     .proof_bytes
 }
 
@@ -1984,12 +1994,12 @@ const FIXTURES: [Fixture; 7] = [
     // 27 queries x 4 openings + 2 OOD = 110 felts. Re-pinned 2026-09-02; the JS
     // twin in wireFormat.test.ts had carried 94_897 since the reship.
     Fixture { label: "C1", len: 94_897, sha256: None, build: fixture_c1 },
-    Fixture { label: "C2", len: 69_761, sha256: Some(FIXTURE_C2_SHA256), build: fixture_c2 },
+    Fixture { label: "C2", len: 95_777, sha256: Some(FIXTURE_C2_SHA256), build: fixture_c2 },
     // [C3-D12] Length pinned, digest deliberately absent. See the note above.
     // [ZK-LIFT 2026-08-31] 78_877 -> 79_597: the lift column, 22 x 4 + 2 = 90 felts.
     Fixture { label: "C3", len: 79_597, sha256: None, build: fixture_c3 },
-    Fixture { label: "C4", len: 81_457, sha256: Some(FIXTURE_C4_SHA256), build: fixture_c4 },
-    Fixture { label: "C5", len: 89_821, sha256: Some(FIXTURE_C5_SHA256), build: fixture_c5 },
+    Fixture { label: "C4", len: 75_085, sha256: Some(FIXTURE_C4_SHA256), build: fixture_c4 },
+    Fixture { label: "C5", len: 91_261, sha256: Some(FIXTURE_C5_SHA256), build: fixture_c5 },
     // [C6-D12] Length pinned, digest deliberately absent. See the note above.
     // [ZK-LIFT 2026-08-31] 81_757 -> 82_477: the lift column, 22 x 4 + 2 = 90 felts.
     Fixture { label: "C6", len: 82_477, sha256: None, build: fixture_c6 },

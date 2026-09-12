@@ -233,7 +233,23 @@ fn every_quotient_segment_is_covered_by_the_pair_leaf() {
 #[test]
 fn every_legacy_quotient_segment_is_covered_by_the_pair_leaf() {
     let data = p01_stark::compact::generate_compact_proof(42);
-    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    // [ZK-MASK-C0 2026-09-11] `CONFIG_SUBSCRIBER_OWNERSHIP` now describes the
+    // masked circuit 0; these bytes are the retired legacy shape, so its
+    // geometry is spelled out here rather than borrowed.
+    let _ = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let legacy = p01_stark_verifier::compact_proof::CircuitConfig {
+        trace_width: 3,
+        trace_length: 32,
+        blowup: 16,
+        lde_size: 512,
+        merkle_depth: 9,
+        num_rounds: 30,
+        fri_final_poly_size: 16,
+        fri_final_poly_degree_bound: 1,
+        quotient_segments: 7,
+        num_queries: 27,
+    };
+    let cfg = &legacy;
     let k = cfg.quotient_segments;
     assert!(k > 1, "this test is vacuous at k = 1");
 

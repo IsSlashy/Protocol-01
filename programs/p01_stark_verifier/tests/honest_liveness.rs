@@ -44,7 +44,8 @@ use p01_stark_verifier::compact_proof::{
 };
 use p01_stark_verifier::goldilocks::Felt;
 use p01_stark_verifier::verify::{
-    verify_deep_ali_circuit_1, verify_deep_ali_circuit_2, verify_deep_ali_circuit_3,
+    verify_deep_ali_circuit_0_masked, verify_deep_ali_circuit_1, verify_deep_ali_circuit_2,
+    verify_deep_ali_circuit_3,
     verify_deep_ali_circuit_4, verify_deep_ali_circuit_5, verify_deep_ali_circuit_6,
     verify_deep_ali_circuit_7,
     verify_generic, verify_subscriber_ownership, VerifyError,
@@ -60,6 +61,9 @@ fn verify_phase2(
     public_inputs: &[u64],
 ) -> Result<(), VerifyError> {
     match circuit_id {
+        // [ZK-MASK-C0 2026-09-11] The masked C0 runs its phase 2 inline on chain;
+        // here it is the same function, called after phase 1.
+        0 => verify_deep_ali_circuit_0_masked(proof, public_inputs),
         1 => verify_deep_ali_circuit_1(proof, public_inputs),
         2 => verify_deep_ali_circuit_2(proof, public_inputs),
         3 => verify_deep_ali_circuit_3(proof, public_inputs),
@@ -190,6 +194,16 @@ fn every_honest_proof_verifies_on_every_circuit() {
         rejected.push(("C0", o.failures.len()));
     }
 
+    // [ZK-MASK-C0 2026-09-11] The SHIPPING circuit 0 -- masked, generic, both
+    // phases -- measured on the same 160 witnesses as the legacy control above.
+    let c0m = run_generic("C0 masked", |i| {
+        let w = common::w0(i);
+        let d = common::prove0_masked(&w);
+        common::check_semantics_0_masked(&w, &d);
+        d
+    });
+    rejected.push(("C0 masked", c0m.failures.len()));
+
     let c1 = run_generic("C1", |i| {
         let w = common::w1(i);
         let d = common::prove1(&w);
@@ -261,7 +275,7 @@ fn every_honest_proof_verifies_on_every_circuit() {
     rejected.push(("C6", c6.failures.len()));
 
     let total: usize = rejected.iter().map(|(_, n)| n).sum();
-    println!("[LIVENESS] TOTAL rejected honest proofs: {total} of {}", WITNESSES * 7);
+    println!("[LIVENESS] TOTAL rejected honest proofs: {total} of {}", WITNESSES * 8);
     assert_eq!(
         total, 0,
         "\n\n  >>> THE VERIFIER REJECTS HONEST PROOFS <<<\n  \

@@ -194,11 +194,21 @@ pub mod p01_stark_verifier {
         let proof_bytes = &account_data[proof_start..proof_end];
 
         if circuit_id == CIRCUIT_SUBSCRIBER_OWNERSHIP {
-            // Legacy path for backward compatibility
-            let proof = CompactStarkProof::from_bytes(proof_bytes)
+            // [ZK-MASK-C0 2026-09-11] The MASKED circuit 0, generic pipeline,
+            // phase 1 AND phase 2 in this one instruction. The legacy 32-row
+            // shape is refused here by the parser (hard wire break, on purpose):
+            // it gave up the note secret to plain interpolation. Running both
+            // phases inline keeps `pause_private_stark` / `resume_private_stark`
+            // and `p01_quantum_wallet`, which read only `verified` and
+            // `sha256(commitment_le)`, exactly as they are.
+            let config = get_circuit_config(circuit_id)
+                .ok_or(StarkVerifierError::UnsupportedCircuit)?;
+            let proof = GenericCompactProof::from_bytes(proof_bytes, config)
                 .ok_or(StarkVerifierError::DeserializationError)?;
-            let commitment_felt = Felt::new(commitment);
-            verify::verify_subscriber_ownership(&proof, commitment_felt)
+            let public_inputs = [commitment];
+            verify::verify_generic(&proof, circuit_id, &public_inputs, config)
+                .map_err(|_| StarkVerifierError::InvalidProof)?;
+            verify::verify_deep_ali_circuit_0_masked(&proof, &public_inputs)
                 .map_err(|_| StarkVerifierError::InvalidProof)?;
         } else {
             // Generic path for new circuits
@@ -234,6 +244,11 @@ pub mod p01_stark_verifier {
         let buffer = &mut ctx.accounts.proof_buffer;
         buffer.verified = true;
         buffer.public_inputs_hash = public_inputs_hash;
+        // [ZK-MASK-C0 2026-09-11] Circuit 0 ran its DEEP-ALI phase above, in
+        // this instruction; record it so the buffer reads like a two-phase one.
+        if circuit_id == CIRCUIT_SUBSCRIBER_OWNERSHIP {
+            buffer.deep_ali_verified = true;
+        }
 
         // [L13 2026-08-03] CONSIDERED AND DELIBERATELY LEFT, twice over. It is
         // not a live leak: this instruction only ever sees a v1 buffer, whose
@@ -255,15 +270,15 @@ pub mod p01_stark_verifier {
     ///
     /// Used for circuits that need more than one public input value.
     ///
-    /// **Circuits 1..=6 only.** `circuit_id == 0` is refused here, not routed:
-    /// C0 has exactly one verifier, the legacy `verify_stark_proof` path, and the
-    /// generic path cannot verify an honest C0 proof (wrong vanishing polynomial,
-    /// no recomputation of C0's folded boundary term). See
-    /// `verify::VerifyError::CircuitZeroIsLegacyOnly`. Four shipped instructions
-    /// hard-require `circuit_id == 0`
-    /// (`zk_shielded::{pause,resume,cancel_private_stark}`,
-    /// `p01_quantum_wallet/src/stark.rs:42`), so the legacy path stays and this
-    /// one says no.
+    /// **Circuits 1..=7.** `circuit_id == 0` is refused here, not routed, and
+    /// since [ZK-MASK-C0 2026-09-11] the reason is policy rather than
+    /// impossibility: the masked circuit 0 IS a generic circuit and
+    /// `verify_generic` accepts it, but its consumers
+    /// (`zk_shielded::{pause,resume}_private_stark`, `p01_quantum_wallet`) read
+    /// only `verified` and expect both phases to have run, so circuit 0 keeps
+    /// its single-instruction entry `verify_stark_proof`, which runs phase 1 and
+    /// the masked phase 2 together. `CircuitZeroIsLegacyOnly` keeps its name for
+    /// the clients that match on it.
     pub fn verify_stark_proof_v2(
         ctx: Context<VerifyStarkProof>,
         public_inputs: Vec<u64>,
@@ -700,10 +715,16 @@ pub mod p01_stark_verifier {
         // has no guard for this. Its live call sites use C1/C3/C6 only, so this
         // is latent, not live.
         //
-        // [C0 GATE] C0 must never appear in this list. It is not a "not needed
-        // yet" omission: `verify::verify_generic` refuses circuit 0 outright, so
-        // adding 0 here would only produce a probe that always errors. C0 goes
-        // through `verify_stark_proof`.
+        // [ZK-MASK-C0 2026-09-11] C0 is a GENERIC circuit now (masked shape,
+        // `CONFIG_SUBSCRIBER_OWNERSHIP` at width 5 / 512 rows) and
+        // `verify_generic` accepts it. It still stays OUT of this list, for a
+        // different reason than before: its consumers (`pause_private_stark`,
+        // `resume_private_stark`, `p01_quantum_wallet`) read a v1 buffer whose
+        // PDA seeds already name the circuit and expect phase 1 and phase 2 to
+        // have run in ONE instruction, which is what `verify_stark_proof` does
+        // for circuit 0. Adding 0 here would also create a width-only pair
+        // with C4 and C7 inside PROBE_ORDER
+        // (`probe_order_members_are_separated_by_a_wire_field`).
         //
         // [SEAM 2026-08-02] What this comment used to say was stale and its
         // mechanism was wrong, so it is restated from measurement.

@@ -130,18 +130,17 @@ fn the_guard_rejects_the_c5_defect_it_was_written_for() {
     );
 }
 
+/// [ZK-MASK-C4 2026-09-11] Formerly `c4_padding_cycle_is_a_real_hash_not_a_freeze`.
 /// C4 has no `active_rows` bound in `verify_constraints_confidential_balance`,
-/// unlike C3 and C6. That is correct ONLY because C4's cycle 7 is a real
-/// `Poseidon(0, 0)` rather than a frozen copy: `round_flag` is 1 across all
-/// eight cycles and `build_confidential_balance_trace` runs a full hash there.
-///
-/// If someone ever "optimises" the padding cycle into a freeze, phase 1 would
-/// start demanding `next == poseidon_round(current)` on rows 224..=253 against a
-/// trace that holds `next == current`, and roughly one honest C4 proof in eight
-/// would fail on chain with `TransitionConstraintFailed` — the C3 (2026-05-29)
-/// and C6 (2026-08-01) defect, a third time. This pins the shape.
+/// unlike C3 and C6. Before the mask that was correct because cycle 7 was a
+/// real `Poseidon(0, 0)`; now rows 224..=511 are the blinding region and it is
+/// correct because every transition constraint is gated by the periodic
+/// `not_boundary_active` / `active` columns, zero from row 223 on. What this
+/// pins, through `check_semantics_4`: the free region IS the caller's mask,
+/// verbatim, and is not zero-filled -- a zero-filled or hashed "padding" would
+/// hand the Lagrange solver 288 known rows and reopen the C4 leak.
 #[test]
-fn c4_padding_cycle_is_a_real_hash_not_a_freeze() {
+fn c4_padding_cycle_is_the_blinding_region_not_a_freeze() {
     let w = common::w4(0);
     // `check_semantics_4` carries the cycle-7 assertions and the full transition
     // sweep, which together are the statement. Named separately so the reason

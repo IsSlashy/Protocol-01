@@ -92,7 +92,7 @@ fn c2() -> Vec<Vec<u8>> {
     [(42u64, 1000u64, 777u64, 999u64), (7, 55, 3, 999), (999, 1, 1, 999), (31_337, 424_242, 13, 999)]
         .iter()
         .map(|(k, b, s, t)| {
-            p01_stark::compact::generate_balance_compact_proof(*k, *b, *s, *t).proof_bytes
+            p01_stark::compact::generate_balance_compact_proof(*k, *b, *s, *t, &p01_stark::compact::c2_deterministic_probe_mask()).proof_bytes
         })
         .collect()
 }
@@ -122,8 +122,7 @@ fn c4() -> Vec<Vec<u8>> {
     .iter()
     .map(|(k, ob, os, nb, ns, a, as_, t)| {
         p01_stark::compact::generate_confidential_balance_compact_proof(
-            *k, *ob, *os, *nb, *ns, *a, *as_, *t,
-        )
+            *k, *ob, *os, *nb, *ns, *a, *as_, *t, &p01_stark::compact::c4_deterministic_probe_mask(),)
         .proof_bytes
     })
     .collect()

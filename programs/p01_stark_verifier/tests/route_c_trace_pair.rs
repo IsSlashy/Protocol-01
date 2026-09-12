@@ -70,6 +70,24 @@ const SHIPPING: [&CircuitConfig; 7] = [
 ];
 
 // C1 witness — one place, so every C1 test below is comparing like with like.
+/// [ZK-MASK-C0 2026-09-11] The RETIRED circuit-0 shape (3 columns, 32 rows,
+/// k = 7, 27 queries) that `generate_compact_proof` still emits as the positive
+/// control. `CONFIG_SUBSCRIBER_OWNERSHIP` now describes the masked, generic
+/// circuit 0 (5 columns, 512 rows, 22 queries, ffps 32) and no longer parses
+/// these bytes, so every legacy probe in this file reads its geometry here.
+const LEGACY_C0: CircuitConfig = CircuitConfig {
+    trace_width: 3,
+    trace_length: 32,
+    blowup: 16,
+    lde_size: 512,
+    merkle_depth: 9,
+    num_rounds: 30,
+    fri_final_poly_size: 16,
+    fri_final_poly_degree_bound: 1,
+    quotient_segments: 7,
+    num_queries: 27,
+};
+
 const C1_ARGS: (u64, u64, u64, u64) = (0xA11CE, 0xB0B, 0xC0FFEE, 0xD00D);
 // C4 witness. Values from `verify.rs::c4_sample_proof`.
 const C4_ARGS: (u64, u64, u64, u64, u64, u64, u64, u64) =
@@ -83,8 +101,7 @@ fn c1_proof(trace_leaf: TraceLeaf) -> p01_stark::compact::GenericCompactProofDat
 fn c4_proof(trace_leaf: TraceLeaf) -> p01_stark::compact::GenericCompactProofData {
     let (a, b, c, d, e, f, g, h) = C4_ARGS;
     p01_stark::compact::generate_confidential_balance_compact_proof_with_trace_leaf(
-        a, b, c, d, e, f, g, h, trace_leaf,
-    )
+        a, b, c, d, e, f, g, h, &p01_stark::compact::c4_deterministic_probe_mask(), trace_leaf,)
 }
 
 fn c1_verify(bytes: &[u8], public_inputs: &[u64]) -> Result<(), VerifyError> {
@@ -350,28 +367,42 @@ fn fails_closed_old_format_c4_proof_against_new_verifier() {
     let old = c4_proof(TraceLeaf::LegacyRowLeaf);
     let new = c4_proof(TraceLeaf::Canonical);
 
+    // [ZK-MASK-C4 2026-09-11] C4 WAS the sharp case: at tw = 4 the row-leaf and
+    // pair-leaf layouts were the same size (16*tw - 64 == 0) and only the
+    // Merkle check stood between an old proof and acceptance. The masked C4
+    // is 6 columns wide, so the two layouts now differ by nq * 32 bytes and
+    // no shipping circuit has tw = 4 any more (5, 5, 6, 8, 6, 9, 12, 12). The
+    // length check therefore rejects an old-format proof before the Merkle
+    // check does; both are asserted below, and the same-size case is covered
+    // behaviourally by `b4_pair_leaf.rs`, which flips pair-leaf bits on
+    // proofs that DO parse.
+    let cfg = &CONFIG_CONFIDENTIAL_BALANCE;
+    let delta = cfg.num_queries as i64 * (16 * cfg.trace_width as i64 - 64);
     assert_eq!(
-        old.proof_bytes.len(),
-        new.proof_bytes.len(),
-        "C4 is the sharp case precisely because the two layouts are the same \
-         size (16*tw - 64 == 0 at tw=4). If this ever differs, this test has \
-         stopped being the sharp case and the assertion below proves less.",
+        old.proof_bytes.len() as i64,
+        new.proof_bytes.len() as i64 - delta,
+        "C4: nq * (16*tw - 64) = {} * {} = {delta}",
+        cfg.num_queries,
+        16 * cfg.trace_width as i64 - 64,
     );
+    assert_ne!(delta, 0, "C4 is no longer the same-size case; see the note above");
     assert_ne!(
         old.root, new.root,
         "row-leaf and pair-leaf trees must commit to different roots, or there \
          is no version skew to fail closed on",
     );
 
-    let proof = GenericCompactProof::from_bytes(&old.proof_bytes, &CONFIG_CONFIDENTIAL_BALANCE)
-        .expect("an old-format C4 proof parses — same length, same boundaries");
-    let err = verify_generic(&proof, 4, &old.public_inputs, &CONFIG_CONFIDENTIAL_BALANCE)
-        .expect_err("an old-format proof must NOT verify against the new verifier");
-    assert!(
-        matches!(err, VerifyError::MerkleProofFailed),
-        "an old-format C4 proof must be rejected at the Merkle check — anything \
-         else means it got past the trace commitment. got {err:?}",
-    );
+    match GenericCompactProof::from_bytes(&old.proof_bytes, &CONFIG_CONFIDENTIAL_BALANCE) {
+        None => println!("[ROUTE C] MEASURED: old-format C4 proof rejected at parse (length)"),
+        Some(proof) => {
+            let err = verify_generic(&proof, 4, &old.public_inputs, &CONFIG_CONFIDENTIAL_BALANCE)
+                .expect_err("an old-format proof must NOT verify against the new verifier");
+            assert!(
+                matches!(err, VerifyError::MerkleProofFailed),
+                "an old-format C4 proof that parses must be rejected at the Merkle check: got {err:?}",
+            );
+        }
+    }
 }
 
 /// **Direction 1, the length-blind case.** The same skew on C1.
@@ -640,7 +671,7 @@ fn route_c_legacy_c0_honest_proof_still_verifies() {
 #[test]
 fn route_c_legacy_c0_wire_size_matches_the_closed_form() {
     let pd = p01_stark::compact::generate_compact_proof(42);
-    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let cfg = &LEGACY_C0;
     let tw = cfg.trace_width;
     let md = cfg.merkle_depth;
     let nq = cfg.num_queries;
@@ -766,7 +797,7 @@ fn fails_closed_old_format_c0_proof_against_new_verifier() {
     // directly. Under the old layout those bytes are
     // `row(pos) | row(next_pos) | first 48 B of the depth-9 path | ...`, so the new
     // rule is hashing a leaf that the row-leaf tree never contained.
-    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let cfg = &LEGACY_C0;
     let half = cfg.lde_size / 2;
     let (base, row_len) = legacy_c0_trace_block_offsets(cfg, &new.proof_bytes, 0);
     let q0_pos = u32::from_le_bytes(old.proof_bytes[base - 4..base].try_into().unwrap()) as usize;
@@ -809,7 +840,7 @@ fn fails_closed_old_format_c0_proof_against_new_verifier() {
 /// old rule is broken.
 #[test]
 fn fails_closed_route_c_c0_opening_against_the_legacy_row_leaf_rule() {
-    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let cfg = &LEGACY_C0;
     let md = cfg.merkle_depth;
 
     // Positive control: old C0 proof, old rule -> accepted.
@@ -860,7 +891,7 @@ fn fails_closed_route_c_c0_opening_against_the_legacy_row_leaf_rule() {
 #[test]
 fn route_c_legacy_c0_rejects_a_corrupted_mirror_row() {
     let pd = p01_stark::compact::generate_compact_proof(42);
-    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let cfg = &LEGACY_C0;
     let (base, row_len) = legacy_c0_trace_block_offsets(cfg, &pd.proof_bytes, 0);
 
     for (label, slot) in [("mirror", 1usize), ("next-mirror", 3)] {
@@ -885,7 +916,7 @@ fn route_c_legacy_c0_rejects_a_corrupted_mirror_row() {
 #[test]
 fn route_c_legacy_c0_rejects_a_wire_level_trace_half_swap() {
     let pd = p01_stark::compact::generate_compact_proof(42);
-    let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
+    let cfg = &LEGACY_C0;
     let mut swapped = 0;
     for q in 0..cfg.num_queries {
         let (base, row_len) = legacy_c0_trace_block_offsets(cfg, &pd.proof_bytes, q);
@@ -931,42 +962,54 @@ fn legacy_c0_trace_block_offsets(
 // 4. THE C0 DISPATCH DECISION
 // ============================================================================
 
-/// [C0 GATE] The generic dispatch refuses `circuit_id == 0` by name.
+/// [ZK-MASK-C0 2026-09-11] Formerly `c0_is_hard_gated_off_the_generic_dispatch`.
 ///
-/// Four shipped instructions hard-require `circuit_id == 0`
-/// (`zk_shielded::{pause,resume,cancel_private_stark}` and
-/// `p01_quantum_wallet/src/stark.rs:42`), and the generic path cannot verify an
-/// honest C0 proof anyway. So the legacy path stays and the generic path says no
-/// — out loud, with its own error, before doing any work.
+/// The masked circuit 0 IS a generic circuit: `verify_generic` accepts an
+/// honest proof of it under `CONFIG_SUBSCRIBER_OWNERSHIP`, and the retired
+/// legacy shape does not even parse under that config. The four shipped
+/// instructions that hard-require `circuit_id == 0` keep working because
+/// `verify_stark_proof` runs this generic phase 1 and the masked phase 2 in
+/// one instruction and sets both flags.
 #[test]
-fn c0_is_hard_gated_off_the_generic_dispatch() {
-    let pd = p01_stark::compact::generate_compact_proof(42);
+fn masked_c0_verifies_generically_and_the_legacy_shape_does_not_parse() {
+    let pd = p01_stark::compact::generate_subscriber_ownership_proof(
+        42,
+        &p01_stark::compact::c0_deterministic_probe_mask(),
+    );
     let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
     let parsed = GenericCompactProof::from_bytes(&pd.proof_bytes, cfg)
-        .expect("an honest C0 proof DOES parse as generic — the gate is what stops it");
-    let err = verify_generic(&parsed, 0, &[pd.commitment], cfg)
-        .expect_err("the generic dispatch must refuse circuit 0");
+        .expect("an honest masked C0 proof parses under its config");
+    verify_generic(&parsed, 0, &pd.public_inputs, cfg)
+        .expect("the generic dispatch verifies the masked circuit 0");
+
+    let legacy = p01_stark::compact::generate_compact_proof(42);
     assert!(
-        matches!(err, VerifyError::CircuitZeroIsLegacyOnly),
-        "circuit 0 must be refused explicitly, not fail incidentally: got {err:?}",
+        GenericCompactProof::from_bytes(&legacy.proof_bytes, cfg).is_none(),
+        "the retired 32-row C0 shape must not parse under the masked config",
+    );
+    assert!(
+        GenericCompactProof::from_bytes(&legacy.proof_bytes, &LEGACY_C0).is_some(),
+        "control: the legacy bytes parse under the legacy geometry",
     );
 }
 
-/// [C0 GATE] The refusal must be a refusal, not a silent mis-verification: a
-/// TAMPERED C0 proof handed to the generic path must fail too, and with the same
-/// named error — the gate cannot be a path that "happens to work" for good proofs
-/// and leaks for bad ones.
+/// [ZK-MASK-C0 2026-09-11] Formerly `c0_gate_refuses_tampered_proofs_the_same_way`.
+/// A tampered masked C0 proof fails a PROOF-DEPENDENT check, and not the
+/// retired gate: the error must be anything but `CircuitZeroIsLegacyOnly`.
 #[test]
-fn c0_gate_refuses_tampered_proofs_the_same_way() {
-    let pd = p01_stark::compact::generate_compact_proof(42);
+fn tampered_masked_c0_fails_a_proof_dependent_check() {
+    let pd = p01_stark::compact::generate_subscriber_ownership_proof(
+        42,
+        &p01_stark::compact::c0_deterministic_probe_mask(),
+    );
     let cfg = &CONFIG_SUBSCRIBER_OWNERSHIP;
     let mut bytes = pd.proof_bytes.clone();
     bytes[64] ^= 0x01; // ood_current[0]
     let parsed = GenericCompactProof::from_bytes(&bytes, cfg).expect("parses");
-    let err = verify_generic(&parsed, 0, &[pd.commitment], cfg).expect_err("must refuse");
+    let err = verify_generic(&parsed, 0, &pd.public_inputs, cfg).expect_err("must refuse");
     assert!(
-        matches!(err, VerifyError::CircuitZeroIsLegacyOnly),
-        "the C0 gate must fire before any proof-dependent check: got {err:?}",
+        !matches!(err, VerifyError::CircuitZeroIsLegacyOnly),
+        "a tampered masked C0 proof must fail on its bytes, not on a gate: got {err:?}",
     );
 }
 
@@ -1188,12 +1231,17 @@ fn route_c_wire_sizes_match_the_closed_form() {
     // which rebuilds the whole wire layout from `CircuitConfig` independently
     // of the generator.
     let cases: Vec<(&str, Option<usize>, &CircuitConfig, usize)> = vec![
-        ("C0", Some(45_433), &CONFIG_SUBSCRIBER_OWNERSHIP,
-            p01_stark::compact::generate_compact_proof(42).proof_bytes.len()),
+        // [ZK-MASK 2026-09-11] C0, C2 and C4 changed geometry (n 512, C0/C4 at
+        // 22 queries), so the pre-Route-C baselines that the closed-form delta
+        // is measured against (45,433 / 66,681 / 78,377) describe shapes that no
+        // longer ship; those rows carry `None` like C1, C3, C5, C6 and are
+        // pinned absolutely below.
+        ("C0 (masked)", None, &CONFIG_SUBSCRIBER_OWNERSHIP,
+            p01_stark::compact::generate_subscriber_ownership_proof(42, &p01_stark::compact::c0_deterministic_probe_mask()).proof_bytes.len()),
         ("C1", None, &CONFIG_POOL_COMMITMENT,
             p01_stark::compact::generate_pool_commitment_proof(42, 17, 7, 11, &p01_stark::compact::c1_deterministic_probe_mask()).proof_bytes.len()),
-        ("C2", Some(66_681), &CONFIG_BALANCE_PROOF,
-            p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999)
+        ("C2", None, &CONFIG_BALANCE_PROOF,
+            p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask())
                 .proof_bytes.len()),
         ("C3", None, &CONFIG_MERKLE_PATH, {
             let pe: Vec<u64> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH as u64).map(|i| 1000 + i).collect();
@@ -1202,11 +1250,10 @@ fn route_c_wire_sizes_match_the_closed_form() {
                 .proof_bytes
                 .len()
         }),
-        ("C4", Some(78_377), &CONFIG_CONFIDENTIAL_BALANCE, {
+        ("C4", None, &CONFIG_CONFIDENTIAL_BALANCE, {
             let (a, b, c, d, e, f, g, h) = C4_ARGS;
             p01_stark::compact::generate_confidential_balance_compact_proof(
-                a, b, c, d, e, f, g, h,
-            )
+                a, b, c, d, e, f, g, h, &p01_stark::compact::c4_deterministic_probe_mask(),)
             .proof_bytes
             .len()
         }),
@@ -1238,7 +1285,11 @@ fn route_c_wire_sizes_match_the_closed_form() {
     // to the sizes the JS twin (wireFormat.test.ts `absolute`) and the shipped
     // blob had carried since the reship; the [ZK-LIFT-FULL] gate change of the
     // same day moves none of them.
-    let absolute: [usize; 7] = [47_641, 94_897, 69_761, 79_597, 81_457, 89_821, 82_477];
+    // [ZK-MASK 2026-09-11] Re-pinned to the masked shapes, measured by
+    // `wire_parity` / `recorded_proof_sizes_hold` on 2026-09-11: C0 47,641 ->
+    // 74,365, C2 69,761 -> 95,777, C4 81,457 -> 75,085 (five fewer queries),
+    // C5 89,821 -> 91,261 (two more columns).
+    let absolute: [usize; 7] = [74_365, 94_897, 95_777, 79_597, 75_085, 91_261, 82_477];
 
     for (i, (label, baseline, cfg, actual)) in cases.into_iter().enumerate() {
         // Two independent terms against the SAME pre-Route-C baseline. Keeping
