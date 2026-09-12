@@ -45,23 +45,28 @@ import {
   deriveKemSeed,
   encodeStealthMetaAddress,
   decodeStealthMetaAddress,
-  // stealth address generation + scanning + claiming
-  generateStealthAddress,
-  buildInitStealthV2Ix,
-  buildKemChunkIxs,
-  StealthScanner,
-  claimStealth,
   // registry lookup
   lookupMetaAddress,
   getRegistryPDA,
   entryToMetaAddress,
   // program ids
-  DEFAULT_PROGRAM_ID,
   REGISTRY_PROGRAM_ID,
   type Cluster,
   type StealthMetaAddress,
-  type StealthPayment as SdkStealthPayment,
 } from '@protocol-01/specter-sdk/core';
+
+/**
+ * [2026-09-13] The stealth TRANSPORT is gone. `buildSend`, `scan` and `claim`
+ * used to announce a one-time address, list announcements and sweep them
+ * through the `specter` program; that program was closed on devnet on
+ * 2026-09-13 (founder's decision; HANDOFF-2026-09-13 §11) and specter-sdk
+ * 0.5.0 no longer exports the calls. The three handlers now refuse with the
+ * message below. What stays: meta-address derivation, recipient resolution
+ * through the registry, and `register_v2` on the registry program.
+ */
+const STEALTH_TRANSPORT_RETIRED =
+  'Stealth transport retired on 2026-09-13: the specter program was closed on devnet. ' +
+  'Use pool notes (send / receive a note) instead.';
 import type {
   DerivedIdentity,
   ResolvedRecipient,
@@ -98,7 +103,6 @@ function anchorDiscriminator(prefix: string, name: string): Buffer {
 interface CoreContext {
   connection: Connection;
   cluster: Cluster;
-  programId: PublicKey;
   registryProgramId: PublicKey;
   usdcMint: PublicKey;
 }
@@ -123,7 +127,6 @@ export function configureWorkerCore(cfg: SolanaWorkerConfig): void {
   ctx = {
     connection: new Connection(cfg.rpcUrl, 'confirmed'),
     cluster,
-    programId: cfg.programId ? new PublicKey(cfg.programId) : DEFAULT_PROGRAM_ID,
     registryProgramId: cfg.registryProgramId
       ? new PublicKey(cfg.registryProgramId)
       : REGISTRY_PROGRAM_ID,
@@ -157,9 +160,9 @@ interface StealthSession {
   kemPubKey: Uint8Array;
   /** X25519 viewing public key bytes — public, kept for register_v2. */
   viewingX25519Pub: Uint8Array;
-  /** Full SDK payment objects from the last scan, keyed by payment id, so a
-   *  later claim has the ephemeral key + KEM ciphertext without re-scanning. */
-  scanCache: Map<string, SdkStealthPayment>;
+  /** [2026-09-13] Kept for the session shape; the scan that filled it is
+   *  retired with the stealth transport, so it stays empty. */
+  scanCache: Map<string, unknown>;
 }
 
 const sessions = new Map<string, StealthSession>();
@@ -298,178 +301,21 @@ async function handleResolveRecipient(req: ResolveRecipientRequest): Promise<Res
  * account whose ciphertext never lands would be unclaimable by anyone.
  */
 async function handleBuildSend(req: BuildSendRequest): Promise<BuildSendResponse> {
-  if (req.assetSymbol !== 'SOL' && req.assetSymbol !== 'USDC') {
-    throw new Error(`Unsupported asset '${req.assetSymbol}'. Send SOL or USDC.`);
-  }
-  const { connection, programId, usdcMint } = requireCtx();
-  const sender = new PublicKey(req.senderPubkey);
-  const amount = BigInt(req.amountLamports);
-
-  const stealth = generateStealthAddress(req.recipientMeta);
-  if (!stealth.kemCiphertext) {
-    throw new Error('Recipient meta-address is not v2 hybrid (missing KEM ciphertext).');
-  }
-
-  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
-
-  const tx1 = new Transaction().add(
-    ComputeBudgetProgram.setComputeUnitLimit({ units: 250_000 }),
-    buildInitStealthV2Ix({
-      programId,
-      sender,
-      stealthAddress: stealth.address,
-      amount,
-      ephemeralPubKey: stealth.ephemeralPubKey,
-      viewTag: stealth.viewTag,
-    }),
-  );
-
-  const chunkIxs = buildKemChunkIxs({
-    programId,
-    sender,
-    stealthAddress: stealth.address,
-    kemCiphertext: stealth.kemCiphertext,
-  });
-
-  // The funds tx (always LAST). SOL: plain transfer. USDC: create the stealth
-  // ATA, move the tokens, and top the stealth address up with enough SOL that
-  // the recipient's self-funded claim can pay its fee + destination ATA rent.
-  const transferTx = new Transaction();
-  if (req.assetSymbol === 'USDC') {
-    const senderAta = getAssociatedTokenAddressSync(usdcMint, sender);
-    const stealthAta = getAssociatedTokenAddressSync(usdcMint, stealth.address);
-    transferTx.add(
-      createAssociatedTokenAccountIdempotentInstruction(sender, stealthAta, stealth.address, usdcMint),
-      createTransferInstruction(senderAta, stealthAta, sender, amount),
-      SystemProgram.transfer({
-        fromPubkey: sender,
-        toPubkey: stealth.address,
-        lamports: SPL_CLAIM_FUND_LAMPORTS,
-      }),
-    );
-  } else {
-    transferTx.add(
-      SystemProgram.transfer({ fromPubkey: sender, toPubkey: stealth.address, lamports: amount }),
-    );
-  }
-
-  // One-time secret the SDK requires callers to wipe once the ixs are built.
-  stealth.ephemeralPrivateKey?.fill(0);
-
-  const txs = [tx1, ...chunkIxs.map((ix) => new Transaction().add(ix)), transferTx];
-  const transactionsB64 = txs.map((tx) => {
-    tx.recentBlockhash = blockhash;
-    tx.feePayer = sender;
-    return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString('base64');
-  });
-
-  return {
-    kind: 'buildSend',
-    transactionsB64,
-    stealthAddress: stealth.address.toBase58(),
-    blockhash,
-    lastValidBlockHeight,
-  };
+  void req;
+  throw new Error(STEALTH_TRANSPORT_RETIRED);
 }
 
 /** Scan the chain for inbound payments; cache full SDK payments for claim. */
 async function handleScan(req: ScanRequest): Promise<ScanResponse> {
-  const { connection, programId, usdcMint } = requireCtx();
-  const session = requireSession(req.meta);
-
-  const scanner = new StealthScanner(
-    connection,
-    session.viewingX25519Priv,
-    session.spendingPubKey,
-    session.kemSecretKey,
-    programId,
-  );
-  // Default limit is 100 announcements program-wide — raise it so payments
-  // don't silently fall off the end as the program grows.
-  let found;
-  try {
-    found = await scanner.scan({ includeClaimed: false, limit: 5000 });
-  } catch (err) {
-    // The SDK wraps the underlying failure in a generic SpecterError — surface
-    // the real cause for diagnosis (public message stays generic), then retry
-    // once: public devnet RPC rate limits burst traffic from browsers.
-    console.warn('[stealth-worker] scan failed, retrying once:', err, (err as { cause?: unknown }).cause);
-    await new Promise((r) => setTimeout(r, 1500));
-    found = await scanner.scan({ includeClaimed: false, limit: 5000 });
-  }
-
-  session.scanCache.clear();
-  const payments: StealthPayment[] = await Promise.all(
-    found.map(async (p) => {
-      const id = p.stealthAddress.toBase58();
-
-      // USDC detection: the announcement layout carries no mint, so probe the
-      // stealth address's USDC ATA. A balance there marks this payment as USDC
-      // and flips the cached SDK payment to the token-claim path.
-      let assetSymbol = 'SOL';
-      let amount = Number(p.amount) / 1e9;
-      try {
-        const ata = getAssociatedTokenAddressSync(usdcMint, p.stealthAddress);
-        const bal = await connection.getTokenAccountBalance(ata);
-        if (bal.value.amount !== '0') {
-          assetSymbol = 'USDC';
-          amount = bal.value.uiAmount ?? Number(bal.value.amount) / 1e6;
-          p.tokenMint = usdcMint;
-          p.amount = BigInt(bal.value.amount);
-        }
-      } catch {
-        // No token account — native SOL payment.
-      }
-
-      session.scanCache.set(id, p);
-      return {
-        id,
-        stealthAddress: id,
-        amount,
-        assetSymbol,
-        ephemeralPubKey: bytesToHex(p.ephemeralPubKey),
-        receivedAt: p.blockTime > 0 ? p.blockTime * 1000 : Date.now(),
-        claimed: p.claimed,
-      };
-    }),
-  );
-  return { kind: 'scan', payments };
+  void req;
+  throw new Error(STEALTH_TRANSPORT_RETIRED);
 }
 
 /** Claim a scanned payment: the SDK derives the one-time stealth keypair from
  *  the session secrets, self-signs the drain, and submits it. */
 async function handleClaim(req: ClaimRequest): Promise<ClaimResponse> {
-  const { connection, cluster } = requireCtx();
-  const session = requireSession(req.meta);
-  // Spend-authority guard: a claim self-signs with the derived one-time key, so
-  // the destination is the only thing standing between same-origin script and
-  // the funds. Lock it to the wallet the identity was derived for — and refuse
-  // outright if the session was never bound (an unbound session would let any
-  // same-origin script claim to an arbitrary destination).
-  if (!session.ownerWallet) {
-    throw new Error('This session has no bound wallet; reconnect and re-derive.');
-  }
-  if (req.destination !== session.ownerWallet) {
-    throw new Error('Claims can only be sent to the wallet these keys were derived for.');
-  }
-  const payment = session.scanCache.get(req.paymentId);
-  if (!payment) {
-    throw new Error('Unknown payment. Re-scan before claiming.');
-  }
-
-  const result = await claimStealth({
-    connection,
-    payment,
-    spendingPubKey: session.spendingPubKey,
-    viewingPrivateKey: session.viewingX25519Priv,
-    kemSecretKey: session.kemSecretKey,
-    destination: new PublicKey(req.destination),
-  });
-
-  return {
-    kind: 'claim',
-    tx: { signature: result.signature, explorerUrl: explorerUrl(result.signature, cluster) },
-  };
+  void req;
+  throw new Error(STEALTH_TRANSPORT_RETIRED);
 }
 
 /**
@@ -484,8 +330,7 @@ async function handleClaim(req: ClaimRequest): Promise<ClaimResponse> {
  * The wallet (owner) signs + submits.
  */
 async function handleRegisterSelf(req: RegisterSelfRequest): Promise<RegisterSelfResponse> {
-  const { connection, registryProgramId, programId: _programId } = requireCtx();
-  void _programId;
+  const { connection, registryProgramId } = requireCtx();
   const session = requireSession(req.meta);
   const owner = new PublicKey(req.senderPubkey);
   const [registryPDA] = getRegistryPDA(owner, registryProgramId);
