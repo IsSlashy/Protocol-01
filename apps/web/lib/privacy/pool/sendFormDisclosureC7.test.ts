@@ -39,6 +39,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import en from '../../../i18n/en';
 
 const REPO = join(__dirname, '../../../../..');
 const SEND_FORM = 'apps/web/components/pay/SendForm.tsx';
@@ -58,10 +59,18 @@ function rawOf(rel: string): string {
  * every phrase below spans two or three lines in the file.
  */
 function copyOf(rel: string): string {
-  return rawOf(rel)
+  // [2026-09-12] The copy moved out of the JSX into the dictionary
+  // (`pay.send.*`, translated), so the RENDERED copy is the component plus the
+  // sentences it renders. The component alone is imports and `t()` calls, and
+  // this sweep went red 7 of 7 on a page whose wording had not changed. The
+  // dictionary block is appended as JSON so the same regexes read it; the
+  // `.not.toMatch` cases below therefore also police the dictionary, which is
+  // where a claim would now be written.
+  return (rawOf(rel) + ' ' + JSON.stringify(en.pay.send))
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/^\s*\/\/.*$/gm, ' ')
     .replace(/&apos;/g, "'")
+    .replace(/’/g, "'")
     .replace(/\s+/g, ' ');
 }
 
@@ -216,9 +225,14 @@ describe('⛔ the copy names each surface — this re-measures them', () => {
    * assertion went red inside the same test run that wired it. Nothing else in
    * 585 pool tests noticed, because nothing else reads the sentence.
    */
-  const STILL_V3: Array<{ surface: string; rel: string }> = [
-    { surface: 'the phone', rel: 'apps/mobile/stores/denominatedPoolStore.ts' },
-  ];
+  // [2026-09-12] The phone routes circuit 7 since f8873d5d, and this list
+  // caught the copy still saying it published the commitment — the failure
+  // this test exists for. The copy now says the phone proves on circuit 7
+  // too, and names the one case left where the commitment IS published: a
+  // note that cannot be proven on the newer circuit, from any client. No
+  // surface is v3-only any more, so the list is empty; the check below stays,
+  // for the day one is added back.
+  const STILL_V3: Array<{ surface: string; rel: string }> = [];
 
   it('the surfaces named as v3 really are, which is what the copy tells the user', () => {
     for (const { surface, rel } of STILL_V3) {

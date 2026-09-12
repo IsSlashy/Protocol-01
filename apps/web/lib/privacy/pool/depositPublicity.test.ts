@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import en from '../../../i18n/en';
 
 /**
  * WHO IS NAMED BY A DEPOSIT, AND WHETHER ANYONE CHOSE IT.
@@ -32,7 +33,9 @@ import { join } from 'node:path';
 const read = (rel: string): string => readFileSync(join(__dirname, rel), 'utf8');
 const shieldClient = (): string => read('../shieldClient.ts');
 const poolPanel = (): string => read('../../../components/pay/PoolPanel.tsx');
-const appPage = (): string => read('../../../app/(pay)/app/page.tsx');
+// [2026-09-12] The page's sentences live in the dictionary (`pay.page.*`)
+// now; the rendered page is the JSX plus that block.
+const appPage = (): string => read('../../../app/(pay)/app/page.tsx') + ' ' + JSON.stringify(en.pay.page);
 
 describe('a deposit is relayed unless someone deliberately said otherwise', () => {
   it('no longer forces the relay on every caller', () => {

@@ -286,7 +286,7 @@ const commitment = computeHashVaultCommitment(secret);
 
 ### Private Subscriptions
 
-Fully untraceable recurring payments that compose stealth addresses with ZK shielded pool unshields.
+Recurring payments that compose stealth addresses with shielded-pool withdrawals. No transaction names the subscriber's wallet; the amount (a pool denomination) and the timing remain observable on chain, and the deployment that funds the one-time key sees the request.
 
 ```typescript
 import { createPrivateSubscription, generatePrivatePaymentData } from '@protocol-01/specter-sdk';
@@ -569,7 +569,7 @@ Override at runtime with `setFeature(name, enabled)` or at client creation via t
 - **Spending keys never leave device** -- There is no remote prover fallback. If local proving fails, the operation fails.
 - **Stealth scanning uses direct RPC** -- No relayer or backend dependency for payment detection. The `StealthIndexer` talks directly to Solana.
 - **ML-KEM-768 hybrid encryption** -- v2 stealth addresses combine X25519 (classical) with ML-KEM-768 (post-quantum) for defense against future quantum computers.
-- **On-chain nullifier PDAs** -- Double-spend prevention via the p01_trustless program.
+- **On-chain nullifier records** -- Double-spend prevention: every spend writes a `NullifierRecord` PDA in the pool program, and a second spend of the same note fails at that account.
 
 ## License
 

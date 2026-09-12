@@ -120,7 +120,15 @@ fn reaches_c7(src: &str) -> bool {
 /// Pins that enumerate circuits and stop before C7, each with the reason.
 ///
 /// Deleting an entry is the goal. Adding one costs a written reason on purpose.
-const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 5] = [
+// [2026-09-12] `b2_segment_binding` left this list. The guard fired first on
+// that file's k=8 pin (`s4b_…`, a `0u8..=7` loop over `get_circuit_config`,
+// written 2026-09-11) while its seven segment-binding sweeps still stopped at
+// C6 and `config_for` still panicked on 7 — a MENTION of C7, not an attack on
+// it, and the text detector cannot tell the two apart. The entry goes because
+// the hole itself is closed in the same commit: `phase2`, `generic_case`,
+// `config_for` and `honest_variant` carry their `7 =>` arms and every sweep
+// runs `..=7`, measured (b2_segment_binding run log named in that commit).
+const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 4] = [
     (
         "honest_liveness",
         "🚨 THE WORST ONE, AND THE REASON THIS FILE'S DETECTOR GREW A THIRD SHAPE. It runs C0          through C6 with hand-written `run_generic(\"C1\", ..)` calls and never generates a C7          witness — its own summary prints `WITNESSES * 7`. Its dispatcher WAS taught C7          (`7 => verify_deep_ali_circuit_7`, added 2026-08-24 so a C7 proof could not clear          phase 2 vacuously), which makes the omission look deliberate and is not the same thing:          the arm exists and nothing ever calls it. So the one suite whose entire job is 'does          the verifier accept EVERY honest proof' says nothing about the circuit the product is          for, and the only evidence C7 liveness holds is the single proof that landed on devnet.          Closing this needs a C7 witness family in tests/common/mod.rs, measured, not adapted",
@@ -132,14 +140,6 @@ const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 5] = [
          forgery-bit counts for C7 and a measured pre-B2 baseline it never had — C7 shipped \
          post-segmentation, so there is no 'before' to subtract. Those numbers must be produced \
          by running the attack, never derived from the other seven",
-    ),
-    (
-        "b2_segment_binding",
-        "seven sweeps at `1u8..=6`, and `config_for` has no `7 =>` arm: it ends \
-         `other => panic!(\"no config for circuit {other}\")`, so widening the loop PANICS rather \
-         than failing an assertion. Three more entry points (the phase-2 one, the generic \
-         pipeline, the honest pipeline) panic the same way. Closing this is four match arms plus \
-         a measured segment count, not a bound change",
     ),
     (
         "b1_deep_binding",
@@ -294,7 +294,8 @@ fn the_detectors_are_not_broken() {
         PINS_THAT_DO_NOT_REACH_C7.len(),
         // 6 -> 5 on 2026-08-29: ood_column_probe now covers C7, so its entry was
         // deleted. That is the deletion its own text asked for.
-        5,
+        // 5 -> 4 on 2026-09-12: b2_segment_binding runs every sweep on C7.
+        4,
         "the exclusion count changed — if a hole was closed, good, update this number \
          deliberately rather than letting the list drift"
     );

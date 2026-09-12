@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import en from '../../../i18n/en';
 import { findPoolV3, shieldValueLamports } from './denominatedPool';
 import { operatorFeeAtomic } from './ephemeralFunder';
 
@@ -22,7 +23,9 @@ import { operatorFeeAtomic } from './ephemeralFunder';
  * reaching a user.
  */
 const PANEL = join(__dirname, '../../../components/pay/PoolPanel.tsx');
-const panelSource = (): string => readFileSync(PANEL, 'utf8');
+// [2026-09-12] The panel's sentences live in the dictionary (`pay.pool.*`)
+// now; the rendered panel is the JSX plus that block.
+const panelSource = (): string => readFileSync(PANEL, 'utf8') + ' ' + JSON.stringify(en.pay.pool);
 
 describe('the value leg is derived from the pool table, never remembered', () => {
   it('is the denomination plus the protocol 0.3%, and nothing else', () => {

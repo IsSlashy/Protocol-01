@@ -27,6 +27,28 @@
 //! all `k` segments shared one gamma power. This file drives the segment half on
 //! its own.
 //!
+//! # [B2-C7 2026-09-12] Circuit 7 joined every sweep
+//!
+//! For as long as this file existed, every sweep stopped at C6 and the four
+//! dispatchers below (`phase2`, `generic_case`, `config_for`, `honest_variant`)
+//! panicked on `7`; `c7_pin_coverage` carried the entry that said so. The
+//! circuit the product spends on was therefore the one circuit with no
+//! segment-binding coverage. The four arms are in and every sweep runs `..=7`.
+//! Measured on 2026-09-12 (`b2_c7_run2.log`, 8/8, 48.4 s), C7 rows only:
+//!
+//! * S0: w=12, k=8, n=512, segments [0, 1, 2] moved, recombination and plain
+//!   sum both preserved, 79,405 B on the wire;
+//! * S1: the segment-split forgery is rejected with `FriFinalPolyDegreeTooHigh`
+//!   after phase 2 accepted it, as designed;
+//! * S2: the aliased terminal is rejected with `FriTerminalCheckFailed`, 21 of
+//!   22 queries on a non-zero terminal index;
+//! * S3: 198 draws over 32 terminal indices, every index reached;
+//! * S5: coordinated and segment-split forgeries -> `FriFinalPolyDegreeTooHigh`
+//!   on the honest terminal, `FriTerminalCheckFailed` on the aliased one.
+//!
+//! Nothing below was loosened for it; the one number that moved is the S5 row
+//! count, 28 -> 32.
+//!
 //! # The adversary
 //!
 //! `OodForgery::SegmentSplit` is strictly stronger than `Coordinated` in every
@@ -76,14 +98,19 @@ use p01_stark::compact::{OodForgery, TerminalPoly};
 use p01_stark_verifier::compact_proof::{
     get_circuit_config, CircuitConfig, CompactStarkProof, GenericCompactProof,
     CONFIG_BALANCE_PROOF, CONFIG_CONFIDENTIAL_BALANCE, CONFIG_MERKLE_PATH, CONFIG_MERKLE_UPDATE,
-    CONFIG_POOL_COMMITMENT, CONFIG_SUBSCRIBER_OWNERSHIP, CONFIG_TRANSFER, LEGACY_QUOTIENT_SEGMENTS,
+    CONFIG_POOL_COMMITMENT, CONFIG_SPEND, CONFIG_SUBSCRIBER_OWNERSHIP, CONFIG_TRANSFER,
+    LEGACY_QUOTIENT_SEGMENTS,
 };
 use p01_stark_verifier::goldilocks::Felt;
 use p01_stark_verifier::verify::{
     verify_deep_ali_circuit_1, verify_deep_ali_circuit_2, verify_deep_ali_circuit_3,
     verify_deep_ali_circuit_4, verify_deep_ali_circuit_5, verify_deep_ali_circuit_6,
-    verify_generic, verify_subscriber_ownership, VerifyError,
+    verify_deep_ali_circuit_7, verify_generic, verify_subscriber_ownership, VerifyError,
 };
+
+// [B2-C7 2026-09-12] The C7 witness is the one shared family in
+// `tests/common/mod.rs` (`w7`, `prove7`), never a second copy typed here.
+mod common;
 
 /// C0's trace length. `CONFIG_SUBSCRIBER_OWNERSHIP` carries it but the legacy
 /// parser hard-codes the constant, so the recombination helper takes it as an
@@ -146,6 +173,7 @@ fn phase2(
         4 => verify_deep_ali_circuit_4(parsed, public_inputs),
         5 => verify_deep_ali_circuit_5(parsed, public_inputs),
         6 => verify_deep_ali_circuit_6(parsed, public_inputs),
+        7 => verify_deep_ali_circuit_7(parsed, public_inputs),
         other => panic!("no phase-2 entry point for circuit {other}"),
     }
 }
@@ -195,6 +223,14 @@ fn generic_case(
             let (pe, pi) = merkle_update_witness();
             c::generate_merkle_update_compact_proof_with_forgery(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()), ood, term)
         }
+        // [B2-C7 2026-09-12] The spend circuit, same forgery knobs as the rest.
+        7 => {
+            let w = common::w7(0);
+            c::generate_spend_compact_proof_with_forgery(
+                w.nullifier_preimage, w.secret, w.blinding, w.token_mint,
+                &w.path_elements, &w.path_indices, &w.recipient_hash, &w.mask, ood, term,
+            )
+        }
         other => panic!("no generic pipeline for circuit {other}"),
     }
 }
@@ -209,6 +245,7 @@ fn config_for(id: u8) -> &'static CircuitConfig {
         4 => &CONFIG_CONFIDENTIAL_BALANCE,
         5 => &CONFIG_TRANSFER,
         6 => &CONFIG_MERKLE_UPDATE,
+        7 => &CONFIG_SPEND,
         other => panic!("no config for circuit {other}"),
     }
 }
@@ -245,7 +282,7 @@ fn s0_the_segment_split_forgery_preserves_everything_except_the_split() {
         assert_eq!(honest.commitment, forged.commitment, "C0: same public input");
     }
 
-    for id in 1u8..=6 {
+    for id in 1u8..=7 {
         let cfg = config_for(id);
         let honest = generic_case(id, OodForgery::None, TerminalPoly::Honest);
         let forged = generic_case(id, OodForgery::SegmentSplit, TerminalPoly::Honest);
@@ -378,7 +415,7 @@ fn s1_a_segment_split_forgery_is_rejected_on_every_circuit() {
     );
     println!("[S1 C0] rejected with {err:?}");
 
-    for id in 1u8..=6 {
+    for id in 1u8..=7 {
         let cfg = config_for(id);
         let forged = generic_case(id, OodForgery::SegmentSplit, TerminalPoly::Honest);
         let parsed = GenericCompactProof::from_bytes(&forged.proof_bytes, cfg)
@@ -458,7 +495,7 @@ fn s2_the_segment_split_rejection_reaches_the_per_query_fold_chain() {
     );
     println!("[S2 C0] rejected with {err:?}");
 
-    for id in 1u8..=6 {
+    for id in 1u8..=7 {
         let cfg = config_for(id);
         let forged = generic_case(id, OodForgery::SegmentSplit, TerminalPoly::AliasedFold);
         let parsed = GenericCompactProof::from_bytes(&forged.proof_bytes, cfg)
@@ -535,7 +572,7 @@ fn final_poly_of(bytes: &[u8], w: usize, k: usize) -> Vec<u64> {
 /// on index 0, and every terminal index reachable.
 #[test]
 fn s3_terminal_index_distribution_on_honest_proofs() {
-    for id in 0u8..=6 {
+    for id in 0u8..=7 {
         let cfg = config_for(id);
         let mut hist = vec![0usize; cfg.fri_final_poly_size];
         let mut total = 0usize;
@@ -614,6 +651,13 @@ fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofD
             pe[0] += seed;
             c::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
         }
+        // [B2-C7 2026-09-12] One witness field moves with the seed, the mask
+        // stays: the seed is there to move the transcript, not the blinding.
+        7 => {
+            let mut w = common::w7(0);
+            w.nullifier_preimage += seed;
+            common::prove7(&w)
+        }
         other => panic!("no honest pipeline for circuit {other}"),
     }
 }
@@ -629,11 +673,11 @@ fn honest_variant(id: u8, seed: u64) -> p01_stark::compact::GenericCompactProofD
 /// instructions — and C4 is the interesting generic one, because
 /// `16*trace_width - 64 == 0` makes it the sharpest version-skew case in the tree.
 ///
-/// This drives all six generic circuits against every other circuit's `k`, plus
+/// This drives all seven generic circuits (C7 since 2026-09-12) against every other circuit's `k`, plus
 /// the neighbours of the real value.
 #[test]
 fn s4_no_circuit_accepts_another_circuits_segment_count() {
-    for id in 1u8..=6 {
+    for id in 1u8..=7 {
         let real = config_for(id);
         let bytes = generic_case(id, OodForgery::None, TerminalPoly::Honest);
         let ok = GenericCompactProof::from_bytes(&bytes.proof_bytes, real)
@@ -734,7 +778,7 @@ fn s5_the_rejecting_mechanism_is_recorded_for_both_forgeries_on_every_circuit() 
             }
         }
 
-        for id in 1u8..=6 {
+        for id in 1u8..=7 {
             let cfg = config_for(id);
             for (tname, term) in
                 [("honest-terminal", TerminalPoly::Honest), ("aliased", TerminalPoly::AliasedFold)]
@@ -759,7 +803,8 @@ fn s5_the_rejecting_mechanism_is_recorded_for_both_forgeries_on_every_circuit() 
     for row in table.iter() {
         println!("[S5] {row}");
     }
-    assert_eq!(table.len(), 28, "7 circuits x 2 forgeries x 2 terminal plays");
+    // [B2-C7 2026-09-12] 28 -> 32: C7 joined the sweep, four more rows.
+    assert_eq!(table.len(), 32, "8 circuits x 2 forgeries x 2 terminal plays");
 }
 
 // ============================================================================
