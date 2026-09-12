@@ -2180,3 +2180,157 @@
   gap: 1rem;
   padding-bottom: 0.5rem;
 }
+
+/* ── / as the product, 2026-09-12 ───────────────────────────────────────────
+   One headline, one line, then the app. The hero keeps the river behind it and
+   loses the split layout: centred, short, no rule, no buttons — the control
+   the buttons pointed at is the next thing on the page. */
+/* SIZED FOR THE FIRST SCREEN, 2026-09-12 (founder: "text too big, the
+   solution must be visible without scrolling on HD, Full HD, 2K, 4K"). Header
+   4rem + this hero ≈ 11rem at 720p, so the app's stepper, asset picker and
+   connect card (≈ 28rem) all sit inside a 45rem (720px) viewport. Everything
+   scales with the viewport (vh / vw) so a 4K screen gets a larger hero, not a
+   taller scroll. */
+.styx-hero-simple {
+  padding-block: clamp(1.25rem, 3vh, 2.5rem) clamp(0.75rem, 2vh, 1.5rem);
+  text-align: center;
+}
+
+.styx-hero-simple .styx-overline {
+  margin-bottom: 0.5rem;
+}
+
+.styx-hero-simple .styx-h1 {
+  margin: 0.4rem auto 0;
+  max-width: none;
+  font-size: clamp(1.8rem, 1.1vw + 1.1vh + 0.9rem, 3.2rem);
+  line-height: 1.1;
+}
+
+.styx-hero-simple-lede {
+  margin: 0.6rem auto 0;
+  max-width: 60ch;
+  font-size: clamp(0.9rem, 0.35vw + 0.7rem, 1.05rem);
+  line-height: 1.5;
+}
+
+/* The app band. PayApp carries its own width (max-w-md, lg:max-w-5xl); the
+   band only gives it room and the one amber line under it. */
+.styx-home-app {
+  padding-block: 0 clamp(2.5rem, 6vw, 4rem);
+}
+
+.styx-home-app-warn {
+  max-width: 64rem;
+  margin-inline: auto;
+  margin-top: 1.25rem;
+}
+
+/* Three quiet doors out: docs, SDK, roadmap. Hairline cards on the shared rule
+   bed, like .styx-grid, so they read as one strip rather than three boxes. */
+.styx-home-links {
+  display: grid;
+  gap: 1px;
+  background: var(--styx-rule);
+  border: 1px solid var(--styx-rule);
+  margin-bottom: clamp(3rem, 8vw, 6rem);
+}
+
+@media (min-width: 720px) {
+  .styx-home-links {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.styx-home-link {
+  display: grid;
+  gap: 0.4rem;
+  padding: 1.35rem 1.5rem;
+  background: var(--styx-panel);
+  color: inherit;
+  text-decoration: none;
+  transition: background 160ms ease;
+}
+
+.styx-home-link:hover,
+.styx-home-link:focus-visible {
+  background: var(--styx-panel-hover, var(--styx-panel));
+  outline: none;
+}
+
+.styx-home-link-title {
+  font-family: var(--styx-mono);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--styx-paper);
+}
+
+.styx-home-link-line {
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--styx-muted);
+}
+
+/* ── Generated visuals on /, 2026-09-12 ─────────────────────────────────────
+   /styx/river.jpg behind the hero, /styx/flank.jpg on both sides of the app.
+   Both are decorative, both fade into the ink so they never fight the type. */
+.styx-hero-stage-simple {
+  background: var(--styx-ink);
+}
+
+.styx-home-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 55%;
+  z-index: -1;
+  opacity: 0.55;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 40%, transparent 100%);
+}
+
+.styx-home-app {
+  position: relative;
+  /* Own stacking context, so the flanks' z-index -1 sits under the app and
+     over the page ground; without it they paint beneath the shell's opaque
+     background and never show (MEASURED: in the DOM, loaded, invisible). */
+  isolation: isolate;
+}
+
+.styx-home-flank {
+  display: none;
+}
+
+@media (min-width: 1600px) {
+  .styx-home-flank {
+    display: block;
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: clamp(10rem, 14vw, 20rem);
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.85;
+    pointer-events: none;
+    z-index: -1;
+  }
+  .styx-home-flank-left {
+    right: 100%;
+    margin-right: 2vw;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
+  }
+  .styx-home-flank-right {
+    left: 100%;
+    margin-left: 2vw;
+    transform: scaleX(-1);
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
+    mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
+  }
+}
+

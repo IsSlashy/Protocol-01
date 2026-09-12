@@ -1,4 +1,6 @@
 import { ImageResponse } from "next/og";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
  * The card every shared link shows, generated at build time.
@@ -19,7 +21,12 @@ export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
 export const alt = "Styx Protocol: private payments on Solana, running on devnet, not audited";
 
-export default function OpengraphImage() {
+export default async function OpengraphImage() {
+  // [VISUALS 2026-09-12] The river of light generated for the home page, as
+  // the card's ground. Read from disk at build time and inlined, because
+  // `next/og` renders in isolation and cannot fetch a relative /public URL.
+  const river = await readFile(join(process.cwd(), "public", "styx", "share.jpg"));
+  const riverUrl = `data:image/jpeg;base64,${river.toString("base64")}`;
   return new ImageResponse(
     (
       <div
@@ -32,8 +39,17 @@ export default function OpengraphImage() {
           background: "#070709",
           color: "#eae7df",
           padding: "72px 80px",
+          position: "relative",
         }}
       >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={riverUrl}
+          alt=""
+          width={1200}
+          height={675}
+          style={{ position: "absolute", left: 0, top: -22, width: 1200, height: 675, opacity: 0.6, objectFit: "cover" }}
+        />
         {/* Wordmark */}
         <div style={{ display: "flex", alignItems: "baseline", gap: 20 }}>
           <div style={{ fontSize: 44, fontWeight: 500, letterSpacing: "-0.01em" }}>

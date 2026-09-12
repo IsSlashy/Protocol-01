@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import StyxShell from "./_styx/StyxShell";
-import HomeSections from "./_home/HomeSections";
+import HomeSimple from "./_home/HomeSimple";
 
 /**
- * / , the landing page, ported to Styx Protocol.
+ * / , the landing page. Since 2026-09-12 it is the product itself: one
+ * headline, the devnet app, three links (see ./_home/HomeSimple.tsx).
  *
  * This file is a SERVER component on purpose. The old page was "use client"
  * because it needed useT(), and a client component cannot export `metadata`,
@@ -56,7 +57,7 @@ export const metadata: Metadata = {
 export default function Home() {
   return (
     <StyxShell>
-      <HomeSections />
+      <HomeSimple />
     </StyxShell>
   );
 }

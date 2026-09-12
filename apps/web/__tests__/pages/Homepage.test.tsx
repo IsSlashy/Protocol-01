@@ -3,6 +3,14 @@ import { render, screen, within } from '@testing-library/react';
 import Home from '@/app/page';
 import en from '@/i18n/en';
 import fr from '@/i18n/fr';
+import { vi } from 'vitest';
+
+vi.mock('@/components/pay/PayApp', () => ({
+  default: () => <div data-testid="pay-app-stub">pay app</div>,
+}));
+vi.mock('@/components/WalletProvider', () => ({
+  WalletProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 
 /**
  * Updated on 2026-08-11 for the Styx Protocol rebrand of `/`.
@@ -131,17 +139,14 @@ describe('Homepage, the Styx Protocol landing page', () => {
       expect(x).toHaveAttribute('rel', 'noopener noreferrer');
     });
 
-    it('links to Discord from the footer and from the invitation section', () => {
+    it('links to Discord from the footer (the invitation section left with the long page, 2026-09-12)', () => {
       const footerDiscord = screen.getByRole('link', { name: 'Discord' });
       expect(footerDiscord).toHaveAttribute(
         'href',
         'https://discord.gg/EfqnVmb2dV'
       );
       expect(footerDiscord).toHaveAttribute('target', '_blank');
-
-      const ctaDiscord = screen.getByRole('link', { name: en.cta.joinDiscord });
-      expect(ctaDiscord).toHaveAttribute('href', 'https://discord.gg/EfqnVmb2dV');
-      expect(ctaDiscord).toHaveAttribute('target', '_blank');
+      expect(screen.queryByRole('link', { name: en.cta.joinDiscord })).toBeNull();
     });
 
     it('exposes exactly Discord and X as outbound links, GitHub stays hidden in waitlist mode', () => {
@@ -159,73 +164,40 @@ describe('Homepage, the Styx Protocol landing page', () => {
   });
 
   describe('Page Sections', () => {
-    it('renders the Hero section', () => {
-      // Was 'Protocol Active', a status pill deleted with the rebrand. The hero
-      // now opens on the kicker and the statement line, both dictionary keys.
-      expect(screen.getByText(en.hero.kicker)).toBeInTheDocument();
-      expect(screen.getByText(en.hero.desc1)).toBeInTheDocument();
+    // 2026-09-12: the landing page IS the product. One headline, the devnet
+    // app, three links. The long sections (problem, features, technology,
+    // logos, film, waitlist) are gone from this route; their copy stays in the
+    // dictionary and in app/_home/HomeSections.tsx, which nothing renders.
+    it('leads with the app headline and one line under it', () => {
+      expect(screen.getByRole('heading', { level: 1, name: en.pay.page.h1 })).toBeInTheDocument();
+      expect(screen.getByText(en.pay.page.overline)).toBeInTheDocument();
+      expect(screen.getByText(`${en.hero.desc3} ${en.hero.desc4}`)).toBeInTheDocument();
     });
-
-    it('states the devnet-only, unaudited, still-linkable position above the fold', () => {
-      // The amber admission is the page's credibility and the reason the two
-      // "nothing they can trace" claims could be deleted rather than restyled.
-      const admission = screen.getByText(
-        en.docs.sections.denominatedPools.desc
-      );
-      expect(admission).toBeInTheDocument();
-      expect(admission.className).toContain('styx-admission-body');
-      expect(screen.getByText(en.footer.disclaimer)).toBeInTheDocument();
-      // The disclosure is introduced by a heading that reads as one.
-      // roadmap.current, the single word "Current", labels a phase on /roadmap
-      // and said nothing about what follows it here.
-      const title = screen.getByText(en.careers.context.badge);
-      expect(title.className).toContain('styx-admission-title');
-      expect(screen.queryByText(en.roadmap.current)).toBeNull();
+    it('renders the devnet app itself, with the devnet line under it', () => {
+      const app = document.getElementById('app');
+      expect(app).toBeTruthy();
+      expect(within(app!).getByTestId('pay-app-stub')).toBeInTheDocument();
+      expect(within(app!).getByText(en.pay.page.devnetTag)).toBeInTheDocument();
+      expect(within(app!).getByText(en.pay.page.devnetBody)).toBeInTheDocument();
     });
-
-    it('renders the Problem section with id="problem"', () => {
-      const problemSection = document.getElementById('problem');
-      expect(problemSection).toBeTruthy();
+    it('offers exactly three doors out: docs, SDK, roadmap', () => {
+      const links = screen.getByRole('region', { name: en.homeSimple.linksLabel });
+      const anchors = within(links).getAllByRole('link');
+      expect(anchors.map((a) => a.getAttribute('href'))).toEqual(['/docs', '/sdk-demo', '/roadmap']);
+      expect(within(links).getByText(en.homeSimple.docsLine)).toBeInTheDocument();
+      expect(within(links).getByText(en.homeSimple.sdkLine)).toBeInTheDocument();
+      expect(within(links).getByText(en.homeSimple.roadmapLine)).toBeInTheDocument();
     });
-
-    it('renders the Features section with id="features"', () => {
-      const featuresSection = document.getElementById('features');
-      expect(featuresSection).toBeTruthy();
+    it('no longer renders the long sections', () => {
+      for (const id of ['problem', 'features', 'download', 'tech']) {
+        expect(document.getElementById(id)).toBeNull();
+      }
+      expect(screen.queryByText(en.hero.kicker)).toBeNull();
+      expect(screen.queryByText(en.problem.without)).toBeNull();
+      expect(screen.queryByText(en.features.privacyPools)).toBeNull();
+      expect(screen.queryByText(en.ecosystem.badge)).toBeNull();
     });
-
-    it('renders the technology list in place of the removed id="tech" section', () => {
-      // Commit a91974cd ("streamline landing page -- remove tech sections")
-      // dropped the TechStack/Showcase sections from the landing page; the
-      // technology list moved to /docs and to the Ecosystem marquee. Nothing
-      // links to #tech any more, so the anchor is gone on purpose.
-      expect(document.getElementById('tech')).toBeNull();
-      expect(screen.getByText(en.ecosystem.badge)).toBeInTheDocument();
-      // The two title halves render inside one heading, so the assertion is on
-      // the whole line rather than on the highlight fragment.
-      expect(
-        screen.getByText(
-          `${en.ecosystem.title} ${en.ecosystem.titleHighlight}`
-        )
-      ).toBeInTheDocument();
-      // The marquee is gone (its keyframes live in app/globals.css), so each
-      // technology appears exactly once, with its role beside it.
-      expect(screen.getByText('Winterfell')).toBeInTheDocument();
-      expect(screen.getByText(en.ecosystem.starkProver)).toBeInTheDocument();
-      // "Quantum-Safe Field" and "Quantum-Safe Proofs" were marquee chips that
-      // claimed more than the measured fact. Deleted with the marquee.
-      expect(screen.queryByText(en.ecosystem.quantumSafeField)).toBeNull();
-      expect(screen.queryByText(en.ecosystem.quantumSafeProofs)).toBeNull();
-    });
-
-    it('renders the CTA/Download section with id="download"', () => {
-      const downloadSection = document.getElementById('download');
-      expect(downloadSection).toBeTruthy();
-    });
-
     it('renders the Footer, with its devnet warning and the discreet waitlist admin entrance', () => {
-      // Was footer.tagline, "> The system cannot see you.", which the rebrand
-      // does not publish. StyxFooter states the position instead, and keeps the
-      // founder's only link into /admin/waitlist.
       expect(
         screen.getByText(
           'Devnet software. Not audited. Use funds you can afford to lose.'
@@ -238,127 +210,16 @@ describe('Homepage, the Styx Protocol landing page', () => {
   });
 
   describe('Copy comes from the dictionary', () => {
-    // The port's first pass wrote about thirty-five sentences straight into the
-    // JSX, which reads correctly in English and silently serves English to a
-    // French visitor, because a literal has no fr.ts entry behind it. These
-    // assertions pin the slots that were hardcoded to the dictionary values they
-    // now render, so the regression cannot come back unnoticed.
-    it('captions the two ledgers as a matched pair, in both locales, with no retired brand', () => {
-      // Section 01 compares two ledgers side by side, so the two captions have
-      // to name two ledgers. problem.without and problem.with are the keys
-      // written for those two slots, and the assertion is on the pair rather
-      // than on one caption at a time, because the defect it replaces was a pair
-      // that stopped matching: an earlier pass could not reword the two keys
-      // (they read "WITHOUT / WITH PROTOCOL 01") so it borrowed
-      // explorer.observer.standardChain for the left slot and
-      // explorer.stat.anonSet, a counter label from /explorer, for the right
-      // one, and the comparison read "Standard chain" against "Shielded Notes".
-      // Both keys carry the pair now, so the brand check moves onto the
-      // dictionary values themselves, in both locales, which is where the
-      // regression would come back.
-      const left = screen.getByText(en.problem.without);
-      const right = screen.getByText(en.problem.with);
-      expect(left.className).toContain('styx-card-label');
-      expect(right.className).toContain('styx-card-label');
-      expect(en.problem.without).not.toMatch(/protocol[\s-]?01/i);
-      expect(en.problem.with).not.toMatch(/protocol[\s-]?01/i);
-      expect(fr.problem.without).not.toMatch(/protocol[\s-]?01/i);
-      expect(fr.problem.with).not.toMatch(/protocol[\s-]?01/i);
-      // The /explorer counter label is not a caption for half of a comparison.
-      expect(screen.queryByText(en.explorer.stat.anonSet)).toBeNull();
-    });
-
-    it('closes both ledger cards with a status line, not a specification fragment', () => {
-      // The right card used to end on a leader row, "Proof .... post-quantum, no
-      // trusted setup", assembled from explorer.observer.proof and
-      // explorer.stat.circuitsHint. The left card ends on a sentence, so that
-      // row broke the parallel the whole panel is built on.
-      expect(screen.getByText(en.problem.exposedStatus)).toBeInTheDocument();
-      expect(screen.getByText(en.problem.anonymousStatus)).toBeInTheDocument();
-      expect(screen.queryByText(en.explorer.observer.proof)).toBeNull();
-      expect(screen.queryByText(en.explorer.stat.circuitsHint)).toBeNull();
-    });
-
-    it('scopes the proof-system note to the proof system, with no blanket elliptic-curve claim', () => {
-      // The first facts card used to carry explorer.circuits.subtitle, which
-      // says "no elliptic curves" and "each operation is verified on-chain by
-      // one of these". The first half contradicts the card beside it
-      // (X25519 + ML-KEM-768) and three rows of the stack list (Curve25519,
-      // Circom, ark-circom); the second is the largest capability claim on the
-      // page. docs.sections.zkProofs.detail7 states the measured property, and
-      // only about the proof.
-      expect(
-        screen.getByText(en.docs.sections.zkProofs.detail7)
-      ).toBeInTheDocument();
-      expect(screen.queryByText(en.explorer.circuits.subtitle)).toBeNull();
-      expect(screen.getByText(en.explorer.circuits.title)).toBeInTheDocument();
-    });
-
-    it('states the devnet position once in the facts grid, next to the on-device measurement', () => {
-      // The fourth card stacked "Devnet Only" over "Beta on Solana Devnet." over
-      // "Devnet only, not audited.", and section 03 printed "Devnet Only" a
-      // fourth time as a chip. One statement of the position stays, and the
-      // note is spent on the measurement nothing else on the page carries.
-      expect(screen.getByText(en.footer.copyright)).toBeInTheDocument();
-      expect(
-        screen.getByText(en.docs.sections.zkProofs.detail5)
-      ).toBeInTheDocument();
-      expect(screen.queryByText(en.extensionPage.betaTitle)).toBeNull();
-      // roadmap.devnetOnly and docs.footerDevnet are both "Devnet Only".
-      expect(screen.queryAllByText(en.docs.footerDevnet)).toHaveLength(0);
-      expect(screen.queryAllByText(en.roadmap.devnetOnly)).toHaveLength(0);
-    });
-
-    it('renders the withdrawal step from the docs sentence, not "zero trace"', () => {
-      expect(
-        screen.getByText(en.docs.sections.denominatedPools.detail8)
-      ).toBeInTheDocument();
-      expect(screen.queryByText(en.howItWorks.step4Desc)).toBeNull();
-    });
-
-    it('heads the invitation with a dictionary line, not "Ready to become invisible"', () => {
-      // The slot is an h2, and its value is reworded rather than borrowed: it
-      // used to be "Self-custody, open source, no KYC. Live on devnet.", which
-      // is hero.desc3 + hero.desc4 in other words, so the closing section opened
-      // by repeating the hero. The heading must not restate the hero lede.
-      const heading = screen.getByRole('heading', {
-        level: 2,
-        name: en.footer.ctaSubtitle,
-      });
-      expect(heading).toBeInTheDocument();
-      // hero.desc3 and hero.desc4 stay in the hero lede, and one of them is not
-      // allowed to come back as this heading.
-      expect(en.footer.ctaSubtitle).not.toBe(en.hero.desc3);
-      expect(en.footer.ctaSubtitle).not.toBe(en.hero.desc4);
-      expect(en.footer.ctaSubtitle).not.toBe(
-        `${en.hero.desc3} ${en.hero.desc4}`
-      );
-      expect(screen.queryByText(en.cta.titleHighlight)).toBeNull();
-    });
-
-    it('renders the module cards from keys, with no unlinkability claim left', () => {
-      expect(screen.getByText(en.features.privacyPools)).toBeInTheDocument();
-      expect(
-        screen.getByText(en.features.desc.privacyPools)
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText(en.docs.sections.stealthAddresses.desc)
-      ).toBeInTheDocument();
-      // The four features.desc.* values that promised an absolute the page's own
-      // admission contradicts are not rendered anywhere.
-      expect(
-        screen.queryByText(en.features.desc.stealthMetaAddresses)
-      ).toBeNull();
-      expect(screen.queryByText(en.features.desc.subscriptionVaults)).toBeNull();
-      expect(screen.queryByText(en.features.desc.zkProofs)).toBeNull();
-      expect(screen.queryByText(en.features.desc.noteSplitting)).toBeNull();
-    });
-
-    it('drops the unbenchmarked timing strip and the zero-traces chip', () => {
-      expect(screen.queryByText(en.howItWorks.shieldTime)).toBeNull();
-      expect(screen.queryByText(en.howItWorks.instantOps)).toBeNull();
-      expect(screen.queryByText(en.howItWorks.zeroTraces)).toBeNull();
-      expect(screen.getByText(en.extensionPage.betaBadge)).toBeInTheDocument();
+    it('says the same thing in both locales, with no retired brand and no claim the app page does not make', () => {
+      for (const d of [en, fr]) {
+        expect(d.pay.page.h1.length).toBeGreaterThan(0);
+        expect(d.homeSimple.docsLine).not.toMatch(/protocol[\s-]?01/i);
+        expect(d.homeSimple.sdkLine).not.toMatch(/protocol[\s-]?01/i);
+        expect(d.homeSimple.roadmapLine).not.toMatch(/protocol[\s-]?01/i);
+        for (const line of [d.homeSimple.docsLine, d.homeSimple.sdkLine, d.homeSimple.roadmapLine, d.pay.page.h1]) {
+          expect(line).not.toMatch(/zero[\s-]?knowledge|untraceable|trustless|128[\s-]?bit/i);
+        }
+      }
     });
   });
 

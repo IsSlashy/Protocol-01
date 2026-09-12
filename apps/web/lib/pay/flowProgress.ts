@@ -89,7 +89,7 @@ export const SHIELD_PHASES: FlowPhase[] = [
   // sentence underneath kept moving. Every verification string must fall
   // through to the phase that actually names it.
   { id: 'prove', label: 'Proving the deposit', labelKey: 'pay.flow.provingTheDeposit', weight: 0.25, match: /generating c6|generating the deposit proof|generating[^.]*stark proof/i },
-  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz/i },
+  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz|rearm/i },
   // 0.50, not 0.45: the shield's phases summed to 0.95, so a shield could never
   // report more than 95% and jumped from there to done. Caught by the sum
   // assertion in the label test, never by looking at it. The missing weight goes
@@ -136,7 +136,7 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
   // seconds carrying an elapsed count, so the regex must match on the words and
   // never on the number.
   { id: 'prove', label: 'Proving you own it', labelKey: 'pay.flow.provingYouOwnIt', weight: 0.3, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|proving ownership and membership in one trace|generating[^.]*stark proof/i },
-  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz|pricing/i },
+  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz|rearm|pricing/i },
   // `submitting the circuit-7 spend proof on-chain` announces the upload rather
   // than the verification: it is emitted immediately before
   // `submitAndVerifyStarkProof`, whose own per-chunk sentences land here too.
@@ -193,7 +193,7 @@ export const SUBSCRIBE_PHASES: FlowPhase[] = [
   // elapsed count, so the regex matches on the words and never on the number.
   // Without it the ~5.5s of actual proving showed no label at all.
   { id: 'prove', label: 'Proving you own it', labelKey: 'pay.flow.provingYouOwnIt', weight: 0.28, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|proving ownership and membership in one trace|generating[^.]*stark proof/i },
-  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz|pricing/i },
+  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz|rearm|pricing/i },
   // `submitting the circuit-7 spend proof` announces the upload rather than the
   // verification: it is emitted immediately before `submitAndVerifyStarkProof`,
   // whose own per-chunk sentences land here too.

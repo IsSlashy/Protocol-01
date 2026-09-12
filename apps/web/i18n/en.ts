@@ -80,6 +80,12 @@ const en = {
   },
 
   // ── Hero ───────────────────────────────────────────────────
+  homeSimple: {
+    linksLabel: 'Where to go next',
+    docsLine: 'How the pool, the proofs and the stealth addresses work, with what each one does not do.',
+    sdkLine: 'Send, shield and subscribe from your own code. Devnet today.',
+    roadmapLine: 'What is live, what is next, and what a mainnet deployment still needs.',
+  },
   hero: {
     systemStatus: '[ SYSTEM STATUS ]',
     kicker: 'WHO YOU PAY. WHAT YOU BUY. HOW MUCH.',

@@ -82,6 +82,12 @@ const fr: Translations = {
   },
 
   // ── Hero ───────────────────────────────────────────────────
+  homeSimple: {
+    linksLabel: 'Pour aller plus loin',
+    docsLine: 'Comment fonctionnent le pool, les preuves et les adresses furtives, et ce que chacun ne fait pas.',
+    sdkLine: 'Envoyer, blinder et s’abonner depuis votre propre code. Sur devnet aujourd’hui.',
+    roadmapLine: 'Ce qui est en ligne, ce qui vient, et ce qu’il manque encore pour un déploiement mainnet.',
+  },
   hero: {
     systemStatus: '[ \u00c9TAT DU SYST\u00c8ME ]',
     kicker: 'QUI VOUS PAYEZ. CE QUE VOUS ACHETEZ. COMBIEN.',
