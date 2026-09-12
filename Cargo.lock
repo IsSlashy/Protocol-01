@@ -1919,14 +1919,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
-name = "p01-fee-splitter"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
-]
-
-[[package]]
 name = "p01-stark"
 version = "0.1.0"
 dependencies = [
@@ -1965,22 +1957,6 @@ dependencies = [
 
 [[package]]
 name = "p01_liquidity"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "solana-sha256-hasher 2.3.0",
-]
-
-[[package]]
-name = "p01_quantum_vault"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "solana-sha256-hasher 2.3.0",
-]
-
-[[package]]
-name = "p01_quantum_wallet"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
@@ -4871,16 +4847,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4841d6e055847c84d011d187cbad022ea4f8832c85a61a1aa220c192bd4dfd0"
 dependencies = [
  "solana-program-runtime",
-]
-
-[[package]]
-name = "specter"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
- "ed25519-dalek",
- "solana-sha256-hasher 2.3.0",
 ]
 
 [[package]]

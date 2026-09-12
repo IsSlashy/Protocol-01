@@ -1,16 +1,12 @@
 [workspace]
 members = [
     "programs/zk_shielded",
-    "programs/specter",
     "programs/stream",
     "programs/subscription",
     "programs/whitelist",
-    "programs/p01-fee-splitter",
     "programs/p01_zkspl",
     "programs/p01_relayer",
     "programs/p01_stark_verifier",
-    "programs/p01_quantum_vault",
-    "programs/p01_quantum_wallet",
     "programs/p01_registry",
     "programs/p01_liquidity",
     "stark",
