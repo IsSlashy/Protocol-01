@@ -24,7 +24,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import {
-  BadgeCheck,
   Check,
   Copy,
   KeyRound,
@@ -56,6 +55,8 @@ import FlowProgress from './FlowProgress';
 import StaleWorkerNotice from './StaleWorkerNotice';
 import SuccessBurst from './SuccessBurst';
 import { truncate } from './util';
+import { useT } from '@/i18n';
+import { translateInterval } from "@/lib/pay/intervalLabel";
 
 // ---------------------------------------------------------------------------
 // The contract with `subscribeFromPool`
@@ -208,6 +209,7 @@ function StepBadge({ n }: { n: number }) {
  * button repeats the two hard sentences a third time at the moment of click.
  */
 function CostDisclosure() {
+  const t = useT();
   // Collapsed by default. Four paragraphs of red text is a wall the user scrolls
   // past, which is the same as not reading it, and it pushed the action out of
   // sight. The summary line stays visible at all times and carries the whole
@@ -222,25 +224,24 @@ function CostDisclosure() {
     <details className="group rounded-lg border border-p01-red/30 bg-p01-red/5 text-xs text-p01-red">
       <summary className="cursor-pointer list-none p-3 font-medium marker:content-none">
         <span className="flex items-start justify-between gap-2">
-          <span>Devnet. The whole note is locked, and none of it comes back</span>
+          <span>{t('pay.subscribe.costSummary')}</span>
           <span className="shrink-0 font-mono text-[10px] text-p01-red/60 group-open:hidden">
-            read
+            {t('pay.subscribe.costRead')}
           </span>
         </span>
       </summary>
       <ul className="list-disc space-y-1 px-3 pb-3 pl-7 text-p01-red/90">
         <li>
-          <strong>Your entire note funds the subscription</strong>, not just rate times the number
-          of periods you want. A 10 SOL note buys a 10 SOL subscription.{' '}
+          <strong>{t('pay.subscribe.costWholeNoteLead')}</strong>
+          {t('pay.subscribe.costWholeNote')}{' '}
           <span className="font-mono text-p01-red/70">
-            subscribe_private_stark.rs:185 sets amount = pool.denomination.
+            {t('pay.subscribe.costWholeNoteCite')}
           </span>
         </li>
         <li>
-          <strong>There is no cancel and no refund.</strong> Only the vendor collecting its periods
-          can close the vault, and the final collection sweeps everything left in it (leftover
-          balance, dust, and the vault&apos;s own rent) to the vendor.{' '}
-          <span className="font-mono text-p01-red/70">claim_period.rs:309-315.</span>
+          <strong>{t('pay.subscribe.costNoRefundLead')}</strong>
+          {t('pay.subscribe.costNoRefund')}{' '}
+          <span className="font-mono text-p01-red/70">{t('pay.subscribe.costNoRefundCite')}</span>
         </li>
         {/* 🚨 THIS SAID "your wallet signs one deposit of roughly 1 SOL to hold
             space for the two proofs" UNCONDITIONALLY, and the result screen at
@@ -276,23 +277,20 @@ function CostDisclosure() {
             `lib/privacy/pool/subscribeFloat.test.ts` (the arithmetic against the
             job's own execution) and `__tests__/pages/PayAppCopy.test.tsx` (that
             this paragraph interpolates it instead of carrying digits). */}
+        {/* The two figures are still INTERPOLATED, not typed: `SUBSCRIBE_FLOAT_SOL`
+            is `subscribeFloorLamports(...)`, the same function
+            `prepareSubscribeJobV4` prices its transfer with, and a literal in
+            the dictionary would go stale silently exactly as the one in this
+            JSX did. The sentence is split into three keys around them for the
+            same reason. */}
         <li>
-          On top of the note, proof-buffer rent is locked while the upload runs, and how much
-          depends on which spend your note can be proved on: about {SUBSCRIBE_FLOAT_SOL.c7} SOL on
-          circuit 7, which rents ONE buffer and is what this app tries first, and about{' '}
-          {SUBSCRIBE_FLOAT_SOL.pair} SOL when it falls back to the C1 + C3 pair, which rents two.
-          A note deposited before we randomised the blinding always takes the pair. It comes back
-          when the buffers close, minus about 0.006 SOL of fees that does not. Who fronts it is
-          decided when you click: this deployment&apos;s funder if it is available, and then your
-          wallet signs nothing and is repaid nothing; your own wallet if it is not.
-          The screen after the purchase names which happened.
+          {t('pay.subscribe.costRentPart1')}
+          {SUBSCRIBE_FLOAT_SOL.c7}
+          {t('pay.subscribe.costRentPart2')}
+          {SUBSCRIBE_FLOAT_SOL.pair}
+          {t('pay.subscribe.costRentPart3')}
         </li>
-        <li>
-          A circuit-7 subscription carries no note commitment, so the merchant cannot walk from it
-          back to the deposit that created your note. What is left is the fee payer, and the funder
-          signs it rather than you. The C1 + C3 fallback does republish the commitment; the screen
-          after the purchase names which one ran. The Pool tab&apos;s disclosure has the details.
-        </li>
+        <li>{t('pay.subscribe.costCommitment')}</li>
       </ul>
     </details>
   );
@@ -319,6 +317,10 @@ export default function SubscribePanel({
    */
   onBusyChange?: (busy: boolean) => void;
 }) {
+  /* Every sentence in this panel used to be English written into the JSX,
+     on a site that serves French by country. They are `pay.subscribe.*`
+     now; see the block header in i18n/en.ts for why. */
+  const t = useT();
   // ── Vendors ──────────────────────────────────────────────────────────────
   const [registry, setRegistry] = useState<RegistrySnapshot | null>(null);
   const [registryLoading, setRegistryLoading] = useState(true);
@@ -337,7 +339,7 @@ export default function SubscribePanel({
         // "we could not read the registry" are different sentences and the user
         // is entitled to the true one.
         setRegistry(null);
-        setRegistryError((e as Error).message || 'Could not read the service registry.');
+        setRegistryError((e as Error).message || t('pay.subscribe.errRegistry'));
       } finally {
         setRegistryLoading(false);
       }
@@ -422,7 +424,7 @@ export default function SubscribePanel({
       // wholesale dropped it from this picker the moment the slow scan landed.
       setNotes(shieldClient.mergeScanWithLocal(res.notes, localNotes));
     } catch (e) {
-      const msg = (e as Error).message || 'Pool scan failed.';
+      const msg = (e as Error).message || t('pay.subscribe.errScan');
       // A partial paint followed by a failure leaves a real but possibly
       // incomplete list on screen — the error must say so, not less.
       setScanError(
@@ -674,17 +676,19 @@ const ISSUANCE_UI = true;
 
   const usdcUnsupported = token !== 'SOL';
   const blockedReason = usdcUnsupported
-    ? `The note scanner only lists SOL pool notes today, so a ${token} subscription cannot be funded from this panel.`
+    ? t('pay.subscribe.errUsdcUnsupported').replaceAll('{token}', token)
     : !signOne
-      ? 'This wallet cannot sign transactions.'
+      ? t('pay.subscribe.errCannotSign')
       : !service
-        ? 'Choose a vendor first.'
+        ? t('pay.subscribe.errPickService')
         : tokenMismatch
-          ? `${service.name} prices in a different token than the ${token} pool, so a ${token} note cannot fund it.`
+          ? t('pay.subscribe.errTokenMismatch')
+              .replace('{vendor}', service.name)
+              .replaceAll('{token}', token)
           : !note && unspent.length > 0
-            ? 'Now choose a note to lock.'
+            ? t('pay.subscribe.errPickNote')
             : periods !== null && periods === 0n
-              ? 'This note is smaller than one billing period, so it would fund nothing.'
+              ? t('pay.subscribe.errTooSmall')
               : null;
 
   async function handleSubscribe() {
@@ -739,10 +743,7 @@ const ISSUANCE_UI = true;
         // it is the difference between subscribing and subscribing privately.
         setIssuableNote(null);
         setError(
-          'You hold no note and this deployment does not issue them, so there is nothing to ' +
-            'subscribe with. Nothing was spent. Shield a note in the Pool tab first — and note ' +
-            'that a note you deposit yourself keeps every subscription reachable from your ' +
-            'wallet.',
+          t('pay.subscribe.errNoIssuance'),
         );
         return;
       }
@@ -914,7 +915,7 @@ const ISSUANCE_UI = true;
               'This is a fault in the deposit lookup, not in your note.',
           );
         }
-        setStep('This note traces back to you; exchanging it for one that does not...');
+        setStep(t('pay.subscribe.stepSwapping'));
         // 🚨 EVERY REFUSAL BELOW REACHES A BUYER WHO HOLDS A NOTE, so none of
         // them may end on "get a claim code". The swap is OUR attempt to rescue
         // THEIR note; its failures are ours to report, not chores to hand back.
@@ -941,7 +942,7 @@ const ISSUANCE_UI = true;
               'The only note you hold was deposited by your own wallet, so it was exchanged: ' +
                 `withdrawal ${spendSig} paid the deployment and the note it bought has not been ` +
                 'collected yet. No subscription was opened. The receipt is kept on this device; ' +
-                'open the Pool tab and click Shield to finish collecting the note, then ' +
+                'open the Shield tab and click Shield to finish collecting the note, then ' +
                 'subscribe with it. The deployment said: ' +
                 ((swapErr as Error).message || 'nothing.'),
             );
@@ -1066,7 +1067,9 @@ const ISSUANCE_UI = true;
             <div className="flex items-center gap-2">
               <StepBadge n={1} />
               <Store className="h-4 w-4 text-p01-cyan" />
-              <p className="font-display text-sm text-p01-text">Choose a vendor</p>
+              <p className="font-display text-sm text-p01-text">
+                {t('pay.subscribe.vendorTitle')}
+              </p>
             </div>
             <button
               onClick={() => void loadVendors(true)}
@@ -1074,41 +1077,56 @@ const ISSUANCE_UI = true;
               className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
             >
               <RefreshCw className={registryLoading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
-              {registryLoading ? 'Reading…' : 'Refresh'}
+              {registryLoading ? t('pay.subscribe.reading') : t('pay.subscribe.refresh')}
             </button>
           </div>
 
           {registryError && (
             <div className="mt-3 rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-              <p className="font-medium">Could not read the vendor registry</p>
+              <p className="font-medium">{t('pay.subscribe.registryErrorTitle')}</p>
               <p className="mt-1 text-p01-red/90">{registryError}</p>
-              <p className="mt-1 text-p01-red/90">
-                This is a failed read, not an empty roster. Vendors are registered on chain and this
-                client could not see them.
-              </p>
+              <p className="mt-1 text-p01-red/90">{t('pay.subscribe.registryErrorBody')}</p>
             </div>
           )}
 
           {!registryError && registry && registry.matchedAccounts === 0 && (
             <p className="mt-3 text-xs text-p01-text-muted">
-              The registry program answered and holds no service accounts on this endpoint. Six
-              vendors are registered on devnet, so this usually means the RPC is pointed elsewhere.
+              {t('pay.subscribe.registryEmpty')}
             </p>
           )}
 
           {!registryError && registry && registry.decodeFailures > 0 && (
             <p className="mt-3 text-xs text-p01-yellow">
-              {registry.decodeFailures} of {registry.matchedAccounts} registry entries could not be
-              decoded and are not listed. The on-chain layout may have changed.
+              {t('pay.subscribe.registryUndecoded')
+                .replace('{failed}', String(registry.decodeFailures))
+                .replace('{total}', String(registry.matchedAccounts))}
             </p>
           )}
 
           {registryLoading && !registry && (
-            <p className="mt-3 text-xs text-p01-text-dim">Reading the registry…</p>
+            <p className="mt-3 text-xs text-p01-text-dim">
+              {t('pay.subscribe.registryLoading')}
+            </p>
           )}
 
+          {/* ⚠️ A GRID OF CARDS, NOT A LIST OF ROWS, AND FOUR THINGS LESS.
+              Each row printed five things: name, a badge with an icon, the
+              category, the on-chain SLUG, the price and the interval. The slug
+              (`bitwarden-testloop`) is a machine identifier nobody chooses a
+              subscription by; the badge, drawn on all six because all six carry
+              the same owner, read as decoration rather than as the caveat it
+              is. What a person picks by is the name and the price, so those are
+              the card, and the price is set in the serif at the size of a
+              headline rather than as an eighth line of small mono.
+
+              🚨 THE SELF-LISTED CAVEAT IS NOT DROPPED, IT IS PUT WHERE IT CAN
+              BE READ. The comment this replaces is explicit that a bare
+              checkmark "reads as third-party vetting that nobody performed",
+              and that the tooltip is what stops it. It stays a word with the
+              same tooltip, in mono under the category, at the weight of a
+              footnote — visible on every card, quotable as nothing more. */}
           {services.length > 0 && (
-            <ul className="mt-3 space-y-2">
+            <ul className="styx-vendor-grid">
               {services.map((s) => {
                 const payable = pricedInPoolToken(s, token);
                 const active = s.pda.toBase58() === selectedPda;
@@ -1117,68 +1135,34 @@ const ISSUANCE_UI = true;
                     <button
                       onClick={() => setSelectedPda(s.pda.toBase58())}
                       disabled={submitting || !payable}
-                      className={
-                        active
-                          ? 'flex w-full items-center justify-between gap-3 rounded-lg border border-p01-cyan bg-p01-cyan/10 p-3 text-left'
-                          : 'flex w-full items-center justify-between gap-3 rounded-lg border border-p01-border bg-p01-void p-3 text-left hover:border-p01-border-hover disabled:opacity-50'
-                      }
+                      className="styx-vendor"
+                      data-active={active}
                     >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p
-                            className={
-                              active
-                                ? 'truncate font-display text-sm text-p01-cyan'
-                                : 'truncate font-display text-sm text-p01-text'
-                            }
+                      <span className="styx-vendor-name">{s.name}</span>
+                      <span className="styx-vendor-price">
+                        {formatServicePrice(s)}
+                        <i>{translateInterval(formatInterval(s.intervalSlots), t)}</i>
+                      </span>
+                      <span className="styx-vendor-meta">
+                        {s.category || t('pay.subscribe.uncategorised')}
+                        {s.verified ? (
+                          <em title={t('pay.subscribe.badgeSelfListedTitle')}>
+                            {t('pay.subscribe.badgeSelfListed')}
+                          </em>
+                        ) : (
+                          <em
+                            data-third-party="true"
+                            title={t('pay.subscribe.badgeThirdPartyTitle')}
                           >
-                            {s.name}
-                          </p>
-                          {/* 🚨 THIS BADGE IS SELF-ISSUED AND MUST SAY SO.
-                              Measured on devnet 2026-08-13: the registry holds
-                              six listings and all six carry the SAME owner —
-                              ours. The attestation is minted by the same key
-                              that registers the listing, so a bare checkmark
-                              reads as third-party vetting that nobody
-                              performed. The tooltip carries the truth so the
-                              badge cannot be quoted as more than it is; when a
-                              listing is registered by someone we did not
-                              control, this comment and that wording are what
-                              need revisiting. */}
-                          {s.verified ? (
-                            <span
-                              title="Listed by Styx Protocol. This badge is issued by the same key that registered the listing — it is not an independent audit or a vetting of the merchant."
-                              className="inline-flex shrink-0 items-center gap-1 text-p01-cyan"
-                            >
-                              <BadgeCheck className="h-3.5 w-3.5 shrink-0" />
-                              <span className="text-[10px] uppercase tracking-wider">
-                                Self-listed
-                              </span>
-                            </span>
-                          ) : (
-                            <span
-                              title="Registered by a third party, with no attestation from Styx Protocol."
-                              className="shrink-0 rounded border border-p01-yellow/40 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-p01-yellow"
-                            >
-                              Third-party
-                            </span>
-                          )}
-                        </div>
-                        <p className="truncate text-xs text-p01-text-muted">
-                          {s.category || 'uncategorised'} · {s.slug}
-                        </p>
-                        {!payable && (
-                          <p className="mt-0.5 text-xs text-p01-text-dim">
-                            Priced in another token, so a {token} note cannot pay for it.
-                          </p>
+                            {t('pay.subscribe.badgeThirdParty')}
+                          </em>
                         )}
-                      </div>
-                      <div className="shrink-0 text-right">
-                        <p className="font-mono text-sm text-p01-text">{formatServicePrice(s)}</p>
-                        <p className="text-xs text-p01-text-muted">
-                          {formatInterval(s.intervalSlots)}
-                        </p>
-                      </div>
+                      </span>
+                      {!payable && (
+                        <span className="styx-vendor-blocked">
+                          {t('pay.subscribe.notPayable').replace('{token}', token)}
+                        </span>
+                      )}
                     </button>
                   </li>
                 );
@@ -1203,7 +1187,9 @@ const ISSUANCE_UI = true;
             <div className="flex items-center gap-2">
               <StepBadge n={2} />
               <KeyRound className="h-4 w-4 text-p01-cyan" />
-              <p className="font-display text-sm text-p01-text">Choose a note to lock</p>
+              <p className="font-display text-sm text-p01-text">
+                {t('pay.subscribe.noteTitle')}
+              </p>
             </div>
             <button
               onClick={rescan}
@@ -1217,7 +1203,7 @@ const ISSUANCE_UI = true;
 
           {checkingOlderNotes && (
             <p className="mt-2 text-xs text-p01-text-dim">
-              Still checking for older notes — anything found will be added here.
+              {t('pay.subscribe.checkingOlder')}
             </p>
           )}
           {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
@@ -1236,15 +1222,13 @@ const ISSUANCE_UI = true;
 
           {usdcUnsupported && (
             <p className="mt-2 text-xs text-p01-yellow">
-              Only SOL pool notes are listed. The scan path is typed to the SOL pools
-              (shieldClient.ts:191), so a {token} note cannot be found or spent from here yet.
+              {t('pay.subscribe.solOnly').replace('{token}', token)}
             </p>
           )}
 
           {!scanning && unspent.length === 0 && !scanError && (
             <p className="mt-2 text-xs text-p01-text-muted">
-              No unspent notes. Shield one in the Pool tab first. The note you shield is the whole
-              budget of the subscription.
+              {t('pay.subscribe.empty')}
             </p>
           )}
 
@@ -1293,16 +1277,22 @@ const ISSUANCE_UI = true;
         {/* The plain sentence of the deal, once both halves are picked. */}
         {service && note && !tokenMismatch && periods !== null && periods > 0n && (
           <div className="rounded-lg border border-p01-cyan/40 bg-p01-cyan/5 p-3 text-sm text-p01-text">
-            You lock{' '}
+            {/* `formatInterval` answers in English ("monthly"); its answer is
+                mapped onto a dictionary key at the point of display. See
+                lib/pay/intervalLabel.ts. */}
+            {t('pay.subscribe.dealLock')}{' '}
             <span className="font-mono text-p01-cyan">
               {note.denomination} {note.token}
             </span>
-            . {service.name} charges{' '}
+            {t('pay.subscribe.dealCharges').replace('{vendor}', service.name)}{' '}
             <span className="font-mono text-p01-cyan">{formatServicePrice(service)}</span>{' '}
-            {formatInterval(service.intervalSlots)}, so that pays for{' '}
-            <span className="font-mono text-p01-cyan">{periods.toString()}</span> billing period
-            {periods === 1n ? '' : 's'}. Then the subscription ends and anything left over goes to
-            the vendor.
+            {translateInterval(formatInterval(service.intervalSlots), t)}
+            {t('pay.subscribe.dealSoPays')}{' '}
+            <span className="font-mono text-p01-cyan">{periods.toString()}</span>{' '}
+            {periods === 1n
+              ? t('pay.subscribe.dealPeriods')
+              : t('pay.subscribe.dealPeriodsPlural')}
+            {t('pay.subscribe.dealEnds')}
           </div>
         )}
 
@@ -1312,16 +1302,15 @@ const ISSUANCE_UI = true;
           redundancy over elegance, and never softened. */}
         <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
           <p>
-            <strong>The whole note is locked</strong>
-            {note ? (
-              <>
-                , all {note.denomination} {note.token} of it
-              </>
-            ) : (
-              <>, not just the periods you want</>
-            )}
-            , and <strong>there is no cancel and no refund</strong>: whatever is left when the
-            subscription ends goes to the vendor, rent included.
+            <strong>{t('pay.subscribe.hardWholeNote')}</strong>
+            {note
+              ? t('pay.subscribe.hardAllOfIt').replace(
+                  '{amount}',
+                  `${note.denomination} ${note.token}`,
+                )
+              : t('pay.subscribe.hardNotJust')}
+            , <strong>{t('pay.subscribe.hardNoRefund')}</strong>
+            {t('pay.subscribe.hardTail')}
           </p>
         </div>
 
@@ -1334,10 +1323,8 @@ const ISSUANCE_UI = true;
           <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
             <span>
-              <strong className="text-p01-text">This deployment has no funder.</strong> Your wallet
-              is the only thing that can pay for this subscription, so it will sign a public
-              transfer and anyone reading the subscription reaches it in three steps. There is no
-              setting that changes that here.
+              <strong className="text-p01-text">{t('pay.subscribe.noFunderLead')}</strong>
+              {t('pay.subscribe.noFunderBody')}
             </span>
           </p>
         )}
@@ -1369,10 +1356,8 @@ const ISSUANCE_UI = true;
           <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
             <span>
-              <strong className="text-p01-text">The funder pays for this, not your wallet.</strong>{' '}
-              It covers the rent and fees, so the subscription is not signed by you. If the funder
-              cannot serve — unreachable, rate limited, or switched off — your wallet pays instead
-              and the receipt says which one did.
+              <strong className="text-p01-text">{t('pay.subscribe.funderLead')}</strong>
+              {t('pay.subscribe.funderBody')}
             </span>
           </p>
         )}
@@ -1393,13 +1378,10 @@ const ISSUANCE_UI = true;
           <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
             <span>
-              <strong className="text-p01-text">You hold no note, so one will be issued to you.</strong>{' '}
-              It was deposited by this deployment, not by you — which is what keeps anyone reading
-              the subscription from reaching your wallet through the deposit. It does{' '}
-              <strong className="text-p01-text">not</strong> hide you from this deployment: the note
-              comes from a seed we hold, so we can recognise every subscription bought with it, and
-              we could spend it ourselves until you do. Deposit your own note instead if you would
-              rather that trade went the other way.
+              <strong className="text-p01-text">{t('pay.subscribe.issuedLead')}</strong>
+              {t('pay.subscribe.issuedBody1')}
+              <strong className="text-p01-text">{t('pay.subscribe.issuedNot')}</strong>
+              {t('pay.subscribe.issuedBody2')}
             </span>
           </p>
         )}
@@ -1436,7 +1418,7 @@ const ISSUANCE_UI = true;
           <p className="flex items-start gap-2 rounded-lg border border-p01-border p-3 text-xs text-p01-text-muted">
             <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
             <span>
-              <strong className="text-p01-text">Swapping your note for one of ours.</strong>{' '}
+              <strong className="text-p01-text">{t('pay.subscribe.swapLead')}</strong>{' '}
               Your own deposit is joined to the moment you paid — measured at under a minute, and
               permanent. The note you get back was deposited long before you arrived, so nothing
               on chain ties it to you. It does{' '}
@@ -1496,10 +1478,12 @@ const ISSUANCE_UI = true;
             </>
           ) : service && note ? (
             <>
-              Lock {note.denomination} {note.token} with {service.name}
+              {t('pay.subscribe.lockButton')
+                .replace('{amount}', `${note.denomination} ${note.token}`)
+                .replace('{vendor}', service.name)}
             </>
           ) : (
-            <>Subscribe</>
+            <>{t('pay.subscribe.subscribeButton')}</>
           )}
         </button>
 
@@ -1530,19 +1514,20 @@ const ISSUANCE_UI = true;
         {/* Outcome. The license key is the product of this whole flow. */}
         {result && (
           <div className="card p-4">
-            <SuccessBurst label="Subscription open" />
+            <SuccessBurst label={t('pay.subscribe.openLabel')} />
 
             <div className="mt-3 rounded-lg border border-p01-cyan/40 bg-p01-void p-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="flex items-center gap-2 text-xs uppercase tracking-wider text-p01-text-muted">
-                  <KeyRound className="h-3.5 w-3.5 text-p01-cyan" /> License key
+                  <KeyRound className="h-3.5 w-3.5 text-p01-cyan" />{' '}
+                  {t('pay.subscribe.keyLabel')}
                 </p>
                 <button
                   onClick={() => void copyKey(result.licenseKey)}
                   className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
                 >
                   {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  {copied ? 'Copied' : 'Copy'}
+                  {copied ? t('pay.subscribe.copied') : t('pay.subscribe.copy')}
                 </button>
               </div>
               <p className="mt-2 break-all font-mono text-xl leading-relaxed text-p01-cyan">
@@ -1556,17 +1541,17 @@ const ISSUANCE_UI = true;
               <p className="flex items-start gap-2 text-xs text-p01-text-muted">
                 <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
                 <span>
-                  <strong className="text-p01-text">Never stored, never lost.</strong> The key is
-                  recomputed from the secret of the note you just spent, so any device holding that
-                  note shows the same key. Nothing to back up.
+                  <strong className="text-p01-text">
+                    {t('pay.subscribe.keyNeverStoredLead')}
+                  </strong>
+                  {t('pay.subscribe.keyNeverStoredBody')}
                 </span>
               </p>
               <p className="flex items-start gap-2 text-xs text-p01-text-muted">
                 <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
                 <span>
-                  <strong className="text-p01-text">It works for whoever holds it.</strong> Anyone
-                  with this key can present it to the vendor as you. Show it to the vendor and no
-                  one else.
+                  <strong className="text-p01-text">{t('pay.subscribe.keyBearerLead')}</strong>
+                  {t('pay.subscribe.keyBearerBody')}
                 </span>
               </p>
               {result.fundedBy === 'funder' ? (
@@ -1574,20 +1559,17 @@ const ISSUANCE_UI = true;
                   <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
                   <span>
                     <strong className="text-p01-text">
-                      Your wallet did not sign or pay for this subscription.
-                    </strong>{' '}
-                    The funder covered the rent and fees and the leftover went back to it, not to
-                    you.
+                      {t('pay.subscribe.paidFunderLead')}
+                    </strong>
+                    {t('pay.subscribe.paidFunderBody')}
                   </span>
                 </p>
               ) : (
                 <p className="flex items-start gap-2 text-xs text-p01-text-muted">
                   <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
                   <span>
-                    <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
-                    It signed a transfer to the signing key before, and got the leftover back after.
-                    Both are ordinary transfers naming your address, so anyone reading this
-                    subscription reaches your wallet in three steps.
+                    <strong className="text-p01-text">{t('pay.subscribe.paidWalletLead')}</strong>
+                    {t('pay.subscribe.paidWalletBody')}
                   </span>
                 </p>
               )}

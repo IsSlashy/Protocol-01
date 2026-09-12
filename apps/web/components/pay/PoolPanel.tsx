@@ -74,6 +74,7 @@ import {
 } from "@/lib/pay/handoffs";
 import StaleWorkerNotice from "./StaleWorkerNotice";
 import { truncate } from "./util";
+import { useT } from "@/i18n";
 
 /** The live V4 SOL pools. Shielding snaps to one of these: a denominated pool
  *  cannot hold an arbitrary amount, and that is the whole point: every note in
@@ -123,7 +124,6 @@ function noteKey(n: PoolNoteView): string {
 /** Set once the disclosure has been shown expanded; after that it starts
  *  collapsed with its one-line summary still visible. The content itself never
  *  goes away, only the delivery changes. */
-const DISCLOSURE_SEEN_KEY = "p01:pay:pool-disclosure-seen";
 
 export default function PoolPanel({
   meta,
@@ -156,6 +156,11 @@ export default function PoolPanel({
    */
   onBusyChange?: (busy: boolean) => void;
 }) {
+  /* Every sentence in this panel used to be English written into the JSX,
+     on a site that serves French by country. They are `pay.pool.*` now; see
+     the block header in i18n/en.ts for why. Figures stay interpolated at the
+     call site: a number in a dictionary rots as silently as one in JSX. */
+  const t = useT();
   /** Every pool of this token, closed or not. The recovery sweep's list. */
   const denominations = denominationsForRecovery(token);
   /** Only the pools a new deposit can actually reach. The picker's list. */
@@ -273,17 +278,21 @@ export default function PoolPanel({
 
   // Open on the first visit, collapsed afterwards. The one-line summary stays
   // on screen either way, so nothing true ever leaves the page.
+  /**
+   * ⚠️ CLOSED BY DEFAULT NOW, AND NOTHING IS HIDDEN BY IT.
+   *
+   * This used to open itself on a visitor's first visit and remember it in
+   * localStorage. The intent was right — the disclosure is owed — but the
+   * result was that every panel greeted a first-time user with four or five
+   * paragraphs above the control they came for, which is how a disclosure
+   * stops being read.
+   *
+   * What is owed is that the fact is ON THE SCREEN and one gesture away, not
+   * that it is unfolded. The summary line stays visible at all times and
+   * carries the whole point in one sentence; the paragraphs are unchanged,
+   * word for word, behind it. Nothing here is softened, only folded.
+   */
   const [disclosureOpen, setDisclosureOpen] = useState(false);
-  useEffect(() => {
-    try {
-      if (!window.localStorage.getItem(DISCLOSURE_SEEN_KEY)) {
-        setDisclosureOpen(true);
-        window.localStorage.setItem(DISCLOSURE_SEEN_KEY, "1");
-      }
-    } catch {
-      // Storage unavailable: default to collapsed, the summary still shows.
-    }
-  }, []);
 
   // ── Payout addresses ─────────────────────────────────────────────────────
   // The root is held in component state and nowhere else: never localStorage,
@@ -482,7 +491,7 @@ export default function PoolPanel({
       setNotesProvisional(false);
       setPoolSizes(res.poolSizes);
     } catch (e) {
-      const msg = (e as Error).message || "Pool scan failed.";
+      const msg = (e as Error).message || t("pay.pool.errScan");
       // If the fast pass painted and the scan then died, the list on screen is
       // real but may be missing older notes — say exactly that, not less.
       setScanError(
@@ -518,8 +527,7 @@ export default function PoolPanel({
     if (payoutRoot) return payoutRoot;
     if (!signMessage) {
       throw new Error(
-        "This wallet cannot sign messages here, so a recoverable payout address cannot be " +
-          "derived. Connect the browser wallet that owns these notes and try again.",
+        t("pay.pool.errCannotSignMsgPayout"),
       );
     }
     const message = buildPoolPayoutMessage({
@@ -590,7 +598,7 @@ export default function PoolPanel({
     try {
       await refreshPayouts(await requirePayoutRoot());
     } catch (e) {
-      setSweepError((e as Error).message || "Could not read your payout addresses.");
+      setSweepError((e as Error).message || t("pay.pool.errSweepRead"));
     }
   }
 
@@ -599,14 +607,14 @@ export default function PoolPanel({
     setSwept(null);
     const destination = sweepTo.trim();
     if (!destination) {
-      setSweepError("Enter the address that should receive these funds.");
+      setSweepError(t("pay.pool.errSweepAddress"));
       return;
     }
     let to: PublicKey;
     try {
       to = new PublicKey(destination);
     } catch {
-      setSweepError("That is not a valid Solana address.");
+      setSweepError(t("pay.pool.errNotSolanaAddress"));
       return;
     }
     // 🚨 THE CHEAPEST WAY BACK TO THIS USER RUNS THROUGH THIS BUTTON.
@@ -646,7 +654,7 @@ export default function PoolPanel({
       // Belt and braces: a mismatch here would mean the derivation drifted and
       // the transaction would be signed by a key that owns nothing.
       if (payout.publicKey.toBase58() !== p.address) {
-        throw new Error("Payout key mismatch. Rescan before sweeping.");
+        throw new Error(t("pay.pool.errPayoutMismatch"));
       }
       const { txSig, lamports } = await sweepPayout({ connection, payout, destination: to });
       setSwept(`Swept ${(lamports / 1e9).toFixed(4)} SOL · ${truncate(txSig, 8, 6)}`);
@@ -660,7 +668,7 @@ export default function PoolPanel({
 
   async function handleShield() {
     if (!signOne) {
-      setError("This wallet cannot sign transactions.");
+      setError(t("pay.pool.errCannotSignTx"));
       return;
     }
     setError(null);
@@ -694,10 +702,10 @@ export default function PoolPanel({
         // `finally` already clears `shielding` and `step`; repeating them here
         // would be two places to keep in step for no gain.
         setError(
-          `This wallet holds ${(held / 1e9).toFixed(4)} SOL and this deposit needs about ` +
-            `${(withFees / 1e9).toFixed(4)} SOL. Nothing was signed. Devnet SOL is free: ` +
-            `run "solana airdrop 2 ${owner.toBase58()} --url devnet", or use ` +
-            `https://faucet.solana.com — then try again.`,
+          t("pay.pool.errNotEnoughSol")
+            .replace("{held}", (held / 1e9).toFixed(4))
+            .replace("{needed}", (withFees / 1e9).toFixed(4))
+            .replace("{address}", owner.toBase58()),
         );
         return;
       }
@@ -780,9 +788,7 @@ export default function PoolPanel({
         // and then be unable to collect.
         if (!signMessage) {
           setError(
-            "This session has no message signer, so a deposit could be paid for but its note " +
-              "could never be collected. Nothing was signed. Connect the browser wallet that " +
-              "owns this identity and try again.",
+            t("pay.pool.errNoSignerDeposit"),
           );
           return;
         }
@@ -877,7 +883,7 @@ export default function PoolPanel({
 
   async function handleUnshield(note: PoolNoteView, opts?: { relayed?: boolean }) {
     if (!signOne) {
-      setError("This wallet cannot sign transactions.");
+      setError(t("pay.pool.errCannotSignTx"));
       return;
     }
     setError(null);
@@ -937,7 +943,7 @@ export default function PoolPanel({
       // reload, where the user has asked for it.
       void rescan();
     } catch (e) {
-      setError((e as Error).message || "Withdrawal failed.");
+      setError((e as Error).message || t("pay.pool.errWithdrawalFailed"));
     } finally {
       setBusyNote(null);
       setStep(null);
@@ -956,7 +962,7 @@ export default function PoolPanel({
    */
   async function handleExchange(note: PoolNoteView) {
     if (!signOne) {
-      setError("This wallet cannot sign transactions.");
+      setError(t("pay.pool.errCannotSignTx"));
       return;
     }
     setError(null);
@@ -1063,20 +1069,31 @@ export default function PoolPanel({
       // that stops someone coming back for ~1 SOL that is still theirs.
       const parts: string[] = [];
       if (r.keys === 0 && r.refused.length === 0) {
-        parts.push("Nothing stranded in any pool, no funds to recover.");
+        parts.push(t("pay.pool.recoverNothing"));
       } else {
         if (r.lamports > 0) {
-          parts.push(`Recovered ${(r.lamports / 1e9).toFixed(4)} SOL to your wallet.`);
+          parts.push(
+            t("pay.pool.recoveredToWallet").replace(
+              "{amount}",
+              (r.lamports / 1e9).toFixed(4),
+            ),
+          );
         }
         if (r.repaidToFunder > 0) {
           parts.push(
-            `Returned ${(r.repaidToFunder / 1e9).toFixed(4)} SOL to the funder that paid for those jobs — ` +
-              `that money was never yours to get back.`,
+            t("pay.pool.recoveredToFunder").replace(
+              "{amount}",
+              (r.repaidToFunder / 1e9).toFixed(4),
+            ),
           );
         }
-        if (r.closedBuffers > 0) parts.push(`Closed ${r.closedBuffers} proof buffer(s).`);
+        if (r.closedBuffers > 0) {
+          parts.push(
+            t("pay.pool.closedBuffers").replace("{count}", String(r.closedBuffers)),
+          );
+        }
         if (r.lamports === 0 && r.repaidToFunder === 0 && r.closedBuffers === 0) {
-          parts.push("Nothing was swept.");
+          parts.push(t("pay.pool.recoverNothingSwept"));
         }
       }
       for (const ref of r.refused) {
@@ -1086,7 +1103,7 @@ export default function PoolPanel({
       }
       setRecovered(parts.join(" "));
     } catch (e) {
-      setError((e as Error).message || "Recovery failed.");
+      setError((e as Error).message || t("pay.pool.errRecovery"));
     } finally {
       setRecovering(false);
       setStep(null);
@@ -1199,25 +1216,25 @@ export default function PoolPanel({
   const poolIsSolOnly = token !== "SOL";
 
   const shieldReason = poolIsSolOnly
-    ? `The pool only handles SOL today, so it cannot shield ${token}. Switch the asset to SOL to deposit. Any note you already hold stays withdrawable from here.`
+    ? t("pay.pool.reasonSolOnly").replace("{token}", token)
     : // Before the wallet check, because it is a fact about the pool rather
       // than about this session: a different wallet would not help.
       selectedBlock
       ? selectedBlock.message
       : !signOne
-        ? "This wallet cannot sign transactions, so it cannot shield."
+        ? t("pay.pool.reasonCannotShield")
         : busyNote
-          ? "Paused while the withdrawal runs."
+          ? t("pay.pool.pausedWithdrawal")
           : null;
   const withdrawReason = !signOne
-    ? "This wallet cannot sign transactions, so it cannot withdraw."
+    ? t("pay.pool.reasonCannotWithdraw")
     : shielding
-      ? "Paused while the shield runs."
+      ? t("pay.pool.pausedShield")
       : null;
   const sweepReason = shielding
-    ? "Paused while the shield runs."
+    ? t("pay.pool.pausedShield")
     : busyNote
-      ? "Paused while the withdrawal runs."
+      ? t("pay.pool.pausedWithdrawal")
       : null;
 
   return (
@@ -1250,7 +1267,7 @@ export default function PoolPanel({
             phases={WITHDRAW_PHASES}
             step={step}
             running={!!busyNote}
-            note="About 1 SOL sits in a refundable deposit while this runs and comes back when it finishes."
+            note={t("pay.pool.floatNote")}
           />
         </div>
       )}
@@ -1259,8 +1276,11 @@ export default function PoolPanel({
       <div className="min-w-0 space-y-5">
         {/* Denomination */}
         <div>
+          {/* "Denomination" is the protocol's word for it. What the control
+              does is pick how much goes in, and every option is a fixed size —
+              which the note under the picker already explains. */}
           <label className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted">
-            Denomination
+            {t("pay.pool.howMuch")}
           </label>
           {/* PRIMARY denomination in front, the rest one click behind it.
               WAS "nothing is disabled" until 2026-08-20, and that is no longer
@@ -1295,7 +1315,7 @@ export default function PoolPanel({
                   disabled={shielding || !!blockByDenomination.get(d)}
                   title={
                     blockByDenomination.get(d)?.message ??
-                    (shielding ? "Locked while the shield runs." : undefined)
+                    (shielding ? t("pay.pool.lockedWhileShielding") : undefined)
                   }
                   className={
                     d === denomination
@@ -1309,9 +1329,12 @@ export default function PoolPanel({
           </div>
           <details className="mt-2">
             <summary className="cursor-pointer text-xs text-p01-text-dim marker:text-p01-text-dim">
-              Other denominations, with how many notes each holds
+              {t("pay.pool.otherSizes")}
               {blockedDenominations.length > 0 &&
-                ` — ${blockedDenominations.length} closed to new deposits`}
+                t("pay.pool.closedToDeposits").replace(
+                  "{count}",
+                  String(blockedDenominations.length),
+                )}
             </summary>
             <div className="mt-2 flex flex-wrap gap-2">
               {denominations
@@ -1326,7 +1349,7 @@ export default function PoolPanel({
                       disabled={shielding || !!block}
                       title={
                         block?.message ??
-                        (shielding ? "Locked while the shield runs." : undefined)
+                        (shielding ? t("pay.pool.lockedWhileShielding") : undefined)
                       }
                       className={
                         d === denomination
@@ -1340,7 +1363,9 @@ export default function PoolPanel({
                       </span>
                       {block && (
                         <span className="ml-1.5 text-p01-yellow">
-                          {block.reason === "over-relay-cap" ? "· over cap" : "· closed"}
+                          {block.reason === "over-relay-cap"
+                            ? t("pay.pool.overCap")
+                            : t("pay.pool.closed")}
                         </span>
                       )}
                     </button>
@@ -1371,22 +1396,28 @@ export default function PoolPanel({
               class of sentence the founder ruling forbids. */}
           <p className="mt-2 text-xs text-p01-text-muted">
             {selectedSize
-              ? `${selectedSize.unspentNotes} unspent note${selectedSize.unspentNotes === 1 ? "" : "s"} in this pool right now, out of ${selectedSize.totalNotes} ever deposited. Amounts snap to a denomination, so the amount you move is not distinctive. See the privacy note for what withdrawal still reveals.`
-              : "Amounts snap to a denomination; arbitrary amounts cannot be shielded."}
+              ? t("pay.pool.inPool")
+                  .replace("{unspent}", String(selectedSize.unspentNotes))
+                  .replaceAll("{plural}", selectedSize.unspentNotes === 1 ? "" : "s")
+                  .replace("{total}", String(selectedSize.totalNotes))
+              : t("pay.pool.setSize")}
           </p>
           {selectedSize && selectedSize.unspentNotes <= 1 && (
             <p className="mt-1 text-xs text-p01-yellow">
-              A pool holding {selectedSize.unspentNotes === 0 ? "no" : "one"} unspent note gives you
-              nothing to blend into: a deposit and a withdrawal here would be the only ones, so they
-              pair trivially no matter what the protocol does. Nothing stops you — this is a fact
-              about the pool, not a setting.
+              {t("pay.pool.thinSet").replace(
+                "{count}",
+                selectedSize.unspentNotes === 0
+                  ? t("pay.pool.thinSetNone")
+                  : t("pay.pool.thinSetOne"),
+              )}
             </p>
           )}
           {selectedSize && selectedSize.discoverableNotes < selectedSize.totalNotes && (
             <p className="mt-1 text-xs text-p01-text-dim">
-              This RPC serves history for only {selectedSize.discoverableNotes} of them.
-              Withdrawal rebuilds the Merkle proof from that history, so a note whose history is
-              gone cannot be withdrawn from this endpoint.
+              {t("pay.pool.historyGap").replace(
+                "{count}",
+                String(selectedSize.discoverableNotes),
+              )}
             </p>
           )}
         </div>
@@ -1396,17 +1427,14 @@ export default function PoolPanel({
             precise breakdown (rent, per-step fees) one click behind it. */}
         <details className="text-xs text-p01-text-muted">
           <summary className="cursor-pointer marker:text-p01-text-dim">
-            Shielding {denomination} SOL costs {shieldCost} SOL, and none of it comes back.
+            {t("pay.pool.costSummary")
+              .replace("{denomination}", String(denomination))
+              .replace("{cost}", String(shieldCost))}
           </summary>
           <p className="mt-1.5 pl-4 text-p01-text-dim">
-            The exact breakdown: the {denomination} SOL denomination, a 0.3% protocol fee, and a 1%
-            operator fee ({operatorFeeSol} SOL). Your wallet signs ONE transaction carrying both
-            transfers, so there is no second approval and no way to pay for the deposit without
-            paying the fee. The ~0.57 SOL of proof-buffer rent a deposit also needs is fronted by
-            this deployment rather than by you, and returns to this deployment when the buffer
-            closes — which is why your figure is smaller than it used to be and why none of it is
-            refundable to you. Withdrawal charges 0.5%, and moving the payout off its one-time
-            address afterwards costs one more transaction fee (0.000005 SOL).
+            {t("pay.pool.costBreakdown")
+              .replace("{denomination}", String(denomination))
+              .replace("{operatorFee}", String(operatorFeeSol))}
           </p>
         </details>
 
@@ -1420,10 +1448,8 @@ export default function PoolPanel({
         {treasuryMode && (
           <div className="space-y-2 rounded-lg border border-p01-red/50 p-3">
             <p className="text-xs text-p01-red">
-              <strong>Treasury setup — this reveals a spend key.</strong> The pool seed derives
-              every note this wallet will ever own, and whoever holds it can spend all of them,
-              including notes not created yet. Put it in a server environment variable and nowhere
-              else.
+              <strong>{t("pay.pool.treasuryLead")}</strong>
+              {t("pay.pool.treasuryBody")}
             </p>
             <button
               type="button"
@@ -1434,12 +1460,12 @@ export default function PoolPanel({
                   setSeedHex(res.seedHex);
                   setSeedLegacy(res.hasLegacySeed);
                 } catch (e) {
-                  setSeedError((e as Error).message || "Seed export failed.");
+                  setSeedError((e as Error).message || t("pay.pool.errSeedExport"));
                 }
               }}
               className="btn-secondary px-4 py-2 text-xs"
             >
-              Reveal pool seed for P01_TREASURY_POOL_SEED
+              {t("pay.pool.treasuryButton")}
             </button>
             {seedHex && (
               <>
@@ -1478,10 +1504,10 @@ export default function PoolPanel({
         >
           {shielding ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin" /> Shielding…
+              <Loader2 className="h-4 w-4 animate-spin" /> {t("pay.pool.shielding")}
             </>
           ) : (
-            <>Shield {denomination} SOL</>
+            <>{t("pay.pool.shieldButton").replace("{denomination}", String(denomination))}</>
           )}
         </button>
         {shieldReason && !shielding && (
@@ -1490,23 +1516,31 @@ export default function PoolPanel({
 
         {result && !shielding && (
           <div className="space-y-2">
-            <SuccessBurst label={`${result.denomination} SOL note shielded`} />
+            <SuccessBurst
+              label={t("pay.pool.shieldedLabel").replace(
+                "{denomination}",
+                String(result.denomination),
+              )}
+            />
             <div className="card p-4">
               <p className="font-display text-sm text-p01-text">
-                Your {result.denomination} SOL note is in the pool
+                {t("pay.pool.inPoolTitle").replace(
+                  "{denomination}",
+                  String(result.denomination),
+                )}
               </p>
               <p className="mt-1 text-xs text-p01-text-muted">
-                It counts toward the balance and can be withdrawn from this device.
+                {t("pay.pool.inPoolBody")}
               </p>
               <p className="mt-1 truncate font-mono text-xs text-p01-text-dim">
                 leaf #{result.leafIndex} · commitment {truncate(result.commitment, 8, 6)}
               </p>
               {contributed && (
                 <p className="mt-2 text-xs text-p01-text-muted">
-                  This is not the leaf your deposit created. Your money funded leaf #
-                  {contributed.fundedLeafIndex}, which the treasury owns and you cannot spend; the
-                  note above was deposited before you arrived, for somebody else. That is what
-                  makes the transaction below yours and the note above not traceable to it.
+                  {t("pay.pool.contributedNote").replace(
+                    "{leaf}",
+                    String(contributed.fundedLeafIndex),
+                  )}
                 </p>
               )}
               {/* Unconditional, and it mirrors SubscribePanel's funding
@@ -1544,27 +1578,21 @@ export default function PoolPanel({
                 {result.fundedBy === 'funder' ? (
                   <span>
                     <strong className="text-p01-text">
-                      Your wallet is not on this transaction.
-                    </strong>{' '}
-                    You paid this deployment
-                    {result.walletPaidLamports !== null
-                      ? ` ${(result.walletPaidLamports / 1e9).toFixed(4)} SOL`
-                      : ''}{' '}
-                    in one signature, and it funded the one-time key that made the deposit above —
-                    so the deposit does not name you. What still connects the two is the amount and
-                    the minutes between them, which nothing here hides. Spending this note on
-                    circuit 7 — what this app tries first — publishes no commitment at all, so a
-                    reader cannot walk back from the spend to this deposit; only the C1 + C3
-                    fallback republishes it, and the screen after the spend names which one ran.
+                      {t("pay.pool.depositFunderLead")}
+                    </strong>
+                    {t("pay.pool.depositFunderBody").replace(
+                      "{amount}",
+                      result.walletPaidLamports !== null
+                        ? ` ${(result.walletPaidLamports / 1e9).toFixed(4)} SOL`
+                        : '',
+                    )}
                   </span>
                 ) : (
                   <span>
-                    <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
-                    This deposit was made without the relay, so it comes from your address by name
-                    and the leftover rent came back to it afterwards. Anyone reading this deposit
-                    reaches your wallet in three steps. Spending it on circuit 7 publishes no
-                    commitment, so that walk has to start here at the deposit rather than at the
-                    spend — the deposit, not the spend, is the exposure on this one.
+                    <strong className="text-p01-text">
+                      {t("pay.pool.depositWalletLead")}
+                    </strong>
+                    {t("pay.pool.depositWalletBody")}
                   </span>
                 )}
               </p>
@@ -1593,19 +1621,15 @@ export default function PoolPanel({
               </p>
               <p className="mt-1 text-xs text-p01-text-muted">
                 Your note at leaf #{exchanged.spentLeafIndex} was withdrawn to the deployment's
-                till on circuit 7, at the pool's 0.5 percent withdrawal fee, and bought the note
-                at leaf #{exchanged.issuedLeafIndex}: one the treasury deposited before you
-                arrived, which you never deposited. The withdrawal named a signing key funded
-                by the deployment, not your wallet, and published no commitment.
+                {t("pay.pool.exchangedBody")
+                  .replace("{spent}", String(exchanged.spentLeafIndex))
+                  .replace("{issued}", String(exchanged.issuedLeafIndex))}
               </p>
               <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
                 <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
                 <span>
-                  <strong className="text-p01-text">Not private, and here is what remains.</strong>{' '}
-                  The float that funded the signing key, the nullifier of the note you gave up,
-                  and the clock between this withdrawal and the issue. The issuer deposited the
-                  note you now hold and can regenerate every value it will publish; it also saw
-                  this request and where it came from.
+                  <strong className="text-p01-text">{t("pay.pool.exchangedLead")}</strong>
+                  {t("pay.pool.exchangedBody2")}
                 </span>
               </p>
               <p className="mt-2 text-xs text-p01-text-dim">{exchanged.disclosure}</p>
@@ -1623,10 +1647,18 @@ export default function PoolPanel({
 
         {withdrawn && !busyNote && (
           <div className="space-y-2">
-            <SuccessBurst label={`${withdrawn.denomination} SOL withdrawn`} />
+            <SuccessBurst
+              label={t("pay.pool.withdrawnLabel").replace(
+                "{denomination}",
+                String(withdrawn.denomination),
+              )}
+            />
             <div className="card p-4">
               <p className="font-display text-sm text-p01-text">
-                Withdrew {withdrawn.denomination} SOL
+                {t("pay.pool.withdrewTitle").replace(
+                  "{denomination}",
+                  String(withdrawn.denomination),
+                )}
               </p>
               <p className="mt-1 text-xs text-p01-text-muted">
                 {/* ⚠️ "Only your wallet's signature reaches it" was here and it
@@ -1635,13 +1667,10 @@ export default function PoolPanel({
                     it", which the next sentence then contradicts. Two readings,
                     one of them fatal, on a card whose whole job is to be
                     believed. Say the narrow thing narrowly. */}
-                Paid to {truncate(withdrawn.payout, 6, 6)}, an address derived for this note
-                alone. Only your key can spend it — anyone can see it. Sweep it from the payout
-                list, whenever and wherever you want. The withdrawal itself carries no
-                commitment, so it does not point back at the deposit it spends &mdash; but the
-                payout address above is written into it in the clear, so whoever reads this
-                transaction reaches whoever you sweep it to. Sweeping it to the wallet that
-                deposited would rejoin the two halves by hand.
+                {t("pay.pool.withdrawnPayout").replace(
+                  "{address}",
+                  truncate(withdrawn.payout, 6, 6),
+                )}
               </p>
               {/* Who paid. Two very different sentences, and the user is owed
                   whichever one is true — `fundedBy` is a RESULT, not a request:
@@ -1658,23 +1687,20 @@ export default function PoolPanel({
                   <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
                   <span>
                     <strong className="text-p01-text">Your wallet did not pay for this.</strong>{' '}
-                    The funder covered the rent and fees and the leftover went back to it. That
-                    removes your address from these transactions — it does not make the withdrawal
-                    private: the payout address above is written into it in the clear, so whoever
-                    reads this reaches whoever you sweep it to. The funder also saw the request and
-                    where it came from.
+                    {t("pay.pool.withdrawFunderBody")}
                   </span>
                 </p>
               ) : (
                 <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
                   <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
                   <span>
-                    <strong className="text-p01-text">Your wallet paid for this, in public.</strong>{' '}
-                    It signed a transfer to the signing key before, and got the leftover back
-                    after. Both name your address.
+                    <strong className="text-p01-text">
+                      {t("pay.pool.withdrawWalletLead")}
+                    </strong>
+                    {t("pay.pool.withdrawWalletBody")}
                     {withdrawn.funderFallbackReason ? (
                       <>
-                        {' '}The funder was asked and did not serve:{' '}
+                        {t("pay.pool.funderRefused")}
                         <span className="font-mono">{withdrawn.funderFallbackReason}</span>
                       </>
                     ) : null}
@@ -1699,12 +1725,14 @@ export default function PoolPanel({
             disabled={recovering || shielding || !!busyNote}
             className="text-p01-text-muted underline-offset-2 hover:text-p01-cyan hover:underline disabled:opacity-50"
           >
-            {recovering ? "Checking for stranded funds…" : "Recover funds from a failed attempt"}
+            {recovering
+              ? t("pay.pool.recoverChecking")
+              : t("pay.pool.recoverButton")}
           </button>
           {recovered ? (
             <span className="text-p01-cyan">{recovered}</span>
           ) : shielding || busyNote ? (
-            <span className="text-p01-text-dim">Paused while a move is running.</span>
+            <span className="text-p01-text-dim">{t("pay.pool.pausedMove")}</span>
           ) : null}
         </div>
         {recovering && step && (
@@ -1731,7 +1759,9 @@ export default function PoolPanel({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Coins className="h-4 w-4 text-p01-cyan" />
-              <p className="font-display text-sm text-p01-text">Shielded balance</p>
+              <p className="font-display text-sm text-p01-text">
+                {t("pay.pool.balanceTitle")}
+              </p>
             </div>
             <button
               onClick={rescan}
@@ -1739,25 +1769,26 @@ export default function PoolPanel({
               className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
             >
               <RefreshCw className={scanning ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-              {scanning ? "Scanning…" : "Rescan"}
+              {scanning ? t("pay.pool.scanningLabel") : t("pay.pool.rescan")}
             </button>
           </div>
           <p className="mt-2 font-mono text-2xl text-p01-text">
             {Number(shieldedBalance.toFixed(4))} SOL
           </p>
           <p className="mt-1 text-xs text-p01-text-muted">
-            {unspent.length} note{unspent.length === 1 ? "" : "s"} ready to move
+            {t("pay.pool.notesReady")
+              .replace("{count}", String(unspent.length))
+              .replaceAll("{plural}", unspent.length === 1 ? "" : "s")}
             {storedNotes > 0 && <> · {storedNotes} encrypted backup{storedNotes === 1 ? "" : "s"} on this device</>}
           </p>
           {notesProvisional && (
             <p className="mt-1 text-xs text-p01-text-dim">
-              Shown from this device&apos;s records while the chain check runs. A note withdrawn
-              elsewhere may still appear until the check finishes; it settles on its own.
+              {t("pay.pool.fromRecords")}
             </p>
           )}
           {checkingOlderNotes && (
             <p className="mt-1 text-xs text-p01-text-dim">
-              Still checking for older notes — anything found will be added here.
+              {t("pay.pool.checkingOlder")}
             </p>
           )}
           {scanStep && <p className="mt-2 text-xs text-p01-text-dim">{scanStep}</p>}
@@ -1835,10 +1866,7 @@ export default function PoolPanel({
                 transaction names which pool and therefore the size. What the
                 pool buys is that the size is one of six fixed values instead of
                 an exact figure that identifies you by itself. Say that. */}
-            <span className="font-medium">
-              Devnet. Your amount is one of a few fixed sizes, not hidden. Matching a withdrawal
-              to its deposit is not hidden either.
-            </span>
+            <span className="font-medium">{t("pay.pool.privacySummary")}</span>
             <ChevronDown
               className={
                 disclosureOpen
@@ -1849,39 +1877,25 @@ export default function PoolPanel({
           </button>
           {disclosureOpen && (
             <div className="mt-2 space-y-2 text-p01-red/90">
-              <p>
-                Neither the deposit nor the withdrawal names your wallet: the deposit is signed
-                by a one-time key, and the withdrawal now pays a fresh address derived for that
-                one note. Your wallet no longer funds that key either — since 2026-08-21 a deposit
-                pays this deployment in one signature and the deployment funds the key from a
-                separate address, so there is a third party between you and the pool instead of a
-                single public hop. Two transfers, neither naming both ends. What still connects
-                them is the amount and the minutes between them.
-              </p>
-              <p>
-                The withdrawal publishes the note commitment in the clear, and the deposit
-                published that same value, so anyone can match a withdrawal to its exact deposit.
-                The anonymity set is one, not the note count above.
-              </p>
-              <p>
-                This tab submits every transaction it sends, including the hundreds of proof-chunk
-                uploads a withdrawal needs, so your IP reaches the RPC throughout. One leg is the
-                exception: funding the one-time key is requested from this deployment and signed on
-                its server, so it sees that request and where it came from. Relaying only the last
-                transaction would not change the rest.
-              </p>
-              <p>
-                What you get today: the amount is quantised to a denomination, the note itself is
-                post-quantum encrypted, and the money does not land in your wallet unless you
-                move it there. That is the whole list.
-              </p>
+              {/* The last paragraph now names the carrier of "post-quantum"
+                  (X25519 + ML-KEM-768). Rule 2b of
+                  __tests__/lib/claims-lexicon.test.ts caught the sentence the
+                  moment it entered the dictionary: the guard scans dictionary
+                  values, so a claim that lived only in JSX had never been read
+                  by it. Translating the app is what put it under the guard. */}
+              <p>{t("pay.pool.privacyWallet")}</p>
+              <p>{t("pay.pool.privacyCommitment")}</p>
+              <p>{t("pay.pool.privacyIp")}</p>
+              <p>{t("pay.pool.privacyToday")}</p>
             </div>
           )}
         </div>
 
         {unspent.length > 0 && (
           <div>
-            <p className="mb-2 font-display text-sm text-p01-text">Your notes</p>
+            <p className="mb-2 font-display text-sm text-p01-text">
+              {t("pay.pool.yourNotes")}
+            </p>
             {withdrawReason && (
               <p className="mb-2 text-xs text-p01-text-dim">{withdrawReason}</p>
             )}
@@ -1899,10 +1913,10 @@ export default function PoolPanel({
                     <p className="font-mono text-sm text-p01-text">{n.denomination} SOL note</p>
                     <p className="text-xs text-p01-text-muted">
                       {handedOver.has(noteKey(n))
-                        ? "Handed over, waiting to be claimed. Still yours until one of you spends it."
+                        ? t("pay.pool.noteSent")
                         : notesProvisional
-                          ? "Still being checked against the chain; may already be spent."
-                          : "In the pool, ready to withdraw."}
+                          ? t("pay.pool.noteChecking")
+                          : t("pay.pool.noteReady")}
                     </p>
                     {!handedOver.has(noteKey(n)) && (
                       <button
@@ -1924,10 +1938,10 @@ export default function PoolPanel({
                         // by design, so nothing can be recovered after the
                         // fact: a note handed over from another device, or
                         // before this state existed, can only be declared.
-                        title="Marks this note as given to someone. It keeps the note out of the handoff and subscription pickers, and does not change anything on chain."
+                        title={t("pay.pool.markSentTitle")}
                         className="mt-1 text-xs text-p01-text-dim underline underline-offset-2 hover:text-p01-text"
                       >
-                        Mark as handed over
+                        {t("pay.pool.markSent")}
                       </button>
                     )}
                     {handedOver.has(noteKey(n)) && (
@@ -1945,10 +1959,10 @@ export default function PoolPanel({
                         // Says what it does and, more importantly, what it does
                         // not: the recipient keeps their copy either way. The
                         // only real way to take a note back is to spend it.
-                        title="Stops treating this note as handed over, so it can be handed over or subscribed with again. It does NOT take it back: the recipient still holds their copy."
+                        title={t("pay.pool.unmarkSentTitle")}
                         className="mt-1 text-xs text-p01-cyan underline underline-offset-2 hover:text-p01-text"
                       >
-                        Use it freely again
+                        {t("pay.pool.unmarkSent")}
                       </button>
                     )}
                     <p className="truncate font-mono text-xs text-p01-text-dim">
@@ -1964,9 +1978,9 @@ export default function PoolPanel({
                     // The row says the status in plain words instead.
                     title={
                       busyNote && busyNote !== `${n.pool}:${n.leafIndex}`
-                        ? "Another withdrawal is running."
+                        ? t("pay.pool.anotherWithdrawal")
                         : notesProvisional
-                          ? "Not yet confirmed against the chain: this note may already be spent."
+                          ? t("pay.pool.unconfirmed")
                           : undefined
                     }
                     className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
@@ -1996,9 +2010,7 @@ export default function PoolPanel({
                       onClick={() => handleUnshield(n, { relayed: true })}
                       disabled={!!busyNote || shielding || !signOne || !signMessage}
                       title={
-                        "A relayer sends and pays for this withdrawal, so your wallet is in none " +
-                        "of its transactions. It takes the same fee you already pay and the payout " +
-                        "is unchanged. Slower to start: the relayer is asked, then polled."
+                        t("pay.pool.relayerTitle")
                       }
                       className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
                     >
@@ -2007,7 +2019,7 @@ export default function PoolPanel({
                       ) : (
                         <Shuffle className="h-3.5 w-3.5" />
                       )}
-                      Withdraw via relayer
+                      {t("pay.pool.relayerButton")}
                     </button>
                   )}
                   {/* The note-in exchange.
@@ -2026,11 +2038,7 @@ export default function PoolPanel({
                       onClick={() => handleExchange(n)}
                       disabled={!!busyNote || shielding || !signOne}
                       title={
-                        "Exchanges this note for an older one the treasury deposited before you " +
-                        "arrived. It costs the pool's 0.5 percent withdrawal fee (the note is " +
-                        "withdrawn to the deployment's till on circuit 7) and yields a note you " +
-                        "never deposited, so nothing you spend from it points back at a deposit " +
-                        "of yours. Your wallet signs nothing on chain for it."
+                        t("pay.pool.exchangeTitle")
                       }
                       className="btn-secondary inline-flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
                     >
@@ -2039,7 +2047,7 @@ export default function PoolPanel({
                       ) : (
                         <RefreshCw className="h-3.5 w-3.5" />
                       )}
-                      Exchange for an older note
+                      {t("pay.pool.exchangeButton")}
                     </button>
                   )}
                 </li>
@@ -2047,10 +2055,7 @@ export default function PoolPanel({
             </ul>
             {!signMessage && (
               <p className="mt-2 text-xs text-p01-red">
-                Withdrawal is disabled: this session has no message signer, so the one-time
-                payout address a withdrawal pays into could not be re-derived later. Connect the
-                browser wallet that owns these notes. Paying your wallet directly instead is not
-                offered; that is the leak this replaced.
+                {t("pay.pool.withdrawDisabled")}
               </p>
             )}
           </div>
@@ -2065,33 +2070,32 @@ export default function PoolPanel({
             cleared browser nor a pruning RPC hides one. */}
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
-            <p className="font-display text-sm text-p01-text">Withdrawn, waiting to be moved</p>
+            <p className="font-display text-sm text-p01-text">
+              {t("pay.pool.withdrawnWaiting")}
+            </p>
             <button
               onClick={handleShowPayouts}
               disabled={!!sweeping || !!busyNote}
               title={
                 sweeping
-                  ? "Paused while the sweep runs."
+                  ? t("pay.pool.pausedSweep")
                   : busyNote
-                    ? "Paused while the withdrawal runs."
+                    ? t("pay.pool.pausedWithdrawal")
                     : undefined
               }
               className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              Check
+              {t("pay.pool.checkPayouts")}
             </button>
           </div>
           <p className="mb-2 text-xs text-p01-text-muted">
-            Each withdrawal pays a fresh address derived from your wallet signature, not your
-            wallet. Nothing moves it automatically. Sending it to the wallet that funded the
-            withdrawal is the one destination that links the two together again on chain.
+            {t("pay.pool.payoutLede")}
           </p>
 
           {payouts.length === 0 ? (
             <p className="text-xs text-p01-text-dim">
-              Nothing waiting. Press Check after a withdrawal, or on a new device, to re-derive
-              your payout addresses and read their balances.
+              {t("pay.pool.payoutEmpty")}
             </p>
           ) : (
             <>

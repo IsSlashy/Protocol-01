@@ -46,6 +46,30 @@ const PAY_PAGE = join(__dirname, '../../app/(pay)/app/page.tsx');
 const SUBSCRIBE = join(__dirname, '../../components/pay/SubscribePanel.tsx');
 const POOL = join(__dirname, '../../components/pay/PoolPanel.tsx');
 
+/**
+ * WHERE THE SUBSCRIBE COST SENTENCES LIVE NOW, AND WHY THIS IS STRONGER.
+ *
+ * On 2026-09-09 components/pay/* was translated: every rendered sentence
+ * moved out of the JSX into `pay.*` in the two dictionaries, because the site
+ * serves French by country and the whole app was hardcoded English. Three
+ * assertions below used to read CostDisclosure's source; they read the
+ * dictionaries instead.
+ *
+ * That is not the same guarantee moved sideways. The guard used to scan ONE
+ * English JSX file; it now scans BOTH locales, so a French translation cannot
+ * quietly say something the English is forbidden from saying -- which is
+ * exactly the failure a translation pass invites, in the locale nobody on this
+ * team reads.
+ *
+ * What stays pinned on the component source is what is genuinely a property
+ * of the source: that the float figure is INTERPOLATED from
+ * `SUBSCRIBE_FLOAT_SOL` rather than typed as digits. A number in a dictionary
+ * rots exactly as silently as a number in JSX, so the constant must never
+ * move into i18n.
+ */
+const DICT_EN = join(__dirname, '../../i18n/en.ts');
+const DICT_FR = join(__dirname, '../../i18n/fr.ts');
+
 const read = (p: string) => readFileSync(p, 'utf8');
 
 /** Comments must not satisfy a claim about what the page SAYS. */
@@ -64,18 +88,26 @@ describe('the /app banner', () => {
     ).not.toMatch(/comes from your address by name/);
   });
 
-  it('states what the wallet actually does instead of saying nothing', () => {
-    const rendered = codeOnly(read(PAY_PAGE));
-    // The true fact: one public signature to the deployment, which then funds
-    // the key that touches the pool.
-    expect(rendered).toMatch(/one public\s*\n?\s*signature paying this deployment/);
-    expect(rendered).toMatch(/not on the pool\s*\n?\s*transaction/);
+  it('states what the wallet actually does instead of saying nothing, in both locales', () => {
+    // The banner moved into `pay.page.panelNote` with the 2026-09-09
+    // translation; see the note at the top of this file. The true fact it must
+    // carry is unchanged: one public signature to the deployment, which then
+    // funds the key that touches the pool.
+    const en = read(DICT_EN);
+    expect(en).toMatch(/one public signature paying this deployment/);
+    expect(en).toMatch(/not on the pool transaction/);
+
+    const fr = read(DICT_FR);
+    expect(fr).toMatch(/une signature publique payant ce déploiement/);
+    expect(fr).toMatch(/pas sur la transaction du pool/);
   });
 
   it('still refuses to answer, in the banner, who paid for a spend', () => {
     // Per-screen facts belong to the screen. The banner asserting one would be
-    // the same defect wearing the opposite sign.
-    expect(codeOnly(read(PAY_PAGE))).toMatch(/Each screen says who paid for that screen/);
+    // the same defect wearing the opposite sign. Both locales must point the
+    // reader at the screen rather than answer for it.
+    expect(read(DICT_EN)).toMatch(/Each screen says who paid for that screen/);
+    expect(read(DICT_FR)).toMatch(/Chaque écran dit qui a payé pour cet écran/);
   });
 });
 
@@ -127,12 +159,20 @@ describe('the subscribe cost disclosure, read before signing', () => {
     ).not.toMatch(/your wallet signs one deposit of roughly 1 SOL/);
   });
 
-  it('names both shapes of WHO PAYS and says what decides', () => {
-    const rendered = codeOnly(read(SUBSCRIBE));
-    expect(rendered).toMatch(/funder if\s*\n?\s*it is available/);
-    expect(rendered).toMatch(/your own\s*\n?\s*wallet if it is not/);
+  it('names both shapes of WHO PAYS and says what decides, in both locales', () => {
+    const en = read(DICT_EN);
+    expect(en).toMatch(/funder if it is available/);
+    expect(en).toMatch(/your own wallet if it is not/);
     // And it must point at where the answer actually appears.
-    expect(rendered).toMatch(/screen after the purchase names which happened/);
+    expect(en).toMatch(/screen after the purchase names which happened/);
+
+    // The French has to carry the same conditional. A translation that lost
+    // the "if it is not" half would promise a funded purchase
+    // unconditionally to every visitor in France, Canada and Switzerland.
+    const fr = read(DICT_FR);
+    expect(fr).toMatch(/financeur de ce déploiement s.il est disponible/);
+    expect(fr).toMatch(/votre propre portefeuille sinon/);
+    expect(fr).toMatch(/L.écran qui suit l.achat dit lequel a agi/);
   });
 
   /**
@@ -203,13 +243,18 @@ describe('the subscribe cost disclosure, read before signing', () => {
       expect(rendered).toMatch(/\$\{SUBSCRIBE_FLOAT_SOL\.pair\}/);
     });
 
-    it('says WHICH route each figure belongs to, and what decides', () => {
-      const rendered = codeOnly(read(SUBSCRIBE));
-      expect(rendered).toMatch(/circuit 7, which rents ONE buffer/);
-      expect(rendered).toMatch(/C1 \+ C3 pair, which rents two/);
+    it('says WHICH route each figure belongs to, and what decides, in both locales', () => {
+      const en = read(DICT_EN);
+      expect(en).toMatch(/circuit 7, which rents ONE buffer/);
+      expect(en).toMatch(/C1 \+ C3 pair, which rents two/);
       // The one case the user cannot influence and would otherwise be surprised
       // by — the same carve-out SendForm's disclosure makes for the same notes.
-      expect(rendered).toMatch(/deposited before we randomised the blinding/);
+      expect(en).toMatch(/deposited before we randomised the blinding/);
+
+      const fr = read(DICT_FR);
+      expect(fr).toMatch(/circuit 7, qui loue UN seul tampon/);
+      expect(fr).toMatch(/paire C1 \+ C3, qui en loue deux/);
+      expect(fr).toMatch(/déposée avant que nous ayons randomisé l.aveuglement/);
     });
 
     it('the two figures really are different, so one sentence could not have covered both', () => {
@@ -235,10 +280,18 @@ describe('the subscribe cost disclosure, read before signing', () => {
     // one direction or the other: drop the first and the copy understates what
     // C7 achieved, drop the second and it hides the C1 + C3 fallback, which
     // really does republish the commitment.
-    const rendered = codeOnly(read(SUBSCRIBE));
-    expect(rendered).toMatch(/There is no cancel and no refund/);
-    expect(rendered).toMatch(/circuit-7 subscription carries no note commitment/);
-    expect(rendered).toMatch(/C1 \+ C3 fallback does republish the commitment/);
+    // Read from the dictionaries since the 2026-09-09 translation; see the
+    // note at the top of this file. Both locales, because the PAIR is the
+    // guarantee and a translation is free to drop half of a sentence.
+    const en = read(DICT_EN);
+    expect(en).toMatch(/There is no cancel and no refund/);
+    expect(en).toMatch(/circuit-7 subscription carries no note commitment/);
+    expect(en).toMatch(/C1 \+ C3 fallback does republish the commitment/);
+
+    const fr = read(DICT_FR);
+    expect(fr).toMatch(/ni annulation ni remboursement/);
+    expect(fr).toMatch(/circuit 7 ne porte aucun engagement de note/);
+    expect(fr).toMatch(/repli C1 \+ C3, lui, republie l.engagement/);
   });
 });
 
@@ -249,11 +302,19 @@ describe('the withdrawal payout line', () => {
     expect(rendered).not.toMatch(/Only your wallet&apos;s signature reaches it/);
   });
 
-  it('separates who can spend from who can see, in that order', () => {
-    const rendered = codeOnly(read(POOL));
-    expect(rendered).toMatch(/Only your key can spend it — anyone can see it/);
+  it('separates who can spend from who can see, in that order, in both locales', () => {
+    // Read from the dictionaries since the 2026-09-09 translation; see the
+    // note at the top of this file. Both locales, because the ORDER is the
+    // guarantee: spend first, see second, and a translation is free to drop
+    // the half that makes the first clause safe.
+    const en = read(DICT_EN);
+    expect(en).toMatch(/Only your key can spend it — anyone can see it/);
     // The sentence that made the old wording dangerous must still be there:
     // the payout address is public and reaches wherever you sweep.
-    expect(rendered).toMatch(/whoever\s*\n?\s*reads this reaches whoever you sweep it to/);
+    expect(en).toMatch(/whoever reads this transaction reaches whoever you sweep it to/);
+
+    const fr = read(DICT_FR);
+    expect(fr).toMatch(/Seule votre clé peut la dépenser — tout le monde peut la voir/);
+    expect(fr).toMatch(/atteint donc celui vers qui vous balayez/);
   });
 });

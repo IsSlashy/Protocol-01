@@ -131,7 +131,7 @@ function noteView(over: Partial<PoolNoteView> = {}): PoolNoteView {
  * a time, so paste it — which is also the real interaction.
  */
 async function pasteAddress(user: ReturnType<typeof userEvent.setup>, value: string) {
-  await user.click(screen.getByLabelText(/Recipient's note address/i));
+  await user.click(screen.getByLabelText(/Recipient.s address/i));
   await user.paste(value);
 }
 
@@ -193,11 +193,20 @@ describe("the note handoff replaces the amount box", () => {
     expect(screen.queryByText("1 SOL")).not.toBeInTheDocument();
   });
 
-  it("says what to do when there is nothing to hand over", async () => {
+  it("says what to do when there is nothing to send", async () => {
+    // The empty state was "No unspent notes. Shield one in the Pool tab first:
+    // you cannot hand over 0.2 SOL…". Two things changed and both are pinned
+    // here: it points at the tab by the name the tab bar actually shows
+    // (PayApp's TAB_LABEL renames `pool` to Shield), and it leads with the
+    // action rather than with what the user cannot do.
     scanPool.mockResolvedValue({ notes: [], shieldedBalance: 0, poolSizes: [] });
     renderForm();
-    expect(await screen.findByText(/No unspent notes/i)).toBeInTheDocument();
-    expect(screen.getByText(/cannot hand over 0\.2 SOL/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Nothing to send yet/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/Open the Shield tab/i).length).toBeGreaterThan(0);
+    // The reason survives the rewrite: a note is a whole fixed size.
+    expect(screen.getByText(/not an amount/i)).toBeInTheDocument();
+    // And the tab it points at must not be named after a state key any more.
+    expect(screen.queryByText(/Pool tab/i)).not.toBeInTheDocument();
   });
 });
 
@@ -209,8 +218,8 @@ describe("the recipient address is checked before any work", () => {
     // A perfectly good Solana wallet address — and useless here.
     await pasteAddress(user, "7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU");
 
-    expect(screen.getByText(/Not a note address/i)).toBeInTheDocument();
-    const seal = screen.getByRole("button", { name: /Seal this note to them/i });
+    expect(screen.getByText(/not one of these addresses/i)).toBeInTheDocument();
+    const seal = screen.getByRole("button", { name: /Prepare the note/i });
     expect(seal).toBeDisabled();
     await user.click(seal);
     expect(sealNoteFor).not.toHaveBeenCalled();
@@ -222,8 +231,8 @@ describe("the recipient address is checked before any work", () => {
     await user.click(await screen.findByText("0.1 SOL"));
     await pasteAddress(user, RECIPIENT_ADDRESS);
 
-    expect(screen.getByText(/Valid note address/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Seal this note to them/i })).toBeEnabled();
+    expect(screen.getByText(/Address looks right/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Prepare the note/i })).toBeEnabled();
   });
 
   it("will not seal until a note is picked", async () => {
@@ -231,7 +240,7 @@ describe("the recipient address is checked before any work", () => {
     renderForm();
     await screen.findByText("0.1 SOL");
     await pasteAddress(user, RECIPIENT_ADDRESS);
-    expect(screen.getByRole("button", { name: /Seal this note to them/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Prepare the note/i })).toBeDisabled();
   });
 });
 
@@ -241,7 +250,7 @@ describe("sealing", () => {
     renderForm();
     await user.click(await screen.findByText("0.1 SOL"));
     await pasteAddress(user, RECIPIENT_ADDRESS);
-    await user.click(screen.getByRole("button", { name: /Seal this note to them/i }));
+    await user.click(screen.getByRole("button", { name: /Prepare the note/i }));
     return user;
   }
 
@@ -268,7 +277,7 @@ describe("sealing", () => {
     // `writeText`: `userEvent.setup()` installs its own `navigator.clipboard`,
     // so a spy planted beforehand would be replaced and would pass by never
     // being called.
-    await user.click(screen.getByRole("button", { name: /Copy sealed note/i }));
+    await user.click(screen.getByRole("button", { name: /Copy the note/i }));
     await expect(navigator.clipboard.readText()).resolves.toBe(SEALED);
     expect(await screen.findByRole("button", { name: /Copied/i })).toBeInTheDocument();
   });
@@ -321,7 +330,7 @@ describe("the stealth send is parked, and parked means invisible not deleted", (
     expect(scanPool).not.toHaveBeenCalled();
     // It used to fall back to the stealth form here. With that path parked the
     // honest answer is the reason, not a different product.
-    expect(screen.getByText(/needs your derived pool keys/i)).toBeInTheDocument();
+    expect(screen.getByText(/needs your keys and a connected wallet/i)).toBeInTheDocument();
     expect(screen.queryByLabelText("Amount")).not.toBeInTheDocument();
   });
 });

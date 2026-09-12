@@ -1,6 +1,7 @@
 "use client";
 
 import { KeyRound, RefreshCw } from "lucide-react";
+import { useT } from "@/i18n";
 
 /**
  * The one line a panel says when the sealed local records could not be opened.
@@ -58,6 +59,10 @@ import { KeyRound, RefreshCw } from "lucide-react";
  * an empty wallet keeps its ordinary empty state.
  */
 export default function StaleWorkerNotice({ lostSession = false }: { lostSession?: boolean }) {
+  /* Both lines are `pay.shared.*` now. Every clause is load-bearing (see
+     this file's header); the French carries the same clauses, including the
+     one that says a reload alone does not fix the lost session. */
+  const t = useT();
   return (
     <div className="flex items-start gap-2 rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-3 text-xs text-p01-yellow">
       {lostSession ? (
@@ -66,19 +71,9 @@ export default function StaleWorkerNotice({ lostSession = false }: { lostSession
         <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       )}
       {lostSession ? (
-        <p>
-          This tab lost its private-key session: the in-page worker holding your derived keys
-          restarted, and until you sign again it cannot unlock your encrypted records, so what
-          is shown may be incomplete or out of date. Your records are safe on this device —
-          reconnect your wallet and sign to derive your keys again to see them. A reload alone
-          is not enough; the signature is what unlocks them.
-        </p>
+        <p>{t("pay.shared.lostSession")}</p>
       ) : (
-        <p>
-          This tab is still running an older version of the app and cannot read some of the
-          records saved on this device, so what it shows may be incomplete or out of date. Your
-          records are intact — reload this tab to see them.
-        </p>
+        <p>{t("pay.shared.staleWorker")}</p>
       )}
     </div>
   );

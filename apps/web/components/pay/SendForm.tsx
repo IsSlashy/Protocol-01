@@ -145,6 +145,7 @@ import HonestyBadge from "./HonestyBadge";
 import StaleWorkerNotice from "./StaleWorkerNotice";
 import SuccessBurst from "./SuccessBurst";
 import { formatAmount, truncate } from "./util";
+import { useT } from "@/i18n";
 
 type Mode = "note" | "stealth";
 
@@ -187,13 +188,6 @@ function noteKey(n: PoolNoteView): string {
  */
 const QR_BYTE_CAPACITY = 2_900;
 
-/**
- * First-visit switch for the disclosure folds. The full text is owed to the
- * user once in full view; from the second visit on it folds to its one-line
- * summary and stays one click away. Delivery changes, content does not.
- */
-const DISCLOSURE_SEEN_KEY = "p01.pay.send.disclosureSeen";
-
 export default function SendForm({
   adapter,
   asset,
@@ -221,23 +215,29 @@ export default function SendForm({
    */
   onBusyChange?: (busy: boolean) => void;
 }) {
+  /* Every sentence in this panel used to be English written into the JSX, on a
+     site that serves French by country. They are `pay.send.*` now; see the
+     block header in i18n/en.ts for why. */
+  const t = useT();
   const poolReady = !!meta && !!owner;
   const [mode, setMode] = useState<Mode>(poolReady || STEALTH_SEND_PARKED ? "note" : "stealth");
 
   // ── Disclosure fold (both modes) ─────────────────────────────────────────
+  /**
+   * ⚠️ CLOSED BY DEFAULT NOW, AND NOTHING IS HIDDEN BY IT.
+   *
+   * This used to open itself on a visitor's first visit and remember it in
+   * localStorage. The intent was right — the disclosure is owed — but the
+   * result was that every panel greeted a first-time user with four or five
+   * paragraphs above the control they came for, which is how a disclosure
+   * stops being read.
+   *
+   * What is owed is that the fact is ON THE SCREEN and one gesture away, not
+   * that it is unfolded. The summary line stays visible at all times and
+   * carries the whole point in one sentence; the paragraphs are unchanged,
+   * word for word, behind it. Nothing here is softened, only folded.
+   */
   const [disclosureOpen, setDisclosureOpen] = useState(false);
-  useEffect(() => {
-    try {
-      if (!window.localStorage.getItem(DISCLOSURE_SEEN_KEY)) {
-        setDisclosureOpen(true);
-        window.localStorage.setItem(DISCLOSURE_SEEN_KEY, "1");
-      }
-    } catch {
-      // No storage, no memory of a first visit: open every time, which errs
-      // on the side of showing the disclosure.
-      setDisclosureOpen(true);
-    }
-  }, []);
   function onDisclosureToggle(e: SyntheticEvent<HTMLDetailsElement>) {
     setDisclosureOpen(e.currentTarget.open);
   }
@@ -359,7 +359,7 @@ export default function SendForm({
       // wholesale dropped it from this picker the moment the slow scan landed.
       setNotes(mergeScanWithLocal(res.notes, localNotes));
     } catch (e) {
-      const msg = (e as Error).message || "Pool scan failed.";
+      const msg = (e as Error).message || t("pay.send.errScan");
       // A partial paint followed by a failure leaves a real but possibly
       // incomplete list on screen — the error must say so, not less.
       setScanError(
@@ -446,19 +446,22 @@ export default function SendForm({
   // never gate an action button.
   const sealReason = !chosen
     ? unspent.length === 0
-      ? "Shield a note in the Pool tab first."
-      : "Pick a note above to hand over."
+      ? t("pay.send.reasonShieldFirst")
+      : t("pay.send.reasonPickNote")
     : noteAddress.trim().length === 0
-      ? "Paste the recipient's note address."
+      ? t("pay.send.reasonPasteAddress")
       : !addressLooksRight
-        ? "Fix the recipient address above first."
+        ? t("pay.send.reasonFixAddress")
         : null;
   const sendReason = !resolved
-    ? "Enter a recipient first."
+    ? t("pay.send.reasonRecipient")
     : amountNum <= 0
-      ? "Enter an amount."
+      ? t("pay.send.reasonAmount")
       : belowMin
-        ? `The minimum send is ${formatAmount(quote.minSend, asset.symbol)}.`
+        ? t("pay.send.reasonMinimum").replace(
+            "{amount}",
+            formatAmount(quote.minSend, asset.symbol),
+          )
         : null;
 
   async function handleResolve() {
@@ -485,7 +488,7 @@ export default function SendForm({
     // The only step this page can truthfully report: `adapter.send` builds the
     // transfer, opens the wallet and submits as one opaque call, so the bar
     // gets one synthesized step rather than invented sub-steps.
-    setSendStep("Sending to a fresh one-time address. Approve the transfer in your wallet...");
+    setSendStep(t("pay.send.stealthStep"));
     try {
       setResult(await adapter.send({ recipient: resolved, asset, amount: amountNum }));
     } catch (e) {
@@ -504,7 +507,7 @@ export default function SendForm({
     // is minutes of history-walking.
     if (!isP01NoteAddress(noteAddress)) {
       setSealError(
-        'That is not a Protocol 01 note address. It starts with "p01pq:". Ask the recipient for theirs.',
+        t("pay.send.errNotAnAddress"),
       );
       return;
     }
@@ -533,7 +536,7 @@ export default function SendForm({
       });
       setHandedOver((prev) => new Set(prev).add(noteKey(chosen)));
     } catch (e) {
-      setSealError((e as Error).message || "Could not seal this note.");
+      setSealError((e as Error).message || t("pay.send.errPrepare"));
     } finally {
       setSealing(false);
       setSealStep(null);
@@ -553,13 +556,18 @@ export default function SendForm({
     const qrFits = s.sealedNote.length <= QR_BYTE_CAPACITY;
     return (
       <div ref={resultRef} className="space-y-4">
-        <SuccessBurst label={`Sealed a ${s.denomination} ${chosen?.token ?? "SOL"} note`} />
+        {/* "Sealed a 1 SOL note" names the cryptographic operation. What
+            happened, from where the reader sits, is that a note is ready to
+            hand to someone. */}
+        <SuccessBurst
+          label={t("pay.send.ready").replace(
+            "{amount}",
+            `${s.denomination} ${chosen?.token ?? "SOL"}`,
+          )}
+        />
 
         <div className="card p-4">
-          <p className="text-sm text-p01-text-muted">
-            Nothing was sent. Give the recipient the string below, by any channel: it is
-            encrypted to their address, so it is useless to anyone else in transit.
-          </p>
+          <p className="text-sm text-p01-text-muted">{t("pay.send.readyBody")}</p>
 
           <code
             data-testid="sealed-note"
@@ -574,7 +582,7 @@ export default function SendForm({
               className="btn-secondary inline-flex items-center gap-2 px-3 py-1.5 text-xs"
             >
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied" : "Copy sealed note"}
+              {copied ? t("pay.send.copied") : t("pay.send.copyNote")}
             </button>
             {/* Second-plane reference: lets the sender tell two handoffs apart. */}
             <span className="font-mono text-xs text-p01-text-dim">
@@ -588,14 +596,17 @@ export default function SendForm({
                 <QRCode value={s.sealedNote} size={180} />
               </div>
               <p className="text-center text-xs text-p01-text-dim">
-                {s.sealedNote.length.toLocaleString()} characters, a dense code. If a camera
-                struggles with it, copy the text instead.
+                {t("pay.send.qrDense").replace(
+                  "{count}",
+                  s.sealedNote.length.toLocaleString(),
+                )}
               </p>
             </div>
           ) : (
             <p className="mt-4 text-xs text-p01-text-muted">
-              Too long for a QR code ({s.sealedNote.length.toLocaleString()} characters, the
-              format tops out around {QR_BYTE_CAPACITY.toLocaleString()}). Copy the text.
+              {t("pay.send.qrTooLong")
+                .replace("{count}", s.sealedNote.length.toLocaleString())
+                .replace("{max}", QR_BYTE_CAPACITY.toLocaleString())}
             </p>
           )}
         </div>
@@ -603,22 +614,14 @@ export default function SendForm({
         {/* Everything a user could get wrong from here. All three are
             properties of the mechanism, not warnings about bugs. */}
         <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-          <p className="font-medium">This string is now the money.</p>
+          <p className="font-medium">{t("pay.send.moneyTitle")}</p>
           <div className="mt-1.5 space-y-2 text-p01-red/90">
-            <p>
-              Once the recipient opens it, whoever holds the contents can withdraw the note. It is
-              a bearer instrument, like cash: there is no account it belongs to and no way to
-              cancel it.
-            </p>
-            <p>
-              You can still withdraw this note yourself. Handing it over does not consume it: the
-              secrets come from your own pool seed, so both of you hold a spendable copy until one
-              of you spends it. Whoever goes first wins and the other copy stops working.
-            </p>
+            <p>{t("pay.send.moneyBearer")}</p>
+            <p>{t("pay.send.moneyBothCopies")}</p>
             <p>
               {s.merklePath === "none"
-                ? "No Merkle path travelled with this note, so the recipient's wallet has to rebuild it from this pool's history before withdrawing."
-                : "The note carries its Merkle path, so the recipient can withdraw without rebuilding the pool's history."}
+                ? t("pay.send.pathMissing")
+                : t("pay.send.pathStored")}
             </p>
           </div>
         </div>
@@ -632,7 +635,7 @@ export default function SendForm({
             void rescan();
           }}
         >
-          Hand over another note
+          {t("pay.send.another")}
         </button>
       </div>
     );
@@ -649,11 +652,12 @@ export default function SendForm({
           the recipient is hidden. The success block is what a user remembers,
           so it is the last place that should overstate.
         */}
-        <SuccessBurst label="Sent to a one-time address" />
+        <SuccessBurst label={t("pay.send.stealthSent")} />
         <div className="card p-4">
           <p className="text-sm text-p01-text-muted">
-            {formatAmount(amountNum, asset.symbol)} to {resolved?.label}. The recipient is
-            hidden; your wallet and the amount are on-chain in the clear.
+            {t("pay.send.stealthResult")
+              .replace("{amount}", formatAmount(amountNum, asset.symbol))
+              .replace("{label}", resolved?.label ?? "")}
           </p>
           <a
             href={r.explorerUrl}
@@ -673,7 +677,7 @@ export default function SendForm({
             setResolved(null);
           }}
         >
-          Send another
+          {t("pay.send.stealthAnother")}
         </button>
       </div>
     );
@@ -698,7 +702,7 @@ export default function SendForm({
               : "flex-1 rounded-md px-3 py-1.5 text-sm font-medium text-p01-text-muted hover:text-p01-text"
           }
         >
-          Hand over a note
+          {t("pay.send.modeNote")}
         </button>
         <button
           type="button"
@@ -709,7 +713,7 @@ export default function SendForm({
               : "flex-1 rounded-md px-3 py-1.5 text-sm font-medium text-p01-text-muted hover:text-p01-text"
           }
         >
-          Stealth send
+          {t("pay.send.modeStealth")}
         </button>
       </div>
       )}
@@ -717,8 +721,7 @@ export default function SendForm({
       {mode === "note" ? (
         !poolReady ? (
           <div className="card p-4 text-sm text-p01-text-muted">
-            Handing over a note needs your derived pool keys and a connected wallet. Reconnect and
-            sign to derive, then come back.
+            {t("pay.send.gate")}
           </div>
         ) : (
           <div className="grid gap-5 lg:grid-cols-2">
@@ -729,7 +732,7 @@ export default function SendForm({
               <div>
                 <div className="mb-1.5 flex items-center justify-between">
                   <span className="block text-xs uppercase tracking-wider text-p01-text-muted">
-                    Note to hand over
+                    {t("pay.send.whichNote")}
                   </span>
                   <button
                     type="button"
@@ -738,13 +741,13 @@ export default function SendForm({
                     className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
                   >
                     <RefreshCw className={scanning ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-                    {scanning ? "Scanning…" : "Rescan"}
+                    {scanning ? t("pay.send.scanning") : t("pay.send.rescan")}
                   </button>
                 </div>
 
                 {checkingOlderNotes && (
                   <p className="mb-2 text-xs text-p01-text-dim">
-                    Still checking for older notes — anything found will be added here.
+                    {t("pay.send.checkingOlder")}
                   </p>
                 )}
                 {scanStep && <p className="mb-2 text-xs text-p01-text-dim">{scanStep}</p>}
@@ -764,8 +767,12 @@ export default function SendForm({
 
                 {!scanning && unspent.length === 0 && !scanError && (
                   <p className="text-xs text-p01-text-muted">
-                    No unspent notes. Shield one in the Pool tab first: you cannot hand over 0.2
-                    SOL, you hand over a note, and a note is one of the fixed pool sizes.
+                    {/* Two corrections. The tab is called Shield, not Pool —
+                        PayApp's TAB_LABEL renamed it and this sentence sent
+                        people looking for a tab that is not there. And the
+                        explanation led with what you cannot do; it now leads
+                        with what to do, and gives the reason after. */}
+                    {t("pay.send.empty")}
                   </p>
                 )}
 
@@ -819,7 +826,7 @@ export default function SendForm({
                   htmlFor="p01-note-address"
                   className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
                 >
-                  Recipient&apos;s note address
+                  {t("pay.send.recipientLabel")}
                 </label>
                 <input
                   id="p01-note-address"
@@ -831,17 +838,19 @@ export default function SendForm({
                 {noteAddress.trim().length > 0 &&
                   (addressLooksRight ? (
                     <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-cyan">
-                      <Check className="h-3.5 w-3.5" /> Valid note address
+                      <Check className="h-3.5 w-3.5" /> {t("pay.send.addressOk")}
                     </p>
                   ) : (
                     <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-yellow">
-                      <TriangleAlert className="h-3.5 w-3.5" /> Not a note address. It starts with
-                      &quot;p01pq:&quot;.
+                      <TriangleAlert className="h-3.5 w-3.5" /> {t("pay.send.addressBad")}
                     </p>
                   ))}
+                {/* Pointed at one client only, and named a screen inside it.
+                    The web app shows the same address on its own Receive tab
+                    (ReceivePanel), which is the copy a tester can actually
+                    reach from here. */}
                 <p className="mt-1.5 text-xs text-p01-text-muted">
-                  Not a wallet address. The recipient finds theirs on the Import note screen of
-                  the Protocol 01 extension.
+                  {t("pay.send.addressHint")}
                 </p>
               </div>
 
@@ -859,11 +868,11 @@ export default function SendForm({
               >
                 {sealing ? (
                   <>
-                    <Loader2 className="h-4 w-4 animate-spin" /> Sealing…
+                    <Loader2 className="h-4 w-4 animate-spin" /> {t("pay.send.preparing")}
                   </>
                 ) : (
                   <>
-                    Seal this note to them <ArrowRight className="h-4 w-4" />
+                    {t("pay.send.prepare")} <ArrowRight className="h-4 w-4" />
                   </>
                 )}
               </button>
@@ -889,55 +898,16 @@ export default function SendForm({
                 >
                   <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-cyan [&::-webkit-details-marker]:hidden">
                     <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
-                    <span>
-                      Nothing goes on chain now. Whether the note&apos;s later exit can be
-                      linked to your deposit depends on where it is withdrawn from, and you
-                      do not choose that.
-                    </span>
+                    <span>{t("pay.send.discSummary")}</span>
                   </summary>
                   <div className="space-y-2 px-3 pb-3 text-xs text-p01-cyan/90">
-                    <p className="font-medium text-p01-cyan">
-                      No transaction is sent. That is what makes it private.
-                    </p>
-                    <p>
-                      Handing over a note moves nothing on chain: the recipient simply ends up
-                      holding its secrets. There is no transfer to observe, so there is no
-                      sender, no recipient, no amount and no timing for anyone to correlate, and
-                      no fee.
-                    </p>
-                    <p className="text-p01-yellow">
-                      What it does not hide depends on the client they withdraw from, and
-                      handing a note over does not let you pick it. From the phone, the
-                      withdrawal publishes the same note commitment your deposit published, so
-                      that exit is publicly matchable to your deposit. Measured on devnet. So
-                      does any client, on any note that cannot be proven on the newer circuit.
-                    </p>
-                    <p className="text-p01-yellow">
-                      From the Protocol 01 extension, for a note deposited recently, the
-                      commitment stays off the wire — but nothing else does: there the
-                      recipient&apos;s own wallet signs the withdrawal and rents the proof
-                      buffer, so it names them directly whichever circuit proves it.
-                    </p>
-                    <p className="text-p01-yellow">
-                      From this web app, for a note deposited recently, it no longer does: the
-                      spend is proven on a single circuit-7 proof and no commitment reaches the
-                      wire. A note deposited before we randomised the blinding is the exception
-                      — it carries its deposit epoch instead, which makes its leaf findable from
-                      the published nullifier by trying a few thousand epochs, so this app
-                      withdraws it the old way rather than pretend. Either way, what changes is
-                      only the tie to your deposit: the withdrawal still names the address being
-                      paid, and whoever funded it is still one hop behind the fee payer. The
-                      handoff is invisible in every case; the note leaving the pool is not.
-                    </p>
-                    <p className="text-p01-yellow">
-                      You keep a spendable copy. The note is not consumed or locked by handing it
-                      over; whoever withdraws first wins.
-                    </p>
-                    <p className="text-p01-cyan/70">
-                      For the curious: a note is identified by its leaf number and public
-                      commitment, and the sealed string is encrypted to the recipient&apos;s
-                      p01pq: address with X25519 plus ML-KEM-768, a post-quantum scheme.
-                    </p>
+                    <p className="font-medium text-p01-cyan">{t("pay.send.discLead")}</p>
+                    <p>{t("pay.send.discNoTx")}</p>
+                    <p className="text-p01-yellow">{t("pay.send.discPhone")}</p>
+                    <p className="text-p01-yellow">{t("pay.send.discExtension")}</p>
+                    <p className="text-p01-yellow">{t("pay.send.discWeb")}</p>
+                    <p className="text-p01-yellow">{t("pay.send.discKeepCopy")}</p>
+                    <p className="text-p01-cyan/70">{t("pay.send.discCurious")}</p>
                   </div>
                 </details>
               )}
@@ -954,7 +924,7 @@ export default function SendForm({
                 htmlFor="p01-stealth-recipient"
                 className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
               >
-                Recipient
+                {t("pay.send.stealthRecipient")}
               </label>
               <div className="flex gap-2">
                 <input
@@ -966,7 +936,7 @@ export default function SendForm({
                     setResolved(null);
                   }}
                   onBlur={handleResolve}
-                  placeholder="Wallet address or st… meta-address"
+                  placeholder={t("pay.send.stealthPlaceholder")}
                   className="card w-full bg-p01-void px-4 py-3 font-mono text-sm text-p01-text outline-none placeholder:text-p01-text-dim focus:border-p01-cyan"
                 />
                 <button
@@ -984,7 +954,8 @@ export default function SendForm({
               </div>
               {resolved && (
                 <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-cyan">
-                  <Check className="h-3.5 w-3.5" /> Resolved {resolved.label} · v2 hybrid
+                  <Check className="h-3.5 w-3.5" />{" "}
+                  {t("pay.send.stealthResolved").replace("{label}", resolved.label)}
                 </p>
               )}
             </div>
@@ -995,7 +966,7 @@ export default function SendForm({
                 htmlFor="p01-stealth-amount"
                 className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
               >
-                Amount
+                {t("pay.send.stealthAmount")}
               </label>
               <div className="card flex items-center gap-3 bg-p01-void px-4 py-3">
                 <input
@@ -1010,7 +981,7 @@ export default function SendForm({
               </div>
               {belowMin && (
                 <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-yellow">
-                  <TriangleAlert className="h-3.5 w-3.5" /> Minimum send is{" "}
+                  <TriangleAlert className="h-3.5 w-3.5" /> {t("pay.send.stealthMinimum")}{" "}
                   {formatAmount(quote.minSend, asset.symbol)}
                 </p>
               )}
@@ -1028,12 +999,8 @@ export default function SendForm({
               */}
               {asset.chainId === "solana" && amountNum > 0 && (
                 <p className="mt-1.5 text-xs text-p01-text-muted">
-                  <span className="text-p01-yellow">
-                    This amount and your wallet will be public.
-                  </span>{" "}
-                  To hide them, shield into the pool and hand over a note instead: notes are
-                  fixed at 0.1, 1, 10, 100, 500 or 1000 SOL, and a free-form amount cannot be
-                  hidden because it identifies itself.
+                  <span className="text-p01-yellow">{t("pay.send.stealthPublic")}</span>{" "}
+                  {t("pay.send.stealthPublicFix")}
                 </p>
               )}
             </div>
@@ -1059,16 +1026,16 @@ export default function SendForm({
                 address, fee payer the wallet. The button is the last thing read
                 before committing, and it contradicted the disclosure directly
                 above it, which is the exact failure this file's own header warns
-                about. Shielding is the Pool tab; handing over a note is the other
+                about. Shielding is the Shield tab; sending a note is the other
                 mode of this one.
               */}
               {sending ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Sending…
+                  <Loader2 className="h-4 w-4 animate-spin" /> {t("pay.send.stealthSending")}
                 </>
               ) : (
                 <>
-                  Send to a one-time address <ArrowRight className="h-4 w-4" />
+                  {t("pay.send.stealthSend")} <ArrowRight className="h-4 w-4" />
                 </>
               )}
             </button>
@@ -1094,7 +1061,7 @@ export default function SendForm({
               >
                 <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-text-muted [&::-webkit-details-marker]:hidden">
                   <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
-                  <span>Hides the recipient only. Your wallet and the amount stay public.</span>
+                  <span>{t("pay.send.stealthDiscSummary")}</span>
                 </summary>
                 <div className="px-3 pb-3">
                   <HonestyBadge chain={asset.chainId} />

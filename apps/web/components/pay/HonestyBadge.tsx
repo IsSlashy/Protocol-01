@@ -2,6 +2,7 @@
 
 import { Eye, ShieldCheck } from "lucide-react";
 import type { ChainId } from "@/lib/privacy/chains/types";
+import { useT } from "@/i18n";
 
 /**
  * Persistent, honest disclosure of the STEALTH SEND envelope, per chain.
@@ -72,18 +73,21 @@ import type { ChainId } from "@/lib/privacy/chains/types";
  * Do not remove or soften either variant until the corresponding work lands.
  */
 export default function HonestyBadge({ chain }: { chain: ChainId }) {
+  /* The two variants are `pay.shared.*` now; the site serves French by
+     country and this badge was English in the JSX. Neither variant is
+     softened — see this file's header for what each sentence is pinned to. */
+  const t = useT();
   if (chain === "starknet") {
     return (
       <div className="card flex items-start gap-3 p-3 text-sm">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-p01-cyan" />
         <p className="text-p01-text-muted">
-          <span className="text-p01-cyan">Recipient hidden</span> by a one-time post-quantum
-          stealth address.{" "}
+          <span className="text-p01-cyan">{t("pay.shared.recipientHidden")}</span>
+          {t("pay.shared.byStealthAddress")}{" "}
           <span className="inline-flex items-center gap-1 text-p01-yellow">
-            <Eye className="h-3.5 w-3.5" /> Amounts public on this path.
-          </span>{" "}
-          STRK20 pool integration is pending. Until you claim, the sender technically retains
-          spend authority over the stealth account, claim promptly.
+            <Eye className="h-3.5 w-3.5" /> {t("pay.shared.amountsPublic")}
+          </span>
+          {t("pay.shared.honestyStarknet")}
         </p>
       </div>
     );
@@ -92,17 +96,12 @@ export default function HonestyBadge({ chain }: { chain: ChainId }) {
     <div className="card flex items-start gap-3 p-3 text-sm">
       <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-p01-cyan" />
       <p className="text-p01-text-muted">
-        <span className="text-p01-cyan">Recipient hidden</span> by a one-time post-quantum
-        stealth address.{" "}
+        <span className="text-p01-cyan">{t("pay.shared.recipientHidden")}</span>
+        {t("pay.shared.byStealthAddress")}{" "}
         <span className="inline-flex items-center gap-1 text-p01-yellow">
-          <Eye className="h-3.5 w-3.5" /> Sender and amount public on this path.
-        </span>{" "}
-        Your wallet signs the transfer, pays the fee and funds the one-time address, and this
-        page submits it straight from your browser, there is no relayer, so nothing here hides
-        the sender. Handing over a note instead (other tab) broadcasts nothing at all, and the
-        recipient&apos;s withdrawal no longer carries the identifier your deposit emitted
-        &mdash; but whoever pays for that withdrawal still names themselves, and the clock
-        joins a deposit to a withdrawal that follows it closely.
+          <Eye className="h-3.5 w-3.5" /> {t("pay.shared.senderAmountPublic")}
+        </span>
+        {t("pay.shared.honestySolana")}
       </p>
     </div>
   );

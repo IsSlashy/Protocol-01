@@ -20,6 +20,20 @@ export interface FlowPhase {
   id: string;
   /** Shown to the user. Plain language: no "nullifier", no "leaf", no "buffer". */
   label: string;
+  /**
+   * The dictionary key for `label`, so the bar reads in the visitor's language.
+   *
+   * ⚠️ THE LABEL STAYS HERE TOO, and is not replaced by the key. It is what
+   * __tests__/lib/flowProgress-labels.test.ts reads, and it is the fallback for
+   * any caller without a translator. The key is derived from the label, so a
+   * label edited without its key drifts loudly (the dictionary lookup misses
+   * and `t()` returns the raw key).
+   *
+   * The worker's step strings are NOT translated: `match` above is a regex over
+   * their English words, and translating them would stop every phase matching.
+   * See the block header in i18n/en.ts under `pay.flow`.
+   */
+  labelKey: string;
   /** Share of the whole flow, 0..1. The phases of a flow sum to 1. */
   weight: number;
   /** Matches the worker's step strings. First match in order wins. */
@@ -63,8 +77,8 @@ export const SHIELD_PHASES: FlowPhase[] = [
   // proved. It belongs here rather than in `buffer` — whose label also says
   // "Reserving" — because that one is about proof-buffer space on chain and
   // its regex (`initializ|resiz`) would never have caught it anyway.
-  { id: 'price', label: 'Working out the cost', weight: 0.05, match: /pricing|looking for funds left|reserving a leaf|finishing a deposit|discarding unfinished attempts/i },
-  { id: 'derive', label: 'Creating your note', weight: 0.05, match: /deriving note|building v3 shield|reading on-chain tree|computing merkle path/i },
+  { id: 'price', label: 'Working out the cost', labelKey: 'pay.flow.workingOutTheCost', weight: 0.05, match: /pricing|looking for funds left|reserving a leaf|finishing a deposit|discarding unfinished attempts/i },
+  { id: 'derive', label: 'Creating your note', labelKey: 'pay.flow.creatingYourNote', weight: 0.05, match: /deriving note|building v3 shield|reading on-chain tree|computing merkle path/i },
   // ⚠️ `generating …stark proof`, NOT a bare `stark proof`.
   //
   // `progressFor` takes the FIRST phase whose regex matches, and this phase sits
@@ -74,18 +88,18 @@ export const SHIELD_PHASES: FlowPhase[] = [
   // the monotonic guard discarded it and the bar sat frozen while the raw
   // sentence underneath kept moving. Every verification string must fall
   // through to the phase that actually names it.
-  { id: 'prove', label: 'Proving the deposit', weight: 0.25, match: /generating c6|generating the deposit proof|generating[^.]*stark proof/i },
-  { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz/i },
+  { id: 'prove', label: 'Proving the deposit', labelKey: 'pay.flow.provingTheDeposit', weight: 0.25, match: /generating c6|generating the deposit proof|generating[^.]*stark proof/i },
+  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz/i },
   // 0.50, not 0.45: the shield's phases summed to 0.95, so a shield could never
   // report more than 95% and jumped from there to done. Caught by the sum
   // assertion in the label test, never by looking at it. The missing weight goes
   // to the upload because it is the longest phase by far — ~150 chunk
   // transactions against everything else's seconds.
-  { id: 'upload', label: 'Uploading the proof', weight: 0.5, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
+  { id: 'upload', label: 'Uploading the proof', labelKey: 'pay.flow.uploadingTheProof', weight: 0.5, match: /uploading|confirming chunk|resending|readback|checking uploaded/i },
   // `collecting what the contribution is owed` closes the contribution: the
   // leaf is on chain and the claim is being minted against it. Last phase,
   // because until it returns the buyer has funded a leaf and holds nothing.
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed|collecting what the contribution|has not seen the payment yet|asking for the note the payment bought/i },
+  { id: 'verify', label: 'Solana is checking the proof', labelKey: 'pay.flow.solanaIsCheckingTheProof', weight: 0.1, match: /verif|closing|submitting c6|sending v3 shield|v3 shield confirmed|collecting what the contribution|has not seen the payment yet|asking for the note the payment bought/i },
 ];
 
 // ⚠️ THE FIFTH MISS, AND THE ONE THAT WOULD HAVE GONE ON STAGE.
@@ -106,7 +120,7 @@ export const SHIELD_PHASES: FlowPhase[] = [
 // The three v3 spellings stay. v3 remains registered on-chain and notes whose
 // blinding is unknown can only be spent there, so both vocabularies are live.
 export const WITHDRAW_PHASES: FlowPhase[] = [
-  { id: 'locate', label: 'Finding your note', weight: 0.12, match: /locating|matching notes|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring|where an exchange pays/i },
+  { id: 'locate', label: 'Finding your note', labelKey: 'pay.flow.findingYourNote', weight: 0.12, match: /locating|matching notes|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring|where an exchange pays/i },
   // ⚠️ THE SIXTH MISS, caught by the sweep rather than on stage — and it is the
   // one place the bar must NOT move forward. `handlePoolUnshieldPrepare` now
   // falls back to the C1 + C3 pair when the circuit-7 rebuild cannot place the
@@ -116,13 +130,13 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
   // to redo the same work: fold the sentence into `path` and the bar holds
   // still, which is true. Give it a later phase and the bar jumps forward at the
   // exact moment the run got LONGER.
-  { id: 'path', label: 'Rebuilding its history', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note|falling back to the c1/i },
+  { id: 'path', label: 'Rebuilding its history', labelKey: 'pay.flow.rebuildingItsHistory', weight: 0.08, match: /merkle|pre-flight root|stored merkle root|checking the note|falling back to the c1/i },
   // `proving ownership and membership in one trace` is C7's single-proof
   // sentence, and it is also the heartbeat: the same words come back every ten
   // seconds carrying an elapsed count, so the regex must match on the words and
   // never on the number.
-  { id: 'prove', label: 'Proving you own it', weight: 0.3, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|proving ownership and membership in one trace|generating[^.]*stark proof/i },
-  { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
+  { id: 'prove', label: 'Proving you own it', labelKey: 'pay.flow.provingYouOwnIt', weight: 0.3, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|proving ownership and membership in one trace|generating[^.]*stark proof/i },
+  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz|pricing/i },
   // `submitting the circuit-7 spend proof on-chain` announces the upload rather
   // than the verification: it is emitted immediately before
   // `submitAndVerifyStarkProof`, whose own per-chunk sentences land here too.
@@ -142,8 +156,8 @@ export const WITHDRAW_PHASES: FlowPhase[] = [
   // reports running or done and nothing between. Deliberately no motion is
   // invented from it: a bar that creeps toward an end nobody knows is the lie
   // this file exists to refuse.
-  { id: 'upload', label: 'Uploading the proof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof|asking the relayer|building the withdrawal in the relayer|handing \d+ transactions to the relayer|handing[^.]*to the relayer|relayer is working/i },
-  { id: 'verify', label: 'Solana is checking the proof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|building v4 unshield|sending v4 unshield|v4 unshield confirmed|relayed spend confirmed|submitting c1|closing/i },
+  { id: 'upload', label: 'Uploading the proof', labelKey: 'pay.flow.uploadingTheProof', weight: 0.35, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof|asking the relayer|building the withdrawal in the relayer|handing \d+ transactions to the relayer|handing[^.]*to the relayer|relayer is working/i },
+  { id: 'verify', label: 'Solana is checking the proof', labelKey: 'pay.flow.solanaIsCheckingTheProof', weight: 0.1, match: /verif|building v3 unshield|sending v3 unshield|v3 unshield confirmed|building v4 unshield|sending v4 unshield|v4 unshield confirmed|relayed spend confirmed|submitting c1|closing/i },
 ];
 
 export const SUBSCRIBE_PHASES: FlowPhase[] = [
@@ -158,33 +172,33 @@ export const SUBSCRIBE_PHASES: FlowPhase[] = [
   // It gets its own label rather than being folded into `locate`, because
   // "Finding your note" would be a lie: there is no note yet, one is being
   // bought.
-  { id: 'issue', label: 'Getting you a note', weight: 0.03, match: /asking for a note|opening the note/i },
+  { id: 'issue', label: 'Getting you a note', labelKey: 'pay.flow.gettingYouANote', weight: 0.03, match: /asking for a note|opening the note/i },
   // `still looking` and `checking notes you already hold` are the worker's
   // heartbeat and its blob-first probe. They were added to `locateOwnedNote`
   // without being added here, so a run that was working fine sat on "Starting"
   // at 5% for minutes — the phase table is the only thing that turns a worker
   // sentence into a label, and an unmatched sentence leaves the previous one
   // standing. Before any phase has matched, that previous one is nothing.
-  { id: 'locate', label: 'Finding your note', weight: 0.1, match: /locating|matching notes|still looking|checking notes you already hold|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
+  { id: 'locate', label: 'Finding your note', labelKey: 'pay.flow.findingYourNote', weight: 0.1, match: /locating|matching notes|still looking|checking notes you already hold|scanning the|reading spent markers|pool for older notes|looking for funds left|fetching pool leaves|scanning events|root not in ring/i },
   // `falling back to the c1` must fold into THIS phase and no later one. When
   // `handlePoolSubscribePrepare`'s circuit-7 attempt cannot place the note's
   // root, the v4 job has already reached `pre-flight root verification` and the
   // v3 job is about to redo the same work — so holding the bar still is true.
   // Giving it a later phase would jump the bar forward at the exact moment the
   // run got LONGER. Same reasoning, same sentence, as WITHDRAW_PHASES above.
-  { id: 'path', label: 'Rebuilding its history', weight: 0.07, match: /merkle|pre-flight root|checking the note|checking who (?:deposited|paid|pays)|subscriber commitment|falling back to the c1/i },
+  { id: 'path', label: 'Rebuilding its history', labelKey: 'pay.flow.rebuildingItsHistory', weight: 0.07, match: /merkle|pre-flight root|checking the note|checking who (?:deposited|paid|pays)|subscriber commitment|falling back to the c1/i },
   // `proving ownership and membership in one trace` is circuit 7's single-proof
   // sentence on the SUBSCRIBE path as well as the withdrawal's, and it is also
   // the heartbeat: the same words come back every ten seconds carrying an
   // elapsed count, so the regex matches on the words and never on the number.
   // Without it the ~5.5s of actual proving showed no label at all.
-  { id: 'prove', label: 'Proving you own it', weight: 0.28, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|proving ownership and membership in one trace|generating[^.]*stark proof/i },
-  { id: 'buffer', label: 'Reserving space on Solana', weight: 0.05, match: /initializ|resiz|pricing/i },
+  { id: 'prove', label: 'Proving you own it', labelKey: 'pay.flow.provingYouOwnIt', weight: 0.28, match: /generating c1|generating c3|proving you own the note|proving the note is in the pool|proving ownership and membership in one trace|generating[^.]*stark proof/i },
+  { id: 'buffer', label: 'Reserving space on Solana', labelKey: 'pay.flow.reservingSpaceOnSolana', weight: 0.05, match: /initializ|resiz|pricing/i },
   // `submitting the circuit-7 spend proof` announces the upload rather than the
   // verification: it is emitted immediately before `submitAndVerifyStarkProof`,
   // whose own per-chunk sentences land here too.
-  { id: 'upload', label: 'Uploading the proofs', weight: 0.37, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof/i },
-  { id: 'open', label: 'Opening your subscription', weight: 0.1, match: /verif|opening the subscription|closing|sending the v4 subscription|v4 subscription confirmed/i },
+  { id: 'upload', label: 'Uploading the proofs', labelKey: 'pay.flow.uploadingTheProofs', weight: 0.37, match: /uploading|confirming chunk|resending|readback|checking uploaded|submitting the circuit-7 spend proof/i },
+  { id: 'open', label: 'Opening your subscription', labelKey: 'pay.flow.openingYourSubscription', weight: 0.1, match: /verif|opening the subscription|closing|sending the v4 subscription|v4 subscription confirmed/i },
 ];
 
 export interface FlowProgressState {
@@ -241,9 +255,9 @@ export function progressFor(
  * `locateOwnedNote` in `worker/poolHandlers.ts`.
  */
 export const SEAL_PHASES: FlowPhase[] = [
-  { id: 'locate', label: 'Finding your note in the pool', weight: 0.7, match: /locating|reading pool history|matching notes|scanning the|reading spent markers|pool for older notes|still looking|checking notes you already hold/i },
-  { id: 'path', label: 'Packing its withdrawal path', weight: 0.15, match: /merkle/i },
-  { id: 'seal', label: 'Sealing it to the recipient', weight: 0.15, match: /sealing the note/i },
+  { id: 'locate', label: 'Finding your note in the pool', labelKey: 'pay.flow.findingYourNoteInThePool', weight: 0.7, match: /locating|reading pool history|matching notes|scanning the|reading spent markers|pool for older notes|still looking|checking notes you already hold/i },
+  { id: 'path', label: 'Packing its withdrawal path', labelKey: 'pay.flow.packingItsWithdrawalPath', weight: 0.15, match: /merkle/i },
+  { id: 'seal', label: 'Sealing it to the recipient', labelKey: 'pay.flow.sealingItToTheRecipient', weight: 0.15, match: /sealing the note/i },
 ];
 
 /**
@@ -255,7 +269,7 @@ export const SEAL_PHASES: FlowPhase[] = [
  * animation the header of this file exists to prevent.
  */
 export const STEALTH_SEND_PHASES: FlowPhase[] = [
-  { id: 'wallet', label: 'Approve in your wallet; Solana sends', weight: 1, match: /one-time address|approve/i },
+  { id: 'wallet', label: 'Approve in your wallet; Solana sends', labelKey: 'pay.flow.approveInYourWalletSolanaSends', weight: 1, match: /one-time address|approve/i },
 ];
 
 /**
@@ -266,7 +280,7 @@ export const STEALTH_SEND_PHASES: FlowPhase[] = [
  * `handlePoolImportNote` in `worker/poolHandlers.ts`.
  */
 export const RECEIVE_NOTE_PHASES: FlowPhase[] = [
-  { id: 'open', label: 'Opening the sealed note', weight: 0.2, match: /opening the sealed note/i },
-  { id: 'check', label: 'Checking it is still unspent', weight: 0.6, match: /checking the note against the chain/i },
-  { id: 'file', label: 'Filing it with your notes', weight: 0.2, match: /filing it with your notes/i },
+  { id: 'open', label: 'Opening the sealed note', labelKey: 'pay.flow.openingTheSealedNote', weight: 0.2, match: /opening the sealed note/i },
+  { id: 'check', label: 'Checking it is still unspent', labelKey: 'pay.flow.checkingItIsStillUnspent', weight: 0.6, match: /checking the note against the chain/i },
+  { id: 'file', label: 'Filing it with your notes', labelKey: 'pay.flow.filingItWithYourNotes', weight: 0.2, match: /filing it with your notes/i },
 ];

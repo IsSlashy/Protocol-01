@@ -37,6 +37,7 @@ import SubscriptionsPanel from "@/components/pay/SubscriptionsPanel";
 import P01ConnectModal from "./P01ConnectModal";
 import Stepper from "./Stepper";
 import { truncate } from "./util";
+import { useT } from "@/i18n";
 
 /**
  * Solana-only as of 2026-08-04.
@@ -60,7 +61,36 @@ const firstLive = ALL_ASSETS.find((a) => a.status === "live") ?? ALL_ASSETS[0];
 // separates them the same way), and the Subscribe tab is already dense.
 type Tab = "send" | "receive" | "pool" | "subscribe" | "subs";
 
+/**
+ * What each tab is CALLED, as opposed to what its state key is.
+ *
+ * The bar used to render `{t}` under `capitalize`, so the five buttons read
+ * "Send Receive Pool Subscribe Subs" — two of which are not words a person
+ * uses. "Pool" is the implementation (a fixed-denomination set of notes); what
+ * the tab lets you do is put value in and take it out, which the app has always
+ * called shielding, on the success line ("Sealed a 1 SOL note") and in the
+ * landing copy. "Subs" is an abbreviation of a state key that happened to reach
+ * the screen.
+ *
+ * The keys themselves are untouched: they are matched in six places in this
+ * file and in the busy-tab map, and renaming a state key to fix a label is how
+ * a tab silently stops being restorable.
+ */
+const TAB_LABEL_KEY: Record<Tab, string> = {
+  send: "pay.tabs.send",
+  receive: "pay.tabs.receive",
+  pool: "pay.tabs.pool",
+  subscribe: "pay.tabs.subscribe",
+  subs: "pay.tabs.subs",
+};
+
 export default function PayApp() {
+  /* Every visible string in this file used to be English written into the JSX,
+     on a site that serves French by country. They live in i18n as `pay.*` now;
+     see the block header in i18n/en.ts for why. `t()` takes a dotted key and
+     has no interpolation, so the two strings with a name in them substitute at
+     the call site. */
+  const t = useT();
   const {
     publicKey,
     connected,
@@ -112,13 +142,51 @@ export default function PayApp() {
       ),
     [wallets],
   );
+
+  /**
+   * 🚨 WHICH WALLETS EXIST IS NOT KNOWN UNTIL THE BROWSER SAYS SO, AND THIS
+   * SCREEN RENDERED AS IF IT WERE.
+   *
+   * `readyState` is a Wallet Standard value that only exists in a browser. On
+   * the server every adapter is absent, so `p01Extension` is undefined and
+   * `externalWallets` is empty, and the connect card server-rendered the "the
+   * P01 extension is not installed" notice. On a client that has Phantom, the
+   * registry answers synchronously and the very same card renders the divider
+   * and a Connect Phantom button instead. React saw two different trees and
+   * logged a hydration mismatch — reported from the running app, and pre-dating
+   * this file's translation (the branches themselves are untouched).
+   *
+   * ⛔ THE FIX IS NOT TO GUESS ON THE SERVER. There is no honest default: "no
+   * wallet" is wrong for anyone who has one, and "some wallet" is wrong for
+   * everyone else, and the second is worse because it advertises a button that
+   * cannot work. So the three wallet-dependent blocks below render nothing at
+   * all until the browser has answered, and the rest of the card — the title,
+   * the one-line lede, the cost disclosure — renders on the server as before.
+   * What a visitor sees is the card, then its buttons a frame later.
+   */
+  const [walletsKnown, setWalletsKnown] = useState(false);
+  useEffect(() => setWalletsKnown(true), []);
   const { connection } = useConnection();
 
   const [asset, setAsset] = useState<Asset>(firstLive);
   const [identities, setIdentities] = useState<Partial<Record<ChainId, DerivedIdentity>>>({});
   const [deriving, setDeriving] = useState(false);
   const [deriveError, setDeriveError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("send");
+  /**
+   * THE APP OPENS ON SHIELD, NOT ON SEND.
+   *
+   * A first-time user has no notes, so the Send tab's first sentence to them
+   * was "Nothing to send yet. Open the Shield tab and shield one first" — a
+   * landing screen whose only content is an instruction to go somewhere else.
+   * Shielding IS the first thing to do: nothing can be sent, subscribed with or
+   * withdrawn until a note exists.
+   *
+   * Solana only. Every other chain renders just send and receive (the pool
+   * exists on Solana alone), so `pool` would select a tab that is not in the
+   * bar and nothing would render. The effect below moves off it if the asset
+   * changes to one of those.
+   */
+  const [tab, setTab] = useState<Tab>("pool");
 
   // Tabs the user has opened this session. A visited panel is never unmounted
   // again, only hidden (see the keep-alive render below): switching tabs
@@ -127,7 +195,7 @@ export default function PayApp() {
   // user who believed it dead would start a second one, the exact mechanism
   // behind this project's orphaned buffers. Hidden-not-unmounted keeps the
   // operation, its progress and its busy reporting alive off-screen.
-  const [visited, setVisited] = useState<ReadonlySet<Tab>>(() => new Set<Tab>(["send"]));
+  const [visited, setVisited] = useState<ReadonlySet<Tab>>(() => new Set<Tab>(["pool"]));
   useEffect(() => {
     setVisited((prev) => (prev.has(tab) ? prev : new Set([...prev, tab])));
   }, [tab]);
@@ -177,6 +245,17 @@ export default function PayApp() {
   // Always "solana" today — ALL_ASSETS is Solana-only (see the note above).
   // Kept as a variable, not inlined, so restoring a second chain is mechanical.
   const chain: ChainId = asset.chainId;
+
+  /**
+   * Pool, subscribe and subs exist on Solana alone (they all drive the
+   * denominated pool). Selecting a non-Solana asset while one of them is open
+   * would leave the bar showing send/receive and the body showing nothing, so
+   * the selection falls back to the tab every chain has.
+   */
+  useEffect(() => {
+    if (chain === "solana") return;
+    setTab((t) => (t === "send" || t === "receive" ? t : "send"));
+  }, [chain]);
   const identity = identities[chain] ?? null;
   const adapter = useMemo(() => getAdapter(chain), [chain]);
 
@@ -215,7 +294,7 @@ export default function PayApp() {
       senderPubkey: solPub.toBase58(),
       async signAndSubmit(transactionsB64, ctx) {
         if (!signAll) {
-          throw new Error("This wallet cannot sign transactions.");
+          throw new Error(t("pay.errors.cannotSignTx"));
         }
         const txs = transactionsB64.map((b64) => Transaction.from(Buffer.from(b64, "base64")));
         const signed = await signAll(txs);
@@ -310,7 +389,7 @@ export default function PayApp() {
       ? async (m: Uint8Array) => nacl.sign.detached(m, p01Keypair.secretKey)
       : signMessage;
     if (!solPub || !doSign) {
-      setDeriveError("This wallet cannot sign messages, so it cannot derive private keys.");
+      setDeriveError(t("pay.errors.cannotSignMsg"));
       return;
     }
     setDeriveError(null);
@@ -389,10 +468,8 @@ export default function PayApp() {
           // and an early return here used to leave it in memory.
           sig.fill(0);
           throw new Error(
-            'The second signature prompt was not completed, so determinism could not be checked ' +
-              'and no keys were derived. Nothing was spent. This wallet is asked twice ON PURPOSE, ' +
-              'once only — approve both and it will not be asked again. ' +
-              `(${(e as Error).message || 'rejected'})`,
+            t("pay.errors.secondPromptAbandoned") +
+              ` (${(e as Error).message || 'rejected'})`,
           );
         }
         const deterministic = sig.length === sig2.length && sig.every((b, i) => b === sig2[i]);
@@ -400,7 +477,7 @@ export default function PayApp() {
         if (!deterministic) {
           sig.fill(0);
           throw new Error(
-            "This wallet does not sign deterministically, so your keys could not be recovered later. Use Phantom or Solflare (software wallet)."
+            t("pay.errors.notDeterministic")
           );
         }
         rememberDeterministicSigner(solPub.toBase58());
@@ -465,14 +542,22 @@ export default function PayApp() {
   // neither change works alone.
   return (
     <div className="mx-auto w-full max-w-md lg:max-w-5xl">
-      <div className="mb-6">
-        <Stepper current={step} />
-      </div>
+      {/* ⚠️ THE STEPPER IS FOR THE FIRST THIRTY SECONDS, AND ONLY THOSE.
+          It guides connect → sign → use. Once `identity` exists both of its
+          first two steps are done and it is a permanent header saying so, above
+          an app the user is already inside — three lines of chrome on every tab,
+          every visit, telling them what they finished. It leaves when the last
+          step is reached. */}
+      {step < 2 && (
+        <div className="mb-6">
+          <Stepper current={step} />
+        </div>
+      )}
 
       {/* Coin selector — always visible so users see multi-chain support */}
       <div className="mb-4">
         <label className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted">
-          Asset
+          {t("pay.asset")}
         </label>
         <ChainCoinSelector assets={selectorAssets} selected={asset} onSelect={setAsset} />
       </div>
@@ -495,7 +580,7 @@ export default function PayApp() {
                 extension's name asks them to identify with an object they do
                 not own. The key this app derives is still a P01 key, and the
                 sentence below says so. */}
-            <p className="font-display text-p01-text">Connect a wallet</p>
+            <p className="font-display text-p01-text">{t("pay.connect.title")}</p>
             {/* "post-quantum payments" is the exact phrase the page header of
                 app/(pay)/app/page.tsx forbids, and this connect card said it:
                 the signature that pays is Ed25519 and stays Ed25519. What is
@@ -510,13 +595,41 @@ export default function PayApp() {
                 already says this correctly two screens later, on the pool
                 panel; a connect card that promises free is a promise the first
                 real screen breaks. */}
+            {/* ⚠️ THIS PARAGRAPH WAS SIXTY-TWO WORDS OF FEE SCHEDULE AND KEY
+                MATERIAL, ON THE SCREEN WHERE NOTHING HAS HAPPENED YET.
+                It opened "Everything here runs on a P01 key: subscriptions
+                belong to it and notes are sealed to it", then priced a deposit
+                to the basis point and named two curve families — all of it
+                before the reader has a wallet connected, which means before any
+                of it can apply to them. Nobody reads a fee table to decide
+                whether to press Connect.
+
+                NOT ONE WORD OF IT IS DELETED. Every sentence is inside the
+                <details> below, one click away, under a summary that says what
+                is in there. That is the difference between a disclosure and a
+                wall: a disclosure is available at the moment it matters, and
+                this one is now also available at the moment it matters — the
+                deposit screen states its own cost, which is where a price
+                belongs.
+
+                The line that stays is the only one that answers the question
+                this screen actually asks, which is "what happens if I press
+                this". */}
             <p className="mt-1 text-sm text-p01-text-muted">
-              Everything here runs on a P01 key: subscriptions belong to it and notes are sealed
-              to it. A deposit costs you one signature — the denomination, a 0.3% protocol fee and
-              a 1% operator fee — while this deployment fronts the refundable proof rent and takes
-              it back afterwards. Recipient addresses are hybrid post-quantum. The signature that
-              pays is Ed25519 and stays Ed25519.
+              {t("pay.connect.lede")}
             </p>
+            {/* The card is centred, so the summary is too — left-aligned it
+                read as a stray link under a centred paragraph. The body inside
+                goes back to the left, because five lines of prose centred is
+                unreadable. */}
+            <details className="mt-3">
+              <summary className="mx-auto cursor-pointer list-none text-xs text-p01-text-muted underline decoration-dotted underline-offset-4 hover:text-p01-cyan">
+                {t("pay.connect.detailSummary")}
+              </summary>
+              <p className="mt-2 text-left text-xs text-p01-text-muted">
+                {t("pay.connect.detail")}
+              </p>
+            </details>
           </div>
           {/* ⚠️ ORDER IS THE ARGUMENT HERE.
               A wallet was only ever needed to make a seed recoverable and to
@@ -530,12 +643,12 @@ export default function PayApp() {
               something that cannot happen. `select()` is enough — the adapter
               connects on selection, which is why there is no second step and
               no modal. */}
-          {p01Extension && (
+          {walletsKnown && p01Extension && (
             <button
               className="btn-primary flex w-full items-center justify-center gap-2"
               onClick={() => select(p01Extension.adapter.name)}
             >
-              <Wallet className="h-4 w-4" /> Connect the P01 extension
+              <Wallet className="h-4 w-4" /> {t("pay.connect.p01Button")}
             </button>
           )}
 
@@ -564,12 +677,12 @@ export default function PayApp() {
               really has them. Nothing downstream needed changing: `solPub`,
               `doSign` and the signer runtime have always taken the adapter or a
               P01 keypair interchangeably. */}
-          {externalWallets.length > 0 && (
+          {walletsKnown && externalWallets.length > 0 && (
             <div className="space-y-2 pt-1">
               <div className="flex items-center gap-3">
                 <div className="h-px flex-1 bg-p01-border" />
                 <span className="text-[11px] uppercase tracking-wider text-p01-text-muted">
-                  or another wallet
+                  {t("pay.connect.orAnother")}
                 </span>
                 <div className="h-px flex-1 bg-p01-border" />
               </div>
@@ -583,25 +696,24 @@ export default function PayApp() {
                     /* eslint-disable-next-line @next/next/no-img-element */
                     <img src={w.adapter.icon} alt="" className="h-4 w-4" aria-hidden="true" />
                   )}
-                  Connect {w.adapter.name}
+                  {t("pay.connect.otherButton").replace("{name}", w.adapter.name)}
                 </button>
               ))}
             </div>
           )}
 
-          {!p01Extension && (
+          {walletsKnown && !p01Extension && (
             <div className="rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-4 text-left">
-              <p className="text-sm text-p01-yellow">The P01 extension is not installed.</p>
+              <p className="text-sm text-p01-yellow">{t("pay.connect.noExtensionTitle")}</p>
               <p className="mt-2 text-xs text-p01-text-muted">
                 {/* ⚠️ "below" pointed UPWARDS: the external-wallet block closes
                     before this notice opens, and the only thing that follows is
                     a branch nothing can reach. A tester told to look below sees
                     nothing there. */}
-                It holds your keys and signs for you, and it is a convenience rather than a
-                requirement. Install it and reload, and its button appears above.
+                {t("pay.connect.noExtensionBody")}
                 {externalWallets.length > 0
-                  ? " Any wallet listed above works today — the keys this app derives are the same either way."
-                  : " No wallet announced itself to this page, so there is nothing to connect yet. Install Phantom or the P01 extension, then reload."}
+                  ? t("pay.connect.noExtensionOthers")
+                  : t("pay.connect.noExtensionNone")}
               </p>
             </div>
           )}
@@ -632,25 +744,44 @@ export default function PayApp() {
         <div className="glass space-y-4 p-6">
           <div className="flex items-center gap-2">
             <KeyRound className="h-5 w-5 text-p01-cyan" />
-            <p className="font-display text-p01-text">Derive your private keys</p>
+            {/* "Derive your private keys" is the operation's name in the
+                source. On the screen it asks a reader to know what deriving is
+                before they can decide to do it. */}
+            <p className="font-display text-p01-text">{t("pay.derive.title")}</p>
           </div>
+          {/* ⚠️ THE COUNT IS THE ONLY THING A READER NEEDS BEFORE PRESSING,
+              and it was the fourth clause of a sixty-word sentence.
+              A screen that promises two prompts and shows one reads as a bug,
+              and one that promises one and shows two reads as a trap, so the
+              count leads and it stays conditional. What the signatures DO, and
+              why the second one exists, is a paragraph — it is in the
+              <details>, whole, not summarised.
+              ⚠️ "never stored" IS SCOPED TO THE WALLET PATH, and has to be. On
+              the device path the signing key is in this browser's storage by
+              design — that is the whole point of it — so a page that exists to
+              correct overstatement must not ship the sentence that would now be
+              false. Both branches keep their own ending. */}
           <p className="text-sm text-p01-text-muted">
-            {/* The count is now conditional, so the copy has to be too — a
-                screen that promises two prompts and shows one reads as a bug,
-                and one that promises one and shows two reads as a trap. */}
-            {/* ⚠️ "never stored" IS SCOPED TO THE WALLET PATH, and has to be.
-                On the device path the signing key is in this browser's storage
-                by design — that is the whole point of it — so a page that
-                exists to correct overstatement must not ship the sentence that
-                would now be false. */}
             {solPub && deterministicSignerVerified(solPub.toBase58())
-              ? `One signature creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys. No transaction is sent, no gas is paid.${keyIsDevice ? " They are derived from the buyer key stored in this browser." : " Your keys live only in this tab, never uploaded, never stored."}`
-              : `Two signatures, once for this wallet: the first creates your stealth spending, viewing and post-quantum (ML-KEM-768) keys, the second only checks that your wallet signs the same way twice — a wallet that does not would leave your keys unrecoverable later. Approve both and you will not be asked again. No transaction is sent, no gas is paid.${keyIsDevice ? " They are derived from the buyer key stored in this browser." : " Your keys live only in this tab, never uploaded, never stored."}`}
+              ? t("pay.derive.once")
+              : t("pay.derive.twice")}
           </p>
+          <details className="text-left">
+            <summary className="cursor-pointer list-none text-xs text-p01-text-muted underline decoration-dotted underline-offset-4 hover:text-p01-cyan">
+              {t("pay.derive.detailSummary")}
+            </summary>
+            <p className="mt-2 text-xs text-p01-text-muted">
+              {(solPub && deterministicSignerVerified(solPub.toBase58())
+                ? t("pay.derive.detailOnce")
+                : t("pay.derive.detailTwice")) +
+                (keyIsDevice
+                  ? t("pay.derive.fromDeviceKey")
+                  : t("pay.derive.neverStored"))}
+            </p>
+          </details>
           <div className="flex items-start gap-2 rounded-lg border border-p01-yellow/30 bg-p01-yellow/5 p-3 text-xs text-p01-yellow">
             <ShieldQuestion className="mt-0.5 h-4 w-4 shrink-0" />
-            Only sign this on the official site. Any site that gets this signature can derive your
-            keys.
+            {t("pay.derive.onlyOfficial")}
           </div>
           {deriveError && <p className="text-sm text-p01-red">{deriveError}</p>}
           <button
@@ -660,16 +791,16 @@ export default function PayApp() {
           >
             {deriving ? (
               <>
-                <Loader2 className="h-4 w-4 animate-spin" /> Waiting for signature…
+                <Loader2 className="h-4 w-4 animate-spin" /> {t("pay.derive.waiting")}
               </>
             ) : (
               <>
-                <KeyRound className="h-4 w-4" /> Sign to derive keys
+                <KeyRound className="h-4 w-4" /> {t("pay.derive.button")}
               </>
             )}
           </button>
           <button className="text-center text-xs text-p01-text-muted hover:text-p01-cyan" onClick={reset}>
-            Disconnect
+            {t("pay.derive.disconnect")}
           </button>
         </div>
       )}
@@ -681,33 +812,40 @@ export default function PayApp() {
             {/* flex-wrap: five tabs no longer fit one row inside max-w-md. */}
             <div className="inline-flex flex-wrap rounded-lg border border-p01-border bg-p01-surface p-1">
               {/* Pool, subscribe and subs are Solana-only: all three drive the
-                  denominated pool, which exists on Solana alone. */}
+                  denominated pool, which exists on Solana alone.
+
+                  The loop variable is `tabId`, not `t`: `t` is the translator
+                  in this component now, and a map that shadowed it would call
+                  the tab id as a function. Renamed rather than aliasing the
+                  translator, so nothing here can quietly reach the wrong one. */}
               {((chain === "solana"
                 ? ["send", "receive", "pool", "subscribe", "subs"]
-                : ["send", "receive"]) as Tab[]).map((t) => (
+                : ["send", "receive"]) as Tab[]).map((tabId) => (
                 <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  title={busyTabs[t] ? "An operation is still running in this tab" : undefined}
+                  key={tabId}
+                  onClick={() => setTab(tabId)}
+                  title={busyTabs[tabId] ? t("pay.tabs.busyTitle") : undefined}
                   className={clsx(
-                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium capitalize transition",
-                    tab === t ? "bg-p01-cyan text-p01-void" : "text-p01-text-muted hover:text-p01-text"
+                    "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition",
+                    tab === tabId
+                      ? "bg-p01-cyan text-p01-void"
+                      : "text-p01-text-muted hover:text-p01-text"
                   )}
                 >
-                  {t === "send" ? (
+                  {tabId === "send" ? (
                     <Send className="h-3.5 w-3.5" />
-                  ) : t === "receive" ? (
+                  ) : tabId === "receive" ? (
                     <InboxIcon className="h-3.5 w-3.5" />
-                  ) : t === "pool" ? (
+                  ) : tabId === "pool" ? (
                     <Coins className="h-3.5 w-3.5" />
-                  ) : t === "subscribe" ? (
+                  ) : tabId === "subscribe" ? (
                     <Repeat className="h-3.5 w-3.5" />
                   ) : (
                     <CreditCard className="h-3.5 w-3.5" />
                   )}
-                  {t}
-                  {busyTabs[t] && (
-                    <span className="relative flex h-2 w-2" aria-label="operation in progress">
+                  {t(TAB_LABEL_KEY[tabId])}
+                  {busyTabs[tabId] && (
+                    <span className="relative flex h-2 w-2" aria-label={t("pay.tabs.busyLabel")}>
                       <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-p01-yellow opacity-75" />
                       <span className="relative inline-flex h-2 w-2 rounded-full bg-p01-yellow" />
                     </span>
@@ -726,7 +864,7 @@ export default function PayApp() {
 
           {asset.status === "coming-soon" && (
             <div className="card p-6 text-center text-sm text-p01-text-muted">
-              {asset.name} private transactions are coming soon.
+              {t("pay.comingSoon").replace("{name}", asset.name)}
             </div>
           )}
 

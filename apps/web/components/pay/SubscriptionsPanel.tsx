@@ -94,6 +94,8 @@ import {
 } from "@/lib/privacy/serviceRegistry";
 import StaleWorkerNotice from "./StaleWorkerNotice";
 import { truncate } from "./util";
+import { useT } from "@/i18n";
+import { translateInterval } from "@/lib/pay/intervalLabel";
 
 // ---------------------------------------------------------------------------
 
@@ -103,12 +105,12 @@ type VaultLive =
   | { kind: "error"; message: string }
   | { kind: "open"; decoded: DecodedSubscriptionVault };
 
-const STATUS_LABEL: Record<EntitlementStatus, string> = {
-  current: "Active",
-  paused: "Paused",
-  unknown: "Checking",
-  ended: "Ended",
-  inactive: "Inactive",
+const STATUS_LABEL_KEY: Record<EntitlementStatus, string> = {
+  current: "pay.subs.badgeActive",
+  paused: "pay.subs.badgePaused",
+  unknown: "pay.subs.badgeChecking",
+  ended: "pay.subs.badgeEnded",
+  inactive: "pay.subs.badgeInactive",
 };
 
 const STATUS_CLASS: Record<EntitlementStatus, string> = {
@@ -120,19 +122,21 @@ const STATUS_CLASS: Record<EntitlementStatus, string> = {
 };
 
 function StatusBadge({ status }: { status: EntitlementStatus }) {
+  const t = useT();
   return (
     <span
       className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider ${STATUS_CLASS[status]}`}
     >
-      {STATUS_LABEL[status]}
+      {t(STATUS_LABEL_KEY[status])}
     </span>
   );
 }
 
 function ClosedBadge() {
+  const t = useT();
   return (
     <span className="shrink-0 rounded border border-p01-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-p01-text-muted">
-      Closed
+      {t("pay.subs.badgeClosed")}
     </span>
   );
 }
@@ -159,22 +163,41 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** The one-line, plain-words answer to "where does this subscription stand?". */
-function plainStanding(summary: SubscriptionSummary): string {
+/**
+ * The one-line standing, in the reader's language.
+ *
+ * Module-level and therefore outside the hook, so the translator is passed in
+ * rather than reached for. `formatApproxDuration` still returns English ("about
+ * 3 days"): it lives in lib/pay/subscriptions.ts with its own tests and takes
+ * no locale, so translating it is a separate change and is NOT quietly faked
+ * here.
+ */
+function plainStanding(
+  summary: SubscriptionSummary,
+  t: (key: string) => string,
+): string {
   const total = summary.totalPeriods.toString();
   const left = summary.periodsRemaining.toString();
   switch (summary.status) {
     case "current":
       return summary.secondsRemaining !== null
-        ? `${left} of ${total} periods left, ${formatApproxDuration(summary.secondsRemaining)}`
-        : `${left} of ${total} periods left`;
+        ? t("pay.subs.standingCurrent")
+            .replace("{left}", left)
+            .replace("{total}", total)
+            .replace("{duration}", formatApproxDuration(summary.secondsRemaining))
+        : t("pay.subs.standingCurrentNoClock")
+            .replace("{left}", left)
+            .replace("{total}", total);
     case "ended":
-      return `All ${total} paid periods are used up`;
+      return t("pay.subs.standingEnded").replace("{total}", total);
     case "paused":
-      return `Paused with ${left} of ${total} periods left`;
+      return t("pay.subs.standingPaused")
+        .replace("{left}", left)
+        .replace("{total}", total);
     case "unknown":
-      return "Checking the chain clock...";
+      return t("pay.subs.standingUnknown");
     case "inactive":
-      return "Inactive";
+      return t("pay.subs.standingInactive");
   }
 }
 
@@ -225,6 +248,10 @@ export default function SubscriptionsPanel({
   owner: PublicKey;
   connection: Connection;
 }) {
+  /* Every sentence in this panel used to be English written into the JSX,
+     on a site that serves French by country. They are `pay.subs.*` now; see
+     the block header in i18n/en.ts for why. */
+  const t = useT();
   const walletKey = owner.toBase58();
 
   const [records, setRecords] = useState<StoredSubscription[]>([]);
@@ -298,7 +325,7 @@ export default function SubscriptionsPanel({
           if (!info) {
             state = { kind: "closed" };
           } else if (info.owner.toBase58() !== ZK_SHIELDED_PROGRAM_ID_BASE58) {
-            state = { kind: "error", message: "Account is not owned by the subscription program." };
+            state = { kind: "error", message: t("pay.subs.errNotProgram") };
           } else {
             state = { kind: "open", decoded: decodeSubscriptionVault(info.data) };
           }
@@ -399,7 +426,7 @@ export default function SubscriptionsPanel({
         void refresh();
       }
     } catch (e) {
-      setRevealError((e as Error).message || "Could not re-derive the key.");
+      setRevealError((e as Error).message || t("pay.subs.errRederive"));
     } finally {
       setRevealBusy(false);
     }
@@ -414,7 +441,7 @@ export default function SubscriptionsPanel({
     const addr = trackAddr.trim();
     setTrackError(null);
     if (!isBase58Address(addr)) {
-      setTrackError("That is not a Solana address.");
+      setTrackError(t("pay.subs.errNotSolanaAddress"));
       return;
     }
     setTracking(true);
@@ -422,13 +449,12 @@ export default function SubscriptionsPanel({
       const info = await connection.getAccountInfo(new PublicKey(addr));
       if (!info) {
         setTrackError(
-          "No account lives at this address on this RPC. If this was a subscription vault, " +
-            "the merchant's final claim has closed it and everything in it went to the merchant.",
+          t("pay.subs.errNoAccount"),
         );
         return;
       }
       if (info.owner.toBase58() !== ZK_SHIELDED_PROGRAM_ID_BASE58) {
-        setTrackError("This account is not owned by the subscription program.");
+        setTrackError(t("pay.subs.errNotProgram"));
         return;
       }
       const decoded = decodeSubscriptionVault(info.data);
@@ -462,7 +488,7 @@ export default function SubscriptionsPanel({
     } catch (e) {
       setTrackError(
         e instanceof NotASubscriptionVaultError
-          ? "This account is not a subscription vault."
+          ? t("pay.subs.errNotVault")
           : (e as Error).message || "Read failed.",
       );
     } finally {
@@ -509,7 +535,7 @@ export default function SubscriptionsPanel({
           } already tracked here.`,
         );
       } else {
-        setRecoverNote("No open subscription vault on chain belongs to this wallet's notes.");
+        setRecoverNote(t("pay.subs.recoverNone"));
       }
     } catch (e) {
       setRecoverError((e as Error).message || "Recovery failed.");
@@ -587,24 +613,32 @@ export default function SubscriptionsPanel({
 
           {state.kind === "closed" && (
             <p className="mt-3 text-sm text-p01-text-muted">
-              This vault no longer exists on chain. The merchant claimed its last funded period,
-              which closed the account and sent the remaining balance, any dust and the rent to the
-              merchant. That is the only way a vault ends.
+              {t("pay.subs.closedBody")}
             </p>
           )}
 
           {decoded && summary && (
             <>
-              <p className="mt-3 text-lg text-p01-text">{plainStanding(summary)}</p>
+              <p className="mt-3 text-lg text-p01-text">{plainStanding(summary, t)}</p>
+              {/* `formatInterval` answers in English ("monthly") — it is a pure
+                  helper with its own tests and no locale — so its answer is
+                  mapped onto a dictionary key at the point of display. See
+                  lib/pay/intervalLabel.ts for why the map lives here rather
+                  than inside the helper. */}
               <p className="mt-1 text-sm text-p01-text-muted">
-                {formatAtomic(decoded.totalDeposited, decimals)} {symbol} escrowed,{" "}
-                {formatAtomic(decoded.rate, decimals)} {symbol} per period,{" "}
-                {formatInterval(decoded.intervalSlots)}.
+                {t("pay.subs.escrowLine")
+                  .replace("{total}", formatAtomic(decoded.totalDeposited, decimals))
+                  .replace("{rate}", formatAtomic(decoded.rate, decimals))
+                  .replaceAll("{symbol}", symbol)
+                  .replace(
+                    "{interval}",
+                    translateInterval(formatInterval(decoded.intervalSlots), t),
+                  )}
               </p>
               <p className="mt-1 text-xs text-p01-text-muted">
-                The merchant has collected {summary.claimedPeriods.toString()} of{" "}
-                {summary.totalPeriods.toString()} paid periods so far. Collection runs on its own
-                clock and does not change how long your access lasts.
+                {t("pay.subs.collected")
+                  .replace("{claimed}", summary.claimedPeriods.toString())
+                  .replace("{total}", summary.totalPeriods.toString())}
               </p>
             </>
           )}
@@ -614,16 +648,10 @@ export default function SubscriptionsPanel({
         <div className="card p-4">
           <div className="flex items-center gap-2">
             <KeyRound className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">License key</p>
+            <p className="font-display text-sm text-p01-text">{t("pay.subs.keyTitle")}</p>
           </div>
-          <p className="mt-2 text-xs text-p01-text-muted">
-            The key is stored nowhere: it re-derives from the secret of the note that paid for
-            this vault, so any device holding that note secret can recompute the same key.
-          </p>
-          <p className="mt-2 text-xs text-p01-text-muted">
-            It is a bearer credential. Anyone who holds the key can present it to the merchant as
-            you, so share it like you would share cash.
-          </p>
+          <p className="mt-2 text-xs text-p01-text-muted">{t("pay.subs.keyNowhere")}</p>
+          <p className="mt-2 text-xs text-p01-text-muted">{t("pay.subs.keyBearer")}</p>
 
           {canReveal ? (
             revealedKey ? (
@@ -632,12 +660,12 @@ export default function SubscriptionsPanel({
                   {revealedKey}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <CopyButton text={revealedKey} label="Copy key" />
+                  <CopyButton text={revealedKey} label={t("pay.subs.keyCopy")} />
                   <button
                     onClick={() => setRevealedKey(null)}
                     className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
                   >
-                    Hide
+                    {t("pay.subs.keyHide")}
                   </button>
                 </div>
               </div>
@@ -649,21 +677,17 @@ export default function SubscriptionsPanel({
               >
                 {revealBusy ? (
                   <>
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Re-deriving…
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("pay.subs.keyRederiving")}
                   </>
                 ) : (
                   <>
-                    <KeyRound className="h-3.5 w-3.5" /> Reveal key
+                    <KeyRound className="h-3.5 w-3.5" /> {t("pay.subs.keyReveal")}
                   </>
                 )}
               </button>
             )
           ) : (
-            <p className="mt-3 text-xs text-p01-text-dim">
-              This vault was tracked by its address, so this browser does not know which note paid
-              for it and cannot re-derive the key here. Reveal it on the device that holds the
-              note secret.
-            </p>
+            <p className="mt-3 text-xs text-p01-text-dim">{t("pay.subs.keyNotHere")}</p>
           )}
           {revealError && (
             <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
@@ -671,30 +695,21 @@ export default function SubscriptionsPanel({
             </p>
           )}
 
-          <p className="mt-3 font-mono text-xs text-p01-text-dim">scoped to: {rec.serviceTag}</p>
+          <p className="mt-3 font-mono text-xs text-p01-text-dim">
+            {t("pay.subs.keyScoped")} {rec.serviceTag}
+          </p>
           {decoded?.licenseCommitment && (
-            <p className="mt-1 text-xs text-p01-text-dim">
-              The vault stores a blake3 fingerprint of the key, never the key itself; a merchant
-              checks a presented key against it off chain.
-            </p>
+            <p className="mt-1 text-xs text-p01-text-dim">{t("pay.subs.keyFingerprint")}</p>
           )}
         </div>
 
         {/* Irreversibility, on the detail page and not only before purchase */}
         <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-          <p className="font-medium">No cancel, no refund</p>
-          <p className="mt-1 text-p01-red/90">
-            claim_period is the only instruction that can close this vault. On the final claim the
-            remaining balance, any dust and the vault&apos;s own rent all go to the merchant.
-            Nothing in this vault can ever return to you.
-          </p>
+          <p className="font-medium">{t("pay.subs.noCancelTitle")}</p>
+          <p className="mt-1 text-p01-red/90">{t("pay.subs.noCancelBody")}</p>
         </div>
 
-        <p className="text-xs text-p01-text-muted">
-          This subscription is unlinkable to your wallet only to the extent the pool is. The
-          deposit published the note commitment in the clear, so treat this spend as matchable to
-          it.
-        </p>
+        <p className="text-xs text-p01-text-muted">{t("pay.subs.poolCaveat")}</p>
 
         {/* Links out */}
         <div className="card space-y-2 p-4">
@@ -724,7 +739,7 @@ export default function SubscriptionsPanel({
         {/* Technical detail, second plane on purpose */}
         <details className="card p-4 text-xs text-p01-text-muted">
           <summary className="cursor-pointer font-display text-sm text-p01-text">
-            Technical detail
+            {t("pay.subs.technical")}
           </summary>
           <dl className="mt-3 space-y-1.5 font-mono">
             <div className="flex justify-between gap-3">
@@ -775,14 +790,13 @@ export default function SubscriptionsPanel({
             )}
           </dl>
           <p className="mt-3 font-sans">
-            Pause and resume exist in the protocol behind a proof of the note secret; they are not
-            wired on the web yet.
+            {t("pay.subs.pauseNote")}
           </p>
           <button
             onClick={() => handleForget(rec.vaultPDA)}
             className="mt-3 font-sans text-p01-text-muted underline hover:text-p01-red"
           >
-            Untrack this vault (forgets the local record only; the vault itself is untouched)
+            {t("pay.subs.untrack")}
           </button>
         </details>
       </div>
@@ -798,7 +812,7 @@ export default function SubscriptionsPanel({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <CreditCard className="h-4 w-4 text-p01-cyan" />
-              <p className="font-display text-sm text-p01-text">Your subscriptions</p>
+              <p className="font-display text-sm text-p01-text">{t("pay.subs.listTitle")}</p>
             </div>
             <button
               onClick={() => void refresh()}
@@ -806,7 +820,7 @@ export default function SubscriptionsPanel({
               className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
             >
               <RefreshCw className={refreshing ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-              {refreshing ? "Reading…" : "Refresh"}
+              {refreshing ? t("pay.subs.reading") : t("pay.subs.refresh")}
             </button>
           </div>
 
@@ -825,9 +839,7 @@ export default function SubscriptionsPanel({
 
           {records.length === 0 && !staleWorker && !lostSession && (
             <p className="mt-3 text-xs text-p01-text-muted">
-              No subscriptions tracked in this browser yet. Subscribe from the Subscribe tab, or
-              track an existing vault by its address below. Subscriptions made here before this
-              list existed are found the second way.
+              {t("pay.subs.empty")}
             </p>
           )}
 
@@ -860,10 +872,10 @@ export default function SubscriptionsPanel({
                           {merchantName(rec)}
                         </p>
                         <p className="mt-0.5 truncate text-xs text-p01-text-muted">
-                          {state.kind === "loading" && "Reading the vault…"}
-                          {state.kind === "closed" && "Closed, fully paid out to the merchant"}
-                          {state.kind === "error" && "Could not read the vault"}
-                          {summary && plainStanding(summary)}
+                          {state.kind === "loading" && t("pay.subs.rowLoading")}
+                          {state.kind === "closed" && t("pay.subs.rowClosed")}
+                          {state.kind === "error" && t("pay.subs.rowError")}
+                          {summary && plainStanding(summary, t)}
                         </p>
                       </div>
                       <div className="flex shrink-0 flex-col items-end gap-1">
@@ -884,81 +896,89 @@ export default function SubscriptionsPanel({
           )}
         </div>
 
-        {/* Track an existing vault */}
-        <div className="card p-4">
-          <div className="flex items-center gap-2">
-            <Plus className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Track a vault</p>
+        {/* ⚠️ TWO RECOVERY TOOLS, FOLDED UNDER ONE LINE.
+            "Track a vault" and "Recover from the chain" are both answers to
+            "my list is missing something". Open, they are two cards and two
+            paragraphs — one of them five sentences — and together they took
+            more of the screen than the subscriptions themselves, which is the
+            thing the tab is named after. Neither is used on a normal visit and
+            both are exactly what a reader hunts for when they are.
+
+            Nothing is removed: the fold contains both cards verbatim, and the
+            summary names the situation that sends someone looking for them. */}
+        <details className="styx-subs-tools">
+          <summary>{t("pay.subs.toolsSummary")}</summary>
+          <div className="styx-subs-tools-body">
+          {/* Track an existing vault */}
+          <div className="card p-4">
+            <div className="flex items-center gap-2">
+              <Plus className="h-4 w-4 text-p01-cyan" />
+              <p className="font-display text-sm text-p01-text">{t("pay.subs.trackTitle")}</p>
+            </div>
+            <p className="mt-2 text-xs text-p01-text-muted">
+              {t("pay.subs.trackLede")}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <input
+                value={trackAddr}
+                onChange={(e) => setTrackAddr(e.target.value)}
+                placeholder={t("pay.subs.trackPlaceholder")}
+                spellCheck={false}
+                className="min-w-0 flex-1 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim focus:border-p01-cyan focus:outline-none"
+              />
+              <button
+                onClick={() => void handleTrack()}
+                disabled={tracking || trackAddr.trim().length === 0}
+                className="btn-secondary inline-flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
+              >
+                {tracking ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Plus className="h-3.5 w-3.5" />
+                )}
+                {t("pay.subs.trackButton")}
+              </button>
+            </div>
+            {trackError && (
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {trackError}
+              </p>
+            )}
           </div>
-          <p className="mt-2 text-xs text-p01-text-muted">
-            Paste a subscription vault address to add it to this list, for subscriptions opened
-            before this page existed or from another browser.
-          </p>
-          <div className="mt-3 flex gap-2">
-            <input
-              value={trackAddr}
-              onChange={(e) => setTrackAddr(e.target.value)}
-              placeholder="Vault address"
-              spellCheck={false}
-              className="min-w-0 flex-1 rounded-lg border border-p01-border bg-p01-void px-3 py-2 font-mono text-xs text-p01-text placeholder:text-p01-text-dim focus:border-p01-cyan focus:outline-none"
-            />
+
+          {/* Recover from the chain: the list above is a cache since #11 */}
+          <div className="card p-4">
+            <div className="flex items-center gap-2">
+              <Search className="h-4 w-4 text-p01-cyan" />
+              <p className="font-display text-sm text-p01-text">{t("pay.subs.recoverTitle")}</p>
+            </div>
+            <p className="mt-2 text-xs text-p01-text-muted">
+              {t("pay.subs.recoverLede")}
+            </p>
             <button
-              onClick={() => void handleTrack()}
-              disabled={tracking || trackAddr.trim().length === 0}
-              className="btn-secondary inline-flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
+              onClick={() => void handleRecover()}
+              disabled={recovering}
+              className="btn-secondary mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
             >
-              {tracking ? (
+              {recovering ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Plus className="h-3.5 w-3.5" />
+                <Search className="h-3.5 w-3.5" />
               )}
-              Track
+              {recovering ? t("pay.subs.recoverScanning") : t("pay.subs.recoverButton")}
             </button>
-          </div>
-          {trackError && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
-              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {trackError}
-            </p>
-          )}
-        </div>
-
-        {/* Recover from the chain: the list above is a cache since #11 */}
-        <div className="card p-4">
-          <div className="flex items-center gap-2">
-            <Search className="h-4 w-4 text-p01-cyan" />
-            <p className="font-display text-sm text-p01-text">Recover from the chain</p>
-          </div>
-          <p className="mt-2 text-xs text-p01-text-muted">
-            Lost this list? The private worker matches the notes this wallet owns against the
-            subscription program&apos;s vaults and re-records yours: vault, merchant, price,
-            period and license key all come back. It asks the network one pool-wide question —
-            nothing derived from your notes leaves this device. Only merchant display names and
-            opening-transaction links cannot be restored.
-          </p>
-          <button
-            onClick={() => void handleRecover()}
-            disabled={recovering}
-            className="btn-secondary mt-3 inline-flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-50"
-          >
-            {recovering ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Search className="h-3.5 w-3.5" />
+            {recoverNote && <p className="mt-2 text-xs text-p01-text-muted">{recoverNote}</p>}
+            {recoverError && (
+              <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
+                <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {recoverError}
+              </p>
             )}
-            {recovering ? "Scanning…" : "Recover subscriptions"}
-          </button>
-          {recoverNote && <p className="mt-2 text-xs text-p01-text-muted">{recoverNote}</p>}
-          {recoverError && (
-            <p className="mt-2 flex items-start gap-1.5 text-xs text-p01-red">
-              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {recoverError}
-            </p>
-          )}
-        </div>
+          </div>
+          </div>
+        </details>
 
         <p className="text-xs text-p01-text-muted">
-          A subscription is a one-way prepaid envelope: no cancel, no refund, and the
-          merchant&apos;s final claim closes the vault with everything left inside going to the
-          merchant.
+          {t("pay.subs.envelope")}
         </p>
       </div>
 
@@ -969,7 +989,7 @@ export default function SubscriptionsPanel({
           renderDetail(selectedRec)
         ) : (
           <div className="card p-6 text-center text-sm text-p01-text-muted">
-            Select a subscription to see its standing, its license key and its detail.
+            {t("pay.subs.placeholder")}
           </div>
         )}
       </div>

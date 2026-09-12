@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import StyxShell from "../../_styx/StyxShell";
 import { WalletProvider } from "@/components/WalletProvider";
 import PayApp from "@/components/pay/PayApp";
+import { getServerT } from "@/i18n/server";
 
 /**
  * /app: the devnet money surface, in the Styx voice.
@@ -200,152 +201,97 @@ export const metadata: Metadata = {
   },
 };
 
-export default function PayPage() {
+/**
+ * ⚠️ SERVER-SIDE TRANSLATION, AND THE REASON IT IS NOT `useT()`.
+ *
+ * Every sentence below moved into `pay.page.*` on 2026-09-09, because the site
+ * serves French by country and this page was hardcoded English. It reads the
+ * dictionary through `getServerT()` rather than the client hook, because the
+ * header of this file already ruled on the question: the disclosures on this
+ * page must render from HTML. This is the heaviest client route on the site,
+ * and a caveat that needs hydration is a caveat that can fail to appear while
+ * the claims around it do not.
+ *
+ * The cost is that `cookies()` makes this route dynamic. That is one route, and
+ * one that renders a wallet-connected app nobody can usefully cache. See
+ * i18n/server.ts for the full trade, including where the server and the client
+ * can disagree (local development, where no country cookie exists).
+ *
+ * `metadata` below stays English: it is generated at build time, and localising
+ * it means `generateMetadata` with the same cookie read. Worth doing, not done
+ * here — a share card in the wrong language is a smaller defect than a caveat
+ * that does not render, and this pass is spending its risk on the second one.
+ */
+export default async function PayPage() {
+  const t = await getServerT();
   return (
     <StyxShell>
-      {/* ── Hero ───────────────────────────────────────────────────────── */}
-      <section className="styx-container styx-hero">
-        <p className="styx-overline">
-          Styx Protocol &middot; Devnet app &middot; Solana
-        </p>
+      {/* ── Page header ─────────────────────────────────────────────────── */}
+      {/* THIS ROUTE IS A TOOL. THE PAGE IS NOW SHAPED LIKE ONE.
+          Measured 2026-09-09: /app was 1 152 words over 5 490 px and the app
+          itself started 1 492 px down, under a full-height hero, a four-card
+          facts strip and two paragraphs about key derivation. A visitor who
+          came to move a test token read an essay first.
+
+          What is left above the app is the three things that decide whether to
+          touch it at all: where you are, what it does, and that it is devnet.
+          Everything else — the stealth-address sentence, the two buttons, the
+          primitives, the four limits — is below the panel, in the same words,
+          in the section built for it. Nothing is deleted anywhere on this page;
+          the order is the change.
+
+          THE HEADLINE IS THE VERBS. It was "On a stealth send, the payee is a
+          one-time address, not a wallet": true, important, and a strange first
+          thing to meet before knowing what the screen does. It opens the "How
+          it works" section now. */}
+      <section className="styx-container styx-app-hero">
+        <p className="styx-overline">{t("pay.page.overline")}</p>
         <h1 className="styx-h1" style={SERIF_H1}>
-          On a stealth send, the payee is a one-time{" "}
-          <em className="styx-em styx-gleam-strong">address</em>, not a wallet.
+          {t("pay.page.h1")}
         </h1>
-        <div className="styx-hero-rule" aria-hidden="true" />
-        <div className="styx-hero-body">
-          <div className="styx-stack">
-            <p className="styx-lede">
-              Nothing here hides you from the start: a stealth send names
-              your wallet as the payer, and a pool withdrawal republishes its
-              deposit&apos;s commitment. A deposit is the one leg that detours
-              — you pay this deployment, and it funds the key that touches the
-              pool.{" "}
-              <strong>
-                Your keys are derived from one wallet signature and live in this
-                tab&apos;s worker. They are never uploaded.
-              </strong>
-            </p>
-            <div className="styx-btn-row">
-              <a className="styx-btn" href="#app">
-                Open the app
-              </a>
-              <a className="styx-btn-ghost" href="/docs">
-                Read the mechanism
-              </a>
-            </div>
-          </div>
 
-          {/* The one amber on this page. */}
-          <div className="styx-admission">
-            <p className="styx-admission-title">Devnet only, read first</p>
-            <p className="styx-admission-body">
-              Test tokens, not real funds. This software has not been audited,
-              and there is no mainnet deployment. Anything you move here you
-              should be able to afford to lose.
-            </p>
-          </div>
-        </div>
+        {/* The amber, on one line. It was a bordered card three lines deep
+            beside the lede; the sentence is unchanged and it no longer costs a
+            block. */}
+        <p className="styx-app-hero-warn">
+          <span className="styx-app-hero-warn-tag">{t("pay.page.devnetTag")}</span>
+          {t("pay.page.devnetBody")}
+        </p>
       </section>
 
-      {/* ── Facts strip ────────────────────────────────────────────────── */}
-      <section className="styx-container styx-strip" aria-label="What this app runs on">
-        <div className="styx-grid styx-grid-4">
-          <div className="styx-card styx-sweep">
-            <p className="styx-card-label">Proof system</p>
-            <p className="styx-card-value">Hash-based STARK</p>
-            <p className="styx-card-note">
-              Poseidon and Merkle trees only. No elliptic curves anywhere in the
-              proof.
-            </p>
-          </div>
-          <div className="styx-card styx-sweep">
-            <p className="styx-card-label">Stealth address</p>
-            <p className="styx-card-value">X25519 + ML-KEM-768</p>
-            <p className="styx-card-note">
-              Hybrid key encapsulation. The lattice half follows FIPS 203.
-            </p>
-          </div>
-          <div className="styx-card styx-sweep">
-            <p className="styx-card-label">Signatures</p>
-            <p className="styx-card-value">Ed25519</p>
-            <p className="styx-card-note">
-              Solana verifies nothing else, so every transaction you send from
-              here stays classically signed.
-            </p>
-          </div>
-          <div className="styx-card styx-sweep">
-            <p className="styx-card-label">Status</p>
-            <p className="styx-card-value">Devnet, not audited</p>
-            <p className="styx-card-note">
-              Deployed and running on devnet. There is no mainnet deployment.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* ── 01 · The app ───────────────────────────────────────────────── */}
+      {/* ── The app, first ─────────────────────────────────────────────── */}
+      {/* Was the second half of "01 · The app", 1 492 px down the page. The
+          prose that introduced it still exists and now follows it: a reader who
+          wants the mechanism scrolls to it, and a reader who wants to move a
+          token does not have to. The panel, its chips and its note are moved
+          verbatim — every sentence __tests__/pages/PayAppCopy.test.tsx pins is
+          in this block, unchanged. */}
       <section id="app" className="styx-section styx-section-alt">
-        <div className="styx-container styx-section-grid">
-          <div className="styx-section-label">
-            <span className="styx-numeral" aria-hidden="true">
-              01
-            </span>
-            <p className="styx-index">The app</p>
-            <h2 className="styx-h2" style={SERIF_H2}>
-              Shield, withdraw, subscribe.
-            </h2>
-          </div>
-          <div className="styx-prose">
-            <p>
-              Connect a wallet, then sign to derive your stealth spending,
-              viewing and ML-KEM keys. Your wallet is asked for two signatures,
-              and the second one is only there to prove it signs
-              deterministically, so your keys can still be re-derived next
-              session. Neither signature leaves this tab and no transaction is
-              sent to derive anything. From there the tabs cover sending to a
-              one-time address, importing a sealed note, moving value in and out
-              of the shielded pool, and opening or reviewing a subscription
-              vault.
-            </p>
-            <p>
-              <strong>
-                The signing prompt is still headed with the old Protocol 01 name.
-              </strong>{" "}
-              That heading is the seed of every key this app derives for you, so
-              renaming it would orphan the notes and vaults of everyone who
-              already has some. It stays exactly as it is. The name on the prompt
-              is old; the keys it produces are yours.
-            </p>
-          </div>
-        </div>
+        {/* Full container width: the panels inside PayApp need the room. See
+            the note at the top of this file — inside a 448px box every
+            two-column grid in them collapses and the content truncates.
 
-        {/* Full container width, deliberately outside the 3fr/8fr grid above:
-            the panels inside PayApp need the room. See the note at the top. */}
-        <div
-          className="styx-container"
-          style={{ marginTop: "clamp(2.5rem, 5vw, 4rem)" }}
-        >
-          <div className="styx-gleam-rule" aria-hidden="true" />
-
-          <div
-            className="styx-panel"
-            style={{ marginTop: "clamp(2rem, 4vw, 3rem)" }}
-          >
+            THE TWO TOP MARGINS AND THE GLEAM RULE ARE GONE. Both offsets and
+            the rule existed to separate this panel from the two paragraphs of
+            prose that used to sit above it inside the same section. Nothing
+            sits above it now except the page header, so together with the
+            section's own padding they left roughly 400px of empty band between
+            the disclosure and the first control — measured at 1440x900, the
+            panel started at 936px on a page whose whole point is to be used. */}
+        <div className="styx-container">
+          <div className="styx-panel">
             <div className="styx-panel-head">
-              <p className="styx-overline">
-                Solana devnet &middot; your keys stay in this tab
-              </p>
+              <p className="styx-overline">{t("pay.page.panelOverline")}</p>
               <div
                 className="styx-btn-row"
                 style={{ marginTop: "0.9rem", alignItems: "center" }}
               >
                 <span className="styx-chip">
                   <span className="styx-dot" aria-hidden="true" />
-                  Devnet
+                  {t("pay.page.chipDevnet")}
                 </span>
-                <span className="styx-chip">Not audited</span>
-                <span className="styx-chip">No mainnet deployment</span>
+                <span className="styx-chip">{t("pay.page.chipNotAudited")}</span>
+                <span className="styx-chip">{t("pay.page.chipNoMainnet")}</span>
               </div>
               {/* 🚨 THIS SAID "your wallet is the fee payer on every
                   transaction this panel sends" AND THAT STOPPED BEING TRUE.
@@ -381,20 +327,107 @@ export default function PayPage() {
                   screen's operation, because only the screen knows. Where the
                   money then goes is a per-screen fact and must not be asserted
                   here. */}
-              <p className="styx-note" style={{ marginTop: "0.9rem" }}>
-                Test tokens only. Depositing costs your wallet one public
-                signature paying this deployment, which then funds the one-time
-                key that touches the pool — so your address is not on the pool
-                transaction itself. Each screen says who paid for that screen.
-              </p>
+              {/* ⚠️ FOLDED, NOT REMOVED, AND THE SUMMARY IS THE HONEST HALF.
+                  This is 45 words about who signs what, printed above the tool
+                  on every tab and every visit. The three chips above it already
+                  say devnet, unaudited, no mainnet — which is the part that
+                  decides whether to touch anything. The sentence stays, whole,
+                  one click behind a summary that names what it is about, so a
+                  reader looking for the cost of a deposit finds it and a reader
+                  who came to move a token is not made to read it first.
+
+                  __tests__/pages/PayAppCopy.test.tsx pins the sentence in the
+                  dictionary, not its expansion, so folding it changes nothing
+                  that guard is watching. */}
+              <details className="styx-panel-note" style={{ marginTop: "0.9rem" }}>
+                <summary>{t("pay.page.panelNoteSummary")}</summary>
+                <p className="styx-note" style={{ marginTop: "0.6rem" }}>
+                  {t("pay.page.panelNote")}
+                </p>
+              </details>
             </div>
             <div className="styx-panel-body">
               {/* Width is load-bearing; PayApp carries the matching classes. */}
-              <div className="mx-auto w-full max-w-md lg:max-w-5xl">
+              {/* `styx-pay` is the scope of the skin that drags components/pay/*
+                  into the vault language — see the block at the end of
+                  app/_styx/styx.css for what it does and why it is a skin
+                  rather than a rewrite of those files. */}
+              <div className="styx-pay mx-auto w-full max-w-md lg:max-w-5xl">
                 <WalletProvider network="devnet">
                   <PayApp />
                 </WalletProvider>
               </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      {/* ── Facts strip ────────────────────────────────────────────────── */}
+      <section className="styx-container styx-strip" aria-label="What this app runs on">
+        <div className="styx-grid styx-grid-4">
+          <div className="styx-card styx-sweep">
+            <p className="styx-card-label">{t("pay.page.factProofLabel")}</p>
+            <p className="styx-card-value">{t("pay.page.factProofValue")}</p>
+            <p className="styx-card-note">{t("pay.page.factProofNote")}</p>
+          </div>
+          <div className="styx-card styx-sweep">
+            <p className="styx-card-label">{t("pay.page.factStealthLabel")}</p>
+            <p className="styx-card-value">X25519 + ML-KEM-768</p>
+            <p className="styx-card-note">{t("pay.page.factStealthNote")}</p>
+          </div>
+          <div className="styx-card styx-sweep">
+            <p className="styx-card-label">{t("pay.page.factSigLabel")}</p>
+            <p className="styx-card-value">Ed25519</p>
+            <p className="styx-card-note">{t("pay.page.factSigNote")}</p>
+          </div>
+          <div className="styx-card styx-sweep">
+            <p className="styx-card-label">{t("pay.page.factStatusLabel")}</p>
+            <p className="styx-card-value">{t("pay.page.factStatusValue")}</p>
+            <p className="styx-card-note">{t("pay.page.factStatusNote")}</p>
+          </div>
+        </div>
+      </section>
+
+
+      {/* ── 01 · How it works ──────────────────────────────────────────── */}
+      {/* The prose half of what used to be one section with the app panel. It
+          keeps id="how" — id="app" belongs to the panel above, which is what
+          the hero button and every inbound #app link mean now. */}
+      <section id="how" className="styx-section">
+        <div className="styx-container styx-section-grid">
+          <div className="styx-section-label">
+            <span className="styx-numeral" aria-hidden="true">
+              01
+            </span>
+            <p className="styx-index">{t("pay.page.howIndex")}</p>
+            <h2 className="styx-h2" style={SERIF_H2}>
+              {t("pay.page.howTitle")}
+            </h2>
+          </div>
+          <div className="styx-prose">
+            {/* The old hero lede and its two buttons, re-homed. They are the
+                page's explanation of itself, which is what this section is; at
+                the top they were three blocks a reader had to get past to reach
+                the control. Word for word the same sentences. */}
+            <p>
+              {t("pay.page.howStealthLead")}
+              <em className="styx-em">{t("pay.page.howStealthEm")}</em>
+              {t("pay.page.howStealthTail")}
+              <strong>{t("pay.page.howKeys")}</strong>
+            </p>
+            <p>{t("pay.page.howBody")}</p>
+            <p>
+              <strong>{t("pay.page.howPromptLead")}</strong>
+              {t("pay.page.howPromptBody")}
+            </p>
+            <div className="styx-btn-row" style={{ marginTop: "1.75rem" }}>
+              <a className="styx-btn-ghost" href="#limits">
+                {t("pay.page.ctaLimits")}
+              </a>
+              <a className="styx-btn-ghost" href="/docs">
+                {t("pay.page.ctaDocs")}
+              </a>
             </div>
           </div>
         </div>
@@ -407,18 +440,15 @@ export default function PayPage() {
             <span className="styx-numeral" aria-hidden="true">
               02
             </span>
-            <p className="styx-index">Before you sign</p>
+            <p className="styx-index">{t("pay.page.limitsIndex")}</p>
             <h2 className="styx-h2" style={SERIF_H2}>
-              Four things this page will not pretend.
+              {t("pay.page.limitsTitle")}
             </h2>
           </div>
           <div>
             <div className="styx-prose">
               <p>
-                Each of these is checkable on a block explorer or in the source,
-                which is the only reason it is written here. The recipient side
-                is what this app hides. The payer side is not, and neither is
-                the link between a deposit and the withdrawal that spends it.
+                {t("pay.page.limitsLede")}
               </p>
             </div>
 
@@ -427,41 +457,31 @@ export default function PayPage() {
                 <span className="styx-step-index">01</span>
                 <div>
                   <h3 className="styx-h3" style={SERIF_H3}>
-                    Your wallet signs, and it is not always on chain
+                    {t("pay.page.limit1Title")}
                   </h3>
                   <p className="styx-step-body">
-                    A deposit costs your wallet one signature: a single, fully
-                    visible transaction paying this deployment, plus a 1%
-                    operator fee in the same transaction. This deployment then
-                    funds the single-use key that touches the pool, from a
-                    different address of its own — so the transaction that
-                    deposits does not name you. A withdrawal or a subscription
-                    asks the deployment to cover the whole job; when it does,
-                    your wallet is on no transaction at all, and when it cannot,
-                    your wallet pays and the screen tells you which of the two
-                    happened. A deposit that cannot be relayed is refused rather
-                    than quietly falling back.
+                    {t("pay.page.limit1Body")}
                   </p>
                   <div style={{ marginTop: "0.9rem" }}>
                     <div className="styx-row">
-                      <span className="styx-row-key">you sign</span>
+                      <span className="styx-row-key">{t("pay.page.limit1Row1Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        one transfer, to this deployment
+                        {t("pay.page.limit1Row1Value")}
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">the pool deposit</span>
+                      <span className="styx-row-key">{t("pay.page.limit1Row2Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        a single-use key we funded
+                        {t("pay.page.limit1Row2Value")}
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">relayer</span>
+                      <span className="styx-row-key">{t("pay.page.limit1Row3Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        this deployment, for the funding leg
+                        {t("pay.page.limit1Row3Value")}
                       </span>
                     </div>
                   </div>
@@ -472,15 +492,10 @@ export default function PayPage() {
                 <span className="styx-step-index">02</span>
                 <div>
                   <h3 className="styx-h3" style={SERIF_H3}>
-                    A withdrawal can be paired with its deposit
+                    {t("pay.page.limit2Title")}
                   </h3>
                   <p className="styx-step-body">
-                    Unshielding republishes the same commitment the deposit
-                    published, so the two transactions can be matched today by
-                    anyone reading the chain. This is not fixed, no client-side
-                    change can hide it, and the pool is small enough that
-                    matching is not hard. Read the pair below on devnet before
-                    you decide what to move.
+                    {t("pay.page.limit2Body")}
                   </p>
                   <div style={{ marginTop: "0.9rem" }}>
                     <div className="styx-row">
@@ -501,10 +516,10 @@ export default function PayPage() {
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">appears in</span>
+                      <span className="styx-row-key">{t("pay.page.limit2Row3Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        both the deposit and the withdrawal
+                        {t("pay.page.limit2Row3Value")}
                       </span>
                     </div>
                   </div>
@@ -515,39 +530,31 @@ export default function PayPage() {
                 <span className="styx-step-index">03</span>
                 <div>
                   <h3 className="styx-h3" style={SERIF_H3}>
-                    One public hop, and it points at us, not at the pool
+                    {t("pay.page.limit3Title")}
                   </h3>
                   <p className="styx-step-body">
-                    Shielding still begins with one ordinary, fully visible
-                    transfer signed by your wallet — but it now pays this
-                    deployment rather than the single-use signer, and this
-                    deployment funds that signer from a separate address. Two
-                    transfers, neither naming both ends. What still ties them is
-                    the amount and the minutes between them, and nothing here
-                    hides either. A pool withdrawal then pays a payout address
-                    derived per note, and refuses to pay the connected wallet at
-                    all.
+                    {t("pay.page.limit3Body")}
                   </p>
                   <div style={{ marginTop: "0.9rem" }}>
                     <div className="styx-row">
-                      <span className="styx-row-key">pre-fund</span>
+                      <span className="styx-row-key">{t("pay.page.limit3Row1Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        public transfer, from you to this deployment
+                        {t("pay.page.limit3Row1Value")}
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">signer</span>
+                      <span className="styx-row-key">{t("pay.page.limit3Row2Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        one use, funded by this deployment
+                        {t("pay.page.limit3Row2Value")}
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">payout</span>
+                      <span className="styx-row-key">{t("pay.page.limit3Row3Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        derived per note, never your wallet
+                        {t("pay.page.limit3Row3Value")}
                       </span>
                     </div>
                   </div>
@@ -558,36 +565,31 @@ export default function PayPage() {
                 <span className="styx-step-index">04</span>
                 <div>
                   <h3 className="styx-h3" style={SERIF_H3}>
-                    The amounts are not hidden, and neither is the clock
+                    {t("pay.page.limit4Title")}
                   </h3>
                   <p className="styx-step-body">
-                    The pool is denominated, so a shield or a withdrawal reveals
-                    which denomination you used, and the timing of every
-                    transaction is public because you sent it yourself. What the
-                    proof withholds is which note in the tree you spent. That is
-                    the whole of the guarantee, and it is worth exactly as much
-                    as the number of other notes sitting beside yours.
+                    {t("pay.page.limit4Body")}
                   </p>
                   <div style={{ marginTop: "0.9rem" }}>
                     <div className="styx-row">
-                      <span className="styx-row-key">hidden</span>
+                      <span className="styx-row-key">{t("pay.page.limit4Row1Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        which note was spent
+                        {t("pay.page.limit4Row1Value")}
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">public</span>
+                      <span className="styx-row-key">{t("pay.page.limit4Row2Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        denomination, timing, your wallet
+                        {t("pay.page.limit4Row2Value")}
                       </span>
                     </div>
                     <div className="styx-row">
-                      <span className="styx-row-key">verified by</span>
+                      <span className="styx-row-key">{t("pay.page.limit4Row3Key")}</span>
                       <span className="styx-row-leader" />
                       <span className="styx-row-value">
-                        a Solana program, not a server
+                        {t("pay.page.limit4Row3Value")}
                       </span>
                     </div>
                   </div>
@@ -601,32 +603,29 @@ export default function PayPage() {
       {/* ── Close ──────────────────────────────────────────────────────── */}
       <section className="styx-section styx-section-alt">
         <div className="styx-container">
-          <p className="styx-overline">The honest offer</p>
+          <p className="styx-overline">{t("pay.page.closeOverline")}</p>
           <h2 className="styx-h2" style={SERIF_H2}>
-            Test it with money you can afford to lose.
+            {t("pay.page.closeTitle")}
           </h2>
           <p className="styx-lede" style={{ marginTop: "1.5rem" }}>
-            That is what a devnet can offer. Shield, pay, withdraw, then read the
-            programs that did it and the transactions they left behind.
+            {t("pay.page.closeBody")}
           </p>
           <div className="styx-btn-row" style={{ marginTop: "2rem" }}>
             <a className="styx-btn-ghost" href="/docs">
-              Documentation
+              {t("pay.page.closeDocs")}
             </a>
             <a className="styx-btn-ghost" href="/explorer">
-              Live explorer
+              {t("pay.page.closeExplorer")}
             </a>
             <a className="styx-btn-ghost" href="#app">
-              Back to the app
+              {t("pay.page.closeBack")}
             </a>
           </div>
           <p className="styx-note" style={{ marginTop: "2rem" }}>
             <span className="styx-check" aria-hidden="true">
               &#10003;
             </span>
-            Every claim on this page is either visible on devnet or readable in
-            the source. Nothing about users, volume or throughput appears here,
-            because none of it is benchmarked.
+            {t("pay.page.closeNote")}
           </p>
         </div>
       </section>

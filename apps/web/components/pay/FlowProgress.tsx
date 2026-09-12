@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Loader2 } from "lucide-react";
 
 import { progressFor, type FlowPhase } from "@/lib/pay/flowProgress";
+import { useT } from "@/i18n";
 
 export default function FlowProgress({
   phases,
@@ -32,6 +33,10 @@ export default function FlowProgress({
   /** One line on what is at stake. Omit when nothing is. */
   note?: string;
 }) {
+  /* The phase LABEL is translated; the worker's raw step string under it is
+     not. See the `pay.flow` block header in i18n/en.ts: flowProgress.ts matches
+     phases by regex over the worker's English words. */
+  const t = useT();
   // Monotonic: an unrecognised step must never look like going backwards.
   const [percent, setPercent] = useState(0);
   const startedAt = useRef<number | null>(null);
@@ -77,7 +82,7 @@ export default function FlowProgress({
       <div className="flex items-baseline justify-between gap-3">
         <p className="flex items-center gap-2 text-sm text-p01-text">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-p01-cyan" />
-          {state.current?.label ?? "Starting"}
+          {state.current ? t(state.current.labelKey) : t("pay.flow.starting")}
           {state.detail && (
             <span className="font-mono text-xs text-p01-text-muted">
               {state.detail.done}/{state.detail.total}
@@ -97,7 +102,7 @@ export default function FlowProgress({
         aria-valuenow={Math.floor(percent)}
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-label={state.current?.label ?? "In progress"}
+        aria-label={state.current ? t(state.current.labelKey) : t("pay.flow.inProgress")}
       >
         <div
           className="h-full rounded-full bg-p01-cyan transition-[width] duration-500 ease-out"
@@ -127,7 +132,7 @@ export default function FlowProgress({
               ) : (
                 <span className="h-3 w-3 rounded-full border border-current opacity-40" />
               )}
-              {p.label}
+              {t(p.labelKey)}
             </li>
           );
         })}

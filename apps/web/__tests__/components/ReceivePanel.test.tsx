@@ -85,7 +85,7 @@ function outcome(over: Partial<ImportNoteOutcome["note"]> = {}): ImportNoteOutco
 
 /** A sealed note is ~1,800 characters; nobody types one. Paste it. */
 async function pasteBlob(user: ReturnType<typeof userEvent.setup>, value: string) {
-  await user.click(screen.getByLabelText(/Sealed note you were given/i));
+  await user.click(screen.getByLabelText(/The note you were given/i));
   await user.paste(value);
 }
 
@@ -112,7 +112,7 @@ beforeEach(() => {
 describe("the tab is notes-only: the stealth inbox is parked", () => {
   it("never scans for stealth payments and shows none of that UI", async () => {
     renderPanel();
-    await screen.findByRole("button", { name: /Copy note address/i });
+    await screen.findByRole("button", { name: /Copy my address/i });
 
     expect(ADAPTER.scan).not.toHaveBeenCalled();
     expect(screen.queryByText(/meta-address/i)).not.toBeInTheDocument();
@@ -127,7 +127,7 @@ describe("the note address is the receiving half", () => {
     const user = userEvent.setup();
     renderPanel();
 
-    const copy = await screen.findByRole("button", { name: /Copy note address/i });
+    const copy = await screen.findByRole("button", { name: /Copy my address/i });
     expect(fetchNoteReceiveAddress).toHaveBeenCalledWith("meta-1");
     expect(screen.getByTestId("qr-code")).toHaveAttribute("data-value", MY_ADDRESS);
 
@@ -145,27 +145,27 @@ describe("the note address is the receiving half", () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /Try again/i }));
-    expect(await screen.findByRole("button", { name: /Copy note address/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Copy my address/i })).toBeInTheDocument();
   });
 });
 
 describe("the paste box refuses what cannot be a sealed note", () => {
   it("starts disabled, with the reason next to the button", async () => {
     renderPanel();
-    await screen.findByRole("button", { name: /Copy note address/i });
+    await screen.findByRole("button", { name: /Copy my address/i });
 
     expect(screen.getByRole("button", { name: /Add it to my notes/i })).toBeDisabled();
-    expect(screen.getByText(/Paste the sealed note you were given/i)).toBeInTheDocument();
+    expect(screen.getByText(/Paste the note you were given/i)).toBeInTheDocument();
   });
 
   it("names a p01pq address for what it is: not a sealed note", async () => {
     const user = userEvent.setup();
     renderPanel();
-    await screen.findByRole("button", { name: /Copy note address/i });
+    await screen.findByRole("button", { name: /Copy my address/i });
     // The classic mix-up: pasting an ADDRESS where the sealed NOTE goes.
     await pasteBlob(user, "p01pq:AAAA");
 
-    expect(screen.getAllByText(/Not a sealed note/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/not one of these notes/i).length).toBeGreaterThan(0);
     const button = screen.getByRole("button", { name: /Add it to my notes/i });
     expect(button).toBeDisabled();
     await user.click(button);
@@ -177,7 +177,7 @@ describe("importing", () => {
   async function importSealed() {
     const user = userEvent.setup();
     renderPanel();
-    await screen.findByRole("button", { name: /Copy note address/i });
+    await screen.findByRole("button", { name: /Copy my address/i });
     await pasteBlob(user, SEALED);
     await user.click(screen.getByRole("button", { name: /Add it to my notes/i }));
     return user;
@@ -247,7 +247,7 @@ describe("importing", () => {
 describe("the disclosure before any import", () => {
   it("claims no broadcast, and does NOT claim the note becomes untraceable", async () => {
     renderPanel();
-    await screen.findByRole("button", { name: /Copy note address/i });
+    await screen.findByRole("button", { name: /Copy my address/i });
     expect(
       screen.getByText(/Receiving a note broadcasts nothing/i),
     ).toBeInTheDocument();
@@ -265,8 +265,8 @@ describe("the disclosure before any import", () => {
 describe("without a pool session", () => {
   it("says what is missing instead of rendering a dead form", async () => {
     renderPanel({ meta: null, owner: null });
-    expect(screen.getByText(/needs your derived pool keys/i)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/Sealed note you were given/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/needs your keys and a connected wallet/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/The note you were given/i)).not.toBeInTheDocument();
     expect(fetchNoteReceiveAddress).not.toHaveBeenCalled();
     expect(ADAPTER.scan).not.toHaveBeenCalled();
   });

@@ -20,15 +20,31 @@
 import { Check } from "lucide-react";
 import clsx from "clsx";
 
+import { useT } from "@/i18n";
+
 export type StepState = "done" | "active" | "todo";
 
+/**
+ * 3. "Derive keys" named the operation, not the moment. A first-time reader has
+ *    to know what deriving is before the step tells them anything; "Sign" is
+ *    the thing they will actually do. Its hint no longer says "one signature":
+ *    the count is conditional in PayApp (one prompt for a wallet already known
+ *    to sign deterministically, two otherwise) and a fixed number here would
+ *    contradict the card that asks for them. It carries the fact that holds in
+ *    both cases instead. The third step's hint repeated its own label back
+ *    ("Send or subscribe" / "shield, pay, subscribe"), so it now names the one
+ *    thing the label leaves out.
+ */
+/* Keys, not sentences: this file used to hold three English labels on a site
+   that serves French by country. They live in i18n as `pay.steps.*`. */
 const STEPS = [
-  { label: "Connect", hint: "your wallet" },
-  { label: "Derive keys", hint: "one signature" },
-  { label: "Send or subscribe", hint: "shield, pay, subscribe" },
+  { label: "pay.steps.connect", hint: "pay.steps.connectHint" },
+  { label: "pay.steps.sign", hint: "pay.steps.signHint" },
+  { label: "pay.steps.use", hint: "pay.steps.useHint" },
 ] as const;
 
 export default function Stepper({ current }: { current: 0 | 1 | 2 }) {
+  const t = useT();
   return (
     <ol className="flex items-center gap-2 sm:gap-3">
       {STEPS.map((step, i) => {
@@ -55,14 +71,14 @@ export default function Stepper({ current }: { current: 0 | 1 | 2 }) {
                   state === "todo" && "text-p01-text-dim",
                 )}
               >
-                {step.label}
+                {t(step.label)}
               </span>
               {/* The hint only ever appears on the step being worked on. On the
                   others it is noise, and on narrow screens it is noise that
                   wraps. */}
               {state === "active" && (
                 <span className="hidden truncate text-[10px] text-p01-text-dim sm:block">
-                  {step.hint}
+                  {t(step.hint)}
                 </span>
               )}
             </span>

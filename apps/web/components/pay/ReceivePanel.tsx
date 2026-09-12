@@ -61,6 +61,7 @@ import { RECEIVE_NOTE_PHASES } from "@/lib/pay/flowProgress";
 import FlowProgress from "./FlowProgress";
 import SuccessBurst from "./SuccessBurst";
 import { formatAmount, timeAgo, truncate } from "./util";
+import { useT } from "@/i18n";
 
 /**
  * The stealth-payment inbox is PARKED, not deleted. Founder call, 2026-08-05.
@@ -82,13 +83,6 @@ import { formatAmount, timeAgo, truncate } from "./util";
  * needs to change.
  */
 const STEALTH_RECEIVE_PARKED = true;
-
-/**
- * First-visit switch for the disclosure fold, same delivery contract as
- * SendForm: the full text is owed once in full view, then folds to its
- * one-line summary and stays one click away. Content never changes.
- */
-const DISCLOSURE_SEEN_KEY = "p01.pay.receive.disclosureSeen";
 
 export default function ReceivePanel({
   adapter,
@@ -113,6 +107,10 @@ export default function ReceivePanel({
   /** Raised while an import runs, so PayApp can badge the tab. */
   onBusyChange?: (busy: boolean) => void;
 }) {
+  /* Every sentence in this panel used to be English written into the JSX, on a
+     site that serves French by country. They are `pay.receive.*` now; see the
+     block header in i18n/en.ts for why. */
+  const t = useT();
   const poolReady = !!meta && !!owner;
 
   // ── Your note address ────────────────────────────────────────────────────
@@ -126,7 +124,7 @@ export default function ReceivePanel({
     try {
       setAddress(await fetchNoteReceiveAddress(meta));
     } catch (e) {
-      setAddressError((e as Error).message || "Could not derive your note address.");
+      setAddressError((e as Error).message || t("pay.receive.errAddress"));
     }
   }, [meta]);
 
@@ -170,9 +168,9 @@ export default function ReceivePanel({
   // gated on a scan: this tab does not scan anything.
   const importReason =
     trimmed.length === 0
-      ? "Paste the sealed note you were given."
+      ? t("pay.receive.reasonEmpty")
       : !looksSealed
-        ? 'That is not a sealed note. A sealed note starts with "p01enc1:".'
+        ? t("pay.receive.reasonWrong")
         : null;
 
   async function handleImport() {
@@ -189,7 +187,7 @@ export default function ReceivePanel({
       setReceived(outcome);
       setBlob("");
     } catch (e) {
-      setImportError((e as Error).message || "Could not import this note.");
+      setImportError((e as Error).message || t("pay.receive.errImport"));
     } finally {
       setImporting(false);
       setImportStep(null);
@@ -197,47 +195,47 @@ export default function ReceivePanel({
   }
 
   // ── Disclosure fold ──────────────────────────────────────────────────────
+  /**
+   * ⚠️ CLOSED BY DEFAULT NOW, AND NOTHING IS HIDDEN BY IT.
+   *
+   * This used to open itself on a visitor's first visit and remember it in
+   * localStorage. The intent was right — the disclosure is owed — but the
+   * result was that every panel greeted a first-time user with four or five
+   * paragraphs above the control they came for, which is how a disclosure
+   * stops being read.
+   *
+   * What is owed is that the fact is ON THE SCREEN and one gesture away, not
+   * that it is unfolded. The summary line stays visible at all times and
+   * carries the whole point in one sentence; the paragraphs are unchanged,
+   * word for word, behind it. Nothing here is softened, only folded.
+   */
   const [disclosureOpen, setDisclosureOpen] = useState(false);
-  useEffect(() => {
-    try {
-      if (!window.localStorage.getItem(DISCLOSURE_SEEN_KEY)) {
-        setDisclosureOpen(true);
-        window.localStorage.setItem(DISCLOSURE_SEEN_KEY, "1");
-      }
-    } catch {
-      // No storage, no memory of a first visit: open every time, which errs on
-      // the side of showing the disclosure.
-      setDisclosureOpen(true);
-    }
-  }, []);
 
   // ── Context-column blocks ────────────────────────────────────────────────
 
   function renderReceived(r: ImportNoteOutcome) {
     return (
       <div ref={resultRef} className="space-y-4">
-        <SuccessBurst label={`Received a ${r.note.denomination} ${r.note.token} note`} />
+        <SuccessBurst
+          label={t("pay.receive.success").replace(
+            "{amount}",
+            `${r.note.denomination} ${r.note.token}`,
+          )}
+        />
 
         <div className="card p-4">
           {/* Both halves of the truth, on the screen the user remembers:
               receiving broadcast nothing, AND the eventual withdrawal still
               republishes the deposit's commitment. Never ship one without the
               other. */}
-          <p className="text-sm text-p01-text-muted">
-            The note is yours now. It is saved on this device, encrypted, and shows up in
-            your note lists without any pool scan. Receiving it sent nothing to the chain;
-            when it is eventually withdrawn, that withdrawal will publish the same
-            commitment the original deposit published, so the exit can be matched to that
-            deposit.
-          </p>
+          <p className="text-sm text-p01-text-muted">{t("pay.receive.body")}</p>
           {r.note.spentKnown ? (
             <p className="mt-2 text-xs text-p01-text-muted">
-              Checked against the chain just now: it has not been withdrawn.
+              {t("pay.receive.checkedOk")}
             </p>
           ) : (
             <p className="mt-2 text-xs text-p01-yellow">
-              The chain could not be reached to confirm it is still unspent. The note was
-              saved anyway; the check runs again whenever your notes refresh.
+              {t("pay.receive.checkedFail")}
             </p>
           )}
           {/* Second-plane reference: the protocol's name for this note. */}
@@ -249,33 +247,22 @@ export default function ReceivePanel({
         {/* Everything a user could get wrong from here. All of it is a property
             of the mechanism, not a warning about a bug. */}
         <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-          <p className="font-medium">Before you count this as money:</p>
+          <p className="font-medium">{t("pay.receive.cautionTitle")}</p>
           <div className="mt-1.5 space-y-2 text-p01-red/90">
-            <p>
-              The sender still holds a spendable copy. Handing a note over does not erase
-              its secrets on their side, and whoever withdraws first gets the funds. Until
-              you have spent it, treat it as a promise from the sender, not as cash in hand.
-            </p>
-            <p>
-              This device holds your only copy. A received note cannot be rebuilt from your
-              wallet or from the chain, so clearing this browser&apos;s storage loses it.
-            </p>
+            <p>{t("pay.receive.cautionSender")}</p>
+            <p>{t("pay.receive.cautionOnlyCopy")}</p>
             <p>
               {r.merklePath === "stored"
-                ? "Its withdrawal path travelled with it, so spending it will not need to rebuild the pool's history."
-                : "No withdrawal path travelled with it, so spending it will first rebuild this pool's history, which takes time."}
+                ? t("pay.receive.pathStored")
+                : t("pay.receive.pathMissing")}
             </p>
           </div>
         </div>
 
-        <p className="text-xs text-p01-text-dim">
-          To spend it, open the Pool tab: the note sits under Your notes with the same
-          Withdraw button as a note you shielded yourself. It can also pay for a
-          subscription, or be handed on from the Send tab.
-        </p>
+        <p className="text-xs text-p01-text-dim">{t("pay.receive.toSpend")}</p>
 
         <button className="btn-secondary w-full" onClick={() => setReceived(null)}>
-          Receive another note
+          {t("pay.receive.another")}
         </button>
       </div>
     );
@@ -284,11 +271,10 @@ export default function ReceivePanel({
   function renderAddressCard() {
     return (
       <div className="card p-4">
-        <p className="font-display text-sm text-p01-text">Your note address</p>
-        <p className="mt-1 text-xs text-p01-text-muted">
-          Whoever wants to hand you a note needs this address (or the QR). It contains only
-          public keys, so it is safe to share anywhere.
+        <p className="font-display text-sm text-p01-text">
+          {t("pay.receive.addressTitle")}
         </p>
+        <p className="mt-1 text-xs text-p01-text-muted">{t("pay.receive.addressLede")}</p>
 
         {addressError ? (
           <div className="mt-3">
@@ -297,12 +283,12 @@ export default function ReceivePanel({
               onClick={() => void loadAddress()}
               className="btn-secondary mt-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs"
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Try again
+              <RefreshCw className="h-3.5 w-3.5" /> {t("pay.receive.addressRetry")}
             </button>
           </div>
         ) : !address ? (
           <p className="mt-3 flex items-center gap-2 text-xs text-p01-text-dim">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Deriving your address…
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> {t("pay.receive.addressLoading")}
           </p>
         ) : (
           <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
@@ -318,12 +304,11 @@ export default function ReceivePanel({
                 className="btn-secondary mt-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs"
               >
                 {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {copied ? "Copied" : "Copy note address"}
+                {copied ? t("pay.receive.copied") : t("pay.receive.copyAddress")}
               </button>
               {/* Second plane: what the address actually is. */}
               <p className="mt-2 text-xs text-p01-text-dim">
-                An X25519 and an ML-KEM-768 public key, a post-quantum pair. Notes sealed to
-                it can only be opened by this wallet&apos;s derived keys.
+                {t("pay.receive.addressWhat")}
               </p>
             </div>
           </div>
@@ -347,7 +332,7 @@ export default function ReceivePanel({
     try {
       setPayments(await adapter.scan(identity));
     } catch (e) {
-      setScanError((e as Error).message || "Scan failed. Check your connection and rescan.");
+      setScanError((e as Error).message || t("pay.receive.errScan"));
     } finally {
       setScanning(false);
     }
@@ -368,7 +353,7 @@ export default function ReceivePanel({
       await adapter.claim(p, identity, destination);
       setPayments((prev) => prev.map((x) => (x.id === p.id ? { ...x, claimed: true } : x)));
     } catch (e) {
-      setClaimError((e as Error).message || "Claim failed. Rescan and try again.");
+      setClaimError((e as Error).message || t("pay.receive.errClaim"));
     } finally {
       setClaimingId(null);
     }
@@ -388,11 +373,11 @@ export default function ReceivePanel({
         {/* Publish / meta card */}
         <div className="card p-4">
           <div className="flex items-center justify-between">
-            <p className="font-display text-sm text-p01-text">Your private address</p>
+            <p className="font-display text-sm text-p01-text">
+              {t("pay.receive.stealthTitle")}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-p01-text-muted">
-            Share this meta-address (or the QR) with anyone who wants to pay you privately.
-          </p>
+          <p className="mt-1 text-xs text-p01-text-muted">{t("pay.receive.stealthLede")}</p>
 
           <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
             <div className="rounded-lg bg-white p-2">
@@ -407,7 +392,7 @@ export default function ReceivePanel({
                 className="btn-secondary mt-2 inline-flex items-center gap-2 px-3 py-1.5 text-xs"
               >
                 {metaCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {metaCopied ? "Copied" : "Copy meta-address"}
+                {metaCopied ? t("pay.receive.copied") : t("pay.receive.copyMeta")}
               </button>
             </div>
           </div>
@@ -425,7 +410,7 @@ export default function ReceivePanel({
               className="inline-flex items-center gap-1.5 text-xs text-p01-text-muted hover:text-p01-cyan disabled:opacity-50"
             >
               <RefreshCw className={scanning ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"} />
-              {scanning ? "Scanning…" : "Rescan"}
+              {scanning ? t("pay.receive.scanning") : t("pay.receive.rescan")}
             </button>
           </div>
 
@@ -487,8 +472,7 @@ export default function ReceivePanel({
     <div className="space-y-4">
       {!poolReady ? (
         <div className="card p-4 text-sm text-p01-text-muted">
-          Receiving a note needs your derived pool keys and a connected wallet. Reconnect and
-          sign to derive, then come back.
+          {t("pay.receive.gate")}
         </div>
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
@@ -499,7 +483,7 @@ export default function ReceivePanel({
                 htmlFor="p01-sealed-note"
                 className="mb-1.5 block text-xs uppercase tracking-wider text-p01-text-muted"
               >
-                Sealed note you were given
+                {t("pay.receive.label")}
               </label>
               <textarea
                 id="p01-sealed-note"
@@ -513,18 +497,14 @@ export default function ReceivePanel({
               {trimmed.length > 0 &&
                 (looksSealed ? (
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-cyan">
-                    <Check className="h-3.5 w-3.5" /> Looks like a sealed note
+                    <Check className="h-3.5 w-3.5" /> {t("pay.receive.looksRight")}
                   </p>
                 ) : (
                   <p className="mt-1.5 flex items-center gap-1.5 text-xs text-p01-yellow">
-                    <TriangleAlert className="h-3.5 w-3.5" /> Not a sealed note. It starts with
-                    &quot;p01enc1:&quot;.
+                    <TriangleAlert className="h-3.5 w-3.5" /> {t("pay.receive.looksWrong")}
                   </p>
                 ))}
-              <p className="mt-1.5 text-xs text-p01-text-muted">
-                The sender makes this string on their Send tab by sealing a note to your
-                address on the right.
-              </p>
+              <p className="mt-1.5 text-xs text-p01-text-muted">{t("pay.receive.hint")}</p>
             </div>
 
             {importError && (
@@ -541,11 +521,11 @@ export default function ReceivePanel({
             >
               {importing ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" /> Importing…
+                  <Loader2 className="h-4 w-4 animate-spin" /> {t("pay.receive.importing")}
                 </>
               ) : (
                 <>
-                  <Download className="h-4 w-4" /> Add it to my notes
+                  <Download className="h-4 w-4" /> {t("pay.receive.button")}
                 </>
               )}
             </button>
@@ -573,36 +553,14 @@ export default function ReceivePanel({
               >
                 <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-cyan [&::-webkit-details-marker]:hidden">
                   <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
-                  <span>
-                    Receiving a note broadcasts nothing. Its later exit from the pool can
-                    still be matched to the original deposit.
-                  </span>
+                  <span>{t("pay.receive.discSummary")}</span>
                 </summary>
                 <div className="space-y-2 px-3 pb-3 text-xs text-p01-cyan/90">
-                  <p className="font-medium text-p01-cyan">
-                    Nothing goes on chain when a note changes hands.
-                  </p>
-                  <p>
-                    You are handed the note&apos;s secrets, sealed to your address. There is
-                    no transaction, so there is no sender, no recipient, no amount and no
-                    timing for anyone to correlate, and no fee.
-                  </p>
-                  <p className="text-p01-yellow">
-                    What it does not hide depends on where it is withdrawn. From here or the
-                    extension, on circuit 7, the withdrawal carries no commitment and that exit
-                    is NOT matchable to the deposit. From the phone, or on any note circuit 7
-                    cannot prove, it republishes the deposit&apos;s commitment and that exit IS
-                    publicly matchable to it. Measured on devnet.
-                  </p>
-                  <p className="text-p01-yellow">
-                    Until someone withdraws it, the sender keeps a spendable copy of the
-                    note. Whoever spends first wins.
-                  </p>
-                  <p className="text-p01-cyan/70">
-                    For the curious: your address carries an X25519 and an ML-KEM-768 public
-                    key (a post-quantum pair), and this device recomputes the note&apos;s
-                    commitment from its secrets before accepting it.
-                  </p>
+                  <p className="font-medium text-p01-cyan">{t("pay.receive.discLead")}</p>
+                  <p>{t("pay.receive.discNoTx")}</p>
+                  <p className="text-p01-yellow">{t("pay.receive.discWhere")}</p>
+                  <p className="text-p01-yellow">{t("pay.receive.discFirstSpend")}</p>
+                  <p className="text-p01-cyan/70">{t("pay.receive.discCurious")}</p>
                 </div>
               </details>
             )}

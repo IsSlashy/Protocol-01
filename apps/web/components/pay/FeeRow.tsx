@@ -2,6 +2,7 @@
 
 import type { ChainId, FeeQuote } from "@/lib/privacy/chains/types";
 import { formatAmount } from "./util";
+import { useT } from "@/i18n";
 
 export default function FeeRow({
   quote,
@@ -14,22 +15,29 @@ export default function FeeRow({
 }) {
   // Network fee and sender rent/cushion are paid in the chain's fee currency;
   // minimum send and protocol fee are in the asset being sent.
+  const t = useT();
   const feeSymbol = chainId === "starknet" ? "STRK" : "SOL";
   const rentLabel =
     chainId === "starknet"
-      ? "STRK claim cushion (one-time)"
-      : "Announcement rent (one-time)";
+      ? t("pay.shared.feeRentStarknet")
+      : t("pay.shared.feeRentSolana");
   const rows: [string, string][] = [
-    ["Network fee", formatAmount(quote.networkFee, feeSymbol)],
+    [t("pay.shared.feeNetwork"), formatAmount(quote.networkFee, feeSymbol)],
     ...(quote.senderRent
       ? ([[rentLabel, formatAmount(quote.senderRent, feeSymbol)]] as [string, string][])
       : []),
     ...(quote.protocolFee > 0
-      ? ([["Protocol fee", formatAmount(quote.protocolFee, assetSymbol)]] as [string, string][])
+      ? ([[t("pay.shared.feeProtocol"), formatAmount(quote.protocolFee, assetSymbol)]] as [
+          string,
+          string,
+        ][])
       : []),
-    ["Minimum send", formatAmount(quote.minSend, assetSymbol)],
-    ["Approvals", `${quote.approvals} signature`],
-    ["Est. time", quote.estTime],
+    [t("pay.shared.feeMinimum"), formatAmount(quote.minSend, assetSymbol)],
+    [
+      t("pay.shared.feeApprovals"),
+      t("pay.shared.feeApprovalsValue").replace("{count}", String(quote.approvals)),
+    ],
+    [t("pay.shared.feeTime"), quote.estTime],
   ];
   return (
     <div className="card divide-y divide-p01-border/60 p-0 text-sm">

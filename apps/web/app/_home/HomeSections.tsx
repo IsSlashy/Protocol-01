@@ -6,6 +6,10 @@ import Reveal from "../_styx/Reveal";
 import SerifHeading from "./SerifHeading";
 import WaitlistPanel from "./WaitlistPanel";
 import RiverCanvas from "../_styx/RiverCanvas";
+import StyxDevice from "../_styx/StyxDevice";
+import StyxFilm from "../_styx/StyxFilm";
+import StyxGlyph, { type GlyphName } from "../_styx/StyxGlyph";
+import StyxLogos from "../_styx/StyxLogos";
 
 /**
  * The home page, in the Styx vocabulary.
@@ -221,24 +225,36 @@ const STEPS: { n: string; titleKey: string; descKey: string }[] = [
  * privacyPools and serviceRegistry keep their own descriptions: neither states
  * more than devnet delivers.
  */
-const FEATURES: { titleKey: string; descKey: string }[] = [
-  { titleKey: "features.privacyPools", descKey: "features.desc.privacyPools" },
-  { titleKey: "features.zkProofs", descKey: "docs.sections.zkProofs.detail6" },
+const FEATURES: { titleKey: string; descKey: string; glyph: GlyphName }[] = [
+  {
+    titleKey: "features.privacyPools",
+    descKey: "features.desc.privacyPools",
+    glyph: "pool",
+  },
+  {
+    titleKey: "features.zkProofs",
+    descKey: "docs.sections.zkProofs.detail6",
+    glyph: "proof",
+  },
   {
     titleKey: "features.stealthMetaAddresses",
     descKey: "docs.sections.stealthAddresses.desc",
+    glyph: "stealth",
   },
   {
     titleKey: "features.subscriptionVaults",
     descKey: "docs.sections.subscriptionVaults.desc",
+    glyph: "vault",
   },
   {
     titleKey: "features.noteSplitting",
     descKey: "docs.sections.noteSplitting.desc",
+    glyph: "split",
   },
   {
     titleKey: "features.serviceRegistry",
     descKey: "features.desc.serviceRegistry",
+    glyph: "registry",
   },
 ];
 
@@ -288,6 +304,18 @@ export default function HomeSections() {
       <div className="styx-hero-stage">
         <RiverCanvas className="styx-river" />
         <section className="styx-container styx-hero">
+        {/* THE HERO IS TWO COLUMNS, and the reason is a measurement. Stacked —
+            overline, kicker, headline, rule, then a body row holding the lede
+            beside the device — the hero came to 1 539 px on a 1440x900 laptop,
+            so the whole first screen was the headline and a horizontal rule:
+            no lede, no button, no product. Side by side it is about 800 px and
+            a visitor sees the promise, both buttons and the app at once, which
+            is the arrangement solanamobile.com/seeker and every Apple product
+            page use for the same reason. The headline steps down a size inside
+            this column (see .styx-hero-copy in styx.css) because 5.9rem in a
+            620 px measure wraps to five lines. */}
+        <div className="styx-hero-split">
+        <div className="styx-hero-copy">
         {/* Brand word only. It was "Styx Protocol · Formerly Protocol 01 ·
             Private payments on Solana", three English clauses above the fold
             with no dictionary entry, one of them the retired brand. What Styx
@@ -308,8 +336,7 @@ export default function HomeSections() {
 
         <div className="styx-hero-rule" aria-hidden="true" />
 
-        <div className="styx-hero-body">
-          <div>
+          <div className="styx-hero-body">
             <p className="styx-lede">
               {t("hero.desc3")} {t("hero.desc4")}{" "}
               <strong>{t("footer.disclaimer")}</strong>
@@ -334,24 +361,42 @@ export default function HomeSections() {
               </button>
             </div>
           </div>
+        </div>
 
-          {/* The one amber on the page, above the fold, where hero.headline and
-              hero.traces used to be. This is the page's credibility, so it is
-              also the block that most needed a real dictionary key rather than
-              a paragraph of English: the docs already say the thing, in both
-              locales, and say it more precisely than the JSX did.
+        {/* The product shot. The page shipped four media elements against
+            1 060 words (measured 2026-09-09) and not one of them showed the app
+            it is selling; this is the right column now. See
+            ../_styx/StyxDevice.tsx for why it is drawn rather than
+            screenshotted and why only three of the mockup views appear. */}
+        <StyxDevice />
+        </div>
 
-              The title was roadmap.current, the single word "Current", which
-              labels a phase on /roadmap and does not read as a heading for a
-              disclosure. careers.context.badge is "Where we stand" and it
-              introduces the same kind of admission on /careers, so it keeps its
-              meaning here and both locales keep a real sentence. */}
-          <div className="styx-admission">
-            <p className="styx-admission-title">{t("careers.context.badge")}</p>
-            <p className="styx-admission-body">
-              {t("docs.sections.denominatedPools.desc")}
-            </p>
-          </div>
+        {/* The one amber on the page, still above the fold, and now a
+            full-width band under the hero rather than the hero's right column.
+
+            IT DID NOT MOVE TO BE HIDDEN, IT MOVED TO BE READ. As a sidebar it
+            was a 309-character paragraph set in a narrow box beside the lede,
+            competing with the two buttons for the same glance; across the full
+            measure it is three lines, and it is no longer the second thing a
+            visitor sees on a page that has not yet said what it sells. The
+            class names are unchanged, which is what
+            __tests__/pages/Homepage.test.tsx asserts on.
+
+            This is the page's credibility, so it is also the block that most
+            needed a real dictionary key rather than a paragraph of English: the
+            docs already say the thing, in both locales, and say it more
+            precisely than the JSX did.
+
+            The title was roadmap.current, the single word "Current", which
+            labels a phase on /roadmap and does not read as a heading for a
+            disclosure. careers.context.badge is "Where we stand" and it
+            introduces the same kind of admission on /careers, so it keeps its
+            meaning here and both locales keep a real sentence. */}
+        <div className="styx-admission styx-hero-admission">
+          <p className="styx-admission-title">{t("careers.context.badge")}</p>
+          <p className="styx-admission-body">
+            {t("docs.sections.denominatedPools.desc")}
+          </p>
         </div>
 
           <div
@@ -383,6 +428,28 @@ export default function HomeSections() {
         </div>
       </section>
 
+      {/* ── Ecosystem strip ───────────────────────────────────────────── */}
+      {/* Eight marks, right after the four facts, where a stranger is deciding
+          whether to keep scrolling. This is the one credibility beat the Styx
+          port dropped and did not replace: components/Trust.tsx carried these
+          same assets on the retired identity and its comment states the
+          constraint that still governs them — "$0 raised — no
+          investors/backers" — so trust.tagline, the sentence both dictionaries
+          already carry, is reused verbatim. "Built on, and recognized across
+          the Solana ecosystem" is the true claim; funded and partnered are not,
+          and the wording is the honesty. See ../_styx/StyxLogos.tsx. */}
+      <section className="styx-container styx-strip">
+        <p
+          className="styx-index"
+          style={{ marginBottom: "clamp(1.75rem, 4vw, 2.5rem)" }}
+        >
+          {t("trust.tagline")}
+        </p>
+        <Reveal className="styx-reveal">
+          <StyxLogos />
+        </Reveal>
+      </section>
+
       {/* ── Demo ──────────────────────────────────────────────────────── */}
       <section className="styx-section styx-section-alt">
         <div className="styx-container-narrow">
@@ -397,21 +464,16 @@ export default function HomeSections() {
 
               Every figure the film states was measured on devnet; the script
               lives in apps/weekly-update/src/scenes/styx-pitch/script.ts. */}
+          {/* The attributes are no longer set here: ../_styx/StyxFilm.tsx owns
+              them, because the poster state has to exist before the <video>
+              does. What changed and why is documented in that file — the short
+              version is that a bare `controls` element made Chrome's default
+              control bar the first thing a visitor saw of the product, over a
+              poster frame that is itself a title card of English text. The film
+              is unchanged, and it still starts only when someone asks. */}
           <div style={{ marginTop: "2rem" }}>
-            <Reveal className="styx-panel styx-reveal">
-              <video
-                src="/videos/styx-presentation.mp4"
-                controls
-                playsInline
-                preload="metadata"
-                poster="/videos/styx-presentation.jpg"
-                style={{
-                  display: "block",
-                  width: "100%",
-                  aspectRatio: "16 / 9",
-                  background: "var(--styx-ink)",
-                }}
-              />
+            <Reveal className="styx-reveal">
+              <StyxFilm />
             </Reveal>
           </div>
         </div>
@@ -581,15 +643,25 @@ export default function HomeSections() {
           </div>
           <div>
             <div className="styx-grid styx-grid-3">
+              {/* Glyph, index, title, sentence. The six cards used to be a
+                  numeral over a title over a 150-250 character paragraph, which
+                  gave all six the same silhouette and left a reader nothing to
+                  recognise before reading. Each drawing is the module's
+                  mechanism, not a mascot for it; see ../_styx/StyxGlyph.tsx.
+                  The card keeps styx-card-value and styx-card-note so the
+                  dictionary assertions in Homepage.test.tsx keep their anchor. */}
               {FEATURES.map((feature, i) => (
                 <Reveal
                   key={feature.titleKey}
-                  className="styx-card styx-sweep styx-reveal"
+                  className="styx-feature styx-sweep styx-reveal"
                   delay={(i % 3) * 80}
                 >
-                  <p className="styx-card-label">
-                    {String(i + 1).padStart(2, "0")}
-                  </p>
+                  <div className="styx-feature-head">
+                    <StyxGlyph name={feature.glyph} />
+                    <span className="styx-feature-index" aria-hidden="true">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                  </div>
                   <p className="styx-card-value">{t(feature.titleKey)}</p>
                   <p className="styx-card-note">{t(feature.descKey)}</p>
                 </Reveal>

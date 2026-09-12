@@ -267,7 +267,7 @@ describe("detail page", () => {
     await openDetail();
     expect(await screen.findByText("No cancel, no refund")).toBeInTheDocument();
     expect(
-      screen.getByText(/remaining balance, any dust and the vault's own rent all go to the merchant/i),
+      screen.getByText(/remaining balance, any dust and the vault.s own rent all go to the merchant/i),
     ).toBeInTheDocument();
   });
 
@@ -291,9 +291,19 @@ describe("detail page", () => {
   });
 
   it("does not suggest the subscription is unlinkable", async () => {
+    // The sentence was reworded on 2026-09-09 when it moved into the
+    // dictionary: Rule 4 of __tests__/lib/claims-lexicon.test.ts is per
+    // SENTENCE, and "unlinkable to your wallet only to the extent the pool is"
+    // put the qualification in the next one, so the guard read it as an
+    // unqualified claim and went red. The denial is now in the same breath as
+    // the term. What this test pins is unchanged: the screen must say the link
+    // is NOT broken, and must say why.
     await openDetail();
     expect(
-      await screen.findByText(/unlinkable to your wallet only to the extent the pool is/i),
+      await screen.findByText(/not unlinkable to your wallet/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/published the note commitment in the clear/i),
     ).toBeInTheDocument();
   });
 });
@@ -567,7 +577,7 @@ describe("master-detail", () => {
     });
     render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     expect(
-      await screen.findByText(/Select a subscription to see its standing/i),
+      await screen.findByText(/Pick a subscription to see its status/i),
     ).toBeInTheDocument();
   });
 });
