@@ -893,8 +893,6 @@ export default function SendForm({
                    folded behind its one-line summary after the first visit. */
                 <details
                   className="group rounded-lg border border-p01-cyan/30 bg-p01-cyan/5"
-                  open={disclosureOpen}
-                  onToggle={onDisclosureToggle}
                 >
                   <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-cyan [&::-webkit-details-marker]:hidden">
                     <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />
@@ -1056,8 +1054,6 @@ export default function SendForm({
                  behind its one-line summary after the first visit. */
               <details
                 className="group rounded-lg border border-p01-border bg-p01-surface"
-                open={disclosureOpen}
-                onToggle={onDisclosureToggle}
               >
                 <summary className="flex cursor-pointer select-none items-start gap-2 p-3 text-xs text-p01-text-muted [&::-webkit-details-marker]:hidden">
                   <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 transition-transform group-open:rotate-90" />

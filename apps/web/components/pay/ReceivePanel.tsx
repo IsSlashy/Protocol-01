@@ -307,9 +307,6 @@ export default function ReceivePanel({
                 {copied ? t("pay.receive.copied") : t("pay.receive.copyAddress")}
               </button>
               {/* Second plane: what the address actually is. */}
-              <p className="mt-2 text-xs text-p01-text-dim">
-                {t("pay.receive.addressWhat")}
-              </p>
             </div>
           </div>
         )}

@@ -828,7 +828,7 @@ export default function PayApp() {
                   className={clsx(
                     "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition",
                     tab === tabId
-                      ? "bg-p01-cyan text-p01-void"
+                      ? "bg-p01-text text-p01-void"
                       : "text-p01-text-muted hover:text-p01-text"
                   )}
                 >

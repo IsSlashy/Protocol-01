@@ -178,7 +178,7 @@ describe('Homepage, the Styx Protocol landing page', () => {
       expect(app).toBeTruthy();
       expect(within(app!).getByTestId('pay-app-stub')).toBeInTheDocument();
       expect(within(app!).getByText(en.pay.page.devnetTag)).toBeInTheDocument();
-      expect(within(app!).getByText(en.pay.page.devnetBody)).toBeInTheDocument();
+      expect(within(app!).getByText(en.homeSimple.devnetShort)).toBeInTheDocument();
     });
     it('offers exactly three doors out: docs, SDK, roadmap', () => {
       const links = screen.getByRole('region', { name: en.homeSimple.linksLabel });

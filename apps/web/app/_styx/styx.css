@@ -900,9 +900,14 @@
   left: 0;
   right: 0;
   z-index: 40;
-  background: rgba(7, 7, 9, 0.88);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  /* [2026-09-12] Translucent, so the ground of the page shows through the bar:
+     on / that is the river behind the hero (founder: "le fond doit aussi être
+     pris en compte dans le header, en transparence"); on every other route the
+     ground is the ink and the bar reads exactly as before. The blur keeps the
+     nav legible over the image. */
+  background: rgba(7, 7, 9, 0.32);
+  backdrop-filter: blur(10px) saturate(1.1);
+  -webkit-backdrop-filter: blur(10px) saturate(1.1);
   border-bottom: 1px solid var(--styx-rule-soft);
 }
 
@@ -1794,7 +1799,7 @@
   border-left: 2px solid var(--styx-warn);
   font-size: 0.8125rem;
   line-height: 1.65;
-  color: var(--styx-muted);
+  color: rgba(234, 231, 223, 0.86); /* was --styx-muted: grey on grey over the field */
   max-width: 62ch;
 }
 
@@ -1880,11 +1885,13 @@
    None of that exists anywhere else on this site. */
 .styx-pay .glass,
 .styx-pay .card {
-  background: var(--styx-panel);
+  /* [2026-09-12] Translucent ink with a light frost, so the page's field shows
+     through the panels instead of stopping at their edge. */
+  background: rgba(13, 13, 16, 0.72);
   border: 1px solid var(--styx-rule-soft);
   border-radius: 0;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
   box-shadow: none;
 }
 
@@ -1899,7 +1906,8 @@
 /* ---- Buttons: the site's primary is paper on ink, not a cyan slab ------- */
 
 .styx-pay .btn-primary,
-.styx-pay .btn-secondary {
+.styx-pay .btn-secondary,
+.styx-pay .btn-ghost {
   border-radius: 0;
   font-family: var(--styx-mono);
   font-weight: 400;
@@ -1931,6 +1939,15 @@
   border-color: var(--styx-paper);
   background: transparent;
   box-shadow: none;
+}
+.styx-pay .btn-ghost {
+  background: transparent;
+  border: 1px solid var(--styx-rule);
+  color: var(--styx-muted);
+}
+.styx-pay .btn-ghost:hover:not(:disabled) {
+  border-color: var(--styx-paper);
+  color: var(--styx-paper);
 }
 
 /* ---- Teal, back to being a seal ---------------------------------------- */
@@ -2273,64 +2290,66 @@
   color: var(--styx-muted);
 }
 
-/* ── Generated visuals on /, 2026-09-12 ─────────────────────────────────────
-   /styx/river.jpg behind the hero, /styx/flank.jpg on both sides of the app.
-   Both are decorative, both fade into the ink so they never fight the type. */
-.styx-hero-stage-simple {
+/* ── The field: one background for the whole page, 2026-09-12 ─────────────
+   app/_styx/StyxField.tsx draws it: fixed, full viewport, behind the header,
+   the app and the footer alike. */
+.styx-field {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background: var(--styx-ink);
 }
 
-.styx-home-backdrop {
+/* The shell paints the ink itself; on a page that carries the field, that
+   paint would sit on top of a negative-z fixed layer and hide it (MEASURED:
+   canvas drawn, page black). So the shell goes clear and the field is the
+   ink. */
+.styx:has(.styx-field) {
+  background: transparent;
+}
+
+.styx-field-canvas,
+.styx-field-fallback {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 55%;
-  z-index: -1;
-  opacity: 0.55;
-  pointer-events: none;
-  -webkit-mask-image: linear-gradient(to bottom, #000 40%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 40%, transparent 100%);
+}
+
+.styx-field-fallback {
+  display: none;
+  opacity: 0.9;
+}
+
+.styx-hero-stage-simple {
+  background: transparent;
+  margin-top: -4rem;
+  padding-top: 4rem;
 }
 
 .styx-home-app {
   position: relative;
-  /* Own stacking context, so the flanks' z-index -1 sits under the app and
-     over the page ground; without it they paint beneath the shell's opaque
-     background and never show (MEASURED: in the DOM, loaded, invisible). */
-  isolation: isolate;
 }
 
-.styx-home-flank {
-  display: none;
+/* ── The app inside the Styx frame, 2026-09-12 ────────────────────────────
+   components/pay/* are written with Tailwind utilities and the p01 tokens.
+   Inside the Styx shell those tokens are re-pointed (globals.css) and here the
+   two remaining differences of voice are folded: the display face becomes the
+   serif, and the corner radii tighten to the hairline look of the rest of the
+   site. One rule each, so every panel moves together. */
+.styx {
+  --font-display: var(--styx-serif);
+  --radius-md: 0.2rem;
+  --radius-lg: 0.3rem;
+  --radius-xl: 0.4rem;
+  --radius-2xl: 0.5rem;
 }
 
-@media (min-width: 1600px) {
-  .styx-home-flank {
-    display: block;
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: clamp(10rem, 14vw, 20rem);
-    height: 100%;
-    object-fit: cover;
-    opacity: 0.85;
-    pointer-events: none;
-    z-index: -1;
-  }
-  .styx-home-flank-left {
-    right: 100%;
-    margin-right: 2vw;
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
-    mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
-  }
-  .styx-home-flank-right {
-    left: 100%;
-    margin-left: 2vw;
-    transform: scaleX(-1);
-    -webkit-mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
-    mask-image: linear-gradient(to right, transparent, #000 35%, #000 70%, transparent);
-  }
+.styx .font-display {
+  font-family: var(--styx-serif);
+  font-weight: var(--styx-serif-small);
+  letter-spacing: -0.005em;
 }
 

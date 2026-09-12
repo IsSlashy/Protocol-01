@@ -136,8 +136,11 @@ describe("the connect gate offers every door the browser actually has", () => {
     // public test, where the tester arrives with Phantom and no extension. What
     // must not change is that a browser with nothing installed is TOLD so
     // instead of being shown a button that cannot work.
-    expect(screen.getByText(/no wallet announced itself to this page/i)).toBeInTheDocument();
-    expect(screen.getByText(/install phantom or the p01 extension/i)).toBeInTheDocument();
+    // 2026-09-12: the notice is two short sentences now (founder: no
+    // cluttering detail) — but it still TELLS the visitor, and still names
+    // the two things that would make a button appear.
+    expect(screen.getByText(/install it and reload/i)).toBeInTheDocument();
+    expect(screen.getByText(/or install phantom/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^connect /i })).toBeNull();
   });
 });

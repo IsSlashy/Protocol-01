@@ -1850,46 +1850,11 @@ export default function PoolPanel({
             already seen this browser create everything the relayed transaction
             would refer to. The sentence below therefore says "every
             transaction", which is what is true; do not soften it to "some". */}
-        <div className="rounded-lg border border-p01-red/30 bg-p01-red/5 p-3 text-xs text-p01-red">
-          <button
-            type="button"
-            onClick={() => setDisclosureOpen((v) => !v)}
-            aria-expanded={disclosureOpen}
-            className="flex w-full items-center justify-between gap-2 text-left"
-          >
-            {/* This one line is the only part of the disclosure that is always
-                on screen, so it is the sentence most people will ever read —
-                and it said "Amounts are hidden", which the paragraph it
-                summarises contradicts three lines down ("the amount is
-                quantised to a denomination"). The amount is not hidden: each
-                pool PDA is seeded on `denomination.to_le_bytes()`, so the
-                transaction names which pool and therefore the size. What the
-                pool buys is that the size is one of six fixed values instead of
-                an exact figure that identifies you by itself. Say that. */}
-            <span className="font-medium">{t("pay.pool.privacySummary")}</span>
-            <ChevronDown
-              className={
-                disclosureOpen
-                  ? "h-3.5 w-3.5 shrink-0 rotate-180 transition-transform"
-                  : "h-3.5 w-3.5 shrink-0 transition-transform"
-              }
-            />
-          </button>
-          {disclosureOpen && (
-            <div className="mt-2 space-y-2 text-p01-red/90">
-              {/* The last paragraph now names the carrier of "post-quantum"
-                  (X25519 + ML-KEM-768). Rule 2b of
-                  __tests__/lib/claims-lexicon.test.ts caught the sentence the
-                  moment it entered the dictionary: the guard scans dictionary
-                  values, so a claim that lived only in JSX had never been read
-                  by it. Translating the app is what put it under the guard. */}
-              <p>{t("pay.pool.privacyWallet")}</p>
-              <p>{t("pay.pool.privacyCommitment")}</p>
-              <p>{t("pay.pool.privacyIp")}</p>
-              <p>{t("pay.pool.privacyToday")}</p>
-            </div>
-          )}
-        </div>
+        {/* [2026-09-12] The red privacy disclosure (summary + four paragraphs on
+            amount, commitment, IP and what the pool buys) is no longer rendered
+            here — the founder's brief: people must understand what they do,
+            not read a treatise. The dictionary keys and the tests that guard
+            their wording are untouched; the sentences live on in the docs. */}
 
         {unspent.length > 0 && (
           <div>

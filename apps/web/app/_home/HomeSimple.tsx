@@ -4,6 +4,7 @@ import { useT } from "@/i18n";
 import { WalletProvider } from "@/components/WalletProvider";
 import PayApp from "@/components/pay/PayApp";
 import SerifHeading from "./SerifHeading";
+import StyxField from "../_styx/StyxField";
 
 /**
  * / — the product, first.
@@ -33,22 +34,8 @@ export default function HomeSimple() {
 
   return (
     <>
+      <StyxField />
       <div className="styx-hero-stage styx-hero-stage-simple">
-        {/* [VISUALS 2026-09-12] Generated with the Grok image model from the
-            site's own tokens (near-black, ivory, one teal accent): a river of
-            light, the Styx. A still image where the old page ran an animated
-            canvas — nothing to compute, nothing to crash, and it scales to a
-            4K screen as a backdrop rather than as a taller page. Decorative:
-            aria-hidden, no alt text carries meaning. Source prompts and the
-            other candidates: docs/HANDOFF-2026-09-13.md §8. */}
-        <img
-          className="styx-home-backdrop"
-          src="/styx/river.jpg"
-          alt=""
-          aria-hidden="true"
-          decoding="async"
-          fetchPriority="high"
-        />
         <section className="styx-container styx-hero styx-hero-simple">
           <p className="styx-overline">{t("pay.page.overline")}</p>
           <SerifHeading level={1}>{t("pay.page.h1")}</SerifHeading>
@@ -58,19 +45,17 @@ export default function HomeSimple() {
         </section>
       </div>
 
-      <section id="app" className="styx-container styx-home-app">
-        {/* Two ribbons of light flanking the app on wide screens (≥ 1600px),
-            the way umbraprivacy.com dresses the sides of its card. One asset,
-            mirrored for the right side; hidden below that width so a laptop
-            or a phone gets the app and nothing else. */}
-        <img className="styx-home-flank styx-home-flank-left" src="/styx/flank.jpg" alt="" aria-hidden="true" loading="lazy" decoding="async" />
-        <img className="styx-home-flank styx-home-flank-right" src="/styx/flank.jpg" alt="" aria-hidden="true" loading="lazy" decoding="async" />
+      {/* `styx-pay` is the founder's re-skin of the pay panels into the site's
+          voice (app/_styx/styx.css): paper buttons, hairlines, no glow. /app
+          wraps the app in it; the home page must too, or the panels come up in
+          their old teal-glass dress — which is what happened on 2026-09-12. */}
+      <section id="app" className="styx-container styx-home-app styx-pay">
         <WalletProvider network="devnet">
           <PayApp />
         </WalletProvider>
         <p className="styx-app-hero-warn styx-home-app-warn">
           <span className="styx-app-hero-warn-tag">{t("pay.page.devnetTag")}</span>
-          {t("pay.page.devnetBody")}
+          {t("homeSimple.devnetShort")}
         </p>
       </section>
 

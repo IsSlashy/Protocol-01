@@ -977,9 +977,6 @@ export default function SubscriptionsPanel({
           </div>
         </details>
 
-        <p className="text-xs text-p01-text-muted">
-          {t("pay.subs.envelope")}
-        </p>
       </div>
 
       {/* Right: the detail of the selected merchant. Below lg it only exists
