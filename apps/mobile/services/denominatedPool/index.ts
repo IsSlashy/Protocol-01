@@ -13,6 +13,7 @@
  *   - If snarkjs WASM fails on RN, see PROVING_NOTES at bottom of file
  */
 
+import nacl from 'tweetnacl';
 import { getPoolHistoryStore, poolHistoryKey } from './poolHistoryCache';
 import {
   Connection,
@@ -1500,6 +1501,8 @@ export function deriveNullifierPDA(poolKey: PublicKey, nullifierBytes: Uint8Arra
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction: (tx: Transaction) => Promise<Transaction>;
+  /** Raw ed25519 over message bytes; lets transaction-v1 proof chunks go out (services/stark/index.ts). */
+  signBytes?: (bytes: Uint8Array) => Promise<Uint8Array>;
   // NOTE(Phase3-External): `signMessage?` was removed with the Privy
   // note-seed ceremony below. The external/software-wallet identity path
   // (which re-introduces off-chain message signing for HKDF derivation)
@@ -1553,21 +1556,42 @@ async function signAndSend(
   keypair: Keypair | null,
   walletSigner: WalletSigner | undefined,
 ): Promise<string> {
-  if (keypair) {
-    return await sendAndConfirmTransaction(connection, tx, [keypair], {
-      commitment: 'confirmed',
-    });
-  }
-  if (walletSigner) {
-    const { blockhash } = await connection.getLatestBlockhash();
+  // MEASURED on the CMF phone 2026-09-13 17:47 (the first note-in exchange):
+  // the circuit-7 spend died at preflight with "Blockhash not found" - and so
+  // did the buffer close after it - with 23 transactions from the same
+  // ephemeral landed seconds earlier. `sendAndConfirmTransaction` fetched the
+  // blockhash at the connection's default commitment and simulated at the
+  // same, on a load-balanced RPC whose simulating node lagged the one that
+  // handed out the hash. So: the hash is taken at 'confirmed', preflight runs
+  // at 'confirmed', and a hash the simulator does not know yet is retried ONCE
+  // with a fresh one before it is an error.
+  const send = async (): Promise<string> => {
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
     tx.recentBlockhash = blockhash;
-    tx.feePayer = walletSigner.publicKey;
-    const signed = await walletSigner.signTransaction(tx);
-    const sig = await connection.sendRawTransaction(signed.serialize());
-    await connection.confirmTransaction(sig, 'confirmed');
+    tx.signatures = [];
+    let wire: Buffer;
+    if (keypair) {
+      tx.feePayer = keypair.publicKey;
+      tx.sign(keypair);
+      wire = tx.serialize();
+    } else if (walletSigner) {
+      tx.feePayer = walletSigner.publicKey;
+      wire = (await walletSigner.signTransaction(tx)).serialize();
+    } else {
+      throw new Error('No wallet available for signing');
+    }
+    const sig = await connection.sendRawTransaction(wire, { preflightCommitment: 'confirmed' });
+    const res = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
+    if (res.value.err) throw new Error(`Transaction failed: ${JSON.stringify(res.value.err)}`);
     return sig;
+  };
+  try {
+    return await send();
+  } catch (e) {
+    if (!/Blockhash not found/i.test((e as Error)?.message ?? '')) throw e;
+    console.warn('[DenomPool] preflight did not know the blockhash yet; retrying once with a fresh one');
+    return await send();
   }
-  throw new Error('No wallet available for signing');
 }
 
 /**
@@ -1933,7 +1957,7 @@ export async function unshieldStark(
   // functions (submitAndVerifyStarkProof, closeStarkProofBuffer, signAndSend)
   // can use it without needing their own keypair/getKeypair() logic.
   const starkSigner: WalletSigner = keypair
-    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
+    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; }, signBytes: async (b: Uint8Array) => nacl.sign.detached(b, keypair.secretKey) }
     : walletSigner!;
   console.log(`[DenomPool] STARK signer: stealth=${!!keypair} pubkey=${starkSigner.publicKey.toBase58().slice(0,12)}...`);
   // Log balance of the signer before STARK operations
@@ -2217,7 +2241,7 @@ export async function transferNoteStark(
 
   onProgress?.('Submitting STARK proof on-chain...');
   const starkSigner: WalletSigner = keypair
-    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
+    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; }, signBytes: async (b: Uint8Array) => nacl.sign.detached(b, keypair.secretKey) }
     : walletSigner!;
 
   // Derive PDA upfront so finally can close even if submit throws mid-flight.
@@ -2535,7 +2559,7 @@ export async function splitNoteStark(
 
   onProgress?.('Submitting STARK proofs on-chain...');
   const starkSigner: WalletSigner = keypair
-    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; } }
+    ? { publicKey: keypair.publicKey, signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; }, signBytes: async (b: Uint8Array) => nacl.sign.detached(b, keypair.secretKey) }
     : walletSigner!;
 
   // Derive PDAs upfront so finally can close both even if a submit throws
@@ -3567,6 +3591,7 @@ export async function unshieldDenominatedStarkV4(
     ? {
         publicKey: keypair.publicKey,
         signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+        signBytes: async (b: Uint8Array) => nacl.sign.detached(b, keypair.secretKey),
       }
     : walletSigner!;
 
@@ -3852,10 +3877,18 @@ export async function shieldV3(
   walletSigner?: WalletSigner,
   overrideKeypair?: import('@solana/web3.js').Keypair,
 ): Promise<{ txSig: string; receipt: ShieldReceipt; c6ProofBuffer: PublicKey }> {
-  // Phase C v1 (deployed 2026-05-07): use uniform STARK pipeline for V3.
-  // Pads to 145KB, drops circuit_id from init+verify ix data, randomized
-  // nonce-keyed PDA. Closes L13 + L14.
-  const { submitAndVerifyStarkProofUniform, closeStarkProofBuffer, CIRCUIT_MERKLE_UPDATE } =
+  // ⛔ NON-UNIFORM upload since 2026-09-13, the same trade the withdrawal (v4)
+  // and the web/extension twins make. Until then this went through the Phase C
+  // "uniform" pipeline (proof padded to 145 KB, nonce-keyed PDA, init + ~14
+  // resize transactions, 145 legacy chunks, two verify transactions) — which
+  // closed L13/L14 and was MEASURED on the CMF phone 2026-09-13 16:55 at ~15 s
+  // per batch of 20 chunks, 8 batches, before the verify even started: that
+  // is the founder's "six minutes". `submitAndVerifyStarkProof` allocates the
+  // buffer in ONE transaction, uploads 22 transaction-v1 chunks, and verifies
+  // C6 in one transaction (SINGLE_TX_VERIFY_CU). The circuit id and the real
+  // proof size therefore travel in the init instruction again, as they do on
+  // the web (18.6 s per shield, docs/BENCHMARK-2026-09-13.md §6c).
+  const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_MERKLE_UPDATE } =
     await import('../stark');
 
   onProgress?.('Reading wallet...');
@@ -3868,12 +3901,13 @@ export async function shieldV3(
     ? {
         publicKey: keypair.publicKey,
         signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+        signBytes: async (b: Uint8Array) => nacl.sign.detached(b, keypair.secretKey),
       }
     : walletSigner!;
 
   // 1. Submit + verify C6 proof on-chain (init → upload → verify phase 1+2).
   // PDA is randomized per call (16-byte nonce); we get it back from the call.
-  onProgress?.('Submitting C6 (merkle_update) proof on-chain (uniform)...');
+  onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
 
   // Track buffers created during this operation. Any error path (including
   // wrapper preflight failure, relayer timeout, etc.) must close them in
@@ -3882,7 +3916,7 @@ export async function shieldV3(
   const createdBuffers: PublicKey[] = [];
   let c6ProofBuffer: PublicKey;
   try {
-    const c6Result = await submitAndVerifyStarkProofUniform(
+    const c6Result = await submitAndVerifyStarkProof(
       {
         proofBytes: c6ProofResult.proofBytes,
         circuitId: CIRCUIT_MERKLE_UPDATE,
@@ -4051,6 +4085,7 @@ export async function unshieldDenominatedStarkV3(
     ? {
         publicKey: keypair.publicKey,
         signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+        signBytes: async (b: Uint8Array) => nacl.sign.detached(b, keypair.secretKey),
       }
     : walletSigner!;
 
@@ -4307,6 +4342,7 @@ export async function transferDenominatedStarkV3(
     ? {
         publicKey: keypair.publicKey,
         signTransaction: async (tx: Transaction) => { tx.sign(keypair); return tx; },
+        signBytes: async (b: Uint8Array) => nacl.sign.detached(b, keypair.secretKey),
       }
     : walletSigner!;
 
@@ -4359,7 +4395,7 @@ export async function transferDenominatedStarkV3(
     createdBuffers.push(c3ProofBuffer);
 
     // 3. C6 — proves NEW commitment insertion against the current pool root.
-    onProgress?.('Submitting C6 (merkle_update) proof on-chain (uniform)...');
+    onProgress?.('Submitting C6 (merkle_update) proof on-chain...');
     const c6Result = await submitAndVerifyStarkProofUniform(
       {
         proofBytes: c6ProofResult.proofBytes,

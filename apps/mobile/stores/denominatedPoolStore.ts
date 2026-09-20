@@ -15,6 +15,23 @@ import { vaultEncrypt, vaultDecrypt, isVaultUnlocked } from '../utils/crypto/not
 import { getConnection, getCluster } from '../services/solana/connection';
 import { getKeypair, deriveLocalNoteSeed } from '../services/solana/wallet';
 import {
+  claimChallenge,
+  claimForPayment,
+  fetchExchangeTerms,
+  fetchIssuableNote,
+  funderTicket,
+  fetchFunderAddress,
+  requestFunding,
+  requestIssuedNote,
+} from '../services/privacy/deploymentApi';
+import { createNoteEncryptionAddress, decryptNote } from '../services/privacy/noteCrypto';
+import {
+  type SpentCandidate,
+  fetchSpentNoteIds,
+  findFirstUnspentCounter,
+  isNullifierSpentPoolWide,
+} from '../services/privacy/spentSet';
+import {
   type PoolConfig,
   type ShieldReceipt,
   type PoolOnChainInfo,
@@ -46,12 +63,9 @@ import {
   receiptFromJSON,
   slotToEpoch,
   findPool,
-  createNullifier,
-  bigintToLeBytes32,
-  deriveNullifierPDA,
 } from '../services/denominatedPool';
 import { useWalletStore } from './walletStore';
-import { rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPoolCommitments, deriveNoteMaterial } from '../services/denominatedPool';
+import { rescanPoolFromSeed, rescanPoolFromSeedV3, fetchPoolCommitments } from '../services/denominatedPool';
 import {
   deriveStealthSigners,
   sweepLegacyStealth,
@@ -77,7 +91,15 @@ import {
  * that would reject any future spend of the new note via `init` constraint.
  *
  * Returns the first safe counter. Throws if no free counter is found within
- * `maxAttempts`.
+ * `maxAttempts`, and throws if the spent set cannot be read at all: an empty
+ * set means "counter 0 is free", so a swallowed RPC error would hand back a
+ * counter whose note can never be withdrawn.
+ *
+ * The verdict comes from ONE pool-wide read (`services/privacy/spentSet.ts`)
+ * instead of up to 1,024 reads that each named this wallet's future nullifier
+ * PDAs to the RPC before any of them existed. Pinned by
+ * `services/privacy/spentSet.test.ts` and
+ * `services/privacy/storeNullifierReads.test.ts`.
  */
 export async function findSafeShieldCounter(
   connection: Connection,
@@ -86,28 +108,17 @@ export async function findSafeShieldCounter(
   startCounter: number,
   maxAttempts = 1024,
 ): Promise<number> {
-  for (let i = 0; i < maxAttempts; i++) {
-    const candidate = startCounter + i;
-    const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolPDA, candidate);
-    const g16Null = createNullifier(nullifierPreimage, secret);
-    const [g16Pda] = deriveNullifierPDA(poolPDA, bigintToLeBytes32(g16Null));
-    const starkNull = computeGoldilocksPoolNullifier(nullifierPreimage, secret);
-    const [starkPda] = deriveNullifierPDA(poolPDA, goldilocksNullifierToBytes(starkNull));
-    const accs = await connection.getMultipleAccountsInfo([g16Pda, starkPda]);
-    if (!accs[0] && !accs[1]) {
-      if (i > 0) {
-        console.warn(
-          `[findSafeShieldCounter] counter rewound — start=${startCounter}, safe=${candidate} ` +
-            `(skipped ${i} collided counters on pool ${poolPDA.toBase58().slice(0, 8)})`,
-        );
-      }
-      return candidate;
-    }
+  // No try/catch here, and none in the delegate: a failed read must reach the
+  // shield as a throw (services/privacy/spentSet.test.ts, "what the store
+  // delegates to"; this body is pinned by storeNullifierReads.test.ts).
+  const counter = await findFirstUnspentCounter(connection, walletSeed, poolPDA, startCounter, maxAttempts);
+  if (__DEV__ && counter !== startCounter) {
+    // No counter values and no pool: a counter is a per-wallet note index.
+    console.warn('[findSafeShieldCounter] counter rewound past collided counters');
   }
-  throw new Error(
-    `No free counter found after ${maxAttempts} attempts starting from ${startCounter} on pool ${poolPDA.toBase58()}`,
-  );
+  return counter;
 }
+
 import { scheduleLocalNotification } from '../services/notifications';
 import { getMetaAddress } from '../services/stealth/keys';
 // NOTE: `getOrCreateStealthKeys` / `scanStealthPayment` are no longer imported
@@ -115,10 +126,6 @@ import { getMetaAddress } from '../services/stealth/keys';
 // `services/privacy/stealthSweep.ts`, against a PERSISTED record, so it works
 // on a later run instead of only inside the function that generated it.
 import { generateStealthAddress as genStealth, parseMetaAddress } from '../utils/crypto/stealth';
-import {
-  computeGoldilocksPoolNullifier,
-  goldilocksNullifierToBytes,
-} from '../services/zk/goldilocks-poseidon';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -179,6 +186,26 @@ interface PoolCacheEntry {
 
 type TokenFilter = 'SOL' | 'USDC' | 'ALL';
 
+export interface PendingExchange {
+  noteId: string;
+  /** The circuit-7 withdrawal that paid the till. */
+  txSig: string;
+  /** base64 ed25519 over `claimChallenge(txSig)` by the withdrawal's ephemeral. */
+  proof: string;
+  claimCode?: string;
+  token: 'SOL' | 'USDC';
+  denomination: number;
+  at: number;
+}
+
+export interface ExchangeOutcome {
+  spendSig: string;
+  claimCode: string;
+  issuedNoteId: string;
+  issuedLeafIndex: number | null;
+  disclosure: string;
+}
+
 interface DenominatedPoolState {
   // Persisted
   notes: StoredNote[];
@@ -202,6 +229,13 @@ interface DenominatedPoolState {
    * `services/privacy/stealthSweep.ts` for the measured case.
    */
   pendingStealthSweeps: PendingStealthSweep[];
+  /**
+   * A note-in exchange whose withdrawal to the till has landed but whose
+   * older note is not in hand yet (claim or issue still to run). Persisted:
+   * the payment is on chain and one note is owed for it. `resumeExchange`
+   * redeems it; nothing else may drop it.
+   */
+  pendingExchange: PendingExchange | null;
 
   // Transient (not persisted)
   isLoading: boolean;
@@ -338,6 +372,21 @@ interface DenominatedPoolState {
     recipient: string,
     spend: PreparedNoteSpendV4,
   ) => Promise<string>;
+  /**
+   * The note-in exchange, the web's `exchangeNoteForIssued` on the phone:
+   * spend this v3 note to the deployment's till on circuit 7 (signer armed by
+   * the deployment's funder, never the wallet), present the withdrawal as the
+   * payment, and receive an OLDER note the treasury deposited, sealed to a
+   * `p01pq:` address derived from this wallet's note seed. Nothing is spent
+   * until the deployment has said where it pays and what it stocks.
+   */
+  exchangeNoteForIssued: (
+    noteId: string,
+    prove: SpendProver,
+    onProgress?: (step: string) => void,
+  ) => Promise<ExchangeOutcome>;
+  /** Finish a `pendingExchange`: claim (if not yet), issue, open, import. */
+  resumeExchange: (onProgress?: (step: string) => void) => Promise<ExchangeOutcome>;
   /** Quantum-resistant STARK peer-to-peer transfer */
   transferNoteStark: (
     noteId: string,
@@ -620,6 +669,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       selectedDenomination: null,
       shieldCounters: {},
       pendingStealthSweeps: [],
+      pendingExchange: null,
       isLoading: false,
       error: null,
       poolCache: {},
@@ -732,68 +782,54 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
           const slot = await connection.getSlot('confirmed');
           const currentEpoch = slotToEpoch(slot);
 
-          // Check nullifier PDAs on-chain for non-terminal notes (current cluster only).
-          // A note can be spent via two paths that write DIFFERENT PDAs:
-          //   - Groth16 unshield / transfer: Poseidon(np, sec) → 32-byte BN254 → PDA
-          //   - STARK unshield / subscribe:  Goldilocks Poseidon(np_u64, sec_u64) →
-          //                                  8-byte LE + 24 zeros → PDA
-          // The scanner MUST probe both — checking only the Groth16 PDA leaves
-          // STARK-spent notes marked "mature", causing the next STARK spend to
-          // fail with `already in use` after a 60s proof run.
+          // Spent status, read POOL-WIDE. A nullifier PDA does not exist until
+          // the note is spent, so the two-PDAs-per-note read this replaced handed
+          // the provider addresses that would be created later, from this phone's
+          // IP, on every mount of the notes, unshield and subscribe screens —
+          // with no spend following. One `getProgramAccounts` per pool asks a
+          // question whose answer is the same for every user
+          // (services/privacy/spentSet.ts).
+          //
+          // Both spend paths still answer: `isNoteSpentInSet` asks the set for the
+          // Groth16 (BN254 Poseidon) PDA and the STARK (Goldilocks) PDA. Checking
+          // only the Groth16 one left STARK-spent notes marked "mature" until the
+          // next STARK spend failed with `already in use` after a 60 s proof.
+          //
+          // A failed read throws out of this try and leaves every status
+          // untouched, exactly as a failed batch read did. Pinned by
+          // services/privacy/storeNullifierReads.test.ts and
+          // services/privacy/spentSet.test.ts.
           const cluster = getCluster();
           const activeNotes = notes.filter(n =>
             n.status !== 'spent' && n.status !== 'transferred' && n.status !== 'locked' &&
             (n.cluster ?? 'devnet') === cluster
           );
-          const nullifierPDAs: { noteId: string; pda: PublicKey }[] = [];
 
-          const nullifierMeta: { noteId: string; kind: 'g16' | 'stark'; pda: string }[] = [];
+          const candidates: SpentCandidate[] = [];
           for (const note of activeNotes) {
             try {
               const receipt = readReceipt(note.receiptJSON);
-              const poolKey = new PublicKey(note.poolPDA);
-
-              // Groth16 / Poseidon PDA (BN254 form)
-              const g16Null = createNullifier(receipt.nullifierPreimage, receipt.secret);
-              const [g16Pda] = deriveNullifierPDA(poolKey, bigintToLeBytes32(g16Null));
-              nullifierPDAs.push({ noteId: note.id, pda: g16Pda });
-              nullifierMeta.push({ noteId: note.id, kind: 'g16', pda: g16Pda.toBase58() });
-
-              // STARK / Goldilocks PDA (u64 in bytes[0..8], zero tail)
-              const starkNull = computeGoldilocksPoolNullifier(
-                receipt.nullifierPreimage,
-                receipt.secret,
-              );
-              const [starkPda] = deriveNullifierPDA(poolKey, goldilocksNullifierToBytes(starkNull));
-              nullifierPDAs.push({ noteId: note.id, pda: starkPda });
-              nullifierMeta.push({ noteId: note.id, kind: 'stark', pda: starkPda.toBase58() });
+              candidates.push({
+                id: note.id,
+                poolPDA: new PublicKey(note.poolPDA),
+                nullifierPreimage: receipt.nullifierPreimage,
+                secret: receipt.secret,
+              });
             } catch (err) {
-              if (__DEV__) console.warn(`[refreshNoteStatuses] skip invalid receipt ${note.id}:`, (err as Error).message);
-            }
-          }
-
-          if (__DEV__) console.log(`[refreshNoteStatuses] checking ${nullifierPDAs.length} nullifier PDAs for ${activeNotes.length} active notes`);
-
-          // Batch fetch nullifier accounts
-          const spentNoteIds = new Set<string>();
-          if (nullifierPDAs.length > 0) {
-            const accounts = await connection.getMultipleAccountsInfo(
-              nullifierPDAs.map(n => n.pda)
-            );
-            for (let i = 0; i < accounts.length; i++) {
-              if (accounts[i] !== null) {
-                spentNoteIds.add(nullifierPDAs[i].noteId);
-                if (__DEV__) {
-                  const meta = nullifierMeta[i];
-                  console.log(
-                    `[refreshNoteStatuses] SPENT noteId=${meta.noteId} kind=${meta.kind} pda=${meta.pda} ` +
-                      `owner=${accounts[i]?.owner.toBase58() ?? 'null'} lamports=${accounts[i]?.lamports ?? 0}`,
-                  );
-                }
+              // No note identifier in the message: the id is a commitment prefix.
+              if (__DEV__) {
+                console.warn('[refreshNoteStatuses] skipping an unreadable receipt:', (err as Error).message);
               }
             }
           }
-
+          // One read per distinct pool; a rejected read throws out of this try.
+          const spentNoteIds = await fetchSpentNoteIds(connection, candidates);
+          if (__DEV__) {
+            console.log(
+              `[refreshNoteStatuses] ${activeNotes.length} active note(s), ` +
+                `${spentNoteIds.size} spent`,
+            );
+          }
           const updated = notes.map(note => {
             // Terminal states — never change
             if (note.status === 'spent' || note.status === 'transferred') return note;
@@ -817,7 +853,15 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             const totalDelay = epochDelay + dynamicDelay;
 
             const minEpoch = currentEpoch - totalDelay;
-            const isMature = receipt.depositEpoch <= minEpoch;
+            // ⛔ NO WAIT FOR v3 NOTES (founder, 2026-09-13: "on va retirer le
+            // temps d'attente"). Everything a v3 note is spent on today goes
+            // through circuit 7 — `unshield_denominated_stark_v4.rs` computes
+            // `current_epoch` and `dynamic_delay` and then discards them
+            // (`let _ = (…)`, :587): the program has no maturity gate on that
+            // path, and the web spends a note seconds after depositing it
+            // (docs/BENCHMARK-2026-09-13.md §6c). The epoch clock stays for v2
+            // notes, whose legacy pair spends do hit `EpochDelayNotMet`.
+            const isMature = pool.version === 'v3' || receipt.depositEpoch <= minEpoch;
 
             // Preserve locked/spent/transferred — only update pending/mature/imported
             if ((note.status as string) === 'locked' || (note.status as string) === 'spent' || (note.status as string) === 'transferred') {
@@ -1275,15 +1319,15 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
             shieldEphemeral = ephemeral;
             shieldFunder = localKp!;
 
-            const { UNIFORM_PROOF_SIZE } = await import('../services/stark');
             const PROOF_DATA_OFFSET_LOCAL = 83;
-            // Rent for the PADDED size, not the proof's actual size. The
-            // uniform pipeline reallocs the buffer to UNIFORM_PROOF_SIZE, and
-            // pricing the real size runs E out of lamports during the last
-            // resize (ResultWithNegativeLamports) — the same trap the V3
-            // unshield pre-fund documents.
+            // Rent for the buffer `shieldV3` actually allocates since
+            // 2026-09-13: `PROOF_DATA_OFFSET + proofSize` in one createAccount
+            // (services/stark/index.ts, allocateProofBuffer), no resizes. It was
+            // priced at the 145 KB uniform padding before, ~0.4 SOL of float E
+            // carried for nothing and swept back. A 4 KB margin covers a proof
+            // that comes out a chunk longer than the last one.
             const bufferRent = await connection.getMinimumBalanceForRentExemption(
-              PROOF_DATA_OFFSET_LOCAL + UNIFORM_PROOF_SIZE,
+              PROOF_DATA_OFFSET_LOCAL + c6ProofResult.proofSize + 4_096,
             );
             const relayerEnabled = (
               await import('./settingsStore').then(m => m.useSettingsStore.getState())
@@ -1454,13 +1498,12 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         try {
           const preStarkNull = starkProofData.publicInputs?.[0] ?? 0n;
           if (preStarkNull !== 0n) {
-            const [prePda] = deriveNullifierPDA(
-              pool.poolPDA,
-              goldilocksNullifierToBytes(preStarkNull),
-            );
-            const preConn = getConnection();
-            const preAcct = await preConn.getAccountInfo(prePda);
-            if (preAcct !== null) {
+            // Membership in the pool's spent set, never a read of this note's own
+            // PDA: that read named the address this spend was about to create,
+            // from this phone's IP, seconds before it existed. Same verdict, one
+            // question everybody asks (services/privacy/spentSet.ts, pinned by
+            // services/privacy/storeNullifierReads.test.ts).
+            if (await isNullifierSpentPoolWide(getConnection(), pool.poolPDA, preStarkNull)) {
               set(state => ({
                 notes: state.notes.map(n =>
                   n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n,
@@ -1789,13 +1832,12 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         try {
           const preStarkNull = c1ProofData.publicInputs?.[0] ?? 0n;
           if (preStarkNull !== 0n) {
-            const [prePda] = deriveNullifierPDA(
-              pool.poolPDA,
-              goldilocksNullifierToBytes(preStarkNull),
-            );
-            const preConn = getConnection();
-            const preAcct = await preConn.getAccountInfo(prePda);
-            if (preAcct !== null) {
+            // Membership in the pool's spent set, never a read of this note's own
+            // PDA: that read named the address this spend was about to create,
+            // from this phone's IP, seconds before it existed. Same verdict, one
+            // question everybody asks (services/privacy/spentSet.ts, pinned by
+            // services/privacy/storeNullifierReads.test.ts).
+            if (await isNullifierSpentPoolWide(getConnection(), pool.poolPDA, preStarkNull)) {
               set(state => ({
                 notes: state.notes.map(n =>
                   n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n,
@@ -2174,13 +2216,12 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         try {
           const preStarkNull = spend.prepared.nullifierGoldilocks;
           if (preStarkNull !== 0n) {
-            const [prePda] = deriveNullifierPDA(
-              pool.poolPDA,
-              goldilocksNullifierToBytes(preStarkNull),
-            );
-            const preConn = getConnection();
-            const preAcct = await preConn.getAccountInfo(prePda);
-            if (preAcct !== null) {
+            // Membership in the pool's spent set, never a read of this note's own
+            // PDA: that read named the address this spend was about to create,
+            // from this phone's IP, seconds before it existed. Same verdict, one
+            // question everybody asks (services/privacy/spentSet.ts, pinned by
+            // services/privacy/storeNullifierReads.test.ts).
+            if (await isNullifierSpentPoolWide(getConnection(), pool.poolPDA, preStarkNull)) {
               set(state => ({
                 notes: state.notes.map(n =>
                   n.id === noteId ? { ...n, status: 'spent' as NoteStatus } : n,
@@ -2576,6 +2617,258 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
       // ------------------------------------------------------------------
       // STARK Transfer Note V3 (4-tx: C1 + C3 + C6 + transfer_v3)
       // ------------------------------------------------------------------
+
+      // ------------------------------------------------------------------
+      // The note-in exchange (2026-09-13) — the web's mechanism, on the phone.
+      //
+      // Founder: "la note une fois shieldée est remplacée immédiatement par
+      // une note plus ancienne de quelqu'un d'autre … le même mécanisme que la
+      // web app". So this is `exchangeNoteForIssued` from
+      // apps/web/lib/privacy/shieldClient.ts, step for step:
+      //
+      //   1. GET  /api/claim-for-payment   where the deployment collects (the till)
+      //   2. GET  /api/issue-note          refuse BEFORE spending if it stocks nothing
+      //   3. circuit 7 to the till, signer armed by POST /api/fund-ephemeral
+      //      (the wallet never funds it: a wallet-funded ephemeral sits one hop
+      //      from the transaction that pays the till, which is the join the
+      //      exchange exists to remove); the ephemeral signs the claim challenge
+      //   4. POST /api/claim-for-payment   the withdrawal is the payment
+      //   5. POST /api/issue-note          an older note, sealed to this wallet's
+      //      p01pq: address, opened with the note seed, imported like any
+      //      hand-delivered note (the commitment is recomputed on import)
+      //
+      // What it costs: the pool's 0.5 % withdrawal fee; the float is the
+      // funder's and its residue is swept back to it. What remains, stated as
+      // the web states it: the ephemeral's funding edge from the funder, the
+      // nullifier, the clock between withdrawal and issue, and an anonymity
+      // set of one against the ISSUER, who can regenerate every value an
+      // issued note will publish. Nothing here may be rendered as "private".
+      //
+      // ⛔ THE SPEND HAPPENS BEFORE THE CLAIM. From the moment the withdrawal
+      // lands, `pendingExchange` holds the receipt (signature + proof) and the
+      // old note is marked spent; a failed claim or issue is resumed with
+      // `resumeExchange`, never re-paid.
+      // ------------------------------------------------------------------
+      exchangeNoteForIssued: async (noteId, prove, onProgress) => {
+        if (get().isLoading || _starkOpInFlight) {
+          throw new Error('Another shield/unshield is already in progress. Please wait.');
+        }
+        if (get().pendingExchange) {
+          throw new Error('An exchange is still waiting for its note; finish it first (resume).');
+        }
+        const note = get().notes.find(n => n.id === noteId);
+        if (!note) throw new Error('Note not found');
+        if (note.status === 'spent') throw new Error('Note already spent');
+        if (note.status === 'locked') throw new Error('Note is locked in an active privacy route');
+        if (note.poolVersion !== 'v3') throw new Error('Only a v3-pool note can be exchanged (circuit 7).');
+        const pool = ALL_POOLS_V3.find(p => p.poolPDA.toBase58() === note.poolPDA);
+        if (!pool) throw new Error('V3 pool config not found for this note');
+        const receipt = readReceipt(note.receiptJSON);
+        const refusal = whyCircuit7Cannot(receipt);
+        if (refusal !== null) throw new V4Unprovable(refusal);
+
+        const report = (step: string) => {
+          onProgress?.(step);
+          set({ progress: step });
+        };
+
+        // 1 + 2: where it pays and what it stocks — before anything is spent.
+        report('Asking the deployment where an exchange pays...');
+        const terms = await fetchExchangeTerms();
+        if (!terms.configured || !terms.till) {
+          throw new Error(
+            'This deployment cannot take a note in exchange: ' +
+              (terms.reasons.join(' ') || 'it is not configured to sell notes.') +
+              ' Nothing was spent.',
+          );
+        }
+        let till: PublicKey;
+        try {
+          till = new PublicKey(terms.till);
+        } catch {
+          throw new Error('The deployment named a till that is not a public key. Nothing was spent.');
+        }
+        const issuable = await fetchIssuableNote();
+        if (!issuable) {
+          throw new Error(
+            'This deployment issues no notes right now, so there is nothing to exchange yours for. Nothing was spent.',
+          );
+        }
+        if (issuable.token !== note.token || issuable.denomination !== note.denomination) {
+          throw new Error(
+            `This deployment issues ${issuable.denomination} ${issuable.token} notes and yours is ` +
+              `${note.denomination} ${note.token}; an exchange is like for like. Nothing was spent.`,
+          );
+        }
+        if (!funderTicket()) {
+          throw new Error(
+            'This app carries no funder ticket, so the exchange signer could only be armed by your wallet — ' +
+              'which would put your wallet one hop from the payment. Nothing was spent.',
+          );
+        }
+
+        _starkOpInFlight = true;
+        set({ isLoading: true, isProving: true, error: null, progress: 'Preparing the exchange...' });
+        let ephemeral: SolKeypair | null = null;
+        let sweepTo: string | null = null;
+        const connection = getConnection();
+        try {
+          // 3a. The proof, bound to the till: sha256(recipient) is in the C7 transcript.
+          const prepared = await prepareUnshieldV4(receipt, till, pool, connection, prove, report);
+          set({ isProving: false });
+
+          // 3b. A deterministic ephemeral (resumable on crash), armed by the deployment.
+          const walletAddr = (await getKeypair())?.publicKey.toBase58() ?? '';
+          ephemeral = (await deriveStealthSigners(`exchange_v4_${noteId}`, walletAddr)).current;
+          const c7Rent = await connection.getMinimumBalanceForRentExemption(83 + prepared.c7ProofResult.proofSize);
+          const FEE_FUND = c7Rent + 15_000_000;
+          // Only the SHORTFALL is requested: the ephemeral is deterministic per
+          // note, so a retry after a failed attempt finds what the last grant
+          // left there (and `allocateProofBuffer` rearms the buffer that
+          // attempt opened) instead of asking the funder twice.
+          const held = await connection.getBalance(ephemeral.publicKey);
+          if (held < FEE_FUND) {
+            report('Arming the exchange signer (the deployment funds it, not your wallet)...');
+            const grant = await requestFunding(ephemeral.publicKey.toBase58(), FEE_FUND - held);
+            sweepTo = grant.sweepTo;
+            const deadline = Date.now() + 60_000;
+            for (;;) {
+              const bal = await connection.getBalance(ephemeral.publicKey);
+              if (bal >= FEE_FUND) break;
+              if (Date.now() > deadline) {
+                throw new Error(`The funder's grant ${grant.signature} has not reached the signer after 60 s. Nothing was spent.`);
+              }
+              await new Promise(r => setTimeout(r, 1500));
+            }
+          } else {
+            sweepTo = await fetchFunderAddress();
+          }
+
+          // 3c. Pay the till.
+          report('Paying the till with this note (circuit 7)...');
+          const txSig = await unshieldDenominatedStarkV4(
+            pool,
+            till,
+            prepared,
+            (step: string, proving?: boolean) => {
+              onProgress?.(step);
+              set({ progress: step, isProving: !!proving });
+            },
+            undefined,
+            ephemeral,
+          );
+
+          // Spent on chain from here, whatever happens next.
+          const proofBytes = nacl.sign.detached(Buffer.from(claimChallenge(txSig), 'utf8'), ephemeral.secretKey);
+          const pending: PendingExchange = {
+            noteId,
+            txSig,
+            proof: Buffer.from(proofBytes).toString('base64'),
+            token: issuable.token,
+            denomination: issuable.denomination,
+            at: Date.now(),
+          };
+          set(state => ({
+            pendingExchange: pending,
+            notes: state.notes.map(n =>
+              n.id === noteId ? { ...n, status: 'spent' as NoteStatus, spentTxSig: txSig } : n,
+            ),
+          }));
+
+          // The float's residue goes back to the funder, not to the wallet.
+          try {
+            const bal = await connection.getBalance(ephemeral.publicKey);
+            if (bal > 10_000 && sweepTo) {
+              const sweepTx = new Transaction().add(
+                SystemProgram.transfer({ fromPubkey: ephemeral.publicKey, toPubkey: new PublicKey(sweepTo), lamports: bal - 5_000 }),
+              );
+              const { blockhash } = await connection.getLatestBlockhash('confirmed');
+              sweepTx.recentBlockhash = blockhash;
+              sweepTx.feePayer = ephemeral.publicKey;
+              sweepTx.sign(ephemeral);
+              await connection.sendRawTransaction(sweepTx.serialize());
+            }
+          } catch (e) {
+            console.warn('[Exchange] residue sweep to the funder failed (retry later):', (e as Error).message);
+          }
+
+          // 4 + 5.
+          return await get().resumeExchange(onProgress);
+        } catch (e) {
+          // The float is the funder's. Whatever failed, send back what the
+          // ephemeral still holds free (rent inside a still-open buffer comes
+          // back when a retry rearms and finally closes it).
+          if (ephemeral && sweepTo) {
+            try {
+              const bal = await connection.getBalance(ephemeral.publicKey);
+              if (bal > 10_000) {
+                const back = new Transaction().add(
+                  SystemProgram.transfer({ fromPubkey: ephemeral.publicKey, toPubkey: new PublicKey(sweepTo), lamports: bal - 5_000 }),
+                );
+                const { blockhash } = await connection.getLatestBlockhash('confirmed');
+                back.recentBlockhash = blockhash;
+                back.feePayer = ephemeral.publicKey;
+                back.sign(ephemeral);
+                await connection.sendRawTransaction(back.serialize(), { preflightCommitment: 'confirmed' });
+              }
+            } catch (sweepErr) {
+              console.warn('[Exchange] crash-sweep to the funder failed:', (sweepErr as Error).message);
+            }
+          }
+          throw e;
+        } finally {
+          _starkOpInFlight = false;
+          set({ isLoading: false, isProving: false, progress: null });
+        }
+      },
+
+      resumeExchange: async (onProgress) => {
+        const rec = get().pendingExchange;
+        if (!rec) throw new Error('No exchange is waiting for a note.');
+        const report = (step: string) => {
+          onProgress?.(step);
+          set({ progress: step });
+        };
+        let claimCode = rec.claimCode;
+        if (!claimCode) {
+          report('Presenting the payment to the deployment...');
+          claimCode = (await claimForPayment({ signature: rec.txSig, proof: rec.proof, onProgress: report })).claimCode;
+          set({ pendingExchange: { ...rec, claimCode } });
+        }
+
+        report('Asking for an older note (your wallet did not deposit it)...');
+        const { noteSeed } = await deriveLocalNoteSeed();
+        const recipientAddress = createNoteEncryptionAddress(noteSeed);
+        const issued = await requestIssuedNote({
+          recipientAddress,
+          token: rec.token,
+          denomination: rec.denomination,
+          claimCode,
+        });
+
+        // Open it and import it through the SAME path a hand-delivered note
+        // takes: `importNote` recomputes the commitment from the secrets and
+        // refuses a mismatch, so the issuer is not trusted to have sealed a
+        // real note just because it is the issuer.
+        report('Opening the note...');
+        const plaintext = Buffer.from(decryptNote(noteSeed, issued.sealedNote)).toString('utf8');
+        JSON.parse(plaintext); // a SyntaxError here is clearer than one inside importNote
+        const before = new Set(get().notes.map(n => n.id));
+        set({ error: null });
+        get().importNote(btoa(plaintext), 'received');
+        if (get().error) throw new Error(get().error ?? 'The issued note could not be imported.');
+        const added = get().notes.find(n => !before.has(n.id));
+
+        // Only once the note is in hand.
+        set({ pendingExchange: null, progress: null });
+        return {
+          spendSig: rec.txSig,
+          claimCode,
+          issuedNoteId: added?.id ?? '',
+          issuedLeafIndex: issued.leafIndex,
+          disclosure: issued.disclosure,
+        };
+      },
 
       transferNoteStarkV3: async (noteId, c1ProofData, c3ProofData, c6ProofData, insertParams, walk) => {
         if (get().isLoading) {
@@ -3183,6 +3476,7 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         // would restore the fund-loss window described in
         // `services/privacy/stealthSweep.ts`.
         pendingStealthSweeps: state.pendingStealthSweeps,
+        pendingExchange: state.pendingExchange,
       }),
       migrate: (persistedState: any, version: number) => {
         const state = persistedState as any;

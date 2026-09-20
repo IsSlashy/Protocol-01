@@ -600,7 +600,10 @@ export class ZkService {
       const mightBeSpent = await this.checkNullifierOnChain(nullifierBytes);
 
       if (mightBeSpent) {
-        console.warn(`[ZK] Note at index ${note.leafIndex} appears to be already spent (nullifier in bloom filter)`);
+        // A release build keeps warn and error (babel.config.js excludes them
+        // from transform-remove-console), so logcat reads every one of them.
+        // They name no note here. Pinned by test/consolePolicy.test.ts.
+        console.warn('[ZK] A stored note reads as already spent on chain; dropping it locally.');
         // Remove from local storage
         this.notes = this.notes.filter(n => n.commitment !== note.commitment);
         removedCount++;
@@ -720,9 +723,12 @@ export class ZkService {
     // Sanity: if the client's view of oldRoot doesn't match the on-chain root,
     // shield_stark will reject with InvalidMerkleRoot. Fail fast.
     if (computedOldRoot !== onChainState.root) {
+      // No root values in the message: it reaches the screen through
+      // err.message (test/consolePolicy.test.ts, "every value zk/index.ts puts
+      // in a warn, an error or a thrown Error is one reviewed here").
       throw new Error(
-        `Shield aborted: client merkle state is out of sync with on-chain pool. ` +
-        `Expected root ${onChainState.root.toString()} but local subtrees produce ${computedOldRoot.toString()}. ` +
+        `Shield aborted: client merkle state is out of sync with on-chain pool; ` +
+        `the local subtrees do not reproduce the on-chain root. ` +
         `Call syncMerkleTree() or reset the local tree.`,
       );
     }
@@ -922,7 +928,7 @@ export class ZkService {
         const onChainLeafCount = merkleTreeAccount.data.readBigUInt64LE(8 + 32 + 32);
         const onChainLeafIndex = Number(onChainLeafCount) - 1;
         if (onChainLeafIndex !== note.leafIndex) {
-          console.warn('[ZK Shield] On-chain leaf index mismatch:', note.leafIndex, '!=', onChainLeafIndex);
+          console.warn('[ZK Shield] Local leaf position disagreed with the chain; corrected from the chain.');
           note.leafIndex = onChainLeafIndex;
         }
       }
@@ -1077,10 +1083,10 @@ export class ZkService {
     // the circuit is deriving from different (amount, rand, owner, mint)
     // than we stored, and the note we "saved" for the recipient is wrong.
     if (oc1Gl !== expectedRecipientCommit || oc2Gl !== expectedChangeCommit) {
+      // Names no commitment: same rule as the shield abort above.
       throw new Error(
-        'Transfer aborted: circuit-computed output commitments disagree with local derivation. ' +
-        `oc1 expected=${expectedRecipientCommit} got=${oc1Gl}; ` +
-        `oc2 expected=${expectedChangeCommit} got=${oc2Gl}.`,
+        'Transfer aborted: circuit-computed output commitments disagree with local derivation; ' +
+        'nothing was submitted.',
       );
     }
 
@@ -1120,8 +1126,8 @@ export class ZkService {
     );
     if (computedCurrentRoot !== onChainState.root) {
       throw new Error(
-        `Transfer aborted: client merkle state is out of sync with on-chain pool. ` +
-        `Expected root ${onChainState.root.toString()} but local subtrees produce ${computedCurrentRoot.toString()}. ` +
+        `Transfer aborted: client merkle state is out of sync with on-chain pool; ` +
+        `the local subtrees do not reproduce the on-chain root. ` +
         `Call syncMerkleTree() or reset the local tree.`,
       );
     }
@@ -1464,10 +1470,10 @@ export class ZkService {
     const pubAmtGl = publicInputs[4];
 
     if (oc1Gl !== expectedChangeCommit || oc2Gl !== expectedDummy2Commit) {
+      // Names no commitment: same rule as the shield abort above.
       throw new Error(
-        'Unshield aborted: circuit-computed output commitments disagree with local derivation. ' +
-        `oc1(change) expected=${expectedChangeCommit} got=${oc1Gl}; ` +
-        `oc2(dummy) expected=${expectedDummy2Commit} got=${oc2Gl}.`,
+        'Unshield aborted: circuit-computed output commitments disagree with local derivation; ' +
+        'nothing was submitted.',
       );
     }
     if (pubAmtGl !== publicAmountField) {
@@ -1510,8 +1516,8 @@ export class ZkService {
     );
     if (computedCurrentRoot !== onChainState.root) {
       throw new Error(
-        `Unshield aborted: client merkle state is out of sync with on-chain pool. ` +
-        `Expected root ${onChainState.root.toString()} but local subtrees produce ${computedCurrentRoot.toString()}. ` +
+        `Unshield aborted: client merkle state is out of sync with on-chain pool; ` +
+        `the local subtrees do not reproduce the on-chain root. ` +
         `Call syncMerkleTree() or reset the local tree.`,
       );
     }
@@ -1656,8 +1662,10 @@ export class ZkService {
           }
           throw new Error('Insufficient SOL for transaction fees. Please fund your wallet first.');
         }
-        console.error('[ZK Unshield] Preflight error:', err.message);
-        if (err.logs) console.error('[ZK Unshield] Logs:', err.logs);
+        // Neither `err.message` nor `err.logs`: a web3.js SendTransactionError's
+        // message embeds the last program log lines, which a failed insert
+        // prints with a leaf index (test/consolePolicy.test.ts, r1).
+        console.error('[ZK Unshield] Preflight rejected the transaction.');
         throw err;
       }
 
@@ -2018,9 +2026,7 @@ export class ZkService {
       }
 
       // Different commitment at same index - this is corruption!
-      console.error('[ZK] CORRUPTION DETECTED: Different note exists at leafIndex', note.leafIndex);
-      console.error('[ZK] Existing commitment:', existingNote.commitment.toString().slice(0, 20));
-      console.error('[ZK] New commitment:', note.commitment.toString().slice(0, 20));
+      console.error('[ZK] CORRUPTION DETECTED: two stored notes claim the same tree position; keeping the stored one.');
 
       // Keep the existing note (blockchain should be source of truth via sync)
       return false;
@@ -2264,7 +2270,7 @@ export class ZkService {
         const GOLDILOCKS_MAX = 1n << 64n;
         const validNotes = allNotes.filter((note: Note) => {
           if (note.commitment >= GOLDILOCKS_MAX) {
-            console.warn('[ZK] Dropping legacy BN254 note (commitment > 2^64):', note.commitment.toString().slice(0, 20));
+            console.warn('[ZK] Dropping a legacy BN254 note the STARK pipeline cannot spend; re-shield it.');
             return false;
           }
           return note.ownerPubkey === this.ownerPubkeyGl;
@@ -2284,7 +2290,7 @@ export class ZkService {
 
           const existing = seenIndices.get(note.leafIndex);
           if (existing) {
-            console.warn(`[ZK] Duplicate leafIndex ${note.leafIndex} detected - keeping first, removing duplicate`);
+            console.warn('[ZK] Duplicate tree position while loading notes; keeping the one already stored.');
             duplicatesRemoved++;
             continue;
           }
@@ -2420,7 +2426,8 @@ export class ZkService {
       // Phantom leaves accumulate when correction shields insert into local tree at position M
       // while on-chain inserts at position N < M, causing progressive desync.
       if (cachedLeafCount > onChainLeafCount) {
-        console.warn('[ZK Sync] Local tree ahead of on-chain:', cachedLeafCount, '>', onChainLeafCount, '— trimming to match');
+        // No pool count in a warn that ships (test/consolePolicy.test.ts, r1).
+        console.warn('[ZK Sync] Local tree ahead of on-chain; trimming to match.');
         const rebuiltTree = new MerkleTree(MERKLE_TREE_DEPTH);
         for (let i = 0; i < onChainLeafCount; i++) {
           const leaf = this.merkleTree.getLeaf(i);
@@ -2463,7 +2470,7 @@ export class ZkService {
           console.warn('[ZK Sync] Using local tree for proofs');
           this._onChainRoot = onChainRoot;
         } else {
-          console.error('[ZK Sync] Leaf count mismatch! Local:', this.merkleTree.leafCount, 'On-chain:', onChainLeafCount);
+          console.error('[ZK Sync] Leaf count mismatch between the rebuilt tree and the chain.');
           throw new Error('Merkle tree leaf count mismatch - some commitments could not be extracted');
         }
       } else {
@@ -2523,7 +2530,7 @@ export class ZkService {
 
       if (!found) {
         note.isOnChain = false;
-        console.warn('[ZK] Note commitment not found in tree:', noteCommitmentStr.slice(0, 20));
+        console.warn('[ZK] A stored note was not found in the local tree; marking it off-chain.');
       }
     }
 
@@ -2601,7 +2608,10 @@ export class ZkService {
       const subtrees = data.subtrees.map(s => BigInt(s));
       this._cachedSubtrees = subtrees; // Cache for proof reconstruction
       if (expectedLeafCount !== undefined && data.leafCount !== expectedLeafCount) {
-        console.warn('[ZK Shield] Stale local subtrees:', data.leafCount, 'leaves, need', expectedLeafCount);
+        // Not the two counts: the stored one is the user's last note's leaf + 1
+        // (saveLocalSubtrees after a shield), so the pair linked two of the
+        // user's deposits (test/consolePolicy.test.ts, r1).
+        console.warn('[ZK Shield] Stale local subtrees; recomputing.');
         return null;
       }
       return subtrees;
@@ -2889,15 +2899,17 @@ export class ZkService {
             cacheHits++;
           } else {
             // No fallback available - this will corrupt the tree
-            console.error('[ZK] No fallback available for index', i);
-            throw new Error(`Missing commitment at index ${i} - cannot rebuild merkle tree`);
+            // No leaf position in either line (test/consolePolicy.test.ts).
+            console.error('[ZK] No fallback available for a pool leaf');
+            throw new Error('A pool commitment is missing - cannot rebuild merkle tree');
           }
         }
       }
     }
 
     if (missingCount > 0 || cacheHits > 0) {
-      console.warn('[ZK] Had', missingCount, 'note fallbacks and', cacheHits, 'cache hits');
+      // No counts: `missingCount` counts the user's own notes (test/consolePolicy.test.ts, r1).
+      console.warn('[ZK] Rebuilt the tree with local fallbacks.');
     }
 
     return commitments;
@@ -3090,9 +3102,7 @@ export class ZkService {
     }
 
     if (note.merkleRoot && verifyRoot !== note.merkleRoot) {
-      console.error('[ZK Unshield] Reconstructed proof does NOT match root!');
-      console.error('[ZK Unshield] Expected:', note.merkleRoot.toString().slice(0, 20) + '...');
-      console.error('[ZK Unshield] Got:', verifyRoot.toString().slice(0, 20) + '...');
+      console.error('[ZK Unshield] Reconstructed proof does NOT match the note\'s stored root.');
       throw new Error('Cannot reconstruct valid Merkle proof for this note');
     }
 
@@ -3203,7 +3213,7 @@ export class ZkService {
 
 
     if (onChainIndex === -1) {
-      console.error('[ZK Import] Note not found in merkle tree. Tree has', this.merkleTree.leafCount, 'leaves');
+      console.error('[ZK Import] Note not found in merkle tree.');
       throw new Error('This note is not yet on-chain. Please wait for confirmation and try again.');
     }
 

@@ -46,6 +46,8 @@ import {
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction: (tx: Transaction) => Promise<Transaction>;
+  /** Raw ed25519 over message bytes; lets transaction-v1 proof chunks go out (services/stark/index.ts). */
+  signBytes?: (bytes: Uint8Array) => Promise<Uint8Array>;
 }
 
 const V3_RELAYER_TIMEOUT_MS = 180_000;

@@ -135,6 +135,14 @@ export interface StarkVerificationResult {
 export interface WalletSigner {
   publicKey: PublicKey;
   signTransaction: (tx: Transaction) => Promise<Transaction>;
+  /**
+   * Raw ed25519 over message bytes — what a transaction-v1 chunk needs
+   * (`txv1.ts`), and what every ephemeral keypair can do. MEASURED on the CMF
+   * phone 2026-09-13 16:55: without it the uploader saw `keypair === null`
+   * behind every keypair-backed adapter and silently took the legacy path —
+   * 145 chunks of 1,000 bytes in 8 batches, ~15 s per batch.
+   */
+  signBytes?: (bytes: Uint8Array) => Promise<Uint8Array>;
 }
 
 /**
@@ -151,6 +159,7 @@ export function keypairToWalletSigner(kp: Keypair): WalletSigner {
       tx.partialSign(kp);
       return tx;
     },
+    signBytes: async (bytes: Uint8Array) => nacl.sign.detached(bytes, kp.secretKey),
   };
 }
 
@@ -438,8 +447,12 @@ async function signSendConfirm(
   // [L2-CLIENT] a buffer keypair co-signs `createAccount`, after the wallet.
   if (opts?.extraSigners?.length) tx.partialSign(...opts.extraSigners);
 
+  // preflight at the commitment the blockhash was fetched at (see the note on
+  // `signAndSend` in services/denominatedPool/index.ts: a lagging simulator on
+  // a load-balanced RPC answers "Blockhash not found" otherwise).
   const sig = await conn.sendRawTransaction(tx.serialize(), {
     skipPreflight: opts?.skipPreflight ?? false,
+    preflightCommitment: 'confirmed',
   });
   const result = await conn.confirmTransaction(sig, 'confirmed');
   if (result.value.err) {
@@ -638,8 +651,12 @@ async function uploadChunksParallel(
   onProgress?: (step: string) => void,
 ): Promise<void> {
   // [TX-V1 2026-09-13] 3,840-byte chunks in 4,096-byte v1 transactions when the
-  // cluster's gate is active and a local keypair signs (see `txv1.ts`).
-  const v1 = !!keypair && (await isTransactionV1Active(conn));
+  // cluster's gate is active and SOMETHING can sign raw bytes: a local keypair,
+  // or a WalletSigner that exposes `signBytes` (every keypair adapter does).
+  const signBytes: ((b: Uint8Array) => Promise<Uint8Array>) | undefined = keypair
+    ? async (b) => nacl.sign.detached(b, keypair.secretKey)
+    : walletSigner?.signBytes;
+  const v1 = !!signBytes && (await isTransactionV1Active(conn));
   const chunkSize = v1 ? V1_CHUNK_SIZE : MAX_CHUNK_SIZE;
   const totalChunks = Math.ceil(proofBytes.length / chunkSize);
   const BATCH_SIZE = v1 ? totalChunks : 20; // chunks per blockhash window — smaller batch survives heavy 429 retries
@@ -672,7 +689,7 @@ async function uploadChunksParallel(
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
       const signedTxs: (Transaction | Uint8Array)[] = await Promise.all(
         remaining.map(async ({ offset, data }) => {
-          if (v1 && keypair) {
+          if (v1 && signBytes) {
             const { messageBytes, payer } = compileV1ChunkMessage({
               programId: STARK_VERIFIER_PROGRAM_ID,
               proofBuffer,
@@ -683,7 +700,7 @@ async function uploadChunksParallel(
               lastValidBlockHeight,
               discriminator: DISCRIMINATORS.writeProofChunk,
             });
-            return encodeV1Wire(messageBytes, payer, nacl.sign.detached(messageBytes, keypair.secretKey));
+            return encodeV1Wire(messageBytes, payer, await signBytes(messageBytes));
           }
           let tx = new Transaction().add(
             buildWriteProofChunkIx(offset, data, proofBuffer, authority)
@@ -707,10 +724,18 @@ async function uploadChunksParallel(
         `[STARK] Batch ${batchNum}/${totalBatches} attempt ${attempt + 1}: ${sigs.length} TXs sent`
       );
 
+      // v1: a lost chunk is cheap to resend and expensive to wait for. MEASURED
+      // on the web client (Helius, 2026-09-13): one chunk that never confirmed
+      // cost the whole confirmation window before its resend — 92.7 s of a
+      // 96.3 s run. An offset-addressed write is idempotent, so the first v1
+      // round waits 20 s, polling every second; the retries and the legacy
+      // path keep the 60 s window.
       const unconfirmed = await confirmAllBatchedSoft(
         conn,
         sigs,
         `Chunk batch ${batchNum} attempt ${attempt + 1}`,
+        v1 && attempt === 0 ? 20_000 : 60_000,
+        v1 ? 1_000 : 1_500,
       );
       if (unconfirmed.length === 0) {
         console.log(`[STARK] Batch ${batchNum}/${totalBatches} confirmed`);
