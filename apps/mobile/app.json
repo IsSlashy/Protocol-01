@@ -1,16 +1,16 @@
 {
   "expo": {
-    "name": "Protocol 01",
+    "name": "Styx",
     "slug": "protocol-01",
-    "version": "1.0.2",
+    "version": "1.1.0",
     "orientation": "portrait",
     "scheme": "p01",
     "userInterfaceStyle": "dark",
-    "icon": "./assets/images/Protocol.png",
+    "icon": "./assets/images/styx/icon.png",
     "splash": {
-      "image": "./assets/images/Protocol.png",
+      "image": "./assets/images/styx/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#0a0a0c"
+      "backgroundColor": "#070709"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -18,7 +18,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.protocol01.app",
-      "backgroundColor": "#0a0a0c",
+      "backgroundColor": "#070709",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -31,11 +31,11 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/Protocol.png",
-        "backgroundColor": "#0a0a0c"
+        "foregroundImage": "./assets/images/styx/adaptive-foreground.png",
+        "backgroundColor": "#070709"
       },
       "package": "com.protocol01.app",
-      "versionCode": 28,
+      "versionCode": 31,
       "permissions": [
         "USE_BIOMETRIC",
         "BLUETOOTH",
@@ -45,14 +45,13 @@
         "BLUETOOTH_ADVERTISE",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
-        "RECORD_AUDIO",
         "NFC"
       ]
     },
     "notification": {
-      "color": "#6366f1",
+      "color": "#39c5bb",
       "androidMode": "default",
-      "androidCollapsedTitle": "Protocol 01"
+      "androidCollapsedTitle": "Styx"
     },
     "web": {
       "bundler": "metro",
@@ -74,21 +73,7 @@
           "bluetoothAlwaysPermission": "P-01 uses Bluetooth to discover nearby users for mesh networking"
         }
       ],
-      [
-        "expo-audio",
-        {
-          "microphonePermission": "P-01 needs microphone access for voice input to the AI agent."
-        }
-      ],
-      "react-native-nfc-manager",
-      [
-        "llama.rn",
-        {
-          "enableEntitlements": true,
-          "forceCxx20": true,
-          "enableOpenCLAndHexagon": true
-        }
-      ]
+      "react-native-nfc-manager"
     ],
     "experiments": {
       "typedRoutes": true

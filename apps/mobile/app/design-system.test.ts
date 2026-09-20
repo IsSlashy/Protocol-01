@@ -21,7 +21,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 
 const ROOT = join(__dirname, '..');
@@ -162,14 +162,20 @@ describe('the retired brand assets are gone', () => {
 describe('the tab bar reflects the product', () => {
   const layout = readFileSync(join(ROOT, 'app/(main)/_layout.tsx'), 'utf8');
 
-  it('has no Agent destination', () => {
-    // Retired 2026-08-23: nobody was going to use an on-device chat box.
-    // The route stays registered so a deep link still resolves, but with
-    // href:null it is not a destination.
+  it('has no Agent at all', () => {
+    // Retired 2026-08-23 (nobody was going to use an on-device chat box), and
+    // DELETED 2026-09-13 at the founder's request: the route group, its
+    // screens, services/ai, the aiStore, llama.rn and the microphone
+    // permission are gone. Nothing may register the route again.
     const code = codeOnly(layout);
-    const agentBlock = code.slice(code.indexOf('name="(agent)"'));
-    expect(agentBlock).toMatch(/href:\s*null/);
+    expect(code).not.toMatch(/name="\(agent\)"/);
     expect(code).not.toMatch(/title:\s*'Agent'/);
+    expect(existsSync(join(ROOT, 'app/(main)/(agent)'))).toBe(false);
+    expect(existsSync(join(ROOT, 'services/ai'))).toBe(false);
+    const pkg = readFileSync(join(ROOT, 'package.json'), 'utf8');
+    expect(pkg).not.toMatch(/"llama\.rn"/);
+    const appJson = readFileSync(join(ROOT, 'app.json'), 'utf8');
+    expect(appJson).not.toMatch(/RECORD_AUDIO|llama\.rn/);
   });
 
   it('names the tabs after what they do', () => {

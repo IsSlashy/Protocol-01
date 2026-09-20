@@ -18,7 +18,7 @@
  * proofs and both store calls — is untouched, arguments included.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
   ActivityIndicator, StyleSheet,
@@ -41,6 +41,7 @@ import {
   C3_SUBTREE_DEPTH,
 } from '@/services/denominatedPool';
 import { routeUnshieldSpend } from '@/services/denominatedPool/spendRouting';
+import { noteSubtitle, noteTagText } from '@/services/privacy/noteSubtitle';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { getKeypair } from '@/services/solana/wallet';
 import { getConnection } from '@/services/solana/connection';
@@ -97,6 +98,27 @@ export default function DenominatedUnshieldScreen() {
       setRefreshing(false);
     }
   }, [refreshNoteStatuses]);
+
+  // The name a row calls a note by (services/privacy/noteSubtitle.ts). Successes
+  // are cached against the receipt's ciphertext; failures are not, because the
+  // ordinary failure is a locked vault.
+  const tagCacheRef = useRef(new Map<string, string>());
+  const tagOf = useCallback((note: StoredNote): string | null => {
+    const cached = tagCacheRef.current.get(note.receiptJSON);
+    if (cached !== undefined) return cached;
+    try {
+      const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
+      const text = noteTagText({
+        pool: note.poolPDA,
+        secret: receipt.secret,
+        nullifierPreimage: receipt.nullifierPreimage,
+      });
+      if (text !== null) tagCacheRef.current.set(note.receiptJSON, text);
+      return text;
+    } catch {
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     if (params.noteId) {
@@ -235,7 +257,12 @@ export default function DenominatedUnshieldScreen() {
               const inCur = eq(target, parsed.currentRoot);
               const idx = parsed.historicalRoots.findIndex(r => eq(target, r));
               const ok = inCur || idx >= 0;
-              console.log(`[Unshield/V3] pre-proof ${label}: rebuilt c3Root in pool? ${ok ? 'YES (' + (inCur ? 'currentRoot' : 'hist[' + idx + ']') + ')' : 'NO'} — pool nextLeafIdx=${parsed.nextLeafIndex} histLen=${parsed.historicalRoots.length} mySeen=${leafScan.scannedLeafCount} missing=${leafScan.missing.length}`);
+              // The pool's leaf counter, the ring slot of the root and the scan
+              // counts dated this spend against the pool, in a log a development
+              // build writes to logcat. The verdict is what a reader needs
+              // (test/consolePolicy.test.ts, "every value a screen puts in a
+              // message, an alert or a log is one reviewed here").
+              console.log(`[Unshield/V3] pre-proof ${label}: rebuilt root in pool? ${ok ? 'YES' : 'NO'}`);
               return ok;
             };
             const ok1 = await checkRoot(merkleProof.root, 'attempt-1');
@@ -321,7 +348,10 @@ export default function DenominatedUnshieldScreen() {
             spendV4: (prepared) => unshieldNoteStarkV4(selectedNote.id, finalRecipient, prepared),
             spendPair,
           });
-          console.log(`[Unshield] note ${selectedNote.id.slice(0, 8)}… spent via ${routed.version}`);
+          // The note id is a commitment prefix, and a development build writes
+          // this to the same logcat a release build writes warn and error to
+          // (test/consolePolicy.test.ts, "no screen logs a note").
+          console.log(`[Unshield] spent via ${routed.version}`);
           return routed.txSig;
         }
 
@@ -513,10 +543,11 @@ export default function DenominatedUnshieldScreen() {
                 accessibilityLabel={`${note.denomination} ${note.token}, ${tone.label}`}
               >
                 <View style={st.noteMain}>
-                  {/* Amount and state. Never an internal identifier. */}
+                  {/* Amount, state, and the note's tag. The deposit date stood
+                      here until 2026-09-16 (test/consolePolicy.test.ts). */}
                   <Text style={st.noteAmount}>{note.denomination} {note.token}</Text>
                   <Text style={st.noteSub}>
-                    {tone.label} · {new Date(note.shieldedAt).toLocaleDateString()}
+                    {noteSubtitle(note, { lead: tone.label, tag: tagOf(note) })}
                   </Text>
                 </View>
                 {note.status === 'pending' && emergencyToggle && (
@@ -544,9 +575,10 @@ export default function DenominatedUnshieldScreen() {
               <View key={note.id} style={st.usedNote}>
                 <Text style={st.usedNoteAmount}>{note.denomination} {note.token}</Text>
                 <Text style={st.usedNoteSub}>
-                  {note.status === 'spent' ? t('privacy.spent') : t('privacy.transferred')}
-                  {' · '}
-                  {new Date(note.shieldedAt).toLocaleDateString()}
+                  {noteSubtitle(note, {
+                    lead: note.status === 'spent' ? t('privacy.spent') : t('privacy.transferred'),
+                    tag: tagOf(note),
+                  })}
                 </Text>
               </View>
             ))}

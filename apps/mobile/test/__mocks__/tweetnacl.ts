@@ -53,6 +53,9 @@ const nacl = {
   },
   // Real secretbox (function carries .open/.nonceLength/.overheadLength/.keyLength).
   secretbox: realNacl.secretbox,
+  // Real X25519 (function carries .base). services/privacy/noteCrypto opens
+  // blobs the WEB sealed, so its key agreement must be the genuine curve.
+  scalarMult: realNacl.scalarMult,
   // Real CSPRNG via node crypto (avoids depending on tweetnacl's PRNG auto-setup).
   randomBytes: (n: number): Uint8Array => new Uint8Array(randomBytes(n)),
 };

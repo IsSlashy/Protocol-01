@@ -1,14 +1,28 @@
+/**
+ * Security — PIN or biometrics.
+ *
+ * Restyled 2026-09-13 onto the onboarding vocabulary. The two options are
+ * hairline rows (title in the display face, one line under it, the teal seal
+ * on the selected row) instead of icon bubbles in 16pt-radius cards with a
+ * glow; the PIN step keeps the PinInput and gets the same overline/title/lede
+ * head as every other screen. No red literals, no '#a0a0a0', no halo.
+ *
+ * ⚠️ Untouched: biometric detection, the PIN hash + vault enable/unlock, the
+ * onboarding completion (p01_onboarded, temp-mnemonic cleanup, store init) and
+ * the routes.
+ */
 import React, { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { p01Alert } from '@/stores/alertStore';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+
 import { PinInput } from '../../components/onboarding';
+import { GhostLink, Lede, Mono, Overline, PaperButton, Screen, Title } from '../../components/onboarding/Styx';
+import { Colors, FontFamily } from '../../constants/theme';
 import { useWalletStore } from '../../stores/walletStore';
 import { hashPin } from '../../utils/crypto/pinHash';
 import { enableVault, unlockVault } from '../../utils/crypto/noteVault';
@@ -46,47 +60,54 @@ export default function SecurityScreen() {
     }
   };
 
-  const handleSelectMethod = useCallback(async (method: SecurityMethod) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedMethod(method);
+  const handleSelectMethod = useCallback(
+    async (method: SecurityMethod) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      setSelectedMethod(method);
 
-    if (method === 'pin') {
-      setShowPinSetup(true);
-    } else if (method === 'biometrics') {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: t('onboarding.authenticateToEnable'),
-        cancelLabel: t('common.cancel'),
-        disableDeviceFallback: true,
-      });
+      if (method === 'pin') {
+        setShowPinSetup(true);
+      } else if (method === 'biometrics') {
+        const result = await LocalAuthentication.authenticateAsync({
+          promptMessage: t('onboarding.authenticateToEnable'),
+          cancelLabel: t('common.cancel'),
+          disableDeviceFallback: true,
+        });
 
-      if (!result.success) {
-        setSelectedMethod('none');
-        p01Alert(t('onboarding.authFailed'), t('onboarding.authFailedDesc'));
+        if (!result.success) {
+          setSelectedMethod('none');
+          p01Alert(t('onboarding.authFailed'), t('onboarding.authFailedDesc'));
+        }
       }
-    }
-  }, []);
+    },
+    [t],
+  );
 
-  const handlePinComplete = useCallback((enteredPin: string) => {
-    if (!isConfirming) {
-      setPin(enteredPin);
-      setIsConfirming(true);
-      setConfirmPin('');
-    } else {
-      if (enteredPin === pin) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        savePinAndContinue(enteredPin);
-      } else {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        setPinError(true);
+  const handlePinComplete = useCallback(
+    (enteredPin: string) => {
+      if (!isConfirming) {
+        setPin(enteredPin);
+        setIsConfirming(true);
         setConfirmPin('');
-        setTimeout(() => {
-          setPinError(false);
-          setIsConfirming(false);
-          setPin('');
-        }, 1500);
+      } else {
+        if (enteredPin === pin) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          savePinAndContinue(enteredPin);
+        } else {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+          setPinError(true);
+          setConfirmPin('');
+          setTimeout(() => {
+            setPinError(false);
+            setIsConfirming(false);
+            setPin('');
+          }, 1500);
+        }
       }
-    }
-  }, [isConfirming, pin]);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [isConfirming, pin],
+  );
 
   const savePinAndContinue = async (pinCode: string) => {
     try {
@@ -107,6 +128,7 @@ export default function SecurityScreen() {
       await SecureStore.setItemAsync('security_method', 'biometrics');
       completeOnboarding();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedMethod]);
 
   const completeOnboarding = async () => {
@@ -122,267 +144,136 @@ export default function SecurityScreen() {
     router.replace('/(main)/(wallet)');
   };
 
+  const resetPin = () => {
+    setShowPinSetup(false);
+    setSelectedMethod('none');
+    setPin('');
+    setConfirmPin('');
+    setIsConfirming(false);
+    setPinError(false);
+  };
+
   // PIN Setup View
   if (showPinSetup) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
-        <View style={{ flex: 1, paddingHorizontal: 32, paddingTop: 80 }}>
-          {/* Back Button */}
-          <TouchableOpacity
-            onPress={() => {
-              setShowPinSetup(false);
-              setSelectedMethod('none');
-              setPin('');
-              setConfirmPin('');
-              setIsConfirming(false);
-              setPinError(false);
-            }}
-            activeOpacity={0.7}
-            style={{ position: 'absolute', top: 80, left: 24, zIndex: 10 }}
-            accessibilityRole="button"
-            accessibilityLabel={t('onboarding.goBack')}
-          >
-            <Ionicons name="arrow-back" size={24} color="#39c5bb" />
-          </TouchableOpacity>
+      <Screen>
+        <Animated.View entering={FadeInDown.delay(150).duration(600)} style={{ paddingTop: 28 }}>
+          <Overline>{t('onboarding.overline')}</Overline>
+          <View style={{ marginTop: 12 }}>
+            <Title size={30}>{isConfirming ? t('onboarding.confirmYourPin') : t('onboarding.createPin')}</Title>
+          </View>
+          <View style={{ marginTop: 10, marginBottom: 36 }}>
+            <Lede>{isConfirming ? t('onboarding.confirmPinDesc') : t('onboarding.choosePinDesc')}</Lede>
+          </View>
+        </Animated.View>
 
-          {/* Header */}
-          <Animated.View
-            entering={FadeInDown.delay(200).duration(600)}
-            style={{ alignItems: 'center', marginBottom: 48, marginTop: 32 }}
-          >
-            <View
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: 32,
-                backgroundColor: 'rgba(57, 197, 187, 0.2)',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: 16,
-              }}
-            >
-              <Ionicons name="keypad" size={32} color="#39c5bb" />
-            </View>
-            <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-              {isConfirming ? t('onboarding.confirmYourPin') : t('onboarding.createPin')}
-            </Text>
-            <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-              {isConfirming
-                ? t('onboarding.confirmPinDesc')
-                : t('onboarding.choosePinDesc')}
-            </Text>
-          </Animated.View>
-
-          {/* PIN Input */}
-          <Animated.View
-            entering={FadeIn.delay(400).duration(600)}
-            style={{ alignItems: 'center' }}
-          >
-            <PinInput
-              length={6}
-              value={isConfirming ? confirmPin : pin}
-              onChange={isConfirming ? setConfirmPin : setPin}
-              onComplete={handlePinComplete}
-              error={pinError}
-              secureEntry={true}
-            />
-
-            {pinError && (
-              <Animated.Text
-                entering={FadeIn}
-                style={{ color: '#f87171', textAlign: 'center', marginTop: 16 }}
-              >
+        <Animated.View entering={FadeIn.delay(350).duration(600)} style={{ alignItems: 'center' }}>
+          <PinInput
+            length={6}
+            value={isConfirming ? confirmPin : pin}
+            onChange={isConfirming ? setConfirmPin : setPin}
+            onComplete={handlePinComplete}
+            error={pinError}
+            secureEntry
+          />
+          {pinError ? (
+            <Animated.View entering={FadeIn} style={{ marginTop: 14 }}>
+              <Mono color={Colors.error} center>
                 {t('onboarding.pinsDontMatch')}
-              </Animated.Text>
-            )}
-          </Animated.View>
+              </Mono>
+            </Animated.View>
+          ) : null}
+        </Animated.View>
+
+        <View style={{ flex: 1 }} />
+        <View style={{ paddingBottom: 20 }}>
+          <GhostLink onPress={resetPin} accessibilityLabel={t('onboarding.goBack')}>
+            {t('onboarding.goBack')}
+          </GhostLink>
         </View>
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   // Main Security Selection View
   const canContinue = selectedMethod !== 'none' && selectedMethod !== 'pin';
+  const bioTitle = biometricType === 'face' ? t('onboarding.faceId') : t('onboarding.fingerprint');
+  const bioSub = biometricsAvailable ? t('onboarding.quickSecureAuth') : t('onboarding.notAvailableDevice');
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
-      <View style={{ flex: 1, paddingHorizontal: 32, paddingTop: 80 }}>
-        {/* Header */}
-        <Animated.View
-          entering={FadeInDown.delay(200).duration(600)}
-          style={{ alignItems: 'center', marginBottom: 40 }}
-        >
-          <View
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: 'rgba(57, 197, 187, 0.2)',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 16,
-            }}
-          >
-            <Ionicons name="lock-closed" size={32} color="#39c5bb" />
-          </View>
-          <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-            {t('onboarding.secureWallet')}
-          </Text>
-          <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-            {t('onboarding.secureWalletDesc')}
-          </Text>
-        </Animated.View>
-
-        {/* Security Options */}
-        <View style={{ gap: 16 }}>
-          {/* PIN Code Option */}
-          <Animated.View entering={FadeInDown.delay(400).duration(600)}>
-            <TouchableOpacity
-              onPress={() => handleSelectMethod('pin')}
-              activeOpacity={0.8}
-              accessibilityRole="button"
-              accessibilityLabel={`${t('onboarding.pinCode')}, ${t('onboarding.sixDigitCode')}`}
-              accessibilityState={{ selected: selectedMethod === 'pin' }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                padding: 20,
-                borderRadius: 16,
-                borderWidth: 1,
-                backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.1)' : '#0d0d10',
-                borderColor: selectedMethod === 'pin' ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
-              }}
-            >
-              <View
-                style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 24,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 16,
-                  backgroundColor: selectedMethod === 'pin' ? 'rgba(57, 197, 187, 0.2)' : '#101014',
-                }}
-              >
-                <Ionicons
-                  name="keypad"
-                  size={24}
-                  color={selectedMethod === 'pin' ? '#39c5bb' : 'rgba(234, 231, 223, 0.40)'}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: '#eae7df', fontSize: 18, fontWeight: '600' }}>{t('onboarding.pinCode')}</Text>
-                <Text style={{ color: '#a0a0a0', fontSize: 14 }}>{t('onboarding.sixDigitCode')}</Text>
-              </View>
-              {selectedMethod === 'pin' && (
-                <Ionicons name="checkmark-circle" size={24} color="#39c5bb" />
-              )}
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* Biometrics Option */}
-          <Animated.View entering={FadeInDown.delay(500).duration(600)}>
-            <TouchableOpacity
-              onPress={() => handleSelectMethod('biometrics')}
-              activeOpacity={0.8}
-              disabled={!biometricsAvailable}
-              accessibilityRole="button"
-              accessibilityLabel={`${biometricType === 'face' ? t('onboarding.faceId') : t('onboarding.fingerprint')}, ${biometricsAvailable ? t('onboarding.quickSecureAuth') : t('onboarding.notAvailableDevice')}`}
-              accessibilityState={{ selected: selectedMethod === 'biometrics', disabled: !biometricsAvailable }}
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                padding: 20,
-                borderRadius: 16,
-                borderWidth: 1,
-                opacity: biometricsAvailable ? 1 : 0.5,
-                backgroundColor: !biometricsAvailable
-                  ? '#070709'
-                  : selectedMethod === 'biometrics'
-                  ? 'rgba(57, 197, 187, 0.1)'
-                  : '#0d0d10',
-                borderColor: !biometricsAvailable
-                  ? '#101014'
-                  : selectedMethod === 'biometrics'
-                  ? '#39c5bb'
-                  : 'rgba(234, 231, 223, 0.14)',
-              }}
-            >
-              <View
-                style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 24,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 16,
-                  backgroundColor: selectedMethod === 'biometrics' ? 'rgba(57, 197, 187, 0.2)' : '#101014',
-                }}
-              >
-                <Ionicons
-                  name={biometricType === 'face' ? 'scan' : 'finger-print'}
-                  size={24}
-                  color={selectedMethod === 'biometrics' ? '#39c5bb' : 'rgba(234, 231, 223, 0.40)'}
-                />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: '#eae7df', fontSize: 18, fontWeight: '600' }}>
-                  {biometricType === 'face' ? t('onboarding.faceId') : t('onboarding.fingerprint')}
-                </Text>
-                <Text style={{ color: '#a0a0a0', fontSize: 14 }}>
-                  {biometricsAvailable
-                    ? t('onboarding.quickSecureAuth')
-                    : t('onboarding.notAvailableDevice')}
-                </Text>
-              </View>
-              {selectedMethod === 'biometrics' && (
-                <Ionicons name="checkmark-circle" size={24} color="#39c5bb" />
-              )}
-            </TouchableOpacity>
-          </Animated.View>
+    <Screen>
+      <Animated.View entering={FadeInDown.delay(150).duration(600)} style={{ paddingTop: 28 }}>
+        <Overline>{t('onboarding.overline')}</Overline>
+        <View style={{ marginTop: 12 }}>
+          <Title size={30}>{t('onboarding.secureWallet')}</Title>
         </View>
-      </View>
+        <View style={{ marginTop: 10, marginBottom: 28 }}>
+          <Lede>{t('onboarding.secureWalletDesc')}</Lede>
+        </View>
+      </Animated.View>
 
-      {/* Bottom Buttons */}
-      <View style={{ paddingHorizontal: 24, paddingBottom: 32 }}>
-        <Animated.View entering={FadeInUp.delay(700).duration(600)}>
-          <TouchableOpacity
-            onPress={handleContinue}
-            activeOpacity={0.8}
-            disabled={!canContinue}
-            accessibilityRole="button"
-            accessibilityLabel={t('onboarding.continue')}
-            accessibilityState={{ disabled: !canContinue }}
-            style={{
-              paddingVertical: 16,
-              borderRadius: 12,
-              alignItems: 'center',
-              marginBottom: 16,
-              backgroundColor: canContinue ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
-              ...(canContinue
-                ? {
-                    shadowColor: '#39c5bb',
-                    shadowOpacity: 0.4,
-                    shadowRadius: 20,
-                    shadowOffset: { width: 0, height: 4 },
-                    elevation: 8,
-                  }
-                : {}),
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 17,
-                fontWeight: 'bold',
-                color: canContinue ? '#eae7df' : 'rgba(234, 231, 223, 0.40)',
-              }}
-            >
-              {t('onboarding.continue')}
-            </Text>
-          </TouchableOpacity>
+      <Animated.View entering={FadeInDown.delay(350).duration(600)} style={styles.list}>
+        <OptionRow
+          title={t('onboarding.pinCode')}
+          sub={t('onboarding.sixDigitCode')}
+          selected={selectedMethod === 'pin'}
+          onPress={() => handleSelectMethod('pin')}
+        />
+        <OptionRow
+          title={bioTitle}
+          sub={bioSub}
+          selected={selectedMethod === 'biometrics'}
+          disabled={!biometricsAvailable}
+          onPress={() => handleSelectMethod('biometrics')}
+        />
+      </Animated.View>
 
-        </Animated.View>
-      </View>
-    </SafeAreaView>
+      <View style={{ flex: 1 }} />
+      <Animated.View entering={FadeInUp.delay(600).duration(600)} style={{ paddingBottom: 24 }}>
+        <PaperButton label={t('onboarding.continue')} onPress={handleContinue} disabled={!canContinue} />
+      </Animated.View>
+    </Screen>
   );
 }
+
+const OptionRow: React.FC<{
+  title: string;
+  sub: string;
+  selected: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}> = ({ title, sub, selected, disabled, onPress }) => (
+  <Pressable
+    onPress={onPress}
+    disabled={disabled}
+    accessibilityRole="button"
+    accessibilityLabel={`${title}, ${sub}`}
+    accessibilityState={{ selected, disabled: !!disabled }}
+    style={({ pressed }) => [styles.row, disabled && { opacity: 0.45 }, pressed && !disabled && { opacity: 0.7 }]}
+  >
+    <View style={[styles.rowSeal, selected && { backgroundColor: Colors.primary }]} />
+    <View style={{ flex: 1 }}>
+      <Text style={styles.rowTitle}>{title}</Text>
+      <Text style={styles.rowSub}>{sub}</Text>
+    </View>
+    {selected ? <Text style={styles.rowTick}>{'✓'}</Text> : null}
+  </Pressable>
+);
+
+const styles = StyleSheet.create({
+  list: { borderTopWidth: 1, borderTopColor: Colors.border },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 76,
+    paddingVertical: 14,
+    paddingRight: 4,
+    gap: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  rowSeal: { width: 3, alignSelf: 'stretch', backgroundColor: 'transparent' },
+  rowTitle: { fontFamily: FontFamily.displayMedium, fontSize: 21, color: Colors.text, letterSpacing: -0.3 },
+  rowSub: { fontFamily: FontFamily.regular, fontSize: 13, color: Colors.textSecondary, marginTop: 3 },
+  rowTick: { fontFamily: FontFamily.mono, fontSize: 15, color: Colors.primary },
+});

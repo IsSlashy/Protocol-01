@@ -29,16 +29,6 @@ export {
   CreateStreamForm,
 } from './streams';
 
-// Agent Components
-export {
-  AgentAvatar,
-  ChatBubble,
-  ActionPreview,
-  ExecutionProgress,
-  QuickActionButton,
-  SuggestionChip,
-} from './agent';
-
 // Common Components
 export {
   Header,

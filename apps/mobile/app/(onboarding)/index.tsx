@@ -1,15 +1,35 @@
+/**
+ * The welcome — the phone's version of protocol-01.dev's first screen.
+ *
+ * Rewritten 2026-09-13 to be the same page as the web home: the river under
+ * everything (StyxRiver, the site's StyxField shader in Skia), the mono
+ * overline, the same headline as the site's h1, one lede, the paper button,
+ * and the amber devnet line. What it replaced: "[ SYSTEM STATUS ] / SHIELDED /
+ * READY" in white at weight 900 with 6pt of tracking, a cyan button with a
+ * white label and an elevation halo, and a '#a0a0a0' grey. Three surfaces,
+ * one product; this screen is where a person decides whether that is true.
+ *
+ * The routing is unchanged: the wallet store redirects when a wallet exists,
+ * "Get started" goes straight to creation (this screen IS the chooser), import
+ * and scan-to-connect keep their routes.
+ */
 import React, { useEffect } from 'react';
-import { View, Text, TouchableOpacity } from 'react-native';
+import { View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import Animated, {
-  FadeIn,
-  FadeInDown,
-  FadeInUp,
-} from 'react-native-reanimated';
-import { LinearGradient } from 'expo-linear-gradient';
-import { Ionicons } from '@expo/vector-icons';
-import { Logo } from '../../components/onboarding';
+import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
+
+import { Wordmark } from '../../components/common/Wordmark';
+import {
+  Accent,
+  DevnetLine,
+  GhostLink,
+  Hairline,
+  Lede,
+  Overline,
+  PaperButton,
+  Screen,
+  Title,
+} from '../../components/onboarding/Styx';
 import { useWalletStore } from '@/stores/walletStore';
 import { useT } from '@/i18n';
 
@@ -32,87 +52,47 @@ export default function WelcomeScreen() {
 
   const handleGetStarted = () => {
     // Single-screen onboarding: this welcome IS the chooser, so "Get Started"
-    // goes straight to wallet creation. Previously it pushed to /(auth)/login,
-    // a second near-identical hero that asked the same create/import choice again.
+    // goes straight to wallet creation.
     router.replace('/(onboarding)/create-wallet');
   };
-
-  const handleImportWallet = () => {
-    router.replace('/(auth)/import');
-  };
-
-  const handleScanConnect = () => {
-    // Import this wallet from the browser extension by scanning its pairing QR.
-    router.push('/(auth)/scan-connect');
-  };
+  const handleImportWallet = () => router.replace('/(auth)/import');
+  const handleScanConnect = () => router.push('/(auth)/scan-connect');
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
-      <LinearGradient
-        colors={['rgba(57,197,187,0.03)', 'transparent', 'rgba(57,197,187,0.02)']}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 1 }}
-        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-      />
+    <Screen river={{ flow: 0.2, dim: 0.3, touch: true }}>
+      <Animated.View entering={FadeIn.delay(200).duration(700)} style={{ paddingTop: 18 }} pointerEvents="none">
+        <Wordmark size={22} showText />
+      </Animated.View>
 
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 32 }}>
-        <Animated.View entering={FadeIn.delay(300).duration(800)} style={{ alignItems: 'center', marginBottom: 32 }}>
-          <Logo size={140} showText={true} animated={true} />
+      <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: 36 }} pointerEvents="box-none">
+        <Animated.View entering={FadeInDown.delay(400).duration(700)} pointerEvents="none">
+          <Overline>{t('onboarding.overline')}</Overline>
         </Animated.View>
-
-        <Animated.View entering={FadeInUp.delay(600).duration(600)} style={{ marginTop: 24, alignItems: 'center' }}>
-          <Text style={{ color: '#2a9d95', fontSize: 12, fontWeight: 'bold', letterSpacing: 6, marginBottom: 8 }}>
-            {t('onboarding.systemStatus')}
-          </Text>
-          <Text style={{ color: 'white', fontSize: 24, fontWeight: '900', letterSpacing: 2, textAlign: 'center' }}>
-            {t('onboarding.untraceable')}
-          </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-            <View style={{ width: 8, height: 8, backgroundColor: '#39c5bb', marginRight: 8 }} />
-            <Text style={{ color: 'rgba(234, 231, 223, 0.40)', fontSize: 12, letterSpacing: 4 }}>
-              {t('onboarding.ready')}
-            </Text>
-          </View>
+        <Animated.View entering={FadeInDown.delay(520).duration(800)} style={{ marginTop: 14 }} pointerEvents="none">
+          <Title size={42}>{t('onboarding.h1')}</Title>
+        </Animated.View>
+        <Animated.View entering={FadeIn.delay(900).duration(600)} style={{ marginTop: 22, width: '72%' }} pointerEvents="none">
+          <Hairline seal />
+        </Animated.View>
+        <Animated.View entering={FadeInDown.delay(980).duration(700)} style={{ marginTop: 18 }} pointerEvents="none">
+          <Lede>{t('onboarding.lede')}</Lede>
         </Animated.View>
       </View>
 
-      <View style={{ paddingHorizontal: 32, paddingBottom: 32 }}>
-        <Animated.View entering={FadeInDown.delay(900).duration(600)}>
-          <TouchableOpacity
-            onPress={handleGetStarted}
-            activeOpacity={0.8}
-            style={{
-              backgroundColor: '#39c5bb',
-              paddingVertical: 16,
-              borderRadius: 12,
-              alignItems: 'center',
-              elevation: 8,
-            }}
-          >
-            <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold', letterSpacing: 1 }}>
-              {t('onboarding.getStarted').toUpperCase()}
-            </Text>
-          </TouchableOpacity>
+      <View style={{ paddingBottom: 20, gap: 4 }}>
+        <Animated.View entering={FadeInUp.delay(1150).duration(600)}>
+          <PaperButton label={t('onboarding.getStarted')} onPress={handleGetStarted} />
         </Animated.View>
-
-        <Animated.View entering={FadeInDown.delay(1100).duration(600)} style={{ marginTop: 24, alignItems: 'center' }}>
-          <TouchableOpacity onPress={handleImportWallet} activeOpacity={0.7}>
-            <Text style={{ color: '#a0a0a0', fontSize: 16 }}>
-              {t('onboarding.alreadyHaveWallet')}{' '}
-              <Text style={{ color: '#39c5bb', fontWeight: '500' }}>{t('onboarding.import')}</Text>
-            </Text>
-          </TouchableOpacity>
+        <Animated.View entering={FadeInUp.delay(1300).duration(600)} style={{ marginTop: 10 }}>
+          <GhostLink onPress={handleImportWallet} accessibilityLabel={t('onboarding.import')}>
+            {t('onboarding.alreadyHaveWallet')} <Accent>{t('onboarding.import')}</Accent>
+          </GhostLink>
+          <GhostLink onPress={handleScanConnect} accessibilityLabel={t('onboarding.scanToConnect')}>
+            <Accent>{t('onboarding.scanToConnect')}</Accent>
+          </GhostLink>
         </Animated.View>
-
-        <Animated.View entering={FadeInDown.delay(1250).duration(600)} style={{ marginTop: 16, alignItems: 'center' }}>
-          <TouchableOpacity onPress={handleScanConnect} activeOpacity={0.7} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Ionicons name="qr-code-outline" size={15} color="#39c5bb" />
-            <Text style={{ color: '#39c5bb', fontSize: 15, fontWeight: '500' }}>
-              {t('onboarding.scanToConnect')}
-            </Text>
-          </TouchableOpacity>
-        </Animated.View>
+        <DevnetLine tag={t('onboarding.devnetTag')}>{t('onboarding.devnetLine')}</DevnetLine>
       </View>
-    </SafeAreaView>
+    </Screen>
   );
 }

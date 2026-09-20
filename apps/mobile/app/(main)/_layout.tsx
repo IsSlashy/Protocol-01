@@ -179,11 +179,11 @@ export default function MainLayout() {
           ),
         }}
       />
-      {/* ⛔ THE AGENT TAB IS RETIRED. Founder ruling: nobody was going to use an
-          on-device chat box, and a tab is the most expensive space in the app.
-          The route stays registered with href:null so any deep link into it
-          still resolves instead of crashing the router; it is simply not a
-          destination any more. */}
+      {/* ⛔ THERE IS NO AGENT. The tab was retired on 2026-08-23 (nobody was
+          going to use an on-device chat box) and the route, its screens, the
+          llama.rn model runtime and the microphone permission were deleted on
+          2026-09-13 at the founder's request ("retire l'agent IA"). A deep link
+          into /(main)/(agent) now falls to the router's not-found screen. */}
       <Tabs.Screen
         name="(discover)"
         options={{
@@ -195,12 +195,6 @@ export default function MainLayout() {
               color={color}
             />
           ),
-        }}
-      />
-      <Tabs.Screen
-        name="(agent)"
-        options={{
-          href: null,
         }}
       />
       <Tabs.Screen

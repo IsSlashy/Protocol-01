@@ -62,6 +62,7 @@ import { useDenominatedPoolStore, type StoredNote } from '@/stores/denominatedPo
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { Button } from '@/components/ui/Button';
+import { useStarkProver } from '@/providers/StarkProverProvider';
 import {
   Colors,
   FontFamily,
@@ -72,16 +73,23 @@ import {
 } from '@/constants/theme';
 import { useT } from '@/i18n';
 
-/** The denominations a person is plausibly depositing today. */
-const DENOMINATIONS = [0.1, 1, 10] as const;
-
 /**
- * ⚠️ Only the 1 SOL pool takes new deposits. Founder decision 2026-08-21: one
- * denomination, because a crowd does not add across pools, it splits. The
- * others are shown and refused WITH the reason rather than hidden — a
- * denomination that simply vanishes reads as a bug to someone holding a note
- * in it.
+ * ⛔ TWO OPTIONS, ONE OPEN. Founder ruling 2026-09-13: a note is a prepaid
+ * 1 SOL and nothing chains several notes together yet, so the 0.1 / 10 chips
+ * (shown-and-refused since 2026-08-21) are gone — "on ne montre pas le reste".
+ * The one other thing worth offering is a 100 USDC note, the shape of a
+ * prepaid month at a merchant. It is offered CLOSED and says why: the
+ * on-chain USDC 100 v3 pool exists (Dm6XJCkr…, read on devnet 2026-09-13) but
+ * the v3 shield has no SPL leg — `shieldNoteV3` funds no vault ATA and keeps
+ * the wallet as depositor (stores/denominatedPoolStore.ts, header of
+ * shieldNoteV3) — and no subscription path spends a USDC note. A control that
+ * takes money and lands nothing is worse than one that says "not yet".
  */
+type ShieldOption = { token: 'SOL' | 'USDC'; amount: number; open: boolean };
+const SHIELD_OPTIONS: readonly ShieldOption[] = [
+  { token: 'SOL', amount: 1, open: true },
+  { token: 'USDC', amount: 100, open: false },
+];
 const OPEN_DENOMINATION = 1;
 
 /**
@@ -115,7 +123,8 @@ export default function PrivacyDashboard() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  const [denomination, setDenomination] = useState<number>(OPEN_DENOMINATION);
+  const [option, setOption] = useState<ShieldOption>(SHIELD_OPTIONS[0]);
+  const denomination = option.amount;
   const [now, setNow] = useState(() => Date.now());
 
   const { shieldedBalance, notes } = useShieldedStore();
@@ -128,7 +137,16 @@ export default function PrivacyDashboard() {
     isProving,
     refreshAllPools,
     resetOperationState: resetDenomOp,
+    pendingExchange,
+    resumeExchange,
+    exchangeNoteForIssued,
   } = useDenominatedPoolStore();
+  const { generateSpendProof, isReady: starkReady } = useStarkProver();
+  const [resuming, setResuming] = useState(false);
+  const [resumeError, setResumeError] = useState<string | null>(null);
+  /** The note being exchanged for an older one, and the last refusal. */
+  const [exchanging, setExchanging] = useState<string | null>(null);
+  const [exchangeError, setExchangeError] = useState<string | null>(null);
   const {
     isLoading: subLoading,
     progress: subProgress,
@@ -184,7 +202,7 @@ export default function PrivacyDashboard() {
     await refreshAllPools?.().catch(() => {});
   }, [refreshAllPools]);
 
-  const closed = denomination !== OPEN_DENOMINATION;
+  const closed = !option.open;
 
   const balanceLabel = useMemo(
     () => (privateBalance < 1 ? privateBalance.toFixed(4) : privateBalance.toFixed(2)),
@@ -264,40 +282,42 @@ export default function PrivacyDashboard() {
           <Text style={s.panelLabel}>Add to it</Text>
 
           <View style={s.chips}>
-            {DENOMINATIONS.map((d) => {
-              const isOpen = d === OPEN_DENOMINATION;
-              const selected = denomination === d;
+            {SHIELD_OPTIONS.map((o) => {
+              const selected = option === o;
               return (
                 <TouchableOpacity
-                  key={d}
+                  key={`${o.amount}-${o.token}`}
                   style={[s.chip, selected && s.chipSelected]}
                   onPress={() => {
                     Haptics.selectionAsync();
-                    setDenomination(d);
+                    setOption(o);
                   }}
                   activeOpacity={0.8}
                   accessibilityRole="button"
                   accessibilityState={{ selected }}
-                  accessibilityLabel={`${d} SOL${isOpen ? '' : ', closed to new deposits'}`}
+                  accessibilityLabel={`${o.amount} ${o.token}${o.open ? '' : ', not available yet'}`}
                 >
-                  <Text style={[s.chipAmount, selected && s.chipAmountSelected]}>{d} SOL</Text>
-                  {!isOpen && <Text style={s.chipNote}>closed</Text>}
+                  <Text style={[s.chipAmount, selected && s.chipAmountSelected]}>
+                    {o.amount} {o.token}
+                  </Text>
+                  {!o.open && <Text style={s.chipNote}>soon</Text>}
                 </TouchableOpacity>
               );
             })}
           </View>
 
           {closed ? (
-            /* Refused with the reason, not hidden. */
+            /* Offered and refused with the reason, never a dead button. */
             <Text style={s.chipRefusal}>
-              This pool is closed to new deposits. Every deposit lands in the 1 SOL pool so the
-              crowd stays in one place instead of splitting across six. Notes you already hold
-              here stay spendable.
+              A 100 USDC note is the shape of a prepaid month, and it is not wired yet: the
+              devnet pool exists, but this app cannot deposit USDC into it or spend such a note
+              on a subscription. Shield 1 SOL for now.
             </Text>
           ) : (
             <Text style={s.panelHint}>
-              One press deposits {OPEN_DENOMINATION} SOL plus network fees. The next screen says
-              who signs it before anything is sent.
+              One press deposits {OPEN_DENOMINATION} SOL plus network fees, then exchanges the fresh
+              note for an older one this deployment deposited — ready to spend at once. The next
+              screen says who signs it before anything is sent.
             </Text>
           )}
 
@@ -314,11 +334,51 @@ export default function PrivacyDashboard() {
                 params: { denomination: String(denomination) },
               });
             }}
-            accessibilityLabel={`Shield ${denomination} SOL`}
+            accessibilityLabel={`Shield ${denomination} ${option.token}`}
           >
-            {`Shield ${denomination} SOL`}
+            {`Shield ${denomination} ${option.token}`}
           </Button>
         </View>
+
+        {/* ─── 2b. An exchange that paid the till but has no note in hand yet.
+            The payment is on chain and one note is owed for it; the receipt is
+            persisted (`pendingExchange`) and redeemed here, never re-paid. ── */}
+        {pendingExchange ? (
+          <View style={s.panel}>
+            <Text style={s.panelLabel}>A note is owed to you</Text>
+            <Text style={s.panelHint}>
+              Your {pendingExchange.denomination} {pendingExchange.token} note paid the deployment
+              ({pendingExchange.txSig.slice(0, 8)}…) and the older note it buys has not been
+              collected yet. Nothing is lost; collect it now.
+            </Text>
+            {resumeError ? (
+              <Text style={s.chipRefusal} accessibilityRole="alert">{resumeError}</Text>
+            ) : null}
+            <Button
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={resuming}
+              disabled={resuming || denomLoading}
+              style={s.panelAction}
+              onPress={async () => {
+                setResuming(true);
+                setResumeError(null);
+                try {
+                  await resumeExchange();
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                } catch (e) {
+                  setResumeError((e as Error).message);
+                } finally {
+                  setResuming(false);
+                }
+              }}
+              accessibilityLabel="Collect the note you are owed"
+            >
+              Collect the note
+            </Button>
+          </View>
+        ) : null}
 
         {/* ─── 3. What else you can do with a private balance ── */}
         <Text style={s.sectionTitle}>Move it</Text>
@@ -427,6 +487,45 @@ export default function PrivacyDashboard() {
                       >
                         Subscribe with this note
                       </Button>
+                      {/* The web's per-note "Exchange" (PoolPanel.handleExchange):
+                          a note THIS wallet deposited is one hop from the wallet
+                          through its deposit, whoever pays the spend. Offered on
+                          the notes the wallet shielded itself; a received note
+                          already came from someone else. */}
+                      {note.source === 'shielded' && note.poolVersion === 'v3' ? (
+                        <>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            fullWidth
+                            style={s.noteAction}
+                            loading={exchanging === note.id}
+                            disabled={!starkReady || denomLoading || exchanging !== null}
+                            onPress={async () => {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                              setExchanging(note.id);
+                              setExchangeError(null);
+                              try {
+                                await exchangeNoteForIssued(note.id, generateSpendProof);
+                                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                              } catch (e) {
+                                setExchangeError((e as Error).message);
+                              } finally {
+                                setExchanging(null);
+                              }
+                            }}
+                            accessibilityLabel={`Exchange this ${note.denomination} ${note.token} note for an older one`}
+                          >
+                            Exchange for an older note
+                          </Button>
+                          {exchanging === note.id && denomProgress ? (
+                            <Text style={s.noteReason} accessibilityLiveRegion="polite">{denomProgress}</Text>
+                          ) : null}
+                          {exchangeError && exchanging === null ? (
+                            <Text style={s.chipRefusal} accessibilityRole="alert">{exchangeError}</Text>
+                          ) : null}
+                        </>
+                      ) : null}
                     </>
                   ) : (
                     /* The countdown is in the pill; the reason is here. The

@@ -233,10 +233,15 @@ function TransferScreenContent() {
         } else if (t_oldSliced === onChainRoot) {
           t_chosen = t_sliced;
         } else {
+          // ⛔ THE NUMBERS THAT STOOD HERE NAMED THE POOL. The on-chain root,
+          // the pool's leaf count and both candidate roots went into a message
+          // the user can screenshot or paste into a support thread, which dates
+          // and sizes the pool at the moment of this transfer. The verdict is
+          // the part they can act on (test/consolePolicy.test.ts, "no screen
+          // puts a leaf number in a message").
           throw new Error(
-            `Transfer pre-flight failed: cannot reconstruct the on-chain Merkle root (${onChainRoot}) ` +
-            `from the pool's filled_subtrees for leaf #${leafCount} (direct=${t_oldDirect}, shifted=${t_oldSliced}). ` +
-            `Tree state diverged — not generating a proof that would be rejected.`,
+            'Transfer pre-flight failed: this device could not reproduce the pool\'s ' +
+            'current Merkle root, so no proof was generated. Refresh and try again.',
           );
         }
         const { newRoot, updatedSubtrees, pathElements: c6Path, pathIndices: c6Indices } = t_chosen;

@@ -18,9 +18,14 @@
  * preselects it. The grid stays because a deep link, or a holder of an older
  * note, can land here without one.
  *
- * ⛔ ONLY THE 1 SOL POOL TAKES NEW DEPOSITS (founder, 2026-08-21). Every other
- * pool is SHOWN and REFUSED WITH THE REASON rather than hidden — a denomination
- * that silently vanishes reads as a bug to someone who holds a note in it.
+ * ⛔ ONLY THE 1 SOL POOL TAKES NEW DEPOSITS (founder, 2026-08-21), and since
+ * 2026-09-13 it is the only pool SHOWN: a note is a prepaid 1 SOL, nothing
+ * chains notes yet, so the 0.1 / 10 / 100 / 500 / 1000 chips and the USDC tab
+ * are gone ("on ne montre pas le reste"). The one other option the founder
+ * wants, a 100 USDC note, is offered closed with its reason on the Shield tab
+ * (app/(main)/(privacy)/index.tsx) — the v3 shield has no SPL leg. Notes held
+ * in the other pools stay spendable from the notes list; they were never
+ * created from here.
  *
  * 🚨 THE ONE THING THAT MAY NOT BE COLLAPSED AWAY is who signs the deposit, and
  * it is NOT the same for both tokens: on SOL a one-time key signs and the
@@ -116,15 +121,19 @@ export default function DenominatedShieldScreen() {
     refreshPoolInfo,
   } = useDenominatedPoolStore();
 
-  // V3 pools listed AFTER v2 in the same UI grid so the migration is visible
   // V3 is the only shield path going forward. v2 pools STAY ACTIVE on the
   // unshield/transfer side so users can drain their existing v2 notes during
   // the 30-day deprecation window — the per-note routing uses
-  // note.poolVersion to pick the correct path. New shields are V3 only.
-  const pools = tokenTab === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3;
+  // note.poolVersion to pick the correct path. New shields are V3 only, and
+  // since 2026-09-13 this screen lists ONE pool: the open one.
+  const pools = useMemo(
+    () => (tokenTab === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3).filter(isOpenPool),
+    [tokenTab],
+  );
   // Local wallet only (Privy removed — spec §3 Phase 1).
   const { publicKey: walletPublicKey } = useWalletStore();
-  const { isReady: starkReady, generateMerkleUpdateProof } = useStarkProver();
+  const { isReady: starkReady, generateMerkleUpdateProof, generateSpendProof } = useStarkProver();
+  const exchangeNoteForIssued = useDenominatedPoolStore(s => s.exchangeNoteForIssued);
 
   const fetchBalance = useCallback(async () => {
     setLoadingBalance(true);
@@ -172,6 +181,7 @@ export default function DenominatedShieldScreen() {
     setFailure(null);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    let freshNoteId: string | null = null;
     try {
     // Refresh balance right before check
     let currentBalance = walletBalance;
@@ -362,7 +372,7 @@ export default function DenominatedShieldScreen() {
 
           // 5. Hand off to the store action which orchestrates submit+verify
           //    of the C6 buffer and the shield_denominated_v3 ix.
-          await shieldNoteV3(
+          freshNoteId = await shieldNoteV3(
             selectedPool,
             {
               commitment,
@@ -391,9 +401,30 @@ export default function DenominatedShieldScreen() {
         await withKeepAwake('p01-shield', () => shieldNote(selectedPool));
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // ⛔ No success card, no Done button. The note is on the Shield screen
-      // with its countdown already running, which is both the receipt and
-      // where the user was going next.
+
+      // 6. [NOTE-IN 2026-09-13] The fresh note is exchanged AT ONCE for an
+      //    older one the deployment deposited — the web's `exchangeNoteForIssued`,
+      //    run without a second click (founder: "remplacée immédiatement par une
+      //    note plus ancienne de quelqu'un d'autre"). The store refuses before
+      //    spending if the deployment cannot pay or stocks nothing; after the
+      //    withdrawal has landed a failure keeps the receipt and the Shield tab
+      //    offers to resume, so the fresh note is never lost, only exchanged.
+      if (freshNoteId) {
+        try {
+          await withKeepAwake('p01-exchange', () =>
+            exchangeNoteForIssued(freshNoteId!, generateSpendProof),
+          );
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch (err: any) {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          setFailure(
+            `Deposited, but not exchanged yet: ${err?.message || 'the exchange did not go through.'}`,
+          );
+          return;
+        }
+      }
+      // ⛔ No success card, no Done button. The note is on the Shield screen,
+      // which is both the receipt and where the user was going next.
       router.back();
     } catch (err: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -402,7 +433,7 @@ export default function DenominatedShieldScreen() {
     } finally {
       setSubmitting(false);
     }
-  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, router, starkReady, generateMerkleUpdateProof, submitting]);
+  }, [selectedPool, walletBalance, walletPublicKey, shieldNote, shieldNoteV3, router, starkReady, generateMerkleUpdateProof, generateSpendProof, exchangeNoteForIssued, submitting]);
 
   const busy = isLoading || submitting;
   const canAfford = useMemo(
@@ -440,31 +471,9 @@ export default function DenominatedShieldScreen() {
           <Text style={st.balanceUnit}>SOL</Text>
         </View>
 
-        {/* Token toggle */}
-        <View style={st.tokenRow}>
-          {(['SOL', 'USDC'] as TokenTab[]).map(tab => {
-            const active = tokenTab === tab;
-            return (
-              <TouchableOpacity
-                key={tab}
-                style={[st.tokenBtn, active && st.tokenBtnActive]}
-                onPress={() => {
-                  Haptics.selectionAsync();
-                  setTokenTab(tab);
-                  setSelectedPool(null);
-                  setFailure(null);
-                }}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={tab}
-              >
-                <Text style={[st.tokenText, active && st.tokenTextActive]}>{tab}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-
-        {/* Denominations. Closed pools are shown and refused, never hidden. */}
+        {/* One amount. The token toggle and the closed chips left on 2026-09-13
+            (see the header); `tokenTab` stays SOL and only feeds the signer
+            disclosure below, which is keyed off the token on purpose. */}
         <Text style={st.sectionLabel}>Amount</Text>
         <View style={st.chipsGrid}>
           {pools.map((pool) => {
@@ -492,14 +501,12 @@ export default function DenominatedShieldScreen() {
           })}
         </View>
 
-        {/*
-          The refusal, with its reason. Founder decision 2026-08-21: one
-          denomination, because a crowd does not add across pools, it splits.
-        */}
-        <Text style={st.refusal}>
-          Only the {OPEN_DENOMINATION} SOL pool takes new deposits. Every deposit lands there so
-          the crowd stays in one place instead of splitting across six. Notes you already hold in
-          the other pools stay spendable, and you can withdraw or send them as usual.
+        {/* One denomination, because a crowd does not add across pools, it
+            splits (founder, 2026-08-21). Stated once, in the calm colour: it is
+            the design, not a refusal. */}
+        <Text style={st.note}>
+          Every deposit is {OPEN_DENOMINATION} SOL, so every deposit looks like every other one.
+          Notes you already hold in older pools stay spendable from your notes.
         </Text>
 
         <Text style={st.note}>

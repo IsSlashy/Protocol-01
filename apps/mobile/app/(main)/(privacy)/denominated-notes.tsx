@@ -23,7 +23,7 @@
  * code that was here before; only what the screen looks like and says changed.
  */
 
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, RefreshControl, StyleSheet, Linking, Share,
 } from 'react-native';
@@ -38,6 +38,9 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { useDenominatedPoolStore, useActiveNotes, type StoredNote, type NoteStatus } from '@/stores/denominatedPoolStore';
 import { useBatchUnshieldStore } from '@/stores/batchUnshieldStore';
 import { receiptFromJSON, slotToEpoch } from '@/services/denominatedPool';
+import {
+  isImmature, maturityCountdown, noteSubtitle, noteTagText,
+} from '@/services/privacy/noteSubtitle';
 import { getCluster } from '@/services/solana/connection';
 import { vaultDecrypt } from '@/utils/crypto/noteVault';
 import { Button } from '@/components/ui/Button';
@@ -178,6 +181,29 @@ export default function DenominatedNotesScreen() {
   const clusterNotes = notes.filter(n => (n.cluster ?? 'devnet') === cluster);
   const activeNotes = clusterNotes.filter(n => n.status !== 'spent' && n.status !== 'transferred');
   const historyNotes = clusterNotes.filter(n => n.status === 'spent' || n.status === 'transferred');
+
+  // The name a row calls a note by (services/privacy/noteSubtitle.ts). A
+  // success is cached against the receipt's ciphertext so re-rendering the list
+  // does not decrypt again; a FAILURE is deliberately not cached, because the
+  // ordinary failure is a locked vault and the row has to pick the tag up once
+  // it unlocks.
+  const tagCacheRef = useRef(new Map<string, string>());
+  const tagOf = useCallback((note: StoredNote): string | null => {
+    const cached = tagCacheRef.current.get(note.receiptJSON);
+    if (cached !== undefined) return cached;
+    try {
+      const receipt = receiptFromJSON(vaultDecrypt(note.receiptJSON));
+      const text = noteTagText({
+        pool: note.poolPDA,
+        secret: receipt.secret,
+        nullifierPreimage: receipt.nullifierPreimage,
+      });
+      if (text !== null) tagCacheRef.current.set(note.receiptJSON, text);
+      return text;
+    } catch {
+      return null;
+    }
+  }, []);
 
   const getMaturity = useCallback((note: StoredNote) => {
     if (note.status === 'mature') return { isMature: true, remainingMs: 0 };
@@ -357,12 +383,16 @@ export default function DenominatedNotesScreen() {
     const maturity = getMaturity(note);
     const isSelected = batchMode && batchSelectedIds.includes(note.id);
     const isSelectable = batchMode && note.status === 'mature';
-    const waiting = note.status === 'pending' || note.status === 'imported';
-    const countdown = waiting
-      ? (maturity.remainingMs > 0
-        ? fmtTime(maturity.remainingMs)
-        : maturity.remainingMs === 0 ? t('common.ready') : cfg.label)
-      : cfg.label;
+    const waiting = isImmature(note.status);
+    // Same three outcomes this line always had, with the rule moved into a
+    // helper so a mature note can never be given a clock again
+    // (noteSubtitle.test.ts, "never puts a clock on a note that is not immature").
+    const countdown = maturityCountdown(note, {
+      remainingMs: maturity.remainingMs,
+      fmt: fmtTime,
+      ready: t('common.ready'),
+      label: cfg.label,
+    });
 
     return (
       <View key={note.id} style={[st.noteCard, isSelected && st.noteCardSelected, batchMode && !isSelectable && st.noteCardDimmed]}>
@@ -388,10 +418,13 @@ export default function DenominatedNotesScreen() {
           )}
 
           <View style={st.noteMain}>
-            {/* Amount and state. Never an internal identifier. */}
+            {/* Amount, where it came from, and the note's tag. Never its leaf,
+                its commitment, or the day it was deposited — the deposit date
+                stood here until 2026-09-16 and dated the note to a short list
+                of that day's deposits (test/consolePolicy.test.ts). */}
             <Text style={st.noteAmount}>{note.denomination} {note.token}</Text>
             <Text style={st.noteSub}>
-              {srcLabel(note)} · {new Date(note.shieldedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              {noteSubtitle(note, { lead: srcLabel(note), tag: tagOf(note) })}
             </Text>
           </View>
 

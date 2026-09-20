@@ -590,42 +590,6 @@ export default {
     timingPrivacy: 'Waiting (timing privacy)...',
   },
 
-  // ── Agent ───────────────────────────────────────────────────
-  agent: {
-    title: 'Agent',
-    howCanIHelp: 'How can I help?',
-    marketFallback: 'Prices, portfolio, market sentiment, or anything Solana.',
-    askAnything: 'Ask anything...',
-    solPrice: 'SOL Price',
-    fearGreed: 'Fear & Greed',
-    myPortfolio: 'My Portfolio',
-    analyzeStreams: 'Analyze Streams',
-    marketSummary: 'Market Summary',
-    help: 'Help',
-    settings: 'Agent Settings',
-    provider: 'Provider',
-    model: 'Model',
-    onDevice: 'On-Device',
-    cloud: 'Cloud',
-    custom: 'Custom',
-    typeMessage: 'Type a message...',
-    thinking: 'Thinking...',
-    clearChat: 'Clear Chat',
-    clearChatConfirm: 'Delete all messages?',
-    chatHistory: 'Chat History',
-    newChat: 'New Chat',
-    searchConversations: 'Search conversations...',
-    deleteConversation: 'Delete Conversation',
-    deleteConversationConfirm: 'Delete "%{title}"?',
-    noResults: 'No Results',
-    noResultsDesc: 'Try a different search term.',
-    noConversations: 'No Conversations',
-    noConversationsDesc: 'Start chatting with P-01 Agent to see your conversation history here.',
-    startChatting: 'Start Chatting',
-    justNow: 'Just now',
-    msgs: '%{count} msgs',
-  },
-
   // ── Onboarding ──────────────────────────────────────────────
   onboarding: {
     welcome: 'Welcome to Protocol 01',
@@ -643,6 +607,16 @@ export default {
     biometricDesc: 'Use fingerprint or face recognition to unlock.',
     skip: 'Skip',
     getStarted: 'Get Started',
+    // 2026-09-13: the welcome in the site's voice. h1 mirrors apps/web
+    // pay.page.h1; the devnet line mirrors homeSimple.devnetShort.
+    overline: 'Styx · Solana devnet',
+    h1: 'Send, receive, shield, subscribe.',
+    lede: 'Your keys are made on this phone and never leave it. Test tokens on devnet, not real funds.',
+    devnetTag: 'Devnet only',
+    devnetLine: 'Test tokens, not real funds. Not audited.',
+    crossing: 'The crossing',
+    yourAddress: 'Your address',
+    walletReady: 'Your wallet is on this phone.',
     // Welcome screen
     systemStatus: '[ SYSTEM STATUS ]',
     // Was 'UNTRACEABLE'. The anonymity set is one: a withdrawal republishes the
@@ -660,7 +634,7 @@ export default {
     creatingSecureStorage: 'Creating secure storage',
     encryptingKeys: 'Encrypting keys',
     settingUpWallet: 'Setting up wallet',
-    encryptedSecurity: 'Encrypted with military-grade security',
+    encryptedSecurity: 'Keys made on this phone, kept in its secure storage.',
     walletCreationFailed: 'Failed to create wallet. Please try again.',
     // Backup screen
     backupSeedPhrase: 'Backup Your Seed Phrase',
@@ -704,23 +678,6 @@ export default {
     authFailedDesc: 'Please try again or choose another method.',
     failedToSavePin: 'Failed to save PIN. Please try again.',
     goBack: 'Go back',
-    // Features screen
-    stealthWallet: 'Stealth Wallet',
-    invisibleTransfers: 'Invisible Transfers',
-    // Was 'without leaving a trace… completely private'. Deposits of one size
-    // do look alike, which is the real and only claim available today.
-    stealthWalletDesc: 'Shielded notes and one-time addresses. Every deposit of a given size looks the same — though a withdrawal can still be matched to its deposit.',
-    privateStreams: 'Private Streams',
-    streamingPayments: 'Streaming Payments',
-    privateStreamsDesc: 'Create continuous payment flows. Perfect for salaries, subscriptions, and recurring payments.',
-    encryptedSocial: 'Encrypted Social',
-    privateContacts: 'Private Contacts',
-    // 'No one can see who you talk to' deleted — nothing in this repo
-    // establishes metadata privacy for the contacts feature.
-    encryptedSocialDesc: 'End-to-end encrypted messaging and payments with your contacts.',
-    aiAgent: 'AI Agent',
-    yourAssistant: 'Your Assistant',
-    aiAgentDesc: 'Intelligent automation for DeFi. Let AI manage your portfolio while you focus on what matters.',
     next: 'NEXT',
   },
 

@@ -1,14 +1,37 @@
+/**
+ * Backup — the twelve words.
+ *
+ * Restyled 2026-09-13 onto the onboarding vocabulary (components/onboarding/
+ * Styx.tsx): overline, Newsreader title, lede, hairline panels, the paper
+ * button. Gone: the key icon in a teal bubble, the '#a0a0a0' grey, the
+ * '#ef4444' red box (the theme's caution colour is amber, and "never share
+ * these words" is a caution, not an error), the button's elevation halo.
+ *
+ * ⚠️ Untouched: the screen-capture block, the mnemonic lookup order (temp with
+ * keychainService → temp without → permanent), the 60-second clipboard scrub,
+ * and the acknowledgement gate on the continue button.
+ */
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, ScrollView, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, { FadeIn, FadeInDown, FadeInUp } from 'react-native-reanimated';
-import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import * as SecureStore from 'expo-secure-store';
 import * as ScreenCapture from 'expo-screen-capture';
+
 import { SeedPhraseGrid } from '../../components/onboarding';
+import {
+  Accent,
+  GhostLink,
+  Lede,
+  Overline,
+  Panel,
+  PaperButton,
+  Screen,
+  Title,
+} from '../../components/onboarding/Styx';
+import { Colors, FontFamily } from '../../constants/theme';
 import { useT } from '@/i18n';
 
 export default function BackupScreen() {
@@ -37,8 +60,9 @@ export default function BackupScreen() {
     try {
       const secOpts = { keychainService: 'protocol-01' };
       // Try with keychainService first (new), then without (legacy), then permanent fallback
-      let mnemonic = await SecureStore.getItemAsync('p01_temp_mnemonic', secOpts)
-        || await SecureStore.getItemAsync('p01_temp_mnemonic');
+      let mnemonic =
+        (await SecureStore.getItemAsync('p01_temp_mnemonic', secOpts)) ||
+        (await SecureStore.getItemAsync('p01_temp_mnemonic'));
 
       if (!mnemonic || !mnemonic.trim()) {
         console.warn('[Backup] No temp mnemonic, falling back to permanent storage');
@@ -46,7 +70,7 @@ export default function BackupScreen() {
       }
 
       if (mnemonic && mnemonic.trim()) {
-        const words = mnemonic.trim().split(' ').filter(w => w.length > 0);
+        const words = mnemonic.trim().split(' ').filter((w) => w.length > 0);
         if (words.length === 12) {
           setSeedPhrase(words);
         } else {
@@ -88,206 +112,101 @@ export default function BackupScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#070709', alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator size="large" color="#39c5bb" />
-      </SafeAreaView>
+      <Screen style={styles.centred}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+      </Screen>
     );
   }
 
   // Show error if seed phrase failed to load
   if (seedPhrase.length === 0) {
     return (
-      <SafeAreaView style={{ flex: 1, backgroundColor: '#070709', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
-        <View style={{ alignItems: 'center' }}>
-          <Ionicons name="warning" size={48} color="#ef4444" />
-          <Text style={{ color: '#eae7df', fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginTop: 16, marginBottom: 8 }}>
-            {t('onboarding.failedToLoadSeed')}
-          </Text>
-          <Text style={{ color: '#a0a0a0', textAlign: 'center', marginBottom: 24 }}>
-            {t('onboarding.failedToLoadSeedDesc')}
-          </Text>
-          <TouchableOpacity
-            onPress={() => router.replace('/(onboarding)/create-wallet')}
-            style={{ backgroundColor: '#39c5bb', paddingHorizontal: 24, paddingVertical: 14, borderRadius: 12 }}
-          >
-            <Text style={{ color: '#eae7df', fontWeight: '600', fontSize: 16 }}>{t('onboarding.tryAgain')}</Text>
-          </TouchableOpacity>
+      <Screen style={styles.centred}>
+        <Overline>{t('onboarding.overline')}</Overline>
+        <View style={{ marginTop: 12 }}>
+          <Title size={28}>{t('onboarding.failedToLoadSeed')}</Title>
         </View>
-      </SafeAreaView>
+        <View style={{ marginTop: 12, marginBottom: 28 }}>
+          <Lede>{t('onboarding.failedToLoadSeedDesc')}</Lede>
+        </View>
+        <PaperButton label={t('onboarding.tryAgain')} onPress={() => router.replace('/(onboarding)/create-wallet')} />
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#070709' }}>
+    <Screen>
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ paddingHorizontal: 24, paddingTop: 60, paddingBottom: 24 }}
+        contentContainerStyle={{ paddingTop: 28, paddingBottom: 16 }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Header */}
-        <Animated.View
-          entering={FadeInDown.delay(200).duration(600)}
-          style={{ alignItems: 'center', marginBottom: 32 }}
-        >
-          <View
-            style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: 'rgba(57, 197, 187, 0.2)',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginBottom: 16,
-            }}
-          >
-            <Ionicons name="key" size={32} color="#39c5bb" />
+        <Animated.View entering={FadeInDown.delay(150).duration(600)}>
+          <Overline>{t('onboarding.overline')}</Overline>
+          <View style={{ marginTop: 12 }}>
+            <Title size={30}>{t('onboarding.backupSeedPhrase')}</Title>
           </View>
-          <Text style={{ color: '#eae7df', fontSize: 24, fontWeight: 'bold', textAlign: 'center', marginBottom: 8 }}>
-            {t('onboarding.backupSeedPhrase')}
-          </Text>
-          <Text style={{ color: '#a0a0a0', fontSize: 16, textAlign: 'center' }}>
-            {t('onboarding.writeDownWords')}
-          </Text>
-        </Animated.View>
-
-        {/* Seed Phrase Grid */}
-        <Animated.View
-          entering={FadeInDown.delay(400).duration(600)}
-          style={{
-            backgroundColor: '#0d0d10',
-            borderWidth: 1,
-            borderColor: 'rgba(234, 231, 223, 0.14)',
-            borderRadius: 16,
-            padding: 20,
-            marginBottom: 24,
-          }}
-        >
-          <SeedPhraseGrid
-            words={seedPhrase}
-            showCopyButton={false}
-            revealDelay={80}
-          />
-
-          {/* Copy Button */}
-          <TouchableOpacity
-            onPress={handleCopyAll}
-            activeOpacity={0.7}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginTop: 16,
-              paddingVertical: 12,
-              borderWidth: 1,
-              borderColor: 'rgba(234, 231, 223, 0.14)',
-              borderRadius: 12,
-            }}
-          >
-            <Ionicons
-              name={copied ? 'checkmark-circle' : 'copy-outline'}
-              size={20}
-              color="#39c5bb"
-            />
-            <Text style={{ color: '#39c5bb', marginLeft: 8, fontWeight: '500' }}>
-              {copied ? t('common.copied') : t('onboarding.copyAll')}
-            </Text>
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* Warning */}
-        <Animated.View
-          entering={FadeInDown.delay(600).duration(600)}
-          style={{
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
-            borderWidth: 1,
-            borderColor: 'rgba(239, 68, 68, 0.3)',
-            borderRadius: 16,
-            padding: 16,
-            marginBottom: 24,
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <Ionicons name="warning" size={24} color="#ef4444" />
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <Text style={{ color: '#f87171', fontWeight: '600', marginBottom: 4 }}>
-                {t('onboarding.neverShareWords')}
-              </Text>
-              <Text style={{ color: 'rgba(252, 165, 165, 0.7)', fontSize: 14, lineHeight: 20 }}>
-                {t('onboarding.neverShareWordsDesc')}
-              </Text>
-            </View>
+          <View style={{ marginTop: 10, marginBottom: 24 }}>
+            <Lede>{t('onboarding.writeDownWords')}</Lede>
           </View>
         </Animated.View>
 
-        {/* Acknowledgment Checkbox */}
-        <Animated.View entering={FadeInDown.delay(800).duration(600)}>
-          <TouchableOpacity
+        <Animated.View entering={FadeInDown.delay(350).duration(600)}>
+          <Panel>
+            <SeedPhraseGrid words={seedPhrase} showCopyButton={false} revealDelay={80} />
+            <GhostLink onPress={handleCopyAll} accessibilityLabel={t('onboarding.copyAll')}>
+              <Accent>{copied ? t('common.copied') : t('onboarding.copyAll')}</Accent>
+            </GhostLink>
+          </Panel>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(550).duration(600)} style={{ marginTop: 16 }}>
+          <Panel tone="warn">
+            <Text style={styles.warnTitle}>{t('onboarding.neverShareWords')}</Text>
+            <Text style={styles.warnBody}>{t('onboarding.neverShareWordsDesc')}</Text>
+          </Panel>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.delay(750).duration(600)}>
+          <Pressable
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
               setHasAcknowledged(!hasAcknowledged);
             }}
-            activeOpacity={0.8}
-            style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 16 }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: hasAcknowledged }}
+            accessibilityLabel={t('onboarding.acknowledgeSeed')}
+            style={styles.ack}
           >
-            <View
-              style={{
-                width: 24,
-                height: 24,
-                borderRadius: 8,
-                borderWidth: 2,
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginRight: 12,
-                backgroundColor: hasAcknowledged ? '#39c5bb' : 'transparent',
-                borderColor: hasAcknowledged ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
-              }}
-            >
-              {hasAcknowledged && (
-                <Ionicons name="checkmark" size={16} color="#eae7df" />
-              )}
+            <View style={[styles.box, hasAcknowledged && styles.boxOn]}>
+              {hasAcknowledged ? <Text style={styles.boxTick}>{'✓'}</Text> : null}
             </View>
-            <Text style={{ color: '#eae7df', flex: 1, fontSize: 15 }}>
-              {t('onboarding.acknowledgeSeed')}
-            </Text>
-          </TouchableOpacity>
+            <Text style={styles.ackText}>{t('onboarding.acknowledgeSeed')}</Text>
+          </Pressable>
         </Animated.View>
       </ScrollView>
 
-      {/* Bottom Button */}
-      <View style={{ paddingHorizontal: 24, paddingBottom: 32 }}>
-        <Animated.View entering={FadeInUp.delay(1000).duration(600)}>
-          <TouchableOpacity
-            onPress={handleContinue}
-            activeOpacity={0.8}
-            disabled={!hasAcknowledged}
-            style={{
-              paddingVertical: 16,
-              borderRadius: 12,
-              alignItems: 'center',
-              backgroundColor: hasAcknowledged ? '#39c5bb' : 'rgba(234, 231, 223, 0.14)',
-              ...(hasAcknowledged
-                ? {
-                    shadowColor: '#39c5bb',
-                    shadowOpacity: 0.4,
-                    shadowRadius: 20,
-                    shadowOffset: { width: 0, height: 4 },
-                    elevation: 8,
-                  }
-                : {}),
-            }}
-          >
-            <Text
-              style={{
-                fontSize: 17,
-                fontWeight: 'bold',
-                color: hasAcknowledged ? '#eae7df' : 'rgba(234, 231, 223, 0.40)',
-              }}
-            >
-              {t('onboarding.writtenThemDown')}
-            </Text>
-          </TouchableOpacity>
-        </Animated.View>
-      </View>
-    </SafeAreaView>
+      <Animated.View entering={FadeInUp.delay(900).duration(600)} style={{ paddingBottom: 24 }}>
+        <PaperButton label={t('onboarding.writtenThemDown')} onPress={handleContinue} disabled={!hasAcknowledged} />
+      </Animated.View>
+    </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  centred: { justifyContent: 'center' },
+  warnTitle: { fontFamily: FontFamily.medium, fontSize: 14, color: Colors.warning, marginBottom: 6 },
+  warnBody: { fontFamily: FontFamily.regular, fontSize: 13, lineHeight: 19, color: Colors.textSecondary },
+  ack: { flexDirection: 'row', alignItems: 'center', paddingVertical: 18, gap: 12 },
+  box: {
+    width: 22,
+    height: 22,
+    borderWidth: 1,
+    borderColor: Colors.borderLight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  boxOn: { backgroundColor: Colors.text, borderColor: Colors.text },
+  boxTick: { fontFamily: FontFamily.mono, fontSize: 13, color: Colors.background },
+  ackText: { flex: 1, fontFamily: FontFamily.regular, fontSize: 14, lineHeight: 20, color: Colors.text },
+});

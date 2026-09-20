@@ -43,8 +43,15 @@ config.resolver.nodeModulesPaths = [
 // Disallow packages outside of the project root from being resolved
 config.resolver.disableHierarchicalLookup = true;
 
-// Prioritize browser field in package.json for jose and other browser-compatible packages
-config.resolver.resolverMainFields = ['browser', 'main', 'module'];
+// `react-native` FIRST, as React Native's own default has it. This line used to
+// read ['browser', 'main', 'module'] "for jose", which dropped the react-native
+// field altogether. Measured 2026-09-13: @shopify/react-native-skia declares
+// react-native: "src/index.ts", and without that field Metro took the compiled
+// lib/module build, whose *NativeComponent.js specs carry no types — so the
+// codegen babel plugin failed the whole bundle with "Could not find component
+// config for native component". jose is gone with Privy; browser stays second
+// for the packages that still use it.
+config.resolver.resolverMainFields = ['react-native', 'browser', 'main', 'module'];
 
 // Find @noble/hashes base path for subpath resolution
 let nobleHashesPath;

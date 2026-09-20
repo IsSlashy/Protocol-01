@@ -107,8 +107,8 @@ android {
         applicationId 'com.protocol01.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 30
-        versionName "1.0.3"
+        versionCode 31
+        versionName "1.1.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
 
@@ -124,10 +124,26 @@ android {
             keyPassword 'android'
         }
         release {
-            storeFile file('release.keystore')
-            storePassword findProperty('RELEASE_STORE_PASSWORD') ?: System.getenv('P01_RELEASE_STORE_PASSWORD')
-            keyAlias findProperty('RELEASE_KEY_ALIAS') ?: 'protocol01'
-            keyPassword findProperty('RELEASE_KEY_PASSWORD') ?: System.getenv('P01_RELEASE_KEY_PASSWORD')
+            // The password normally comes from android/signing.properties
+            // (git-ignored, loaded at the top of this file) or the environment.
+            // 2026-09-13: on a machine that has neither, a release build used to
+            // die at packaging with a null storePassword, after ten minutes of
+            // compiling. It falls back to the debug key instead and says so; an
+            // APK signed this way cannot UPGRADE a release-signed install (the
+            // phone must be reinstalled), and must never ship.
+            def releaseStorePassword = findProperty('RELEASE_STORE_PASSWORD') ?: System.getenv('P01_RELEASE_STORE_PASSWORD')
+            if (releaseStorePassword) {
+                storeFile file('release.keystore')
+                storePassword releaseStorePassword
+                keyAlias findProperty('RELEASE_KEY_ALIAS') ?: 'protocol01'
+                keyPassword findProperty('RELEASE_KEY_PASSWORD') ?: System.getenv('P01_RELEASE_KEY_PASSWORD') ?: releaseStorePassword
+            } else {
+                println "WARNING: P01_RELEASE_STORE_PASSWORD is not set; signing the release build with the DEBUG key (local testing only)"
+                storeFile file('debug.keystore')
+                storePassword 'android'
+                keyAlias 'androiddebugkey'
+                keyPassword 'android'
+            }
         }
     }
     buildTypes {
