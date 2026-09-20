@@ -1,0 +1,5 @@
+error[E0616]: field `0` of struct `BlindingMask` is private
+ --> tests/ui/mask_field_access.rs:7:21
+  |
+7 |     let _stolen = m.0;
+  |                     ^ private field

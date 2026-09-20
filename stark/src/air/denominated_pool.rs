@@ -29,6 +29,7 @@ use winterfell::{
 };
 
 use crate::poseidon;
+use crate::BlindingMask;
 
 // ============================================================================
 // Constants
@@ -482,8 +483,10 @@ pub fn build_pool_commitment_trace(
     secret: BaseElement,
     deposit_epoch: BaseElement,
     token_mint: BaseElement,
-    mask: &[BaseElement],
+    mask: &BlindingMask,
 ) -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement) {
+    // [A8] The provenance lives in the type; the body below is unchanged.
+    let mask: &[BaseElement] = mask.as_slice();
     assert_eq!(
         mask.len(),
         MASK_LEN,
@@ -617,7 +620,7 @@ pub fn compute_pool_values(
 /// shipping path draws from `getrandom` inside the wasm entry and refuses to
 /// build without a CSPRNG.
 #[cfg(test)]
-fn deterministic_test_mask() -> Vec<BaseElement> {
+fn deterministic_test_mask_raw() -> Vec<BaseElement> {
     let mut z: u64 = 0xC1_5EED_0002;
     (0..MASK_LEN)
         .map(|_| {
@@ -627,6 +630,12 @@ fn deterministic_test_mask() -> Vec<BaseElement> {
             BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the trace builders now demand.
+#[cfg(test)]
+fn deterministic_test_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_for_tests(deterministic_test_mask_raw())
 }
 
 #[cfg(test)]

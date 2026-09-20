@@ -1,0 +1,19 @@
+error[E0423]: cannot initialize a tuple struct which contains private fields
+ --> tests/ui/mask_tuple_construction.rs:5:13
+  |
+5 |     let _ = BlindingMask(vec![BaseElement::new(0); 4]);
+  |             ^^^^^^^^^^^^
+  |
+note: constructor is not visible here due to private fields
+ --> src/lib.rs
+  |
+  | pub struct BlindingMask(Vec<BaseElement>);
+  |                         ^^^^^^^^^^^^^^^^ private field
+help: you might have meant to use an associated function to build this type
+  |
+5 -     let _ = BlindingMask(vec![BaseElement::new(0); 4]);
+5 +     let _ = BlindingMask::from_raw_for_tests(_);
+  |
+5 -     let _ = BlindingMask(vec![BaseElement::new(0); 4]);
+5 +     let _ = BlindingMask::from_raw_u64_for_tests(_);
+  |

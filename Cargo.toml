@@ -10,6 +10,8 @@ members = [
     "programs/p01_registry",
     "programs/p01_liquidity",
     "stark",
+    # [A8] dev-only feature shim; see stark/test-support/Cargo.toml.
+    "stark/test-support",
 ]
 # p01_arcium pulls arcium-primitives → serde_with 3.18 → time 0.3.47 which
 # requires edition2024, incompatible with Solana SBF cargo 1.84. The program

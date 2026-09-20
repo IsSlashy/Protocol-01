@@ -33,7 +33,7 @@ fn main() {
             // The C1 blinding region. Same caveat as the other arms: a
             // deterministic xorshift is adequate for generating a proof to
             // inspect and INADEQUATE for anything whose secrecy matters.
-            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::denominated_pool::MASK_LEN)
+            let mask = p01_stark::BlindingMask::draw(p01_stark::air::denominated_pool::MASK_LEN)
                 .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_pool_commitment_proof(
                 np, secret, epoch, mint, &mask,
@@ -51,7 +51,7 @@ fn main() {
             let salt: u64 = args[4].parse().expect("Invalid salt");
             let mint: u64 = args[5].parse().expect("Invalid mint");
 
-            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::balance_proof::MASK_LEN)
+            let mask = p01_stark::BlindingMask::draw(p01_stark::air::balance_proof::MASK_LEN)
                 .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_balance_compact_proof(sk, balance, salt, mint, &mask);
             println!("{{");
@@ -71,7 +71,7 @@ fn main() {
             // comment called that "adequate for a proof to inspect" -- but the
             // bytes are indistinguishable from a real proof, and the mask hid
             // nothing.
-            let mask: Vec<u64> = p01_stark::draw_blinding_mask(
+            let mask = p01_stark::BlindingMask::draw(
                 p01_stark::air::merkle_path::mask_len_for_depth(elements.len()),
             )
                 .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
@@ -102,7 +102,7 @@ fn main() {
             // for anything whose secrecy matters: the blinding region is only
             // hiding if its values are unpredictable -- which is exactly why
             // this arm no longer rolls its own. Same draw as the shipping path.
-            let mask: Vec<u64> = p01_stark::draw_blinding_mask(
+            let mask = p01_stark::BlindingMask::draw(
                 p01_stark::air::merkle_update::mask_len_for_depth(elements.len()),
             )
                 .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
@@ -130,7 +130,7 @@ fn main() {
             let amt_salt: u64 = args[8].parse().expect("Invalid amt_salt");
             let mint: u64 = args[9].parse().expect("Invalid mint");
 
-            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::confidential_balance::MASK_LEN)
+            let mask = p01_stark::BlindingMask::draw(p01_stark::air::confidential_balance::MASK_LEN)
                 .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_confidential_balance_compact_proof(
                 sk, old_bal, old_salt, new_bal, new_salt, amount, amt_salt, mint,
@@ -164,7 +164,7 @@ fn main() {
 
             // The C5 blinding region. Same caveat as the other arms: adequate
             // for generating a proof to inspect, INADEQUATE for secrecy.
-            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::transfer::MASK_LEN)
+            let mask = p01_stark::BlindingMask::draw(p01_stark::air::transfer::MASK_LEN)
                 .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof = p01_stark::compact::generate_transfer_compact_proof(
                 sk, mint, in1_amt, in1_rand, in2_amt, in2_rand,
@@ -189,7 +189,7 @@ fn main() {
                 .parse()
                 .expect("Invalid secret number");
 
-            let mask: Vec<u64> = p01_stark::draw_blinding_mask(p01_stark::air::subscriber_ownership::MASK_LEN)
+            let mask = p01_stark::BlindingMask::draw(p01_stark::air::subscriber_ownership::MASK_LEN)
                 .expect("no CSPRNG available; refusing to emit a proof with a predictable blinding region");
             let proof_data = p01_stark::compact::generate_subscriber_ownership_proof(secret, &mask);
             println!("{{");

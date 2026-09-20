@@ -1,0 +1,31 @@
+# ⛔ LEAK-LEDGER A8 plumbing, and nothing else.
+#
+# `BlindingMask::from_raw_for_tests` is gated on
+# `cfg(any(test, feature = "deterministic-mask-for-tests"))`. `cfg(test)` covers
+# the unit tests inside `stark/src`, but NOT the integration tests in
+# `stark/tests/`, which link the lib as an ordinary dependency — and those are
+# exactly the tests that must drive a chosen, non-hiding mask through the
+# prover (the C0-C7 witness-recovery attacks, the byte-identity gate, the
+# free-dimension controls).
+#
+# So `p01-stark` dev-depends on this crate, and this crate depends on
+# `p01-stark` with the feature. Cargo unifies features across the dev graph of
+# the package under test, so `cargo test -p p01-stark` builds the lib WITH the
+# escape hatch and `cargo build -p p01-stark` (and `cargo build-sbf`, and
+# `wasm-pack build stark -- --features wasm`) builds it WITHOUT.
+#
+# Why not a dev-dependency of `p01-stark` on ITSELF, which is the usual trick:
+# cargo then passes `--extern p01_stark=<rlib>` twice and rustc 1.98.1
+# segfaults (STATUS_ACCESS_VIOLATION) intermittently while compiling
+# `stark/tests/mask_api.rs`; renaming the self-dependency instead makes
+# `trybuild`'s generated manifest refuse with "depends on crate `p01-stark`
+# multiple times with different names". This crate has neither problem.
+[package]
+name = "p01-stark-test-support"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Dev-only: turns on p01-stark's deterministic-mask-for-tests for its own integration tests"
+
+[dependencies]
+p01-stark = { path = "..", features = ["deterministic-mask-for-tests"] }

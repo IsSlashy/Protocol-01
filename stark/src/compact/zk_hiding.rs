@@ -288,7 +288,7 @@ fn c7_internals(
 ) -> C7Internals {
     assert_eq!(mask.len(), MASK_LEN);
     let (w0, w1, w2, w3, pe, bits) = witness_for(witness);
-    let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+    let mask_felts = crate::BlindingMask::from_raw_u64_for_tests(mask);
 
     let (trace, nullifier, root) = build_spend_trace(
         w0,
@@ -1120,7 +1120,15 @@ fn the_mask_every_other_measurement_assumes_is_uniform() {
     // ── the structural half ────────────────────────────────────────────────
     const GEN: &str = include_str!("../bin/gen_proof.rs");
     let bindings = GEN.matches("let mask").count();
-    let draws = GEN.matches("draw_blinding_mask").count();
+    // [LEAK-LEDGER A8 2026-09-20] Two spellings now reach the same CSPRNG:
+    // `draw_blinding_mask` (the raw `Vec<u64>` draw, still public for callers
+    // that want the values) and `BlindingMask::draw`, which wraps it in the
+    // newtype the prover demands. Counting only the old name turned this
+    // assert red the moment `gen_proof.rs` moved to the newtype, which is the
+    // guard doing its job -- the fix is to teach it the second door, never to
+    // drop the equality.
+    let draws =
+        GEN.matches("draw_blinding_mask").count() + GEN.matches("BlindingMask::draw").count();
     assert!(bindings > 0, "the scan found no mask binding at all in gen_proof.rs");
     assert_eq!(
         bindings, draws,
@@ -1128,6 +1136,11 @@ fn the_mask_every_other_measurement_assumes_is_uniform() {
          arms is building a mask some other way, which is exactly the 2026-08-30 defect: four \
          arms, four deterministic xorshifts, all seeded with the same literal."
     );
+    // ⛔ And the only way to get a mask INTO a prover from outside this crate
+    // is `BlindingMask::draw`: the newtype's field is private and its raw
+    // constructors are gated out of every shipping build. That half is pinned
+    // in `stark/tests/mask_api.rs` and in `tests/ui/*.rs`, which is where A8
+    // is actually closed; this assert only keeps this one binary honest.
 
     println!();
     println!("X5 / the mask - the assumption every other result rests on:");
@@ -3050,7 +3063,7 @@ fn geom(c: Circ) -> Geom {
 fn public_inputs_for(c: Circ) -> Vec<u64> {
     use crate::compact as cc;
     let g = geom(c);
-    let m = base_mask_len(0x9001, g.mask_len);
+    let m = crate::BlindingMask::from_raw_u64_for_tests(&base_mask_len(0x9001, g.mask_len));
     match c {
         Circ::C0 => cc::generate_subscriber_ownership_proof(4242, &m).public_inputs,
         Circ::C1 => cc::generate_pool_commitment_proof(111, 222, 333, 444, &m).public_inputs,
@@ -3099,11 +3112,11 @@ fn base_mask_len(seed: u64, len: usize) -> Vec<u64> {
 
 /// The trace for one circuit under one mask. The witness is FIXED per circuit;
 /// only the mask moves, and that is the whole experiment.
-fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
+fn trace_for(c: Circ, mask_f: &crate::BlindingMask) -> Vec<Vec<BaseElement>> {
     use crate::air::{merkle_path as c3, merkle_update as c6};
     match c {
         Circ::C0 => {
-            crate::air::subscriber_ownership::build_masked_trace(BaseElement::new(4242), &mask_f).0
+            crate::air::subscriber_ownership::build_masked_trace(BaseElement::new(4242), mask_f).0
         }
         Circ::C5 => {
             use crate::air::transfer::{TransferInput, TransferOutput};
@@ -3115,7 +3128,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
                 &TransferInput { amount: f(88), randomness: f(100) },
                 &TransferOutput { amount: f(150), recipient: f(1234), randomness: f(555) },
                 &TransferOutput { amount: f(65), recipient: f(2222), randomness: f(333) },
-                &mask_f,
+                mask_f,
             )
             .0
         }
@@ -3129,7 +3142,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
                 BaseElement::new(200),
                 BaseElement::new(333),
                 BaseElement::new(999),
-                &mask_f,
+                mask_f,
             )
             .0
         }
@@ -3139,7 +3152,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
                 BaseElement::new(1000),
                 BaseElement::new(777),
                 BaseElement::new(999),
-                &mask_f,
+                mask_f,
             )
             .0
         }
@@ -3149,7 +3162,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
                 BaseElement::new(222),
                 BaseElement::new(333),
                 BaseElement::new(444),
-                &mask_f,
+                mask_f,
             )
             .0
         }
@@ -3157,7 +3170,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
             let d = c3::CANONICAL_DEPTH;
             let pe: Vec<BaseElement> = (0..d as u64).map(|i| BaseElement::new(1000 + i)).collect();
             let pi: Vec<u8> = (0..d).map(|i| (i % 2) as u8).collect();
-            c3::build_merkle_trace(BaseElement::new(777), &pe, &pi, &mask_f)
+            c3::build_merkle_trace(BaseElement::new(777), &pe, &pi, mask_f)
         }
         Circ::C6 => {
             let d = c6::CANONICAL_DEPTH;
@@ -3169,7 +3182,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
                 BaseElement::new(222),
                 &pe,
                 &pi,
-                &mask_f,
+                mask_f,
             )
         }
         Circ::C7 => {
@@ -3184,7 +3197,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
                 BaseElement::new(555),
                 &pe,
                 &pi,
-                &mask_f,
+                mask_f,
             )
             .0
         }
@@ -3197,7 +3210,7 @@ fn trace_for(c: Circ, mask_f: &[BaseElement]) -> Vec<Vec<BaseElement>> {
 fn ood_claims_for(c: Circ, mask: &[u64], pub_inputs: &[u64]) -> Vec<u64> {
     use crate::air::{merkle_path as c3, merkle_update as c6};
     let g = geom(c);
-    let mask_f: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+    let mask_f = crate::BlindingMask::from_raw_u64_for_tests(mask);
 
     let trace = trace_for(c, &mask_f);
 
@@ -3452,7 +3465,7 @@ fn quotient_lde_for(
 ) -> Vec<Vec<u64>> {
     use crate::air::{merkle_path as c3, merkle_update as c6};
     let g = geom(c);
-    let mask_f: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+    let mask_f = crate::BlindingMask::from_raw_u64_for_tests(mask);
     let trace = trace_for(c, &mask_f);
 
     let alpha = BaseElement::new(ALPHA);

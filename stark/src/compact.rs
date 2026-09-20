@@ -1134,17 +1134,12 @@ fn compute_quotient_lde_circuit_6(
     let periodic_trace = build_merkle_update_periodic_columns(depth, trace_length);
     assert_eq!(periodic_trace.len(), MERKLE_UPDATE_NUM_PERIODIC);
 
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; MERKLE_UPDATE_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); MERKLE_UPDATE_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
-            // together -- trace and periodic columns alike -- or a
-            // constraint would mix a coset evaluation with a subgroup one.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        // [B7] x = h * g^i, the same coset as the trace; one NTT [WP0d].
+        periodic_lde[k] = lde_dom.evaluate(&poly);
     }
 
     // 2. Evaluate the 19 constraints at every LDE position and combine via
@@ -1251,14 +1246,11 @@ fn compute_quotient_lde_circuit_0(
 
     let periodic_trace = build_subscriber_ownership_periodic_columns(trace_length);
     assert_eq!(periodic_trace.len(), SUBSCRIBER_OWNERSHIP_NUM_PERIODIC);
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; SUBSCRIBER_OWNERSHIP_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); SUBSCRIBER_OWNERSHIP_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        periodic_lde[k] = lde_dom.evaluate(&poly); // [B7] coset, one NTT [WP0d]
     }
 
     let mut c_lde = vec![BaseElement::ZERO; lde_size];
@@ -1311,17 +1303,12 @@ fn compute_quotient_lde_circuit_1(
     let periodic_trace = build_pool_commitment_periodic_columns(trace_length);
     assert_eq!(periodic_trace.len(), POOL_COMMITMENT_NUM_PERIODIC);
 
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; POOL_COMMITMENT_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); POOL_COMMITMENT_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
-            // together -- trace and periodic columns alike -- or a
-            // constraint would mix a coset evaluation with a subgroup one.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        // [B7] x = h * g^i, the same coset as the trace; one NTT [WP0d].
+        periodic_lde[k] = lde_dom.evaluate(&poly);
     }
 
     // 2. Evaluate the 4 constraints at every LDE position and RLC-combine with α.
@@ -1424,17 +1411,12 @@ fn compute_quotient_lde_circuit_2(
     let periodic_trace = build_balance_proof_periodic_columns(trace_length);
     assert_eq!(periodic_trace.len(), BALANCE_PROOF_NUM_PERIODIC);
 
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; BALANCE_PROOF_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); BALANCE_PROOF_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
-            // together -- trace and periodic columns alike -- or a
-            // constraint would mix a coset evaluation with a subgroup one.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        // [B7] x = h * g^i, the same coset as the trace; one NTT [WP0d].
+        periodic_lde[k] = lde_dom.evaluate(&poly);
     }
 
     // 2. Evaluate the 7 constraints at every LDE position and RLC-combine with α.
@@ -1542,17 +1524,12 @@ fn compute_quotient_lde_circuit_3(
     let periodic_trace = build_merkle_path_periodic_columns(depth, trace_length);
     assert_eq!(periodic_trace.len(), MERKLE_PATH_NUM_PERIODIC);
 
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; MERKLE_PATH_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); MERKLE_PATH_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
-            // together -- trace and periodic columns alike -- or a
-            // constraint would mix a coset evaluation with a subgroup one.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        // [B7] x = h * g^i, the same coset as the trace; one NTT [WP0d].
+        periodic_lde[k] = lde_dom.evaluate(&poly);
     }
 
     // 2. Evaluate the 11 constraints at every LDE position and RLC-combine with α.
@@ -1660,17 +1637,12 @@ fn compute_quotient_lde_circuit_4(
     let periodic_trace = build_confidential_balance_periodic_columns();
     assert_eq!(periodic_trace.len(), CONFIDENTIAL_BALANCE_NUM_PERIODIC);
 
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; CONFIDENTIAL_BALANCE_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); CONFIDENTIAL_BALANCE_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
-            // together -- trace and periodic columns alike -- or a
-            // constraint would mix a coset evaluation with a subgroup one.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        // [B7] x = h * g^i, the same coset as the trace; one NTT [WP0d].
+        periodic_lde[k] = lde_dom.evaluate(&poly);
     }
 
     // 2. Evaluate the 10 constraints at every LDE position and RLC-combine with α.
@@ -1789,17 +1761,12 @@ fn compute_quotient_lde_circuit_5(
     let periodic_trace: Vec<Vec<BaseElement>> =
         periodic_trace_raw.iter().map(materialise).collect();
 
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; TRANSFER_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); TRANSFER_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
-            // together -- trace and periodic columns alike -- or a
-            // constraint would mix a coset evaluation with a subgroup one.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        // [B7] x = h * g^i, the same coset as the trace; one NTT [WP0d].
+        periodic_lde[k] = lde_dom.evaluate(&poly);
     }
 
     // 2. Evaluate the 23 constraints at every LDE position and RLC-combine with α.
@@ -1910,15 +1877,12 @@ fn compute_quotient_lde_circuit_7(
     let periodic_trace: Vec<Vec<BaseElement>> =
         periodic_trace_raw.iter().map(materialise).collect();
 
-    let mut periodic_lde: Vec<Vec<BaseElement>> =
-        vec![vec![BaseElement::ZERO; lde_size]; SPEND_NUM_PERIODIC];
+    let mut periodic_lde: Vec<Vec<BaseElement>> = vec![Vec::new(); SPEND_NUM_PERIODIC];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     for (k, col) in periodic_trace.iter().enumerate() {
         let poly = inverse_ntt(col, trace_g);
-        for i in 0..lde_size {
-            // [B7] x = h * g^i, on the coset, exactly like the trace.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            periodic_lde[k][i] = evaluate_poly(&poly, x);
-        }
+        // [B7] x = h * g^i, on the coset, exactly like the trace; one NTT [WP0d].
+        periodic_lde[k] = lde_dom.evaluate(&poly);
     }
 
     // 2. Evaluate the 18 constraints at every LDE position and RLC-combine.
@@ -1964,20 +1928,17 @@ fn compute_quotient_lde_circuit_7(
 /// Compute LDE by evaluating trace polynomials at BLOWUP * TRACE_LENGTH points.
 /// Uses FFT interpolation + evaluation.
 fn compute_lde(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
-    let mut lde = vec![vec![BaseElement::ZERO; LDE_SIZE]; TRACE_WIDTH];
+    let mut lde = vec![Vec::new(); TRACE_WIDTH];
+    // [B7] x = h * g^i. C0 has its own builder and is the sole verifier path
+    // for four shipped instructions, so leaving it unshifted would leave the
+    // leak open where it is most used. `lde_coset_domain` carries the shift.
+    let lde_dom = lde_coset_domain(LDE_SIZE, get_lde_domain_generator());
 
     for col in 0..TRACE_WIDTH {
         // Interpolate: get polynomial coefficients from trace values.
-        // Then evaluate at all LDE domain points.
+        // Then evaluate at all LDE domain points, one NTT [WP0d].
         let poly = interpolate_poly(&trace[col]);
-        let g = get_lde_domain_generator();
-        for i in 0..LDE_SIZE {
-            // [B7] x = h * g^i. C0 has its own builder and is the sole
-            // verifier path for four shipped instructions, so leaving it
-            // unshifted would leave the leak open where it is most used.
-            let x = lde_coset_shift() * g.exp(i as u64);
-            lde[col][i] = evaluate_poly(&poly, x);
-        }
+        lde[col] = lde_dom.evaluate(&poly);
     }
 
     lde
@@ -2427,25 +2388,22 @@ fn segment_quotient_poly(
         coeffs.push(seg);
     }
 
-    // Evaluate every segment on the LDE domain. Total work is
-    // `significant * lde_size` muls — the SAME as the single full-Q evaluation
-    // this replaces, because the segments partition Q's coefficients. Walking
-    // `x` multiplicatively avoids `lde_size` exponentiations per segment.
+    // Evaluate every segment on the LDE domain. [WP0d] One NTT per segment,
+    // `(lde_size / 2) * log2(lde_size)` butterflies, where the per-point loop
+    // this replaces spent `significant * lde_size` multiply-adds in total.
+    //
+    // [B7] On the coset, starting at h, not at ONE. The per-point loop walked
+    // the domain multiplicatively from `x = lde_coset_shift()`, which is why no
+    // search for `lde_g.exp(` found it, and why it was the last site left
+    // evaluating the quotient on the raw subgroup while trace, periodic columns
+    // and constraints had all moved to the coset. MEASURED: that single mismatch
+    // made the committed quotient disagree with the composition it is supposed
+    // to be, and `B1 TERMINAL DEGREE BOUND VIOLATED` fired at proof time on C0.
+    // `lde_coset_domain` is now the one place every LDE column gets its shift.
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
     let mut lde: Vec<Vec<u64>> = Vec::with_capacity(segments);
     for seg in coeffs.iter() {
-        let mut col = vec![0u64; lde_size];
-        // [B7] Starts at h, not at ONE. This walks the domain MULTIPLICATIVELY
-        // instead of exponentiating, which is why no search for `lde_g.exp(`
-        // finds it — and why it was the last site left evaluating the quotient
-        // on the raw subgroup while trace, periodic columns and constraints had
-        // all moved to the coset. MEASURED: that single mismatch made the
-        // committed quotient disagree with the composition it is supposed to be,
-        // and `B1 TERMINAL DEGREE BOUND VIOLATED` fired at proof time on C0.
-        let mut x = lde_coset_shift();
-        for slot in col.iter_mut() {
-            *slot = evaluate_poly(seg, x).as_int();
-            x *= lde_g;
-        }
+        let col: Vec<u64> = lde_dom.evaluate(seg).iter().map(|v| v.as_int()).collect();
         lde.push(col);
     }
 
@@ -2979,7 +2937,7 @@ mod tests {
         // catches a serialisation change, the other catches a geometry change,
         // and a single pin cannot tell them apart.
         let (np, sk, blind, mint, pe, pi, rh, mask) = spend_test_witness();
-        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &crate::BlindingMask::from_raw_u64_for_tests(&mask));
         assert_eq!(
             proof.proof_bytes.len(),
             expected_wire_size(
@@ -5672,7 +5630,7 @@ mod tests {
         use crate::air::spend::TRACE_WIDTH as SP_W;
 
         let (np, sk, blind, mint, pe, pi, rh, mask) = spend_test_witness();
-        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &crate::BlindingMask::from_raw_u64_for_tests(&mask));
         let b = &proof.proof_bytes;
 
         // trace_root 32 | quotient_root 32 | ood_current 8w | ood_next 8w |
@@ -5874,7 +5832,7 @@ mod tests {
 
         let (np, sk, blind, mint, pe, pi, _rh, mask) = spend_test_witness();
         let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
-        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts = crate::BlindingMask::from_raw_u64_for_tests(&mask);
         let (trace, nullifier, root) = build_spend_trace(
             BaseElement::new(np),
             BaseElement::new(sk),
@@ -6122,7 +6080,7 @@ mod tests {
 
         let (np, sk, _blind, mint, pe, pi, _rh, mask) = spend_test_witness();
         let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
-        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts = crate::BlindingMask::from_raw_u64_for_tests(&mask);
         assert_eq!(mask_felts.len(), MASK_LEN);
 
         // 30 -- a plausible deposit epoch, not a field element.
@@ -6290,7 +6248,7 @@ mod tests {
             BaseElement::new(mint),
         );
 
-        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &crate::BlindingMask::from_raw_u64_for_tests(&mask));
 
         assert_eq!(proof.circuit_id, CIRCUIT_SPEND);
         assert_eq!(proof.public_inputs.len(), 6, "C7 publishes exactly six felts");
@@ -6327,7 +6285,7 @@ mod tests {
         };
 
         let (np, sk, blind, mint, pe, pi, rh, mask) = spend_test_witness();
-        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &mask);
+        let proof = generate_spend_compact_proof(np, sk, blind, mint, &pe, &pi, &rh, &crate::BlindingMask::from_raw_u64_for_tests(&mask));
         assert_eq!(proof.circuit_id, CIRCUIT_SPEND);
 
         let bytes = &proof.proof_bytes;
@@ -6427,7 +6385,7 @@ mod tests {
         assert_eq!(pe.len(), CANONICAL_DEPTH);
 
         let elems: Vec<BaseElement> = pe.iter().map(|&v| BaseElement::new(v)).collect();
-        let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
+        let mask_felts = crate::BlindingMask::from_raw_u64_for_tests(&mask);
         let (trace, _, _) = build_spend_trace(
             BaseElement::new(np),
             BaseElement::new(sk),
@@ -6715,6 +6673,24 @@ fn get_domain_generator_generic(domain_size: usize) -> BaseElement {
     g
 }
 
+/// [WP0d] The LDE evaluation domain as an NTT domain: the coset `h * <lde_g>`,
+/// `h = lde_coset_shift()` [B7].
+///
+/// EVERY column the prover samples on the LDE (trace, periodic columns,
+/// quotient segments) is evaluated through this one constructor, so they
+/// cannot drift apart: everything sampled on the LDE domain moves together, or
+/// a constraint would mix a coset evaluation with a subgroup one.
+///
+/// `evaluate(poly)[i]` is `poly(h * lde_g^i)` for `i = 0..lde_size`, in natural
+/// order: exactly what the pre-WP0d per-point loop
+/// (`x = lde_coset_shift() * lde_g.exp(i)`, `evaluate_poly(&poly, x)`) wrote,
+/// in `(lde_size / 2) * log2(lde_size)` butterflies instead of
+/// `n * lde_size` multiply-adds per column. Same values bit for bit: see
+/// `crate::ntt`, `wp0d_ntt_lde` below and `stark/tests/wp0d_ntt_lde.rs`.
+fn lde_coset_domain(lde_size: usize, lde_g: BaseElement) -> crate::ntt::CosetDomain {
+    crate::ntt::CosetDomain::new(lde_size, lde_g, lde_coset_shift())
+}
+
 /// Compute LDE for any trace dimensions.
 fn compute_lde_generic(
     trace: &[Vec<BaseElement>],
@@ -6727,19 +6703,14 @@ fn compute_lde_generic(
     let trace_g = get_domain_generator_generic(trace_length);
     let lde_g = get_domain_generator_generic(lde_size);
 
-    let mut lde = vec![vec![BaseElement::ZERO; lde_size]; trace_width];
+    let mut lde = vec![Vec::new(); trace_width];
+    let lde_dom = lde_coset_domain(lde_size, lde_g);
 
     for col in 0..trace_width {
         // Interpolate: get polynomial coefficients from trace values
         let poly = inverse_ntt(&trace[col], trace_g);
-        // Evaluate at all LDE domain points
-        for i in 0..lde_size {
-            // [B7] x = h * g^i. Everything sampled on the LDE domain moves
-            // together -- trace and periodic columns alike -- or a
-            // constraint would mix a coset evaluation with a subgroup one.
-            let x = lde_coset_shift() * lde_g.exp(i as u64);
-            lde[col][i] = evaluate_poly(&poly, x);
-        }
+        // Evaluate at all LDE domain points, x = h * g^i [B7], one NTT [WP0d].
+        lde[col] = lde_dom.evaluate(&poly);
     }
 
     lde
@@ -9233,7 +9204,7 @@ const SPEND_FRI_FINAL_POLY_DEGREE_BOUND: usize = 2;
 /// scaffolding only. HIDES NOTHING; cannot reach a shipped binary
 /// (`test-probes` is off in `default`).
 #[cfg(any(test, feature = "test-probes"))]
-pub fn c0_deterministic_probe_mask() -> Vec<u64> {
+pub fn c0_deterministic_probe_mask_raw() -> Vec<u64> {
     let mut z: u64 = 0xC0_5EED_0001;
     (0..crate::air::subscriber_ownership::MASK_LEN)
         .map(|_| {
@@ -9243,6 +9214,12 @@ pub fn c0_deterministic_probe_mask() -> Vec<u64> {
             z % 0xFFFF_FFFF_0000_0001
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the prover now demands.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c0_deterministic_probe_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_u64_for_tests(&c0_deterministic_probe_mask_raw())
 }
 
 /// [ZK-MASK-C0 2026-09-11] The SHIPPING circuit-0 proof: the masked
@@ -9256,7 +9233,7 @@ pub fn c0_deterministic_probe_mask() -> Vec<u64> {
 /// Geometry: width 5, n 512, 22 queries, ffps 32 / bound 2 (C7's terminal
 /// shape) -- see `CONFIG_SUBSCRIBER_OWNERSHIP` in the verifier for why those
 /// two fields, and not `num_queries` alone, are what tell it from C1.
-pub fn generate_subscriber_ownership_proof(subscriber_secret: u64, mask: &[u64]) -> GenericCompactProofData {
+pub fn generate_subscriber_ownership_proof(subscriber_secret: u64, mask: &crate::BlindingMask) -> GenericCompactProofData {
     generate_subscriber_ownership_proof_inner(subscriber_secret, mask, DeepProbe::HONEST)
 }
 
@@ -9268,7 +9245,7 @@ pub fn generate_subscriber_ownership_proof(subscriber_secret: u64, mask: &[u64])
 #[doc(hidden)]
 pub fn generate_subscriber_ownership_proof_with_forgery(
     subscriber_secret: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9277,13 +9254,13 @@ pub fn generate_subscriber_ownership_proof_with_forgery(
 
 fn generate_subscriber_ownership_proof_inner(
     subscriber_secret: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     let secret = BaseElement::new(subscriber_secret);
     let (trace, commitment) = crate::air::subscriber_ownership::build_masked_trace(
         secret,
-        &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+        mask,
     );
     let public_inputs = vec![commitment.as_int()];
     let pub_bytes = commitment.as_int().to_le_bytes().to_vec();
@@ -9322,7 +9299,7 @@ fn generate_subscriber_ownership_proof_inner(
 /// shipping configuration. The twins are `c3_deterministic_probe_mask` and
 /// `c6_deterministic_probe_mask`.
 #[cfg(any(test, feature = "test-probes"))]
-pub fn c1_deterministic_probe_mask() -> Vec<u64> {
+pub fn c1_deterministic_probe_mask_raw() -> Vec<u64> {
     let mut z: u64 = 0xC1_5EED_0001;
     (0..crate::air::denominated_pool::MASK_LEN)
         .map(|_| {
@@ -9334,12 +9311,18 @@ pub fn c1_deterministic_probe_mask() -> Vec<u64> {
         .collect()
 }
 
+/// [A8] The same bytes, carried by the type the prover now demands.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c1_deterministic_probe_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_u64_for_tests(&c1_deterministic_probe_mask_raw())
+}
+
 pub fn generate_pool_commitment_proof(
     nullifier_preimage: u64,
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout(
         nullifier_preimage,
@@ -9364,7 +9347,7 @@ pub fn generate_pool_commitment_proof_with_pair_indexing(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     pair_indexing: PairIndexing,
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout(
@@ -9397,7 +9380,7 @@ pub fn generate_pool_commitment_proof_with_trace_leaf(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     trace_leaf: TraceLeaf,
 ) -> GenericCompactProofData {
     generate_pool_commitment_proof_with_layout(
@@ -9425,7 +9408,7 @@ pub fn generate_pool_commitment_proof_with_forgery(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9454,7 +9437,7 @@ pub fn generate_pool_commitment_proof_claiming(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     claim_index: usize,
     claimed_value: u64,
 ) -> GenericCompactProofData {
@@ -9470,7 +9453,7 @@ fn generate_pool_commitment_proof_with_layout(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
@@ -9487,7 +9470,7 @@ fn generate_pool_commitment_proof_with_layout_and_claim(
     secret: u64,
     deposit_epoch: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     pair_indexing: PairIndexing,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
@@ -9506,7 +9489,7 @@ fn generate_pool_commitment_proof_with_layout_and_claim(
             s,
             epoch,
             mint,
-            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+            mask,
         );
 
     // Public inputs: nullifier, commitment
@@ -9559,7 +9542,7 @@ fn generate_pool_commitment_proof_with_layout_and_claim(
 /// `default`, so calling it from a production path is a COMPILE ERROR in the
 /// shipping configuration. Twins: `c1_`, `c3_`, `c5_`, `c6_deterministic_probe_mask`.
 #[cfg(any(test, feature = "test-probes"))]
-pub fn c2_deterministic_probe_mask() -> Vec<u64> {
+pub fn c2_deterministic_probe_mask_raw() -> Vec<u64> {
     let mut z: u64 = 0xC2_5EED_0001;
     (0..crate::air::balance_proof::MASK_LEN)
         .map(|_| {
@@ -9571,6 +9554,12 @@ pub fn c2_deterministic_probe_mask() -> Vec<u64> {
         .collect()
 }
 
+/// [A8] The same bytes, carried by the type the prover now demands.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c2_deterministic_probe_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_u64_for_tests(&c2_deterministic_probe_mask_raw())
+}
+
 /// [ZK-MASK-C2 2026-09-11] `mask` is the blinding region, exactly
 /// `air::balance_proof::MASK_LEN` fresh uniform elements. The wasm entry draws
 /// it from the OS CSPRNG and refuses to build without one; tests pass
@@ -9580,7 +9569,7 @@ pub fn generate_balance_compact_proof(
     balance: u64,
     salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
 ) -> GenericCompactProofData {
     generate_balance_compact_proof_inner(
         spending_key, balance, salt, token_mint, mask, DeepProbe::HONEST,
@@ -9603,7 +9592,7 @@ pub fn generate_balance_compact_proof_with_forgery(
     balance: u64,
     salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9648,7 +9637,7 @@ pub fn generate_balance_compact_proof_claiming(
     balance: u64,
     salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     claim_index: usize,
     claimed_value: u64,
 ) -> GenericCompactProofData {
@@ -9663,7 +9652,7 @@ fn generate_balance_compact_proof_inner(
     balance: u64,
     salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     generate_balance_compact_proof_with_claim(spending_key, balance, salt, token_mint, mask, probe, None)
@@ -9674,7 +9663,7 @@ fn generate_balance_compact_proof_with_claim(
     balance: u64,
     salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     probe: DeepProbe,
     // `Some((i, v))` replaces public input `i` with `v` BEFORE the transcript is
     // built, leaving the trace honest. `None` on every production path.
@@ -9691,7 +9680,7 @@ fn generate_balance_compact_proof_with_claim(
             bal,
             s,
             mint,
-            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+            mask,
         );
 
     let mut public_inputs = vec![commitment.as_int(), token_mint];
@@ -9745,7 +9734,7 @@ fn generate_balance_compact_proof_with_claim(
 /// COMPILE ERROR in the shipping configuration. The twin for C6 is
 /// `c6_deterministic_probe_mask`.
 #[cfg(any(test, feature = "test-probes"))]
-pub fn c3_deterministic_probe_mask(depth: usize) -> Vec<u64> {
+pub fn c3_deterministic_probe_mask_raw(depth: usize) -> Vec<u64> {
     let mut z: u64 = 0xC3_5EED_0000 ^ ((depth as u64) << 8) | 1;
     (0..crate::air::merkle_path::mask_len_for_depth(depth))
         .map(|_| {
@@ -9757,11 +9746,17 @@ pub fn c3_deterministic_probe_mask(depth: usize) -> Vec<u64> {
         .collect()
 }
 
+/// [A8] The same bytes, carried by the type the prover now demands.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c3_deterministic_probe_mask(depth: usize) -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_u64_for_tests(&c3_deterministic_probe_mask_raw(depth))
+}
+
 pub fn generate_merkle_path_compact_proof(
     leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
 ) -> GenericCompactProofData {
     generate_merkle_path_compact_proof_inner(
         leaf,
@@ -9785,7 +9780,7 @@ pub fn generate_merkle_path_compact_proof_with_forgery(
     leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9802,15 +9797,14 @@ fn generate_merkle_path_compact_proof_inner(
     leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     let leaf_felt = BaseElement::new(leaf);
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
-    let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
 
     let trace =
-        crate::air::merkle_path::build_merkle_trace(leaf_felt, &elems, path_indices, &mask_felts);
+        crate::air::merkle_path::build_merkle_trace(leaf_felt, &elems, path_indices, mask);
     let root = crate::air::merkle_path::compute_merkle_root(leaf_felt, &elems, path_indices);
 
     let root_u64 = root.as_int();
@@ -9854,7 +9848,7 @@ fn generate_merkle_path_compact_proof_inner(
 /// HIDES NOTHING; cannot reach a shipped binary (`test-probes` is off in
 /// `default`). Twins: `c1_`, `c2_`, `c3_`, `c5_`, `c6_deterministic_probe_mask`.
 #[cfg(any(test, feature = "test-probes"))]
-pub fn c4_deterministic_probe_mask() -> Vec<u64> {
+pub fn c4_deterministic_probe_mask_raw() -> Vec<u64> {
     let mut z: u64 = 0xC4_5EED_0001;
     (0..crate::air::confidential_balance::MASK_LEN)
         .map(|_| {
@@ -9864,6 +9858,12 @@ pub fn c4_deterministic_probe_mask() -> Vec<u64> {
             z % 0xFFFF_FFFF_0000_0001
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the prover now demands.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c4_deterministic_probe_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_u64_for_tests(&c4_deterministic_probe_mask_raw())
 }
 
 /// [ZK-MASK-C4 2026-09-11] `mask` is the blinding region, exactly
@@ -9879,7 +9879,7 @@ pub fn generate_confidential_balance_compact_proof(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
 ) -> GenericCompactProofData {
     generate_confidential_balance_compact_proof_inner(
         spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt,
@@ -9907,7 +9907,7 @@ pub fn generate_confidential_balance_compact_proof_with_forgery(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -9938,7 +9938,7 @@ pub fn generate_confidential_balance_compact_proof_with_trace_leaf(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     trace_leaf: TraceLeaf,
 ) -> GenericCompactProofData {
     generate_confidential_balance_compact_proof_inner(
@@ -9966,7 +9966,7 @@ pub fn generate_confidential_balance_compact_proof_claiming(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     claim_index: usize,
     claimed_value: u64,
 ) -> GenericCompactProofData {
@@ -9987,7 +9987,7 @@ fn generate_confidential_balance_compact_proof_inner(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
@@ -10007,7 +10007,7 @@ fn generate_confidential_balance_compact_proof_with_claim(
     amount: u64,
     amount_salt: u64,
     token_mint: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     trace_leaf: TraceLeaf,
     probe: DeepProbe,
     // `Some((i, v))` replaces public input `i` with `v` BEFORE the transcript is
@@ -10026,7 +10026,7 @@ fn generate_confidential_balance_compact_proof_with_claim(
     let (trace, oc, nc, ah) =
         crate::air::confidential_balance::build_confidential_balance_trace(
             sk, ob, os, nb, ns, a, as_, mint,
-            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+            mask,
         );
 
     let mut public_inputs = vec![oc.as_int(), nc.as_int(), ah.as_int(), token_mint];
@@ -10097,7 +10097,7 @@ fn generate_confidential_balance_compact_proof_with_claim(
 /// `default`. The twins are `c1_deterministic_probe_mask`,
 /// `c3_deterministic_probe_mask` and `c6_deterministic_probe_mask`.
 #[cfg(any(test, feature = "test-probes"))]
-pub fn c5_deterministic_probe_mask() -> Vec<u64> {
+pub fn c5_deterministic_probe_mask_raw() -> Vec<u64> {
     let mut z: u64 = 0xC5_5EED_0001;
     (0..crate::air::transfer::MASK_LEN)
         .map(|_| {
@@ -10107,6 +10107,12 @@ pub fn c5_deterministic_probe_mask() -> Vec<u64> {
             z % 0xFFFF_FFFF_0000_0001
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the prover now demands.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c5_deterministic_probe_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_u64_for_tests(&c5_deterministic_probe_mask_raw())
 }
 
 pub fn generate_transfer_compact_proof(
@@ -10123,7 +10129,7 @@ pub fn generate_transfer_compact_proof(
     out_recipient_2: u64,
     out_rand_2: u64,
     public_amount: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
 ) -> GenericCompactProofData {
     generate_transfer_compact_proof_inner(
         spending_key, token_mint, in_amount_1, in_rand_1, in_amount_2, in_rand_2, out_amount_1,
@@ -10157,7 +10163,7 @@ pub fn generate_transfer_compact_proof_with_forgery(
     out_recipient_2: u64,
     out_rand_2: u64,
     public_amount: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -10183,7 +10189,7 @@ fn generate_transfer_compact_proof_inner(
     out_recipient_2: u64,
     out_rand_2: u64,
     public_amount: u64,
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     use crate::air::transfer::{TransferInput, TransferOutput, build_transfer_trace};
@@ -10211,7 +10217,7 @@ fn generate_transfer_compact_proof_inner(
             &input_2,
             &output_1,
             &output_2,
-            &mask.iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+            mask,
         );
 
     let n1_u64 = n1.as_int();
@@ -10285,7 +10291,7 @@ fn generate_transfer_compact_proof_inner(
 /// The shipping path draws from `getrandom` inside the wasm entry and refuses to
 /// build without a CSPRNG.
 #[cfg(any(test, feature = "test-probes"))]
-pub fn c6_deterministic_probe_mask(depth: usize) -> Vec<u64> {
+pub fn c6_deterministic_probe_mask_raw(depth: usize) -> Vec<u64> {
     let mut z: u64 = 0xC6_5EED_0000 ^ ((depth as u64) << 8) | 1;
     (0..crate::air::merkle_update::mask_len_for_depth(depth))
         .map(|_| {
@@ -10297,12 +10303,18 @@ pub fn c6_deterministic_probe_mask(depth: usize) -> Vec<u64> {
         .collect()
 }
 
+/// [A8] The same bytes, carried by the type the prover now demands.
+#[cfg(any(test, feature = "test-probes"))]
+pub fn c6_deterministic_probe_mask(depth: usize) -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_u64_for_tests(&c6_deterministic_probe_mask_raw(depth))
+}
+
 pub fn generate_merkle_update_compact_proof(
     old_leaf: u64,
     new_leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
 ) -> GenericCompactProofData {
     generate_merkle_update_compact_proof_inner(
         old_leaf,
@@ -10328,7 +10340,7 @@ pub fn generate_merkle_update_compact_proof_with_forgery(
     new_leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -10347,23 +10359,22 @@ fn generate_merkle_update_compact_proof_inner(
     new_leaf: u64,
     path_elements: &[u64],
     path_indices: &[u8],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     let old_leaf_felt = BaseElement::new(old_leaf);
     let new_leaf_felt = BaseElement::new(new_leaf);
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
-    let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
 
     // A zero-filled or constant mask compiles, proves and verifies -- and leaks.
     // It is the one failure mode no downstream test can see, so catch it here.
     debug_assert!(
-        mask.windows(2).any(|w| w[0] != w[1]),
+        mask.as_slice().windows(2).any(|w| w[0] != w[1]),
         "C6 mask is constant; that is not blinding, it is one degree of freedom",
     );
 
     let trace = crate::air::merkle_update::build_merkle_update_trace(
-        old_leaf_felt, new_leaf_felt, &elems, path_indices, &mask_felts,
+        old_leaf_felt, new_leaf_felt, &elems, path_indices, mask,
     );
     let (old_root, new_root) = crate::air::merkle_update::compute_update_roots(
         old_leaf_felt, new_leaf_felt, &elems, path_indices,
@@ -10450,7 +10461,7 @@ pub fn generate_spend_compact_proof(
     path_elements: &[u64],
     path_indices: &[u8],
     recipient_hash: &[u64; 4],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
 ) -> GenericCompactProofData {
     generate_spend_compact_proof_inner(
         nullifier_preimage, secret, blinding, token_mint, path_elements, path_indices,
@@ -10475,7 +10486,7 @@ pub fn generate_spend_compact_proof_with_forgery(
     path_elements: &[u64],
     path_indices: &[u8],
     recipient_hash: &[u64; 4],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     ood_forgery: OodForgery,
     terminal_poly: TerminalPoly,
 ) -> GenericCompactProofData {
@@ -10494,7 +10505,7 @@ fn generate_spend_compact_proof_inner(
     path_elements: &[u64],
     path_indices: &[u8],
     recipient_hash: &[u64; 4],
-    mask: &[u64],
+    mask: &crate::BlindingMask,
     probe: DeepProbe,
 ) -> GenericCompactProofData {
     use crate::air::spend::{build_spend_trace, CANONICAL_DEPTH, MASK_LEN};
@@ -10514,7 +10525,6 @@ fn generate_spend_compact_proof_inner(
     );
 
     let elems: Vec<BaseElement> = path_elements.iter().map(|&v| BaseElement::new(v)).collect();
-    let mask_felts: Vec<BaseElement> = mask.iter().map(|&v| BaseElement::new(v)).collect();
 
     // Returns (trace, nullifier, root) -- and NOT the commitment.
     let (trace, nullifier, root) = build_spend_trace(
@@ -10524,7 +10534,7 @@ fn generate_spend_compact_proof_inner(
         BaseElement::new(token_mint),
         &elems,
         path_indices,
-        &mask_felts,
+        mask,
     );
 
     let nullifier_u64 = nullifier.as_int();
@@ -10657,6 +10667,311 @@ mod ood_resampling_tests {
             ood_z,
             derive_ood_point_generic(&trace_root, &quotient_root, &pub_bytes, n, n * GENERIC_BLOWUP),
             "the wire's ood_z is the resampled derivation of its own roots"
+        );
+    }
+}
+
+/// [WP0d 2026-09-19] The low-degree extensions, rewritten from per-point
+/// evaluation to one NTT per column, held to two things: the SAME values, and a
+/// cost that no longer grows with the square of the trace.
+///
+/// # The oracles
+///
+/// `per_point_*_oracle` below are the pre-WP0d bodies, kept VERBATIM (only the
+/// names changed). They are the reference semantics: every rewritten builder
+/// must return exactly what its oracle returns, on inputs the shipped circuits
+/// never produce as well as on the ones they do. Field arithmetic is exact, so
+/// "exactly" means bit for bit, and `assert_eq!` on `BaseElement` is the check.
+/// End-to-end byte identity on real proofs is `stark/tests/wp0d_ntt_lde.rs`.
+///
+/// # The cost tests
+///
+/// Growing the trace 32-fold (n = 64 -> 2048, blowup 16) grows each builder's
+/// cost PER LDE CELL by:
+///   * ~15x or more for the per-point evaluator: every cell costs a degree-n
+///     evaluation (2n multiplications) plus, in the trace and periodic
+///     builders, one constant-time 64-bit `exp` (~128 multiplications). At
+///     n = 64 -> 2048 that is (129 + 4096) / (129 + 128) = 16.4 for the trace
+///     columns, 16 for the quotient segments, ~15 for C6's quotient;
+///   * ~1.5x for a radix-2 NTT: log2(16 * 2048) / log2(16 * 64) = 15 / 10.
+///
+/// MEASURED 2026-09-19 (i9-14900K, release): 12.5 / 13.0 / 32.4 per-point
+/// (C6 quotient / trace / segments) and 1.2 to 1.8 with the NTT. The ceiling
+/// of 5 sits at least a factor 2.5 from every one of those, so neither a noisy
+/// machine nor a fast one should move a verdict. Each sample runs the small case
+/// `FACTOR` times, so both halves of a sample do the same number of cells; the
+/// reported figure is the ratio of the best small and best large sample over
+/// `REPS` interleaved rounds.
+#[cfg(test)]
+mod wp0d_ntt_lde {
+    use super::*;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const PER_CELL_GROWTH_CEILING: f64 = 5.0;
+    const REPS: usize = 5;
+    const SMALL_N: usize = 64;
+    const LARGE_N: usize = 2048;
+    const FACTOR: usize = LARGE_N / SMALL_N;
+
+    /// xorshift64 field elements; a seed per call site keeps the cases apart.
+    fn felts(seed: u64, len: usize) -> Vec<BaseElement> {
+        let mut z = seed | 1;
+        (0..len)
+            .map(|_| {
+                z ^= z << 13;
+                z ^= z >> 7;
+                z ^= z << 17;
+                BaseElement::new(z)
+            })
+            .collect()
+    }
+
+    fn random_trace(seed: u64, width: usize, n: usize) -> Vec<Vec<BaseElement>> {
+        (0..width).map(|c| felts(seed ^ ((c as u64 + 1) << 32), n)).collect()
+    }
+
+    // ---------------------------------------------------------------------
+    // Oracles: the pre-WP0d bodies, verbatim.
+    // ---------------------------------------------------------------------
+
+    /// Pre-WP0d `compute_lde_generic`, verbatim.
+    fn per_point_lde_generic_oracle(
+        trace: &[Vec<BaseElement>],
+        blowup: usize,
+    ) -> Vec<Vec<BaseElement>> {
+        let trace_width = trace.len();
+        let trace_length = trace[0].len();
+        let lde_size = trace_length * blowup;
+
+        let trace_g = get_domain_generator_generic(trace_length);
+        let lde_g = get_domain_generator_generic(lde_size);
+
+        let mut lde = vec![vec![BaseElement::ZERO; lde_size]; trace_width];
+
+        for col in 0..trace_width {
+            // Interpolate: get polynomial coefficients from trace values
+            let poly = inverse_ntt(&trace[col], trace_g);
+            // Evaluate at all LDE domain points
+            for i in 0..lde_size {
+                // [B7] x = h * g^i. Everything sampled on the LDE domain moves
+                // together -- trace and periodic columns alike -- or a
+                // constraint would mix a coset evaluation with a subgroup one.
+                let x = lde_coset_shift() * lde_g.exp(i as u64);
+                lde[col][i] = evaluate_poly(&poly, x);
+            }
+        }
+
+        lde
+    }
+
+    /// Pre-WP0d `compute_lde` (legacy C0), verbatim.
+    fn per_point_lde_legacy_oracle(trace: &[Vec<BaseElement>]) -> Vec<Vec<BaseElement>> {
+        let mut lde = vec![vec![BaseElement::ZERO; LDE_SIZE]; TRACE_WIDTH];
+
+        for col in 0..TRACE_WIDTH {
+            // Interpolate: get polynomial coefficients from trace values.
+            // Then evaluate at all LDE domain points.
+            let poly = interpolate_poly(&trace[col]);
+            let g = get_lde_domain_generator();
+            for i in 0..LDE_SIZE {
+                // [B7] x = h * g^i. C0 has its own builder and is the sole
+                // verifier path for four shipped instructions, so leaving it
+                // unshifted would leave the leak open where it is most used.
+                let x = lde_coset_shift() * g.exp(i as u64);
+                lde[col][i] = evaluate_poly(&poly, x);
+            }
+        }
+
+        lde
+    }
+
+    /// Pre-WP0d evaluation loop of `segment_quotient_poly`, verbatim.
+    fn per_point_segment_lde_oracle(
+        coeffs: &[Vec<BaseElement>],
+        lde_size: usize,
+        lde_g: BaseElement,
+    ) -> Vec<Vec<u64>> {
+        let mut lde: Vec<Vec<u64>> = Vec::with_capacity(coeffs.len());
+        for seg in coeffs.iter() {
+            let mut col = vec![0u64; lde_size];
+            let mut x = lde_coset_shift();
+            for slot in col.iter_mut() {
+                *slot = evaluate_poly(seg, x).as_int();
+                x *= lde_g;
+            }
+            lde.push(col);
+        }
+        lde
+    }
+
+    // ---------------------------------------------------------------------
+    // Same values.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn trace_lde_equals_the_per_point_oracle() {
+        let mut cases = 0;
+        for (seed, width) in [(0x11u64, 1usize), (0x12, 3)] {
+            for n in [1usize, 2, 4, 32, 128] {
+                for blowup in [1usize, 2, 16] {
+                    let trace = random_trace(seed ^ (n as u64) ^ ((blowup as u64) << 8), width, n);
+                    assert_eq!(
+                        compute_lde_generic(&trace, blowup),
+                        per_point_lde_generic_oracle(&trace, blowup),
+                        "compute_lde_generic differs from the per-point oracle at width {width}, \
+                         n {n}, blowup {blowup}",
+                    );
+                    cases += 1;
+                }
+            }
+        }
+        assert_eq!(cases, 30, "the case grid shrank; this test would prove less than it says");
+    }
+
+    #[test]
+    fn legacy_c0_lde_equals_the_per_point_oracle() {
+        let honest = crate::air::subscriber_ownership::build_trace(BaseElement::new(42));
+        assert_eq!(compute_lde(&honest), per_point_lde_legacy_oracle(&honest), "honest C0 trace");
+        let random = random_trace(0xC0, TRACE_WIDTH, TRACE_LENGTH);
+        assert_eq!(compute_lde(&random), per_point_lde_legacy_oracle(&random), "random 3x32 trace");
+    }
+
+    #[test]
+    fn segment_lde_equals_the_per_point_oracle() {
+        let mut cases = 0;
+        for n in [2usize, 32, 128] {
+            let lde_size = n * GENERIC_BLOWUP;
+            let lde_g = get_domain_generator_generic(lde_size);
+            for segments in [1usize, 7, 8] {
+                // Every legal length for this segment count: the top block may
+                // be anything from one coefficient to full.
+                for top in [1usize, n / 2 + 1, n] {
+                    let len = (segments - 1) * n + top;
+                    let mut q = felts(0x5E6 ^ (len as u64) ^ ((n as u64) << 20), len);
+                    // Interior zeros, including a whole zero block where one
+                    // fits, so the trailing-zero trimming is exercised too.
+                    for z in q.iter_mut().skip(1).step_by(5) {
+                        *z = BaseElement::ZERO;
+                    }
+                    if segments >= 3 {
+                        for z in &mut q[n..2 * n] {
+                            *z = BaseElement::ZERO;
+                        }
+                    }
+                    let last = q.len() - 1;
+                    q[last] = BaseElement::ONE; // the measured degree is exactly len-1
+                    let segs = segment_quotient_poly(&q, n, lde_size, lde_g, segments);
+                    assert_eq!(
+                        segs.lde,
+                        per_point_segment_lde_oracle(&segs.coeffs, lde_size, lde_g),
+                        "segment LDE differs from the per-point oracle at n {n}, {segments} \
+                         segments, {len} coefficients",
+                    );
+                    cases += 1;
+                }
+            }
+        }
+        assert_eq!(cases, 27, "the case grid shrank");
+    }
+
+    // ---------------------------------------------------------------------
+    // Cost that is not quadratic.
+    // ---------------------------------------------------------------------
+
+    /// Best-of-`REPS` interleaved samples; returns (small s, large s, growth).
+    fn per_cell_growth(mut small: impl FnMut(), mut large: impl FnMut()) -> (f64, f64, f64) {
+        let mut best_small = f64::INFINITY;
+        let mut best_large = f64::INFINITY;
+        for _ in 0..REPS {
+            let t = Instant::now();
+            for _ in 0..FACTOR {
+                small();
+            }
+            best_small = best_small.min(t.elapsed().as_secs_f64());
+            let t = Instant::now();
+            large();
+            best_large = best_large.min(t.elapsed().as_secs_f64());
+        }
+        (best_small, best_large, best_large / best_small)
+    }
+
+    fn assert_quasi_linear(what: &str, (small, large, growth): (f64, f64, f64)) {
+        println!(
+            "[WP0d] {what}: n {SMALL_N} x{FACTOR} = {:.2} ms, n {LARGE_N} x1 = {:.2} ms, \
+             per-cell growth {growth:.2} (ceiling {PER_CELL_GROWTH_CEILING})",
+            small * 1e3,
+            large * 1e3,
+        );
+        assert!(
+            growth < PER_CELL_GROWTH_CEILING,
+            "[WP0d] {what} is not quasi-linear: growing the trace {FACTOR}x (n {SMALL_N} -> \
+             {LARGE_N}) grew the cost PER LDE CELL {growth:.2}x (ceiling {PER_CELL_GROWTH_CEILING}; \
+             an NTT predicts ~1.5, per-point evaluation ~15-16). Best of {REPS}: {:.2} ms for \
+             {FACTOR} small runs vs {:.2} ms for one large run.",
+            small * 1e3,
+            large * 1e3,
+        );
+    }
+
+    #[test]
+    fn trace_lde_cost_per_cell_grows_quasi_linearly() {
+        let small = random_trace(0xA1, 4, SMALL_N);
+        let large = random_trace(0xA2, 4, LARGE_N);
+        assert_quasi_linear(
+            "compute_lde_generic (4 columns, blowup 16)",
+            per_cell_growth(
+                || {
+                    black_box(compute_lde_generic(black_box(&small), GENERIC_BLOWUP));
+                },
+                || {
+                    black_box(compute_lde_generic(black_box(&large), GENERIC_BLOWUP));
+                },
+            ),
+        );
+    }
+
+    /// The periodic columns are the part of every `compute_quotient_lde_circuit_*`
+    /// that was quadratic; C6 is the one whose periodic builder takes the trace
+    /// length as an argument, so it is the one that can be timed at two sizes.
+    /// The trace LDE fed in is random: the cost does not depend on the values,
+    /// and nothing here checks the quotient (the byte-identity gate does).
+    #[test]
+    fn periodic_lde_cost_per_cell_grows_quasi_linearly() {
+        let width = crate::air::merkle_update::TRACE_WIDTH;
+        let small = random_trace(0xB1, width, SMALL_N * GENERIC_BLOWUP);
+        let large = random_trace(0xB2, width, LARGE_N * GENERIC_BLOWUP);
+        let alpha = BaseElement::new(0xA1FA);
+        assert_quasi_linear(
+            "compute_quotient_lde_circuit_6 (depth 1, 7 periodic columns, blowup 16)",
+            per_cell_growth(
+                || {
+                    black_box(compute_quotient_lde_circuit_6(black_box(&small), GENERIC_BLOWUP, SMALL_N, 1, alpha));
+                },
+                || {
+                    black_box(compute_quotient_lde_circuit_6(black_box(&large), GENERIC_BLOWUP, LARGE_N, 1, alpha));
+                },
+            ),
+        );
+    }
+
+    #[test]
+    fn segment_lde_cost_per_cell_grows_quasi_linearly() {
+        let segments = GENERIC_QUOTIENT_SEGMENTS;
+        let small_q = felts(0xC1, segments * SMALL_N);
+        let large_q = felts(0xC2, segments * LARGE_N);
+        let small_g = get_domain_generator_generic(SMALL_N * GENERIC_BLOWUP);
+        let large_g = get_domain_generator_generic(LARGE_N * GENERIC_BLOWUP);
+        assert_quasi_linear(
+            "segment_quotient_poly (8 segments, blowup 16)",
+            per_cell_growth(
+                || {
+                    black_box(segment_quotient_poly(black_box(&small_q), SMALL_N, SMALL_N * GENERIC_BLOWUP, small_g, segments));
+                },
+                || {
+                    black_box(segment_quotient_poly(black_box(&large_q), LARGE_N, LARGE_N * GENERIC_BLOWUP, large_g, segments));
+                },
+            ),
         );
     }
 }

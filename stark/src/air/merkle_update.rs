@@ -97,6 +97,7 @@ use winterfell::{
 };
 
 use crate::poseidon;
+use crate::BlindingMask;
 
 // ============================================================================
 // Constants
@@ -658,8 +659,10 @@ pub fn build_merkle_update_trace(
     new_leaf: BaseElement,
     path_elements: &[BaseElement],
     path_indices: &[u8],
-    mask: &[BaseElement],
+    mask: &BlindingMask,
 ) -> Vec<Vec<BaseElement>> {
+    // [A8] The provenance lives in the type; the body below is unchanged.
+    let mask: &[BaseElement] = mask.as_slice();
     let depth = path_elements.len();
     assert_eq!(depth, path_indices.len());
     assert!(depth > 0);
@@ -880,7 +883,7 @@ pub fn compute_update_roots(
 /// The shipping path draws from `getrandom` inside the wasm entry and refuses to
 /// build without a CSPRNG.
 #[cfg(test)]
-pub(crate) fn deterministic_test_mask(depth: usize) -> Vec<BaseElement> {
+pub(crate) fn deterministic_test_mask_raw(depth: usize) -> Vec<BaseElement> {
     let mut z: u64 = 0x9E37_79B9_7F4A_7C15 ^ (depth as u64) << 32 | 1;
     (0..mask_len_for_depth(depth))
         .map(|_| {
@@ -890,6 +893,12 @@ pub(crate) fn deterministic_test_mask(depth: usize) -> Vec<BaseElement> {
             BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the trace builders now demand.
+#[cfg(test)]
+pub(crate) fn deterministic_test_mask(depth: usize) -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_for_tests(deterministic_test_mask_raw(depth))
 }
 
 #[cfg(test)]

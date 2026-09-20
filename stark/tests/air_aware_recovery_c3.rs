@@ -245,7 +245,7 @@ fn mask_len() -> usize {
 /// care how the values were drawn, only that the rows are independent unknowns
 /// -- and inadequate for a secrecy claim, which is why the shipping path draws
 /// from getrandom and refuses to build without it.
-fn test_mask(seed: u64) -> Vec<u64> {
+fn test_mask_raw(seed: u64) -> Vec<u64> {
     let mut z = seed | 1;
     (0..mask_len())
         .map(|_| {
@@ -255,6 +255,11 @@ fn test_mask(seed: u64) -> Vec<u64> {
             z % 0xFFFF_FFFF_0000_0001
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the prover now demands.
+fn test_mask(seed: u64) -> p01_stark::BlindingMask {
+    p01_stark::BlindingMask::from_raw_u64_for_tests(&test_mask_raw(seed))
 }
 
 /// One honest C3 proof, masked, at the canonical depth.

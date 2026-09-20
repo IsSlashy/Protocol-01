@@ -63,6 +63,7 @@ use winterfell::{
 };
 
 use crate::poseidon;
+use crate::BlindingMask;
 
 // ============================================================================
 // Public inputs
@@ -474,8 +475,10 @@ impl Air for SubscriberOwnershipMaskedAir {
 /// refuses to build a proof without one.
 pub fn build_masked_trace(
     subscriber_secret: BaseElement,
-    mask: &[BaseElement],
+    mask: &BlindingMask,
 ) -> (Vec<Vec<BaseElement>>, BaseElement) {
+    // [A8] The provenance lives in the type; the body below is unchanged.
+    let mask: &[BaseElement] = mask.as_slice();
     assert_eq!(
         mask.len(),
         MASK_LEN,
@@ -512,7 +515,7 @@ pub fn build_masked_trace(
 // ============================================================================
 
 #[cfg(test)]
-fn deterministic_test_mask() -> Vec<BaseElement> {
+fn deterministic_test_mask_raw() -> Vec<BaseElement> {
     let mut z: u64 = 0xC0_5EED_0002;
     (0..MASK_LEN)
         .map(|_| {
@@ -522,6 +525,12 @@ fn deterministic_test_mask() -> Vec<BaseElement> {
             BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the trace builders now demand.
+#[cfg(test)]
+fn deterministic_test_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_for_tests(deterministic_test_mask_raw())
 }
 
 #[cfg(test)]
@@ -577,11 +586,11 @@ mod tests {
             }
         }
         // And the mask lands where the layout says.
-        assert_eq!(masked[0][FIRST_FREE_ROW], mask[0]);
-        assert_eq!(masked[ZK_LIFT_COL][FIRST_FREE_ROW], mask[ZK_LIFT_COL]);
+        assert_eq!(masked[0][FIRST_FREE_ROW], mask.as_slice()[0]);
+        assert_eq!(masked[ZK_LIFT_COL][FIRST_FREE_ROW], mask.as_slice()[ZK_LIFT_COL]);
         let rb = MASK_ROWS * MASKED_CONSTRAINED_TRACE_WIDTH;
-        assert_eq!(masked[RANDOMIZER_COL][0], mask[rb]);
-        assert_eq!(masked[ZK_LIFT_COL][0], mask[rb + MASKED_TRACE_LENGTH]);
+        assert_eq!(masked[RANDOMIZER_COL][0], mask.as_slice()[rb]);
+        assert_eq!(masked[ZK_LIFT_COL][0], mask.as_slice()[rb + MASKED_TRACE_LENGTH]);
         // No masked cell repeats the last witness row (the legacy leak shape).
         let repeats = (FIRST_FREE_ROW..MASKED_TRACE_LENGTH).filter(|&r| masked[0][r] == masked[0][31]).count();
         assert_eq!(repeats, 0);

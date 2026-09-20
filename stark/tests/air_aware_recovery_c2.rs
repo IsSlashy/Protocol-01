@@ -274,7 +274,7 @@ fn carry_structure_pre_mask() -> Vec<Vec<u64>> {
 
 /// A deterministic mask. Adequate for a RANK measurement and inadequate for a
 /// secrecy claim, which is why the shipping path draws from getrandom.
-fn test_mask(seed: u64) -> Vec<u64> {
+fn test_mask_raw(seed: u64) -> Vec<u64> {
     let mut z = seed | 1;
     (0..c2::MASK_LEN)
         .map(|_| {
@@ -284,6 +284,11 @@ fn test_mask(seed: u64) -> Vec<u64> {
             z % (P as u64)
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the prover now demands.
+fn test_mask(seed: u64) -> p01_stark::BlindingMask {
+    p01_stark::BlindingMask::from_raw_u64_for_tests(&test_mask_raw(seed))
 }
 
 const SPENDING_KEY: u64 = 0x1DEA_D0D0_CAFE_5678;
@@ -311,11 +316,14 @@ fn the_pre_mask_carry_column_hands_over_owner_mint() {
     // the carry column set to `owner_mint`. This is what C2 published before
     // 2026-09-11 (with the trace simply ending at row 127).
     let om = owner_mint();
-    let mut mask = test_mask(0xC2_5EED_0003);
+    let mut mask = test_mask_raw(0xC2_5EED_0003);
     for row in FIRST_FREE_ROW..TRACE_LEN {
         mask[(row - FIRST_FREE_ROW) * CW + CARRY_COL] = om;
     }
-    let proof = generate_balance_compact_proof(SPENDING_KEY, BALANCE, SALT, TOKEN_MINT, &mask);
+    let proof = generate_balance_compact_proof(
+        SPENDING_KEY, BALANCE, SALT, TOKEN_MINT,
+        &p01_stark::BlindingMask::from_raw_u64_for_tests(&mask),
+    );
     let op = parse_generic(&proof.proof_bytes);
     assert_eq!(op.num_queries, NUM_QUERIES);
 

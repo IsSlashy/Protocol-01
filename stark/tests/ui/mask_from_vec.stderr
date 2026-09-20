@@ -1,0 +1,28 @@
+error[E0277]: the trait bound `BlindingMask: From<Vec<BaseElement>>` is not satisfied
+ --> tests/ui/mask_from_vec.rs:7:38
+  |
+7 |     let _converted: BlindingMask = v.into();
+  |                                      ^^^^ the trait `From<Vec<BaseElement>>` is not implemented for `BlindingMask`
+  |
+  = note: required for `Vec<BaseElement>` to implement `Into<BlindingMask>`
+
+error[E0599]: no associated function or constant named `default` found for struct `BlindingMask` in the current scope
+ --> tests/ui/mask_from_vec.rs:8:32
+  |
+8 |     let _empty = BlindingMask::default();
+  |                                ^^^^^^^ associated function or constant not found in `BlindingMask`
+  |
+note: if you're trying to build a new `BlindingMask` consider using one of the following associated functions:
+      BlindingMask::draw
+      BlindingMask::from_raw_for_tests
+      BlindingMask::from_raw_u64_for_tests
+ --> src/lib.rs
+  |
+  |     pub fn draw(len: usize) -> Result<Self, getrandom::Error> {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+  |     pub fn from_raw_for_tests(v: Vec<BaseElement>) -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+  |     pub fn from_raw_u64_for_tests(v: &[u64]) -> Self {
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -303,7 +303,9 @@ fn spend_proof(mask_seed: u64) -> p01_stark::compact::GenericCompactProofData {
     // then the lift column's rows 1..FIRST_FREE_ROW ([ZK-LIFT-FULL 2026-09-02])
     // (TRACE_LENGTH). Computing it here from a width was what made this file
     // unable to prove once the randomizer column landed.
-    let mask: Vec<u64> = (0..MASK_LEN).map(|_| next()).collect();
+    let mask = p01_stark::BlindingMask::from_raw_u64_for_tests(
+        &(0..MASK_LEN).map(|_| next()).collect::<Vec<u64>>(),
+    );
     let path_elements: Vec<u64> = (0..CANONICAL_DEPTH as u64).map(|i| 0x51A7 + i * 7919).collect();
     let path_indices: Vec<u8> = (0..CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
     let recipient_hash = [0x1111_1111u64, 0x2222_2222, 0x3333_3333, 0x4444_4444];

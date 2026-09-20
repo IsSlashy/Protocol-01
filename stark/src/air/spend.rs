@@ -306,6 +306,7 @@ use winterfell::{
 };
 
 use crate::poseidon;
+use crate::BlindingMask;
 
 // ============================================================================
 // Constants
@@ -1197,8 +1198,10 @@ pub fn build_spend_trace(
     token_mint: BaseElement,
     path_elements: &[BaseElement],
     path_indices: &[u8],
-    mask: &[BaseElement],
+    mask: &BlindingMask,
 ) -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement) {
+    // [A8] The provenance lives in the type; the body below is unchanged.
+    let mask: &[BaseElement] = mask.as_slice();
     assert_eq!(
         mask.len(),
         MASK_LEN,
@@ -1434,13 +1437,18 @@ mod tests {
     /// what the counting argument needs is 1280 INDEPENDENT unknowns, not
     /// unpredictable ones, and a test that cannot reproduce its own trace
     /// cannot pin anything.
-    fn test_mask() -> Vec<BaseElement> {
+    fn test_mask_raw() -> Vec<BaseElement> {
         // [ZK-RANDOMIZER] MASK_LEN, not MASK_ROWS * TRACE_WIDTH: the second
         // form is now SHORT by TRACE_LENGTH and every test using it panicked in
         // `build_spend_trace`, which is exactly what that assertion is for.
         (0..MASK_LEN)
             .map(|i| BaseElement::new(1_000_003u64 * (i as u64 + 1) + 7))
             .collect()
+    }
+
+    /// [A8] The same bytes, carried by the type `build_spend_trace` now demands.
+    fn test_mask() -> crate::BlindingMask {
+        crate::BlindingMask::from_raw_for_tests(test_mask_raw())
     }
 
     fn honest() -> (Vec<Vec<BaseElement>>, BaseElement, BaseElement, BaseElement) {

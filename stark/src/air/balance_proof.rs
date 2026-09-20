@@ -61,6 +61,7 @@ use winterfell::{
 };
 
 use crate::poseidon;
+use crate::BlindingMask;
 
 // ============================================================================
 // Constants
@@ -498,8 +499,10 @@ pub fn build_balance_proof_trace(
     balance: BaseElement,
     salt: BaseElement,
     token_mint: BaseElement,
-    mask: &[BaseElement],
+    mask: &BlindingMask,
 ) -> (Vec<Vec<BaseElement>>, BaseElement) {
+    // [A8] The provenance lives in the type; the body below is unchanged.
+    let mask: &[BaseElement] = mask.as_slice();
     assert_eq!(
         mask.len(),
         MASK_LEN,
@@ -632,7 +635,7 @@ pub fn compute_balance_commitment(
 /// shipping path draws from `getrandom` inside the wasm entry and refuses to
 /// build without a CSPRNG.
 #[cfg(test)]
-fn deterministic_test_mask() -> Vec<BaseElement> {
+fn deterministic_test_mask_raw() -> Vec<BaseElement> {
     let mut z: u64 = 0xC2_5EED_0002;
     (0..MASK_LEN)
         .map(|_| {
@@ -642,6 +645,12 @@ fn deterministic_test_mask() -> Vec<BaseElement> {
             BaseElement::new(z % 0xFFFF_FFFF_0000_0001)
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the trace builders now demand.
+#[cfg(test)]
+fn deterministic_test_mask() -> crate::BlindingMask {
+    crate::BlindingMask::from_raw_for_tests(deterministic_test_mask_raw())
 }
 
 #[cfg(test)]
@@ -715,13 +724,13 @@ mod tests {
         assert_eq!(repeats, 0, "{repeats} masked carry cells still carry owner_mint");
 
         // And the mask lands where the layout says it does.
-        assert_eq!(trace[0][FIRST_FREE_ROW], mask[0]);
-        assert_eq!(trace[ZK_LIFT_COL][FIRST_FREE_ROW], mask[ZK_LIFT_COL]);
+        assert_eq!(trace[0][FIRST_FREE_ROW], mask.as_slice()[0]);
+        assert_eq!(trace[ZK_LIFT_COL][FIRST_FREE_ROW], mask.as_slice()[ZK_LIFT_COL]);
         let randomizer_base = MASK_ROWS * CONSTRAINED_TRACE_WIDTH;
-        assert_eq!(trace[RANDOMIZER_COL][0], mask[randomizer_base]);
-        assert_eq!(trace[RANDOMIZER_COL][TRACE_LENGTH - 1], mask[randomizer_base + TRACE_LENGTH - 1]);
-        assert_eq!(trace[ZK_LIFT_COL][0], mask[randomizer_base + TRACE_LENGTH]);
-        assert_eq!(trace[ZK_LIFT_COL][FIRST_FREE_ROW - 1], mask[randomizer_base + TRACE_LENGTH + FIRST_FREE_ROW - 1]);
+        assert_eq!(trace[RANDOMIZER_COL][0], mask.as_slice()[randomizer_base]);
+        assert_eq!(trace[RANDOMIZER_COL][TRACE_LENGTH - 1], mask.as_slice()[randomizer_base + TRACE_LENGTH - 1]);
+        assert_eq!(trace[ZK_LIFT_COL][0], mask.as_slice()[randomizer_base + TRACE_LENGTH]);
+        assert_eq!(trace[ZK_LIFT_COL][FIRST_FREE_ROW - 1], mask.as_slice()[randomizer_base + TRACE_LENGTH + FIRST_FREE_ROW - 1]);
     }
 
     #[test]

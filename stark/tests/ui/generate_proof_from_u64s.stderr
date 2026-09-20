@@ -1,0 +1,16 @@
+error[E0308]: mismatched types
+  --> tests/ui/generate_proof_from_u64s.rs:16:9
+   |
+ 8 |     let _ = generate_spend_compact_proof(
+   |             ---------------------------- arguments to this function are incorrect
+...
+16 |         &mask,
+   |         ^^^^^ expected `&BlindingMask`, found `&Vec<u64>`
+   |
+   = note: expected reference `&BlindingMask`
+              found reference `&Vec<u64>`
+note: function defined here
+  --> src/compact.rs
+   |
+   | pub fn generate_spend_compact_proof(
+   |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

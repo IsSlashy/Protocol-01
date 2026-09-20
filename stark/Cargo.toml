@@ -32,7 +32,22 @@ wasm = ["wasm-bindgen", "serde", "serde_json", "csprng"]
 # get it from that crate's dev-dependency on `p01-stark`, which enables the
 # feature. `resolver = "2"` (workspace Cargo.toml) keeps dev-only features out
 # of the normal graph, so `cargo build-sbf` is unaffected.
-test-probes = []
+test-probes = ["deterministic-mask-for-tests"]
+
+# [LEAK-LEDGER A8 2026-09-20] Compiles `BlindingMask::from_raw_for_tests` and
+# its `u64` twin -- the ONLY way to put chosen bytes into a blinding mask.
+#
+# ⛔ NOT in `default`, and `wasm` must never pull it in. `cargo build`,
+# `cargo build-sbf` and `wasm-pack build stark -- --features wasm` therefore do
+# not compile it at all, so no shipped artefact can construct a mask that did
+# not come from `BlindingMask::draw`. `stark/tests/mask_api.rs` asserts both of
+# those manifest facts, and `tests/ui/*.rs` pins the rejections a caller gets.
+#
+# `test-probes` enables it because the `c*_deterministic_probe_mask` helpers it
+# compiles ARE chosen masks, and because every cross-crate probe in
+# `programs/p01_stark_verifier/tests` drives one. This crate's own integration
+# tests get it through the dev-dependency on `test-support`.
+deterministic-mask-for-tests = []
 
 [dependencies]
 # Winterfell STARK library (re-exports air, prover, verifier, math, crypto)
@@ -69,3 +84,11 @@ required-features = ["std"]
 [dev-dependencies]
 rand = "0.8"
 hex = "0.4"
+
+# [A8] Turns on `deterministic-mask-for-tests` while THIS crate's own
+# integration tests build, without the crate dev-depending on itself.
+# The reasons that matters are in stark/test-support/Cargo.toml.
+p01-stark-test-support = { path = "test-support" }
+
+# [A8] The compile-fail evidence: tests/ui/*.rs must not compile.
+trybuild = "1"

@@ -360,7 +360,7 @@ fn mask_len() -> usize {
 /// care how the values were drawn, only that the rows are independent unknowns —
 /// and inadequate for a secrecy claim, which is why the shipping path draws from
 /// getrandom and refuses to build without it.
-fn test_mask(seed: u64) -> Vec<u64> {
+fn test_mask_raw(seed: u64) -> Vec<u64> {
     let mut z = seed | 1;
     (0..mask_len())
         .map(|_| {
@@ -370,6 +370,11 @@ fn test_mask(seed: u64) -> Vec<u64> {
             z % 0xFFFF_FFFF_0000_0001
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the prover now demands.
+fn test_mask(seed: u64) -> p01_stark::BlindingMask {
+    p01_stark::BlindingMask::from_raw_u64_for_tests(&test_mask_raw(seed))
 }
 
 // The witness. Conservation must hold: out1 + out2 - in1 - in2 == public_amount.
@@ -445,7 +450,7 @@ fn the_mask_closes_the_accumulator_that_gave_up_four_amounts() {
     // knowledge — this is a control on the HARNESS, not a weaker attack. If the
     // parser, the Lagrange basis or the abscissae were wrong, this would fail,
     // and then the `None` above would mean nothing.
-    let mask = test_mask(0xC5_5EED_0003);
+    let mask = test_mask_raw(0xC5_5EED_0003);
     let known: Vec<(usize, u64)> = (FIRST_FREE_ROW..TRACE_LEN)
         .map(|row| (row, mask[(row - FIRST_FREE_ROW) * p01_stark::air::transfer::CONSTRAINED_TRACE_WIDTH + 6]))
         .collect();

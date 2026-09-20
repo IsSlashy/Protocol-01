@@ -92,7 +92,7 @@ fn ood_claims(bytes: &[u8]) -> (u64, Vec<u64>) {
     (z, q)
 }
 
-fn xorshift_mask(seed: u64, len: usize) -> Vec<u64> {
+fn xorshift_mask_raw(seed: u64, len: usize) -> Vec<u64> {
     let mut z = seed | 1;
     (0..len)
         .map(|_| {
@@ -102,6 +102,11 @@ fn xorshift_mask(seed: u64, len: usize) -> Vec<u64> {
             z % (P as u64)
         })
         .collect()
+}
+
+/// [A8] The same bytes, carried by the type the prover now demands.
+fn xorshift_mask(seed: u64, len: usize) -> p01_stark::BlindingMask {
+    p01_stark::BlindingMask::from_raw_u64_for_tests(&xorshift_mask_raw(seed, len))
 }
 
 /// One honest C7 proof over the given mask seed. The witness is FIXED across

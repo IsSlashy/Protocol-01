@@ -61,6 +61,9 @@ pub mod verifier;
 
 pub mod compact;
 
+// [WP0d] The coset NTT every compact-prover LDE column goes through.
+mod ntt;
+
 // Re-exports for convenience
 pub use air::subscriber_ownership::{
     build_trace, compute_commitment, SubscriberOwnershipAir, SubscriberOwnershipPublicInputs,
@@ -149,6 +152,79 @@ pub fn draw_blinding_mask(n: usize) -> Result<Vec<u64>, getrandom::Error> {
     Ok(out)
 }
 
+/// A blinding mask that can only have come from the platform CSPRNG.
+///
+/// ⛔ [LEAK-LEDGER A8, closed 2026-09-20] Until this type existed, every
+/// `build_*_trace` and every `generate_*_proof` took `mask: &[BaseElement]`
+/// (or `&[u64]`) and checked only its LENGTH. The shipped wasm entry points
+/// always drew the mask from `draw_blinding_mask`, so web, extension and phone
+/// were fine -- but the API let ANY other caller hand in a zero, reused or
+/// deterministic mask and get back a proof that hides nothing. The verifier
+/// cannot see it: the mask is never published, so a zero-masked proof verifies
+/// exactly like an honest one, and the pre-2026-08-31 witness recovery comes
+/// straight back (see `stark/tests/air_aware_recovery_c*.rs`).
+///
+/// The field is PRIVATE and there is no `From<Vec<_>>`, no `Default`, no
+/// literal and no public field access, so outside this crate's own tests
+/// [`BlindingMask::draw`] is the only way to obtain one. That is the whole
+/// closure: the length check stays, but the PROVENANCE is now carried by the
+/// type instead of by a comment asking the caller to be careful.
+///
+/// ⛔ Deliberately NOT `Debug`: a `{:?}` of a mask in a log, a panic message
+/// or a test failure would publish the one value the hiding argument assumes
+/// nobody ever sees.
+pub struct BlindingMask(Vec<BaseElement>);
+
+impl BlindingMask {
+    /// Draw `len` fresh uniform Goldilocks elements from the platform CSPRNG.
+    ///
+    /// The ONLY public constructor. Returns `Err` rather than falling back to
+    /// anything, for the reason spelled out on [`draw_blinding_mask`].
+    #[cfg(feature = "csprng")]
+    pub fn draw(len: usize) -> Result<Self, getrandom::Error> {
+        Ok(Self(
+            draw_blinding_mask(len)?
+                .into_iter()
+                .map(BaseElement::new)
+                .collect(),
+        ))
+    }
+
+    /// The mask elements, for the `build_*_trace` bodies inside this crate.
+    pub fn as_slice(&self) -> &[BaseElement] {
+        &self.0
+    }
+
+    /// Number of elements, for the `MASK_LEN` asserts.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// A mask from raw elements, for the hiding measurements, the recovery
+    /// attacks and the deterministic `c*_deterministic_probe_mask` probes.
+    ///
+    /// ⛔ Gated on `cfg(test)` OR the `deterministic-mask-for-tests` feature,
+    /// which is NOT in `default` and is pulled in only by `test-probes` and by
+    /// this crate's own dev-dependency on itself. `cargo build -p p01-stark`
+    /// and `wasm-pack build stark -- --features wasm` therefore do not compile
+    /// it at all, which is what `stark/tests/mask_api.rs` pins.
+    #[cfg(any(test, feature = "deterministic-mask-for-tests"))]
+    pub fn from_raw_for_tests(v: Vec<BaseElement>) -> Self {
+        Self(v)
+    }
+
+    /// Same, from the `u64` form the `c*_deterministic_probe_mask` helpers and
+    /// the cross-crate probes carry.
+    #[cfg(any(test, feature = "deterministic-mask-for-tests"))]
+    pub fn from_raw_u64_for_tests(v: &[u64]) -> Self {
+        Self(v.iter().map(|&x| BaseElement::new(x)).collect())
+    }
+}
+
 // WASM bindings for browser/WebView proof generation
 #[cfg(feature = "wasm")]
 mod wasm_api {
@@ -168,7 +244,7 @@ mod wasm_api {
     //
     // ⛔ So the shipped-prover path was uncompilable and the tree was green. If
     // this line is ever removed again, add the build to CI in the same commit.
-    use crate::draw_blinding_mask;
+    use crate::BlindingMask;
 
     use crate::compact::{
         generate_subscriber_ownership_proof, generate_pool_commitment_proof,
@@ -189,7 +265,7 @@ mod wasm_api {
     pub fn generate_stark_proof(subscriber_secret: u64) -> String {
         // ⛔ REFUSES RATHER THAN FALLING BACK. The legacy C0 gave up the note
         // secret to plain interpolation; a zero-filled mask would do the same.
-        let mask = match draw_blinding_mask(crate::air::subscriber_ownership::MASK_LEN) {
+        let mask = match BlindingMask::draw(crate::air::subscriber_ownership::MASK_LEN) {
             Ok(m) => m,
             Err(e) => {
                 return format!(
@@ -236,7 +312,7 @@ mod wasm_api {
         // A zero-filled or witness-derived default would leave rows 96..255
         // predictable and `air_aware_recovery_c1.rs` would go back to recovering
         // all four private inputs from the published bytes.
-        let mask = match draw_blinding_mask(crate::air::denominated_pool::MASK_LEN) {
+        let mask = match BlindingMask::draw(crate::air::denominated_pool::MASK_LEN) {
             Ok(m) => m,
             Err(e) => {
                 return format!(
@@ -277,7 +353,7 @@ mod wasm_api {
         // other masked entry states: no proof fails loudly, a weak mask
         // succeeds and leaks. A zero-filled default would leave rows 128..511
         // predictable and the carry column would give up `owner_mint` again.
-        let mask = match draw_blinding_mask(crate::air::balance_proof::MASK_LEN) {
+        let mask = match BlindingMask::draw(crate::air::balance_proof::MASK_LEN) {
             Ok(m) => m,
             Err(e) => {
                 return format!(
@@ -321,7 +397,7 @@ mod wasm_api {
         // proof. REFUSES RATHER THAN FALLING BACK: a zero-filled default would
         // leave rows 224..511 predictable and the carry column would give up
         // `owner_mint` again, exactly as the 2026-09-03 audit measured.
-        let mask = match draw_blinding_mask(crate::air::confidential_balance::MASK_LEN) {
+        let mask = match BlindingMask::draw(crate::air::confidential_balance::MASK_LEN) {
             Ok(m) => m,
             Err(e) => {
                 return format!(
@@ -376,7 +452,7 @@ mod wasm_api {
         // zero-filled or witness-derived default would leave rows 384..511
         // predictable and `air_aware_recovery_c3.rs` would go back to recovering
         // the path and the leaf index from the published bytes.
-        let mask = match draw_blinding_mask(
+        let mask = match BlindingMask::draw(
             crate::air::merkle_path::mask_len_for_depth(path_elements.len()),
         ) {
             Ok(m) => m,
@@ -436,7 +512,7 @@ mod wasm_api {
         // 🚨 IT MUST BE REDRAWN EVERY PROOF. Two C6 proofs over the same
         // insertion with the same mask publish the same bytes, which re-links
         // exactly what the mask exists to unlink.
-        let mask = match draw_blinding_mask(
+        let mask = match BlindingMask::draw(
             p01_stark_mask_len_c6(path_elements.len()),
         ) {
             Ok(m) => m,
@@ -493,7 +569,7 @@ mod wasm_api {
         // NOTHING — it was the only shipping circuit with no mask at all, which
         // is why `air_aware_recovery_c5.rs` recovered all four note amounts and
         // `owner` from one honest proof.
-        let mask = match draw_blinding_mask(crate::air::transfer::MASK_LEN) {
+        let mask = match BlindingMask::draw(crate::air::transfer::MASK_LEN) {
             Ok(m) => m,
             Err(e) => {
                 return format!(
@@ -599,7 +675,7 @@ let proof_data = generate_transfer_compact_proof(
         // form was right until column 10 existed; it is now SHORT by
         // TRACE_LENGTH and `build_spend_trace` refuses it, which is the whole
         // reason the mask is one slice with one length constant.
-        let mask = match draw_blinding_mask(crate::air::spend::MASK_LEN) {
+        let mask = match BlindingMask::draw(crate::air::spend::MASK_LEN) {
             Ok(m) => m,
             Err(e) => {
                 return format!(

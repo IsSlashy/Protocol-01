@@ -1,0 +1,13 @@
+error[E0308]: mismatched types
+  --> tests/ui/build_trace_from_slice.rs:13:74
+   |
+13 |     let _ = build_spend_trace(z, z, z, z, &path_elements, &path_indices, &mask);
+   |             ----------------- arguments to this function are incorrect   ^^^^^ expected `&BlindingMask`, found `&Vec<BaseElement>`
+   |
+   = note: expected reference `&BlindingMask`
+              found reference `&Vec<BaseElement>`
+note: function defined here
+  --> src/air/spend.rs
+   |
+   | pub fn build_spend_trace(
+   |        ^^^^^^^^^^^^^^^^^
