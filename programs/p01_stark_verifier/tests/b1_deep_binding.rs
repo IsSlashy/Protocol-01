@@ -36,17 +36,21 @@
 //! alphas, all layer roots, the grinding nonce, every position) is recomputed
 //! consistently by the prover itself.
 
+// [WP0a 2026-09-18] The C7 witness family (`w7`, `prove7`) lives there, ONE
+// definition shared with `c7_binding`, `b2_segment_binding` and `honest_liveness`.
+mod common;
+
 use p01_stark::compact::{OodForgery, TerminalPoly};
 use p01_stark_verifier::compact_proof::{
     CompactStarkProof, GenericCompactProof, CONFIG_BALANCE_PROOF, CONFIG_CONFIDENTIAL_BALANCE,
-    CONFIG_MERKLE_PATH, CONFIG_MERKLE_UPDATE, CONFIG_POOL_COMMITMENT, CONFIG_TRANSFER,
-    LEGACY_FRI_FINAL_POLY_DEGREE_BOUND, LEGACY_QUOTIENT_SEGMENTS,
+    CONFIG_MERKLE_PATH, CONFIG_MERKLE_UPDATE, CONFIG_POOL_COMMITMENT, CONFIG_SPEND,
+    CONFIG_TRANSFER, LEGACY_FRI_FINAL_POLY_DEGREE_BOUND, LEGACY_QUOTIENT_SEGMENTS,
 };
 use p01_stark_verifier::goldilocks::{Felt, MODULUS};
 use p01_stark_verifier::verify::{
     verify_deep_ali_circuit_1, verify_deep_ali_circuit_2, verify_deep_ali_circuit_3,
     verify_deep_ali_circuit_4, verify_deep_ali_circuit_5, verify_deep_ali_circuit_6,
-    verify_generic, verify_subscriber_ownership, VerifyError,
+    verify_deep_ali_circuit_7, verify_generic, verify_subscriber_ownership, VerifyError,
 };
 
 // ============================================================================
@@ -108,15 +112,19 @@ fn read_ood_current(bytes: &[u8], col: usize) -> u64 {
 // T6 — HONEST CONTROL. Without this, a verifier that rejects everything passes.
 // ============================================================================
 
-/// All seven circuits still verify end to end, and the published final poly is
+/// All eight circuits still verify end to end, and the published final poly is
 /// within its MEASURED degree bound on every one.
 ///
 /// This is the test that stops "reject everything" from satisfying T1/T2, and it
 /// is also the honest-proof half of the terminal degree bound: if any circuit's
 /// real bound were >= `fri_final_poly_size`, the terminal check would be VACUOUS
 /// for that circuit and this must FAIL LOUDLY rather than be relaxed.
+///
+/// [WP0a 2026-09-18] Was `t6_honest_control_all_seven_circuits_…` and stopped at
+/// C6, so the spend circuit (`CONFIG_SPEND`, bound 2 of 32) had no honest control
+/// in this file. C7 joins the generic list below.
 #[test]
-fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
+fn t6_honest_control_all_eight_circuits_verify_and_respect_the_degree_bound() {
     // C0, legacy path.
     {
         let data = p01_stark::compact::generate_compact_proof(42);
@@ -135,7 +143,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
             .expect("C0 honest proof must verify end to end");
     }
 
-    // C1..C6, generic path.
+    // C1..C7, generic path.
     let generic: Vec<(&str, usize, p01_stark::compact::GenericCompactProofData)> = vec![
         ("C1", p01_stark::air::denominated_pool::TRACE_WIDTH, p01_stark::compact::generate_pool_commitment_proof(111, 222, 333, 444, &p01_stark::compact::c1_deterministic_probe_mask())),
         ("C2", p01_stark::air::balance_proof::TRACE_WIDTH, p01_stark::compact::generate_balance_compact_proof(42, 1000, 777, 999, &p01_stark::compact::c2_deterministic_probe_mask())),
@@ -171,6 +179,7 @@ fn t6_honest_control_all_seven_circuits_verify_and_respect_the_degree_bound() {
                 p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
             },
         ),
+        ("C7", p01_stark::air::spend::TRACE_WIDTH, common::prove7(&common::w7(0))),
     ];
     for (label, tw, data) in &generic {
         let config = p01_stark_verifier::compact_proof::get_circuit_config(data.circuit_id)
@@ -339,7 +348,7 @@ fn terminal_degree_bound_check_in_isolation() {
 // ============================================================================
 
 /// Residual work a coordinated forgery still costs, per circuit, IN BOTH
-/// COLUMNS. C0..C6.
+/// COLUMNS. C0..C7.
 ///
 /// # Why there are two arrays and not one
 ///
@@ -367,7 +376,9 @@ fn terminal_degree_bound_check_in_isolation() {
 /// ```
 ///
 /// Post-B2 the query term is 110-130 bits on every circuit and the floor is
-/// 47.8-52.5, so the CONJECTURED column is floor-bound everywhere — B2 bought
+/// 46.61-47.91 ([WP0a 2026-09-18] printed by the derivation below; this said
+/// 47.8-52.5, the range before C0 moved to n = 512 and C5 to n = 1024), so the
+/// CONJECTURED column is floor-bound everywhere — B2 bought
 /// real bits, and then the base field ate the surplus. Grinding cannot lift the
 /// floor: the nonce is absorbed AFTER z, gamma and every alpha, so an adversary
 /// who wins the OOD or proximity lottery wins with zero grinding.
@@ -392,8 +403,13 @@ fn terminal_degree_bound_check_in_isolation() {
 // 27 -> 22 queries) 48/46 -> 47/42. The field floor moved with the LDE size and the
 // unconditional column with the query count; every value below is asserted equal to
 // `soundness_bits_are_derived_from_the_config`'s derivation, no literal survives alone.
-const B2_CONJECTURED_FORGERY_BITS: [u32; 7] = [47, 47, 47, 47, 47, 46, 47];
-const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [42, 46, 46, 42, 42, 42, 42];
+// [WP0a 2026-09-18] Index 7 is C7, the spend circuit, which every sweep in this
+// file stopped short of since it shipped on 2026-08-25: its two figures were
+// asserted by no test. They are derived like the other seven, at the
+// rho that `b2_bits_measured` MEASURES on a C7 forgery (bound 2 of 32, not 1 of 16),
+// and `the_soundness_prose_matches_the_two_derived_arrays` holds the prose to them.
+const B2_CONJECTURED_FORGERY_BITS: [u32; 8] = [47, 47, 47, 47, 47, 46, 47, 47];
+const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 8] = [42, 46, 46, 42, 42, 42, 42, 42];
 
 /// The DERIVED twin of the two arrays above.
 ///
@@ -407,7 +423,15 @@ const B2_UNCONDITIONAL_FORGERY_BITS: [u32; 7] = [42, 46, 46, 42, 42, 42, 42];
 fn soundness_bits_are_derived_from_the_config() {
     use p01_stark_verifier::compact_proof::GRINDING_BITS;
 
-    for id in 0u8..=6 {
+    // [WP0a 2026-09-18] The sweep stopped at 6 for over three weeks while circuit 7
+    // shipped. It now stops at 7, and this is what makes "7" a fact rather than
+    // another literal that can fall behind: a ninth circuit turns it red.
+    assert!(
+        p01_stark_verifier::compact_proof::get_circuit_config(8).is_none(),
+        "a ninth circuit exists and this sweep stops at 7 — widen both arrays and every \
+         sweep in this file before any figure for it is quoted",
+    );
+    for id in 0u8..=7 {
         let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
 
         // MEASURED rate. T5 / T5b show an aliased degree-<bound terminal poly
@@ -468,7 +492,7 @@ fn soundness_bits_are_derived_from_the_config() {
 #[test]
 fn the_conjectured_column_is_floor_bound_on_every_circuit() {
     use p01_stark_verifier::compact_proof::GRINDING_BITS;
-    for id in 0u8..=6 {
+    for id in 0u8..=7 {
         let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
         let rho = c.fri_final_poly_degree_bound as f64 / c.fri_final_poly_size as f64;
         let num_folds = (c.lde_size / c.fri_final_poly_size).trailing_zeros() as usize;
@@ -754,9 +778,13 @@ fn t1_t2_t3_c6_coordinated_forgery() {
 
 /// Phase 2 for a generic circuit, by id. Phase 2 is the identity that was
 /// SUPPOSED to be the binding; every generic T3 leg in this file requires it to
-/// still ACCEPT the forgery — C6 above, C2..C5 through
+/// still ACCEPT the forgery — C6 above, C2..C5 and C7 through
 /// `run_generic_forgery_case` below. C1 calls `verify_deep_ali_circuit_1`
 /// directly because its matrix test predates this dispatcher.
+///
+/// [WP0a 2026-09-18] The `7 =>` arm is new. Until it existed this file could not
+/// even ASK whether phase 2 accepts a coordinated C7 forgery: the dispatcher
+/// panicked on 7, which is why the C7 case below could not be written.
 fn phase2(
     circuit_id: u8,
     parsed: &GenericCompactProof,
@@ -769,6 +797,7 @@ fn phase2(
         4 => verify_deep_ali_circuit_4(parsed, public_inputs),
         5 => verify_deep_ali_circuit_5(parsed, public_inputs),
         6 => verify_deep_ali_circuit_6(parsed, public_inputs),
+        7 => verify_deep_ali_circuit_7(parsed, public_inputs),
         other => panic!("no phase-2 entry point for circuit {other}"),
     }
 }
@@ -1023,6 +1052,79 @@ fn t1_t2_t3_c5_coordinated_forgery() {
         OodForgery::Coordinated { col: 0, delta: 1 },
         TerminalPoly::AliasedFold);
     run_generic_forgery_case("C5", config, &honest, &forged, &aliased);
+}
+
+/// T1/T2/T3 on C7 (spend) — the circuit that moves money out of the pool.
+///
+/// [WP0a 2026-09-18] Every sweep and every forgery case in this file stopped at
+/// C6, while C7 has been the spend circuit on devnet since 2026-08-25. Its
+/// terminal bound is 2 of 32 (`CONFIG_SPEND`, the geometry C4 and the masked C0
+/// share), so the two plays take this shape:
+///
+///   * T1: the forged terminal interpolant has to spill past index 1, not 0;
+///   * T2: the in-bound alias is `c mod (x^2 - 1)`, which agrees with the true
+///     terminal layer at the two indices where `x^2 = 1`, i.e. {0, 16} of 32.
+///     `run_generic_forgery_case`'s odd-index premise is sufficient for that
+///     set: an odd index is neither 0 nor 16.
+///
+/// The witness is `common::w7(0)`, the deterministic stream `c7_binding`,
+/// `b2_segment_binding` and `cross_circuit_confusion` already use. Its mask is
+/// a TEST stream, never CSPRNG output.
+#[test]
+fn t1_t2_t3_c7_coordinated_forgery() {
+    let config = &CONFIG_SPEND;
+    let w = common::w7(0);
+    let honest = common::prove7(&w);
+    let build = |terminal: TerminalPoly| {
+        p01_stark::compact::generate_spend_compact_proof_with_forgery(
+            w.nullifier_preimage,
+            w.secret,
+            w.blinding,
+            w.token_mint,
+            &w.path_elements,
+            &w.path_indices,
+            &w.recipient_hash,
+            &w.mask,
+            OodForgery::Coordinated { col: 0, delta: 1 },
+            terminal,
+        )
+    };
+    let forged = build(TerminalPoly::Honest);
+    let aliased = build(TerminalPoly::AliasedFold);
+
+    // Positive control, BOTH phases. T6 runs phase 1 only; without this the
+    // rejections below could be rejections of a statement no verifier accepts.
+    let parsed = GenericCompactProof::from_bytes(&honest.proof_bytes, config)
+        .expect("honest C7 proof parses");
+    verify_generic(&parsed, honest.circuit_id, &honest.public_inputs, config)
+        .and_then(|()| phase2(honest.circuit_id, &parsed, &honest.public_inputs))
+        .unwrap_or_else(|e| panic!("C7 control: the HONEST proof must clear both phases, got {e:?}"));
+
+    // Premise for T1, on C7's own geometry: the forged terminal interpolant
+    // leaves the bound. If it stopped spilling, T1 would be pinned on a proof the
+    // degree check never looks at.
+    let poly = read_final_poly(&forged.proof_bytes, config.trace_width, config.quotient_segments);
+    assert_eq!(poly.len(), config.fri_final_poly_size, "C7 fri_final_poly_size");
+    assert_eq!(config.fri_final_poly_degree_bound, 2, "C7's bound is 2 of 32 (CONFIG_SPEND)");
+    let spilled: Vec<usize> = poly
+        .iter()
+        .enumerate()
+        .skip(config.fri_final_poly_degree_bound)
+        .filter(|(_, &c)| c != 0)
+        .map(|(i, _)| i)
+        .collect();
+    println!(
+        "[T1 C7] forged terminal coefficients non-zero above the bound: {} of {}",
+        spilled.len(),
+        poly.len() - config.fri_final_poly_degree_bound,
+    );
+    assert!(
+        !spilled.is_empty(),
+        "the forged C7 terminal interpolant is inside the bound of 2, so the T1 leg below \
+         would say nothing about the degree check",
+    );
+
+    run_generic_forgery_case("C7", config, &honest, &forged, &aliased);
 }
 
 // ============================================================================
@@ -1290,6 +1392,9 @@ fn quotient_segmentation_is_measured_not_assumed() {
         ("C4", 4, fixture_c4),
         ("C5", 5, fixture_c5),
         ("C6", 6, fixture_c6),
+        // [WP0a 2026-09-18] C7's pinned bound is 2, not 1 (`CONFIG_SPEND`), so this
+        // row asserts its top honest coefficient sits at index 1 exactly.
+        ("C7", 7, fixture_c7),
     ] {
         let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
         rows.push(Row {
@@ -1343,7 +1448,7 @@ fn quotient_segmentation_is_measured_not_assumed() {
     }
 
     // Structural facts `log2(fps/bound)` depends on, asserted rather than assumed.
-    for id in 0u8..=6 {
+    for id in 0u8..=7 {
         let c = p01_stark_verifier::compact_proof::get_circuit_config(id).unwrap();
         // `bound` cannot go below 1, so a blowup larger than the terminal domain
         // clamps and the config would over-claim the rate while looking correct.
@@ -1476,10 +1581,12 @@ fn read_src(path: &str) -> String {
 #[test]
 fn the_soundness_prose_matches_the_two_derived_arrays() {
     let src = read_src(CONFIG_SRC_PATH);
-    let fmt = |a: &[u32; 7]| {
+    let fmt = |a: &[u32; 8]| {
         a.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(" / ")
     };
-    let conj = format!("conjectured  {}   (C0..C6)", fmt(&B2_CONJECTURED_FORGERY_BITS));
+    // [WP0a 2026-09-18] (C0..C6) -> (C0..C7). The prose quoted seven figures per
+    // column while C7 shipped, so the spend circuit's pair sat in no asserted line.
+    let conj = format!("conjectured  {}   (C0..C7)", fmt(&B2_CONJECTURED_FORGERY_BITS));
     let uncond = format!("unconditional {}", fmt(&B2_UNCONDITIONAL_FORGERY_BITS));
     for want in [conj, uncond] {
         assert!(
@@ -1975,6 +2082,13 @@ fn fixture_c6() -> Vec<u8> {
     p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len())).proof_bytes
 }
 
+/// [WP0a 2026-09-18] `common::w7(0)` feeds a FIXED test mask. The shipped prover
+/// draws a fresh one per proof (`lib.rs::draw_blinding_mask`), which is why C7
+/// has a length pin below and no digest.
+fn fixture_c7() -> Vec<u8> {
+    common::prove7(&common::w7(0)).proof_bytes
+}
+
 /// One row per circuit. `len` is the same literal `wireFormat.test.ts` pins as
 /// `Pin.absolute` and `route_c_trace_pair.rs` pins for C0; `sha256` is the same
 /// literal it pins as `Pin.sha256`.
@@ -1987,7 +2101,7 @@ struct Fixture {
     build: fn() -> Vec<u8>,
 }
 
-const FIXTURES: [Fixture; 7] = [
+const FIXTURES: [Fixture; 8] = [
     Fixture { label: "C0", len: 47_641, sha256: Some(FIXTURE_C0_SHA256), build: fixture_c0 },
     // [C1-N256] Length pinned and MOVED; digest deliberately absent.
     // [ZK-LIFT 2026-08-31] 94_017 -> 94_897: one more trace column (the lift),
@@ -2003,6 +2117,11 @@ const FIXTURES: [Fixture; 7] = [
     // [C6-D12] Length pinned, digest deliberately absent. See the note above.
     // [ZK-LIFT 2026-08-31] 81_757 -> 82_477: the lift column, 22 x 4 + 2 = 90 felts.
     Fixture { label: "C6", len: 82_477, sha256: None, build: fixture_c6 },
+    // [WP0a 2026-09-18] Length pinned, digest deliberately absent, for the reason
+    // `deployed-verifier.json` gives: its mask is fresh per proof. The same literal
+    // is pinned on the shipped blob by `wireFormat.test.ts` ("C7 spend") and in
+    // `cross_circuit_confusion.rs`.
+    Fixture { label: "C7", len: 79_405, sha256: None, build: fixture_c7 },
 ];
 
 /// The prover core is a function of its inputs.
@@ -2041,14 +2160,14 @@ fn c6_proof_bytes_change_when_the_mask_changes() {
         .collect();
     let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
 
-    let m1 = p01_stark::compact::c6_deterministic_probe_mask(pe.len());
+    let m1 = p01_stark::compact::c6_deterministic_probe_mask_raw(pe.len());
     let mut m2 = m1.clone();
     // ONE element, by ONE. The weakest possible perturbation: if the mask were
     // only partly committed, a bigger change might still show up by accident.
     m2[0] = (m2[0] + 1) % 0xFFFF_FFFF_0000_0001;
 
-    let a = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &m1);
-    let b = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &m2);
+    let a = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::BlindingMask::from_raw_u64_for_tests(&m1));
+    let b = p01_stark::compact::generate_merkle_update_compact_proof(111, 222, &pe, &pi, &p01_stark::BlindingMask::from_raw_u64_for_tests(&m2));
 
     assert_eq!(
         a.proof_bytes.len(), b.proof_bytes.len(),
@@ -2079,14 +2198,14 @@ fn c3_proof_bytes_change_when_the_mask_changes() {
         .collect();
     let pi: Vec<u8> = (0..p01_stark::air::merkle_path::CANONICAL_DEPTH).map(|i| (i % 2) as u8).collect();
 
-    let m1 = p01_stark::compact::c3_deterministic_probe_mask(pe.len());
+    let m1 = p01_stark::compact::c3_deterministic_probe_mask_raw(pe.len());
     let mut m2 = m1.clone();
     // ONE element, by ONE. The weakest possible perturbation: a bigger change
     // might show up by accident even if the mask were only partly committed.
     m2[0] = (m2[0] + 1) % 0xFFFF_FFFF_0000_0001;
 
-    let a = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &m1);
-    let b = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &m2);
+    let a = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::BlindingMask::from_raw_u64_for_tests(&m1));
+    let b = p01_stark::compact::generate_merkle_path_compact_proof(777, &pe, &pi, &p01_stark::BlindingMask::from_raw_u64_for_tests(&m2));
 
     assert_eq!(
         a.proof_bytes.len(), b.proof_bytes.len(),
@@ -2273,7 +2392,7 @@ struct Coverage {
     note: &'static str,
 }
 
-const COVERAGE: [Coverage; 7] = [
+const COVERAGE: [Coverage; 8] = [
     Coverage {
         id: 0,
         label: "C0 subscriber_ownership",
@@ -2378,6 +2497,36 @@ const COVERAGE: [Coverage; 7] = [
         note: "Widest trace (w = 10) and the marginal case for the DEEP arithmetic. \
                Does not use run_generic_forgery_case, which is how it spent a whole \
                round as the one generic circuit with no phase-2 control.",
+    },
+    Coverage {
+        id: 7,
+        label: "C7 spend",
+        path: "verify_generic",
+        solve_implemented: true,
+        t1_forgery_rejected: true,
+        t3_phase2_still_accepts: true,
+        // MEASURED 2026-09-18 (WP0a), by hand, in a scratch copy of the two
+        // crates, ONE variable each, as for the other rows:
+        //   A. DEEP fold OFF on the generic path, degree bound ON. Experiment A
+        //      above predates B2 and reverted to one quotient column, which no
+        //      longer exists, so its post-B2 form was used: the prover commits FRI
+        //      on F(x) = SUM_j gamma^(w+1+j) * Q_j(x) instead of D, and
+        //      verify_fri_generic folds the same F. The C7 forgery was ACCEPTED
+        //      (read with this test's spill premise bypassed, since with no DEEP
+        //      fold the forged terminal poly no longer spills: 0 of 30), while
+        //      t6 stayed green. C1..C6 were ACCEPTED in the same run.
+        //   B. Degree bound OFF, DEEP fold ON: the C7 forgery was ACCEPTED, as
+        //      were the other seven rows' forgeries.
+        t1_accepted_when_deep_disabled: true,
+        t2_terminal_play_reaches_fold_chain: true,
+        t1_test: "t1_t2_t3_c7_coordinated_forgery",
+        t3_test: "t1_t2_t3_c7_coordinated_forgery",
+        t2_test: "t1_t2_t3_c7_coordinated_forgery",
+        note: "Added 2026-09-18 (WP0a). Bound 2 of 32 (C0 masked and C4 share it): \
+               the T2 alias is c mod (x^2 - 1), agreeing at terminal indices 0 and \
+               16. T1 rejects at FriFinalPolyDegreeTooHigh (30 of 30 coefficients \
+               above the bound non-zero). The acc/no-DEEP column is the post-B2 form \
+               of experiment A, see the comment on this row.",
     },
 ];
 
@@ -2544,9 +2693,10 @@ fn coverage_table_describes_the_tests_that_actually_exist() {
     let phase2_ok = COVERAGE.iter().filter(|r| r.t3_phase2_still_accepts).count();
     let confirmed = COVERAGE.iter().filter(|r| r.t1_accepted_when_deep_disabled).count();
     let chain = COVERAGE.iter().filter(|r| r.t2_terminal_play_reaches_fold_chain).count();
+    let n = COVERAGE.len();
     println!(
-        "  acceptance coverage: {covered}/7 forgeries rejected, {phase2_ok}/7 with phase 2 \
-         still ACCEPTING the same forgery, {confirmed}/7 confirmed ACCEPTED with the DEEP \
-         fold reverted, {chain}/7 reaching the per-query fold chain\n"
+        "  acceptance coverage: {covered}/{n} forgeries rejected, {phase2_ok}/{n} with phase 2 \
+         still ACCEPTING the same forgery, {confirmed}/{n} confirmed ACCEPTED with the DEEP \
+         fold reverted, {chain}/{n} reaching the per-query fold chain\n"
     );
 }

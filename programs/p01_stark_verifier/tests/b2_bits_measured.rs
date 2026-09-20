@@ -21,14 +21,15 @@
 //!
 //! # What is MEASURED here and what is merely DERIVED
 //!
-//! MEASURED — a command produces it, on real proof bytes, on all seven circuits:
+//! MEASURED — a command produces it, on real proof bytes, on all eight circuits
+//! (C7 joined on 2026-09-18, WP0a):
 //!
 //! * the FRI rate `rho`, as the agreement count of the best-known adversarial
 //!   terminal play against the terminal layer the adversary actually committed to
-//!   (`the_per_query_rate_is_measured_on_all_seven_circuits`). This is the same
+//!   (`the_per_query_rate_is_measured_on_all_eight_circuits`). This is the same
 //!   method that produced the 1.000 bits/query figure for B1 — `T5` in
 //!   `b1_deep_binding.rs` — but re-implemented here from proof bytes and field
-//!   arithmetic only, sharing no helper with it, and run on SEVEN circuits where
+//!   arithmetic only, sharing no helper with it, and run on EIGHT circuits where
 //!   the shipped version runs on two;
 //! * that the terminal check is not vacuous: the published interpolant of a forged
 //!   fold really does leave the code;
@@ -58,7 +59,11 @@
 //!  C4 |      43 |      47 |   +4 |        27 |        42 |  +15
 //!  C5 |      38 |      46 |   +8 |        25 |        42 |  +17
 //!  C6 |      38 |      47 |   +9 |        25 |        42 |  +17
+//!  C7 |       - |      47 |    - |         - |        42 |    -
 //! ```
+//!
+//! (C7, the spend circuit, was born after B2 and has no B1 column; see
+//! `PRE_B2_CIRCUITS`. Its row was added 2026-09-18, WP0a.)
 //!
 //! (Regenerated 2026-09-11 after the uniform masks [ZK-MASK]: the "B2" column is
 //! today's shipped geometry, in which C0, C2 and C4 grew to n = 512 and C0, C4
@@ -82,6 +87,10 @@
 //! CONSERVATIVE on C0 by 5 bits. `B1_PINNED_FORGERY_BITS` keeps the published
 //! number and reports its own delta column, so the correction is visible instead
 //! of retconned.
+
+// [WP0a 2026-09-18] For the C7 witness family (`w7`, `prove7`) only. No derivation
+// helper comes from there, so the independence rule below still holds.
+mod common;
 
 use p01_stark::compact::{OodForgery, TerminalPoly};
 use p01_stark_verifier::compact_proof::{
@@ -200,6 +209,16 @@ fn forged_proof_bytes(id: u8) -> Vec<u8> {
                 111, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()), f, t)
             .proof_bytes
         }
+        // [WP0a 2026-09-18] The spend circuit. Its rate is MEASURED here by running
+        // the same attack, not copied from the seven above: C7's terminal geometry
+        // (bound 2 of 32) is its own.
+        7 => {
+            let w = common::w7(0);
+            p01_stark::compact::generate_spend_compact_proof_with_forgery(
+                w.nullifier_preimage, w.secret, w.blinding, w.token_mint,
+                &w.path_elements, &w.path_indices, &w.recipient_hash, &w.mask, f, t)
+            .proof_bytes
+        }
         _ => unreachable!(),
     }
 }
@@ -253,6 +272,9 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
                     let pi: Vec<u8> = (0..p01_stark::air::merkle_update::CANONICAL_DEPTH).map(|i| ((i as u64 + s) % 2) as u8).collect();
                     p01_stark::compact::generate_merkle_update_compact_proof(111 + s, 222, &pe, &pi, &p01_stark::compact::c6_deterministic_probe_mask(pe.len()))
                 }
+                // [WP0a 2026-09-18] `w7(i)` varies the preimage, secret, path and
+                // mask with `i`, so each seed is a different honest spend.
+                7 => common::prove7(&common::w7(s as usize)),
                 _ => unreachable!(),
             };
             let cfg = get_circuit_config(id).unwrap();
@@ -263,10 +285,10 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
 }
 
 // ============================================================================
-// MEASUREMENT 1 — the per-query rate, on all seven circuits.
+// MEASUREMENT 1 — the per-query rate, on all eight circuits.
 // ============================================================================
 
-/// The number every bits figure in this repo is built on, measured seven times.
+/// The number every bits figure in this repo is built on, measured eight times.
 ///
 /// For each circuit: build the coordinated forgery, take the terminal interpolant
 /// it actually published, check it is OUTSIDE the code (else there is nothing to
@@ -279,15 +301,23 @@ fn honest_query_positions(id: u8, s: u64) -> Vec<u32> {
 /// PRE-B2 the same construction gave `8 of 16` on the generic circuits and `4 of
 /// 16` on legacy C0, i.e. 1.000 and 2.000 bits — see `T5` / `T5b`.
 ///
+/// [WP0a 2026-09-18] Now EIGHT, and the sentence above is no longer the whole
+/// picture: circuits 0 (masked), 4 and 7 fold to a 32-coefficient terminal layer
+/// with a bound of 2 (`CircuitConfig`), so for them the expected reading is
+/// `2 of 32` — the same 4.000 bits per query, reached by a different agreement
+/// set. The per-circuit lines this
+/// test prints are the record; `v2-run/logs/WP0a-green.log` holds this run's.
+/// Was `the_per_query_rate_is_measured_on_all_seven_circuits`.
+///
 /// The upper assertion is the one that matters: `agree > bound` would mean the
 /// bound over-states the rate and every bits figure in the tree is an over-claim.
 /// The lower assertion (`agree == bound`, not `<=`) is what keeps this a
 /// MEASUREMENT: an alias that agreed at fewer points would be a weaker adversary
 /// than the code allows, and quoting the resulting rate would be luck, not a bound.
 #[test]
-fn the_per_query_rate_is_measured_on_all_seven_circuits() {
+fn the_per_query_rate_is_measured_on_all_eight_circuits() {
     let mut rates = Vec::new();
-    for id in 0u8..=6 {
+    for id in 0u8..=7 {
         let cfg: &CircuitConfig = get_circuit_config(id).unwrap();
         let bytes = forged_proof_bytes(id);
         let c = read_terminal_coeffs(&bytes, cfg.trace_width, cfg.quotient_segments);
@@ -361,10 +391,12 @@ fn the_per_query_rate_is_measured_on_all_seven_circuits() {
 /// (`if !positions.contains(&pos)`), so the `num_queries` positions in a proof are
 /// distinct and the query term is not silently discounted by birthday collisions —
 /// which on C0 (27 draws from an LDE of 512) would otherwise cost ~0.7 queries.
+///
+/// [WP0a 2026-09-18] C7 joined the sweep, with the same 8 proofs per circuit.
 #[test]
 fn terminal_query_indices_cover_the_whole_terminal_domain() {
     const PROOFS_PER_CIRCUIT: u64 = 8;
-    for id in 0u8..=6 {
+    for id in 0u8..=7 {
         let cfg = get_circuit_config(id).unwrap();
         let fps = cfg.fri_final_poly_size;
         let mut hist = vec![0usize; fps];
@@ -433,8 +465,21 @@ fn terminal_query_indices_cover_the_whole_terminal_domain() {
 // one of them had been edited, the disagreement would have said so by name.
 // [ZK-MASK 2026-09-11] re-derived for the masked geometries (C0/C2/C4 at n 512,
 // C0/C4 at 22 queries); see the note on the arrays in `b1_deep_binding.rs`.
-const B2_CONJECTURED: [u32; 7] = [47, 47, 47, 47, 47, 46, 47];
-const B2_UNCONDITIONAL: [u32; 7] = [42, 46, 46, 42, 42, 42, 42];
+// [WP0a 2026-09-18] Index 7 is C7. It is checked by
+// `the_post_b2_columns_rederive_on_all_eight_circuits`, which derives it with
+// this file's own `columns` at the rate the attack above measures on C7.
+const B2_CONJECTURED: [u32; 8] = [47, 47, 47, 47, 47, 46, 47, 47];
+const B2_UNCONDITIONAL: [u32; 8] = [42, 46, 46, 42, 42, 42, 42, 42];
+
+/// How many circuits existed at `0235c624`, the commit B2 was built on: C0..C6.
+///
+/// [WP0a 2026-09-18] C7 has NO pre-B2 column and never will. Its AIR landed on
+/// 2026-08-20 (`1d69c0b0`) and its verifier arm on 2026-08-24 (`3be88558`), both
+/// after the B2 head `6de57685` (2026-08-01). So every array below this line is
+/// seven wide on purpose, every B1-versus-B2 sweep runs `0..PRE_B2_CIRCUITS`, and
+/// C7's post-B2 columns are asserted by their own eight-wide sweep instead of by
+/// a subtraction that has no subtrahend.
+const PRE_B2_CIRCUITS: u8 = 7;
 
 /// The B1-era columns, derived from constants transcribed out of git at
 /// `0235c624` (the commit B2 was built on):
@@ -565,7 +610,7 @@ fn what_b2_bought_in_bits_is_a_subtraction_that_runs() {
     println!(
         " id | B1 conj | B2 conj | gain | B1 uncond | B2 uncond | gain | B1 PIN | gain vs PIN"
     );
-    for id in 0u8..=6 {
+    for id in 0..PRE_B2_CIRCUITS {
         let b1 = b1_columns(id);
         let b2 = b2_columns(id);
 
@@ -637,7 +682,7 @@ fn what_b2_bought_in_bits_is_a_subtraction_that_runs() {
 /// change has to be the extension field and not more queries.
 #[test]
 fn b2_moved_the_conjectured_column_from_query_bound_to_floor_bound() {
-    for id in 0u8..=6 {
+    for id in 0..PRE_B2_CIRCUITS {
         let b1 = b1_columns(id);
         let b2 = b2_columns(id);
         println!(
@@ -664,7 +709,7 @@ fn b2_moved_the_conjectured_column_from_query_bound_to_floor_bound() {
 /// column would reach its floor. Anything past that needs the extension field.
 #[test]
 fn the_unconditional_column_is_query_bound_at_both_ends() {
-    for id in 0u8..=6 {
+    for id in 0..PRE_B2_CIRCUITS {
         let c = get_circuit_config(id).unwrap();
         let b1 = b1_columns(id);
         let b2 = b2_columns(id);
@@ -703,6 +748,57 @@ fn the_unconditional_column_is_query_bound_at_both_ends() {
     }
 }
 
+/// The post-B2 half of the three tests above, on ALL EIGHT circuits.
+///
+/// [WP0a 2026-09-18] Those three compare against a B1 column that only C0..C6
+/// have (`PRE_B2_CIRCUITS`). Their post-B2 halves say nothing about B1, so they
+/// are asserted here for every circuit, C7 included: this file's own `columns`
+/// agrees with the shipped arrays, the conjectured column is floor-bound, and the
+/// unconditional column is still query-bound. Without this sweep C7's pair would
+/// be pinned by the arrays and checked by nothing in this file.
+#[test]
+fn the_post_b2_columns_rederive_on_all_eight_circuits() {
+    assert!(
+        get_circuit_config(8).is_none(),
+        "a ninth circuit exists. Every sweep in this file stops at 7; widen them and \
+         measure its rate before anything quotes its bits",
+    );
+    for id in 0u8..=7 {
+        let c = get_circuit_config(id).unwrap();
+        let b2 = b2_columns(id);
+        println!(
+            "[B2-M now] C{id}: rho {} of {}, {} queries -> query conj {:.2} / uncond {:.2}, \
+             floor {:.2} -> conjectured {} / unconditional {}",
+            c.fri_final_poly_degree_bound,
+            c.fri_final_poly_size,
+            c.num_queries,
+            b2.query_conjectured,
+            b2.query_unconditional,
+            b2.field_floor,
+            b2.conjectured,
+            b2.unconditional,
+        );
+        assert_eq!(
+            b2.conjectured, B2_CONJECTURED[id as usize],
+            "C{id}: this file's independent derivation disagrees with the shipped \
+             B2_CONJECTURED_FORGERY_BITS. One of the two derivations is wrong.",
+        );
+        assert_eq!(
+            b2.unconditional, B2_UNCONDITIONAL[id as usize],
+            "C{id}: this file's independent derivation disagrees with the shipped \
+             B2_UNCONDITIONAL_FORGERY_BITS",
+        );
+        assert!(
+            b2.query_conjectured > b2.field_floor,
+            "C{id}: the post-B2 conjectured column is no longer floor-bound",
+        );
+        assert!(
+            b2.query_unconditional < b2.field_floor,
+            "C{id}: the unconditional column stopped being query-bound",
+        );
+    }
+}
+
 // ============================================================================
 // Cross-file ties. Two files, one set of numbers.
 // ============================================================================
@@ -710,7 +806,7 @@ fn the_unconditional_column_is_query_bound_at_both_ends() {
 const B1_DEEP_BINDING_SRC: &str = include_str!("b1_deep_binding.rs");
 const SELF_SRC: &str = include_str!("b2_bits_measured.rs");
 
-fn fmt(a: &[u32; 7]) -> String {
+fn fmt(a: &[u32; 8]) -> String {
     format!(
         "[{}]",
         a.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
@@ -726,7 +822,7 @@ fn the_two_files_agree_on_the_post_b2_columns() {
         ("B2_CONJECTURED_FORGERY_BITS", &B2_CONJECTURED),
         ("B2_UNCONDITIONAL_FORGERY_BITS", &B2_UNCONDITIONAL),
     ] {
-        let line = format!("const {name}: [u32; 7] = {};", fmt(arr));
+        let line = format!("const {name}: [u32; 8] = {};", fmt(arr));
         assert!(
             B1_DEEP_BINDING_SRC.contains(&line),
             "b1_deep_binding.rs must declare exactly `{line}`. If the shipped array moved, \
@@ -743,7 +839,7 @@ fn the_two_files_agree_on_the_post_b2_columns() {
 fn the_module_doc_gain_table_matches_the_derivation() {
     let doc_end = SELF_SRC.find("\nuse ").expect("module doc precedes the imports");
     let doc = &SELF_SRC[..doc_end];
-    for id in 0u8..=6 {
+    for id in 0..PRE_B2_CIRCUITS {
         let b1 = b1_columns(id);
         let b2 = b2_columns(id);
         let row = format!(
@@ -760,9 +856,21 @@ fn the_module_doc_gain_table_matches_the_derivation() {
             "the module doc's gain table is stale: expected the row `{row}`",
         );
     }
+    // [WP0a 2026-09-18] Circuits with no B1 column (C7 today) print dashes there.
+    for id in PRE_B2_CIRCUITS..=7 {
+        let b2 = b2_columns(id);
+        let row = format!(
+            "//!  C{id} | {:>7} | {:7} | {:>4} | {:>9} | {:9} | {:>4}",
+            "-", b2.conjectured, "-", "-", b2.unconditional, "-",
+        );
+        assert!(
+            doc.contains(&row),
+            "the module doc's gain table is stale: expected the row `{row}`",
+        );
+    }
     assert!(
         doc.contains("1.000 to 4.000 bits"),
         "the module doc must state the MEASURED per-query rate change, which \
-         `the_per_query_rate_is_measured_on_all_seven_circuits` produces",
+         `the_per_query_rate_is_measured_on_all_eight_circuits` produces",
     );
 }

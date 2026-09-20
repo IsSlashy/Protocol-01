@@ -137,7 +137,8 @@ fn a_legacy_small_blinding_still_proves_and_verifies() {
     // check is the other plausible range check someone would add.
     for blinding in [0u64, 1, 2, 3, 42] {
         let data = p01_stark::compact::generate_spend_compact_proof(
-            42, 999, blinding, 555, &path_elements, &path_indices, &[11, 22, 33, 44], &mask,
+            42, 999, blinding, 555, &path_elements, &path_indices, &[11, 22, 33, 44],
+            &p01_stark::BlindingMask::from_raw_u64_for_tests(&mask),
         );
         verify_both(&data.proof_bytes, &data.public_inputs).unwrap_or_else(|e| {
             panic!(

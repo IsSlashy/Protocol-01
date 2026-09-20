@@ -40,6 +40,12 @@ fn verifier_id() -> Address {
     VERIFIER_ID.parse().unwrap()
 }
 fn so_path() -> PathBuf {
+    // The artifact under test, as in `subscription_lifecycle.rs`. The CI job
+    // (`scripts/ci/sbf-litesvm.sh`) points it at the .so it just built, and
+    // checks that this suite fails when it names a file that is not a program.
+    if let Ok(p) = std::env::var("P01_ZK_SHIELDED_SO") {
+        return PathBuf::from(p);
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/deploy/zk_shielded.so")
 }
 fn disc(name: &str) -> [u8; 8] {

@@ -32,7 +32,9 @@
 //!
 //! ⛔ AN ENTRY BELOW IS NOT AN EXCUSE. Four of the five are real coverage holes
 //! in CI-enforced soundness pins, and closing them needs MEASURED values that
-//! must not be guessed — see each reason.
+//! must not be guessed — see each reason. [2026-09-18] One entry is left,
+//! `route_c_trace_pair`; every other one was closed by widening its pin, not by
+//! rewording it.
 //!
 //! Run:
 //!   cargo test -p p01_stark_verifier --test c7_pin_coverage
@@ -128,27 +130,16 @@ fn reaches_c7(src: &str) -> bool {
 // the hole itself is closed in the same commit: `phase2`, `generic_case`,
 // `config_for` and `honest_variant` carry their `7 =>` arms and every sweep
 // runs `..=7`, measured (b2_segment_binding run log named in that commit).
-const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 4] = [
-    (
-        "honest_liveness",
-        "🚨 THE WORST ONE, AND THE REASON THIS FILE'S DETECTOR GREW A THIRD SHAPE. It runs C0          through C6 with hand-written `run_generic(\"C1\", ..)` calls and never generates a C7          witness — its own summary prints `WITNESSES * 7`. Its dispatcher WAS taught C7          (`7 => verify_deep_ali_circuit_7`, added 2026-08-24 so a C7 proof could not clear          phase 2 vacuously), which makes the omission look deliberate and is not the same thing:          the arm exists and nothing ever calls it. So the one suite whose entire job is 'does          the verifier accept EVERY honest proof' says nothing about the circuit the product is          for, and the only evidence C7 liveness holds is the single proof that landed on devnet.          Closing this needs a C7 witness family in tests/common/mod.rs, measured, not adapted",
-    ),
-    (
-        "b2_bits_measured",
-        "six sweeps at `0u8..=6` and five `[_; 7]` tables (B2_CONJECTURED, B2_UNCONDITIONAL, \
-         PRE_B2_*, B1_PINNED_FORGERY_BITS, PRE_B2_TERMINAL_BOUND). Widening needs MEASURED \
-         forgery-bit counts for C7 and a measured pre-B2 baseline it never had — C7 shipped \
-         post-segmentation, so there is no 'before' to subtract. Those numbers must be produced \
-         by running the attack, never derived from the other seven",
-    ),
-    (
-        "b1_deep_binding",
-        "three sweeps at `0u8..=6`, plus FIXTURES: [Fixture; 7] and COVERAGE: [Coverage; 7]. \
-         deployed-verifier.json:344 explains why C7 has no DIGEST fixture — 'its mask is fresh \
-         per proof', which is true and is why wireFormat pins C7 by length instead. That covers \
-         the fixture tables. It does NOT cover the three DEEP-binding sweeps, which do not need \
-         a digest, and no file says why those stop at 6",
-    ),
+// [2026-09-18, WP0a] `honest_liveness`, `b2_bits_measured` and `b1_deep_binding`
+// left this list, all three in one change, with their holes closed rather than
+// reworded: honest_liveness proves and verifies 160 C7 witnesses through both
+// phases, each checked against its AIR before it is proved; b2_bits_measured runs
+// the attack on C7 and measures its rate (2 of 32); b1_deep_binding derives C7's
+// two columns, runs the coordinated forgery on it and carries the phase-2 arm.
+// C7 has no pre-B2 column and b2 now says so in code (`PRE_B2_CIRCUITS`).
+// `the_soundness_and_liveness_pins_exercise_c7_and_are_never_excused` keeps all
+// three from coming back.
+const PINS_THAT_DO_NOT_REACH_C7: [(&str, &str); 1] = [
     (
         "route_c_trace_pair",
         "SHIPPING: [&CircuitConfig; 7] lists C0 through C6 and omits CONFIG_SPEND; \
@@ -212,6 +203,81 @@ fn the_exclusion_list_does_not_outlive_its_reasons() {
             !reaches_c7(&src),
             "{stem} NOW REACHES C7 — delete its entry from PINS_THAT_DO_NOT_REACH_C7.\n\
              That is the good failure: the hole was closed and the record of it should go with it."
+        );
+    }
+}
+
+/// Source text with every `//` comment line dropped, so that writing ABOUT an
+/// exercise shape (`// verify_deep_ali_circuit_7(...) is not called here`) can
+/// never count as the shape. Same technique as `test_body` in b1_deep_binding.
+fn code_only(src: &str) -> String {
+    src.lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// [WP0a 2026-09-18] The three pins the published figures rest on may NOT be
+/// excused, whatever the reason, and each must EXERCISE C7 in code.
+///
+/// * `b1_deep_binding` derives the two soundness columns the prose in
+///   `compact_proof.rs` quotes and runs the coordinated forgery on each circuit;
+/// * `b2_bits_measured` MEASURES the per-query rate those columns are derived at,
+///   by running the attack — the rule `PINS_THAT_DO_NOT_REACH_C7` wrote down for
+///   it was "produced by running the attack, never derived from the other seven";
+/// * `honest_liveness` is what `ci.yml` cites as proof that an honest spend clears
+///   both verifier phases.
+///
+/// An entry in the list above is a recorded hole. For these three a hole means
+/// the spend circuit's security figure or its liveness is quoted and unmeasured,
+/// so the list may not hold them. The generic `reaches_c7` is not enough here
+/// either: a quoted `"C7"` or a `..=7` could be added without running anything,
+/// so each file must also carry, OUTSIDE comments, the call that runs C7, and no
+/// stop-at-C6 sweep may survive in it.
+#[test]
+fn the_soundness_and_liveness_pins_exercise_c7_and_are_never_excused() {
+    // Each list names the CALL that runs C7, not just a C7 name: MEASURED on a
+    // scratch copy, honest_liveness with its C7 run commented out still carried
+    // `common::prove7(`, `common::w7(` and a quoted "C7" (in the semantics check
+    // and its anti-vacuity test), so only `run_generic("C7"` tells the two apart.
+    let required: [(&str, &[&str]); 3] = [
+        (
+            "b1_deep_binding",
+            &[
+                "7 => verify_deep_ali_circuit_7(",
+                "generate_spend_compact_proof_with_forgery(",
+                "run_generic_forgery_case(\"C7\"",
+                "0u8..=7",
+            ],
+        ),
+        (
+            "b2_bits_measured",
+            &["generate_spend_compact_proof_with_forgery(", "common::prove7(", "0u8..=7"],
+        ),
+        (
+            "honest_liveness",
+            &["run_generic(\"C7\"", "common::prove7(", "7 => verify_deep_ali_circuit_7("],
+        ),
+    ];
+    for (stem, shapes) in required {
+        assert!(
+            excluded(stem).is_none(),
+            "{stem} is excused in PINS_THAT_DO_NOT_REACH_C7. It is one of the three pins the \
+             published soundness figures and the liveness claim rest on, so it must be widened \
+             to C7, not excused",
+        );
+        let src = source_of(stem);
+        let code = code_only(&src);
+        assert!(reaches_c7(&code), "{stem} does not reach C7 outside its comments");
+        for shape in shapes {
+            assert!(
+                code.contains(shape),
+                "{stem} does not contain `{shape}` outside comments, so it does not run C7",
+            );
+        }
+        assert!(
+            !code.contains("0u8..=6"),
+            "{stem} still has a sweep that stops at C6",
         );
     }
 }
@@ -295,7 +361,9 @@ fn the_detectors_are_not_broken() {
         // 6 -> 5 on 2026-08-29: ood_column_probe now covers C7, so its entry was
         // deleted. That is the deletion its own text asked for.
         // 5 -> 4 on 2026-09-12: b2_segment_binding runs every sweep on C7.
-        4,
+        // 4 -> 1 on 2026-09-18 (WP0a): b1_deep_binding, b2_bits_measured and
+        // honest_liveness run C7, each with its C7 values produced by a run.
+        1,
         "the exclusion count changed — if a hole was closed, good, update this number \
          deliberately rather than letting the list drift"
     );

@@ -2390,7 +2390,7 @@ fn cu_ceiling_ci_workflow_cannot_hold_a_stale_copy_of_a_pin() {
 // inside the shared validator instead of trusting its callers — so the entry is
 // gone and the target runs in CI. That is the intended lifetime of an entry
 // here: written with the reason, deleted when the reason is.
-const CI_UNRUN_TEST_TARGETS: [(&str, &str); 5] = [
+const CI_UNRUN_TEST_TARGETS: [(&str, &str); 6] = [
     (
         "wasm_blob_parity",
         "[RESHIP 2026-09-12] its one test is `#[ignore]` and reads proof files that only a wasm          prover blob can write (P01_WASM_PROOFS_DIR, produced by a Node driver through the          blob's own wasm-bindgen glue). It is the pre-ship check that a STAGED blob's proofs          verify under THIS verifier on all eight circuits; CI has no staged blob to check, and          the shipped one is covered by deployed-verifier-check.mjs and wireFormat.test.ts",
@@ -2427,6 +2427,14 @@ const CI_UNRUN_TEST_TARGETS: [(&str, &str); 5] = [
          WITNESS FAMILY in tests/common/mod.rs, so it only has something new to say when that \
          file changes. Run it locally when it does: \
          `cargo test --release -p p01_stark_verifier --test liveness_generator_semantics`",
+    ),
+    (
+        "cu_microbench",
+        "[WP0f 2026-09-19] same reason as cu_budget: it BUILDS the SBF probe it measures \
+         (tests/cu_microbench_probe) with `cargo-build-sbf`, which the rust-programs-build job \
+         does not have, and it fails closed without one. It runs in sbf-litesvm.yml's cu stage \
+         against a probe that run builds. Its figures are CU-model inputs (DESIGN-V2 §2.2), not \
+         a gate on the shipped verifier",
     ),
 ];
 
@@ -4222,7 +4230,7 @@ fn all_cases() -> Vec<ProofCase> {
             st ^= st >> 27;
             mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
         }
-        (pe, pi, [11u64, 22, 33, 44], mask)
+        (pe, pi, [11u64, 22, 33, 44], p01_stark::BlindingMask::from_raw_u64_for_tests(&mask))
     };
     let (p7, ms) = timed(|| {
         p01_stark::compact::generate_spend_compact_proof(42, 999, 7, 555, &pe7, &pi7, &rh7, &mask7)
@@ -5081,7 +5089,7 @@ fn uniform_leak_cases() -> Vec<(&'static str, u8, p01_stark::compact::GenericCom
                     mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
                 }
                 p01_stark::compact::generate_spend_compact_proof(
-                    42, 999, 7, 555, &spe, &spi, &[11, 22, 33, 44], &mask,
+                    42, 999, 7, 555, &spe, &spi, &[11, 22, 33, 44], &p01_stark::BlindingMask::from_raw_u64_for_tests(&mask),
                 )
             },
         ),

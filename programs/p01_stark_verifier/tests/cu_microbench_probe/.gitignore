@@ -1,0 +1,6 @@
+# Build outputs of the throwaway CU micro-benchmark probe. tests/cu_microbench.rs
+# builds it itself into the cargo target dir (CARGO_TARGET_TMPDIR), so only the
+# lockfile cargo writes next to this manifest ever lands here.
+out/
+target/
+Cargo.lock

@@ -35,8 +35,8 @@ use p01_stark_verifier::verify::{
 
 const N: usize = 5;
 
-fn mask(len: usize) -> Vec<u64> {
-    p01_stark::draw_blinding_mask(len).expect("OS CSPRNG")
+fn mask(len: usize) -> p01_stark::BlindingMask {
+    p01_stark::BlindingMask::draw(len).expect("OS CSPRNG")
 }
 
 fn prove(cid: u8) -> c::GenericCompactProofData {

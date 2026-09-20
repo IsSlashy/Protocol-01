@@ -25,8 +25,8 @@ use p01_stark_verifier::verify::{
     verify_deep_ali_circuit_6, verify_deep_ali_circuit_7, verify_generic, VerifyError,
 };
 
-fn mask(len: usize) -> Vec<u64> {
-    p01_stark::draw_blinding_mask(len).expect("OS CSPRNG")
+fn mask(len: usize) -> p01_stark::BlindingMask {
+    p01_stark::BlindingMask::draw(len).expect("OS CSPRNG")
 }
 
 /// Same witnesses as `bench_all_circuits::prove`; only the public inputs are used.

@@ -188,8 +188,9 @@ fn c7() -> Vec<Vec<u8>> {
             // the CONSTRAINED columns, then the randomizer column's own row per
             // trace row. The literal `128 * 10` here predated both the depth cut
             // and the randomizer column.
-            let mask: Vec<u64> =
-                (0..p01_stark::air::spend::MASK_LEN).map(|_| next()).collect();
+            let mask = p01_stark::BlindingMask::from_raw_u64_for_tests(
+                &(0..p01_stark::air::spend::MASK_LEN).map(|_| next()).collect::<Vec<u64>>(),
+            );
             let pe: Vec<u64> = (0..p01_stark::air::spend::CANONICAL_DEPTH as u64).map(|i| 0x51A7 + i * 7919 + (w as u64) * 131).collect();
             let pi: Vec<u8> = (0..p01_stark::air::spend::CANONICAL_DEPTH).map(|i| ((i + w) % 2) as u8).collect();
             let rh = [

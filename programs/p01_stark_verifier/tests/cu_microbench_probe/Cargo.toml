@@ -1,0 +1,31 @@
+[package]
+name = "cu-microbench-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Throwaway SBF program that prices the primitives of the v2 compute-unit model (Goldilocks mul/add/inv, cubic-extension mul, the SHA-256 Merkle node and path walk) with the verifier's own source. Driven by tests/cu_microbench.rs. Never deployed."
+
+# Deliberately its own workspace root, like `../c7_probe`. It lives next to the
+# harness that loads it, but it must NOT join the Protocol-01 workspace: it is
+# built with `cargo-build-sbf` only, is never deployed, and has no dependencies,
+# so its graph cannot touch the workspace lockfile. Cargo does not discover it as
+# an integration test either (that needs `tests/<dir>/main.rs`).
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "cu_microbench_probe"
+
+# Mirrors the root workspace's `[profile.release]` and `.cargo/config.toml`.
+# `overflow-checks = true` changes the code emitted for every `Felt` operation
+# (reduce128 has a checked multiply), so without it the probe would price a
+# different multiply than the one the verifier runs.
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+overflow-checks = true
+
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1

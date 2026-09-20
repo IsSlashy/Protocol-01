@@ -68,6 +68,18 @@ solana-address = { version = "2.6", features = ["curve25519", "decode", "std"] }
 # driving `subscribe_private_stark` and having to synthesise STARK proof buffers.
 solana-account = "4.3"
 
+# [WP0e C0 replay] `tests/c0_replay.rs` needs a GENUINE, verifier-accepted C0
+# proof to demonstrate the pause/resume replay — a fabricated `verified` buffer
+# would beg the question. `generate_subscriber_ownership_proof` is the same
+# public generator `p01_stark_verifier/tests/cu_budget.rs` and the in-crate
+# positive tests use, so the proof under test is known-honest. `test-probes`
+# only gates `c0_deterministic_probe_mask` (the publicly reproducible blinding
+# mask); it pulls NO extra crates (`stark/Cargo.toml:test-probes = []`), so it
+# adds nothing to Cargo.lock beyond one dependency edge. `resolver = "2"` keeps
+# this dev-only feature out of the normal graph, and dev-dependencies never
+# reach `cargo build-sbf`, so `target/deploy/zk_shielded.so` is untouched.
+p01-stark = { path = "../../stark", features = ["test-probes"] }
+
 [lints.rust.unexpected_cfgs]
 level = "allow"
 check-cfg = [

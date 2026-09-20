@@ -34,6 +34,15 @@
 //! rejection was read as a verifier liveness defect for a full day. A liveness
 //! number measured on invalid witnesses is not a number.
 //!
+//! # C7
+//!
+//! [WP0a 2026-09-18] Until this date the suite proved C0 through C6 and never
+//! generated a C7 witness, while `ci.yml` described it as what proves an honest
+//! C7 proof clears both phases. The dispatcher below had carried a `7 =>` arm
+//! since 2026-08-24 and nothing called it. C7 now runs on the same
+//! `common::w7` family `c7_binding` and `b2_segment_binding` use, each witness
+//! checked by `check_semantics_7` below before it is proved.
+//!
 //! Run with: `cargo test -p p01_stark_verifier --release --test honest_liveness -- --nocapture`
 
 mod common;
@@ -132,6 +141,9 @@ where
     F: FnMut(usize) -> p01_stark::compact::GenericCompactProofData,
 {
     let mut o = Outcome { ok: 0, failures: Vec::new(), good_rows: Vec::new(), bad_rows: Vec::new() };
+    // [WP0a 2026-09-18] Per-circuit wall time, printed, so the CI budget of the
+    // slow-pins job can be read off one run instead of guessed.
+    let started = std::time::Instant::now();
     for i in 0..WITNESSES {
         let data = make(i);
         let config = get_circuit_config(data.circuit_id).expect("config");
@@ -155,7 +167,98 @@ where
         }
     }
     report(label, &o);
+    println!("[LIVENESS] {label}: wall time {:.1}s", started.elapsed().as_secs_f64());
     o
+}
+
+// ============================================================================
+// [WP0a 2026-09-18] C7 witness semantics
+// ============================================================================
+
+/// The C7 twin of `common::check_semantics_*`: the witness is an honest spend
+/// BEFORE its proof is counted.
+///
+/// It lives here rather than in `common/mod.rs` only because WP0a's file set is
+/// this suite; moving it there (and running it from
+/// `liveness_generator_semantics.rs`) is the natural follow-up.
+///
+/// Same contract as its siblings:
+///   * every public input is re-derived from the private witness along an
+///     INDEPENDENT path — the reference `poseidon::hash2`, never
+///     `air::spend::compute_spend_values` / `compute_spend_root`, which the
+///     generator itself uses;
+///   * the public inputs are pinned to the exact trace cells the AIR asserts on,
+///     read from `SPEND_BOUNDARY_SPEC`, and the commitment to the cell that
+///     carries it (it is NOT public, so no boundary assertion names it);
+///   * the AIR's own transition polynomial vanishes at every frame of the trace
+///     the generator commits to, the masked rows included.
+fn check_semantics_7(w: &common::W7, data: &p01_stark::compact::GenericCompactProofData) {
+    use p01_stark::air::spend;
+    use p01_stark::poseidon::hash2;
+    use p01_stark::BaseElement;
+    let f = BaseElement::new;
+
+    assert_eq!(w.path_elements.len(), spend::CANONICAL_DEPTH, "C7: depth is fixed by the trace layout");
+    assert_eq!(w.path_indices.len(), spend::CANONICAL_DEPTH, "C7: index count must match the path");
+    assert_eq!(w.mask.len(), spend::MASK_LEN, "C7: mask length");
+
+    // The note, rebuilt from its preimages by the reference permutation.
+    let nullifier = hash2(f(w.nullifier_preimage), f(w.secret));
+    let commitment = hash2(nullifier, hash2(f(w.blinding), f(w.token_mint)));
+    let mut root = commitment;
+    for (e, &d) in w.path_elements.iter().zip(w.path_indices.iter()) {
+        assert!(d == 0 || d == 1, "C7: path index must be binary, got {d}");
+        root = if d == 0 { hash2(root, f(*e)) } else { hash2(f(*e), root) };
+    }
+
+    assert_eq!(data.circuit_id, 7, "C7: generator returned the wrong circuit id");
+    assert_eq!(data.public_inputs.len(), spend::SPEND_NUM_PUBLIC_INPUTS, "C7: six public inputs");
+    assert_eq!(f(data.public_inputs[0]), nullifier, "C7: nullifier is not Poseidon(preimage, secret)");
+    assert_eq!(f(data.public_inputs[1]), root, "C7: root is not the real fold of the commitment");
+    assert_eq!(&data.public_inputs[2..6], &w.recipient_hash[..], "C7: recipient hash limbs");
+
+    let elems: Vec<BaseElement> = w.path_elements.iter().map(|&v| f(v)).collect();
+    let (trace, t_nullifier, t_root) = spend::build_spend_trace(
+        f(w.nullifier_preimage), f(w.secret), f(w.blinding), f(w.token_mint),
+        &elems, &w.path_indices, &w.mask,
+    );
+    assert_eq!(t_nullifier, nullifier, "C7: the trace builder's nullifier");
+    assert_eq!(t_root, root, "C7: the trace builder's root");
+    assert_eq!(trace.len(), spend::TRACE_WIDTH, "C7: trace width");
+
+    for &(col, row, source) in spend::SPEND_BOUNDARY_SPEC.iter() {
+        let want = source.map(|i| f(data.public_inputs[i])).unwrap_or(BaseElement::new(0));
+        assert_eq!(trace[col][row], want, "C7: boundary cell col {col} row {row}");
+    }
+    assert_eq!(
+        trace[6][spend::ROW_COMMITMENT_OUT], commitment,
+        "C7: the commitment row does not carry the commitment of this witness",
+    );
+    assert!(
+        spend::ROW_MERKLE_ROOT_OUT < spend::FIRST_FREE_ROW,
+        "the root row must stay OUT of the blinding region",
+    );
+
+    common::sweep_transitions(
+        "C7",
+        &trace,
+        &spend::build_spend_periodic_columns(),
+        spend::SPEND_NUM_CONSTRAINTS,
+        spend::evaluate_spend_transition,
+    );
+}
+
+/// ANTI-VACUITY for `check_semantics_7`: it must refuse a proof whose claimed
+/// root is not the fold of its own witness. A semantic check that accepts
+/// anything would let the C7 count below measure nothing, which is the exact
+/// failure the 2026-08-01 C5 generator taught this suite.
+#[test]
+#[should_panic(expected = "C7: root is not the real fold of the commitment")]
+fn check_semantics_7_refuses_a_root_that_is_not_the_witness_fold() {
+    let w = common::w7(0);
+    let mut d = common::prove7(&w);
+    d.public_inputs[1] = (d.public_inputs[1] + 1) % 0xFFFF_FFFF_0000_0001;
+    check_semantics_7(&w, &d);
 }
 
 #[test]
@@ -171,6 +274,7 @@ fn every_honest_proof_verifies_on_every_circuit() {
             bad_rows: Vec::new(),
         };
         let config = get_circuit_config(0).expect("C0 config");
+        let started = std::time::Instant::now();
         for i in 0..WITNESSES {
             let w = common::w0(i);
             let data = common::prove0(&w);
@@ -191,6 +295,7 @@ fn every_honest_proof_verifies_on_every_circuit() {
             }
         }
         report("C0", &o);
+        println!("[LIVENESS] C0: wall time {:.1}s", started.elapsed().as_secs_f64());
         rejected.push(("C0", o.failures.len()));
     }
 
@@ -274,8 +379,20 @@ fn every_honest_proof_verifies_on_every_circuit() {
     });
     rejected.push(("C6", c6.failures.len()));
 
+    // [WP0a 2026-09-18] C7, the spend circuit — both phases, like every generic
+    // circuit above, through `verify_phase2`'s `7 =>` arm, which nothing had
+    // called before this line existed.
+    let c7 = run_generic("C7", |i| {
+        let w = common::w7(i);
+        let d = common::prove7(&w);
+        check_semantics_7(&w, &d);
+        d
+    });
+    rejected.push(("C7", c7.failures.len()));
+
     let total: usize = rejected.iter().map(|(_, n)| n).sum();
-    println!("[LIVENESS] TOTAL rejected honest proofs: {total} of {}", WITNESSES * 8);
+    // [WP0a] Was a literal `WITNESSES * 8`; the run count is the list's length.
+    println!("[LIVENESS] TOTAL rejected honest proofs: {total} of {}", WITNESSES * rejected.len());
     assert_eq!(
         total, 0,
         "\n\n  >>> THE VERIFIER REJECTS HONEST PROOFS <<<\n  \

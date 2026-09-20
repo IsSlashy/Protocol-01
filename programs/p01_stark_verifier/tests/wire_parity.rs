@@ -99,7 +99,7 @@ fn fixture_c7() -> Vec<u8> {
         mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
     }
     p01_stark::compact::generate_spend_compact_proof(
-        42, 999, 7, 555, &pe, &pi, &[11, 22, 33, 44], &mask,
+        42, 999, 7, 555, &pe, &pi, &[11, 22, 33, 44], &p01_stark::BlindingMask::from_raw_u64_for_tests(&mask),
     )
     .proof_bytes
 }

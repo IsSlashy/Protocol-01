@@ -2363,8 +2363,8 @@ fn verify_fri_generic(
     //
     // Prior design: single `inv_gen_0^k` table of min(half_lde, 2048) entries.
     // For circuit 6 (half_lde=4096) this required 2047 Goldilocks muls at init,
-    // which on BPF costs ~442K CU (~216 CU/mul) — 32% of the 1.4M budget,
-    // enough to push verification past the cap on its own.
+    // ~157K CU at the ~77 CU/mul MEASURED on SBF by tests/cu_microbench.rs
+    // (WP0f, 2026-09-19; sbpf v0, cargo-build-sbf 3.1.9): 11% of the 1.4M cap.
     //
     // New design: a small base table (INV_GEN_BASE_SIZE=256 entries) and a
     // stepper table holding inv_gen_0^(256·j) for j=0..INV_GEN_STEP_SIZE-1.
@@ -2372,10 +2372,10 @@ fn verify_fri_generic(
     // every possible k. Lookup for arbitrary k < half_lde:
     //   y_inv = base_table[k & 0xFF] · step_table[k >> 8]
     // Setup cost: 255 + (STEP_SIZE - 1) muls — for circuit 6 that's 255+15=270
-    // muls (~58K CU), a ~384K-CU saving versus the old design.
+    // muls (~21K CU), a ~137K-CU saving versus the old design.
     // Per-query cost: +1 mul per fold (since every k≥256 needs the step lookup,
-    // which is ~93.75% of lookups for circuit 6). 22 × 9 × ~216 CU ≈ 42K CU.
-    // Net saving: ~342K CU. Circuits 0-5 (half_lde ≤ 2048) still pay the same
+    // which is ~93.75% of lookups for circuit 6). 22 × 9 × ~77 CU ≈ 15K CU.
+    // Net saving: ~121K CU. Circuits 0-5 (half_lde ≤ 2048) still pay the same
     // extra mul but their setup shrinks too — small net win or neutral.
     const INV_GEN_BASE_SIZE: usize = 256;
     let gen_0 = get_lde_generator(config.lde_size)?;
@@ -8469,7 +8469,8 @@ mod merkle_update_e2e {
                     mask.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
                 }
                 p01_stark::compact::generate_spend_compact_proof(
-                    42 + s, 999, 7, 555, &path_elements, &path_indices, &[11, 22, 33, 44], &mask,
+                    42 + s, 999, 7, 555, &path_elements, &path_indices, &[11, 22, 33, 44],
+                    &p01_stark::BlindingMask::from_raw_u64_for_tests(&mask),
                 )
             },
             verify_constraints_spend,

@@ -48,7 +48,7 @@ pub struct CircuitConfig {
     /// larger proofs to save 64 bytes). The extra slots must be provable zeros.
     ///
     /// The rate is invariant under folding, so `bound / fri_final_poly_size` IS
-    /// the FRI rate rho. [B2] That is 1/16 on all seven circuits now; it was 8/16
+    /// the FRI rate rho. [B2] That is 1/16 on all eight circuits now; it was 8/16
     /// before segmentation. Read it off this field — never assume `1/blowup`, and
     /// never quote `log2(blowup)` without checking that the bound really is 1.
     pub fri_final_poly_degree_bound: usize,
@@ -94,7 +94,7 @@ pub struct CircuitConfig {
     /// The query term is not the answer. Every Fiat-Shamir challenge here is a
     /// single base-field Goldilocks element, so the argument has a hard field
     /// floor of `64 - log2(8n + w + k + 1 + folds*lde_size)` that grinding cannot
-    /// lift (the nonce is absorbed after z, gamma and every alpha). On all seven
+    /// lift (the nonce is absorbed after z, gamma and every alpha). On all eight
     /// circuits the query term OVERSHOOTS that floor, so the honest figure is the
     /// floor: 46-47 bits conjectured, 42-46 unconditional. Both columns are
     /// derived from this struct and asserted in `tests/b1_deep_binding.rs`.
@@ -462,12 +462,15 @@ pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
 //
 //     field_bits = 64 - log2( 8n + (w + k + 1) + folds * lde_size )
 //
-// = 47.8 bits on C3/C5/C6 and 52.5 on C0. Grinding cannot lift it: the nonce is
+// = 47.75 bits on C1/C2/C3/C6, 47.91 on C0/C4/C7 and 46.61 on C5. ([WP0a
+// 2026-09-18] Printed by `soundness_bits_are_derived_from_the_config`. This line
+// said "47.8 on C3/C5/C6 and 52.5 on C0", figures from before C0 moved to
+// n = 512 and C5 to n = 1024.) Grinding cannot lift it: the nonce is
 // absorbed AFTER z, gamma and every alpha, so an adversary who wins the OOD or
 // proximity lottery wins with zero grinding. Post-B2 the query term OVERSHOOTS
-// the floor on all seven circuits, so the honest conjectured figure IS the floor:
+// the floor on all eight circuits, so the honest conjectured figure IS the floor:
 //
-//     conjectured  47 / 47 / 47 / 47 / 47 / 46 / 47   (C0..C6)
+//     conjectured  47 / 47 / 47 / 47 / 47 / 46 / 47 / 47   (C0..C7)
 //
 //     [C1-N256 2026-08-29] C1: 50 -> 48. Its LDE doubled with its trace, and the
 //     field floor is `64 - log2(8n + w+k+1 + folds*lde)`, so the conjectured
@@ -479,7 +482,11 @@ pub const LDE_SIZE: usize = TRACE_LENGTH * BLOWUP;
 //     and C4 also went 27 -> 22 queries, so their unconditional figure moved
 //     46 -> 42 like C3, C5, C6 at 22 queries. Those are the costs of hiding the
 //     trace and they are recorded here, not absorbed.
-//     unconditional 42 / 46 / 46 / 42 / 42 / 42 / 42
+//     [WP0a 2026-09-18] C7 added: 47 conjectured / 42 unconditional, the floor
+//     of C0 and C4 (same n, LDE and terminal size). Until this date no test
+//     asserted C7's pair; `tests/b1_deep_binding.rs` now derives it, and
+//     `tests/b2_bits_measured.rs` measures its rate (2 of 32) with the attack.
+//     unconditional 42 / 46 / 46 / 42 / 42 / 42 / 42 / 42
 //
 // The unconditional column is unique-decoding (`log2(2/(1+rho))` = 0.913 bits per
 // query, a theorem); the conjectured column is list-decoding to capacity

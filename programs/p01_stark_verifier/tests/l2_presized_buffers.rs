@@ -512,7 +512,7 @@ fn c7_proofs() -> &'static (p01_stark::compact::GenericCompactProofData, p01_sta
                 st ^= st >> 27;
                 m.push(st.wrapping_mul(0x2545_F491_4F6C_DD1D) % GOLDILOCKS);
             }
-            m
+            p01_stark::BlindingMask::from_raw_u64_for_tests(&m)
         };
         let t = std::time::Instant::now();
         let a = p01_stark::compact::generate_spend_compact_proof(

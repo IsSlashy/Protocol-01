@@ -193,7 +193,7 @@ pub struct W7 {
     pub path_elements: Vec<u64>,
     pub path_indices: Vec<u8>,
     pub recipient_hash: [u64; 4],
-    pub mask: Vec<u64>,
+    pub mask: p01_stark::BlindingMask,
 }
 
 pub fn w0(i: usize) -> W0 {
@@ -289,7 +289,7 @@ pub fn w7(i: usize) -> W7 {
         path_elements: (0..CANONICAL_DEPTH as u64).map(|j| 1000 + j * 37 + s * 11).collect(),
         path_indices: (0..CANONICAL_DEPTH).map(|j| ((j + i) % 2) as u8).collect(),
         recipient_hash: [11 + s, 22, 33, 44],
-        mask,
+        mask: p01_stark::BlindingMask::from_raw_u64_for_tests(&mask),
     }
 }
 
@@ -464,8 +464,7 @@ pub fn check_semantics_0_masked(w: &W0, data: &p01_stark::compact::GenericCompac
     let expected = poseidon::hash1(secret);
     assert_eq!(data.public_inputs.len(), 1, "C0 masked: one public input");
     assert_eq!(f(data.public_inputs[0]), expected, "C0 masked: commitment is not Poseidon(secret)");
-    let mask: Vec<BaseElement> = p01_stark::compact::c0_deterministic_probe_mask()
-        .iter().map(|&v| BaseElement::new(v)).collect();
+    let mask = p01_stark::compact::c0_deterministic_probe_mask();
     let (trace, commitment) = c0::build_masked_trace(secret, &mask);
     assert_eq!(commitment, expected);
     assert_eq!(trace[1][0], ZERO(), "C0 masked: row 0 col 1 must be 0");
@@ -488,7 +487,7 @@ pub fn check_semantics_1(w: &W1, data: &p01_stark::compact::GenericCompactProofD
     );
 
     let (trace, _, _) = denominated_pool::build_pool_commitment_trace(
-        f(w.nullifier_preimage), f(w.secret), f(w.deposit_epoch), f(w.token_mint), &p01_stark::compact::c1_deterministic_probe_mask().iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>());
+        f(w.nullifier_preimage), f(w.secret), f(w.deposit_epoch), f(w.token_mint), &p01_stark::compact::c1_deterministic_probe_mask());
     assert_eq!(trace[0][30], nullifier, "C1: boundary row 30 (nullifier)");
     assert_eq!(trace[0][94], commitment, "C1: boundary row 94 (commitment)");
     assert_eq!(trace[0][64], nullifier, "C1: cycle-2 left input must be the nullifier");
@@ -514,8 +513,7 @@ pub fn check_semantics_2(w: &W2, data: &p01_stark::compact::GenericCompactProofD
     assert_eq!(f(data.public_inputs[0]), commitment, "C2: commitment != the reference Poseidon chain");
     assert_eq!(data.public_inputs[1], w.token_mint, "C2: token_mint public input");
 
-    let mask: Vec<BaseElement> = p01_stark::compact::c2_deterministic_probe_mask()
-        .iter().map(|&v| BaseElement::new(v)).collect();
+    let mask = p01_stark::compact::c2_deterministic_probe_mask();
     let (trace, _) = balance_proof::build_balance_proof_trace(
         f(w.spending_key), f(w.balance), f(w.salt), f(w.token_mint), &mask,
     );
@@ -554,11 +552,7 @@ pub fn check_semantics_3(w: &W3, data: &p01_stark::compact::GenericCompactProofD
     // it against the proof's own public inputs, so prover and checker must draw
     // the same blinding region or every assertion below compares two different
     // traces. ⛔ It proves nothing about secrecy — only about SHAPE.
-    let mask: Vec<BaseElement> =
-        p01_stark::compact::c3_deterministic_probe_mask(w.path_elements.len())
-            .into_iter()
-            .map(f)
-            .collect();
+    let mask = p01_stark::compact::c3_deterministic_probe_mask(w.path_elements.len());
     let trace = merkle_path::build_merkle_trace(leaf, &elems, &w.path_indices, &mask);
     assert_eq!(trace[5][0], leaf, "C3: carry at row 0 must be the leaf");
 
@@ -615,7 +609,7 @@ pub fn check_semantics_4(w: &W4, data: &p01_stark::compact::GenericCompactProofD
     let (trace, _, _, _) = confidential_balance::build_confidential_balance_trace(
         f(w.spending_key), f(w.old_balance), f(w.old_salt), f(w.new_balance), f(w.new_salt),
         f(w.amount), f(w.amount_salt), f(w.token_mint),
-        &p01_stark::compact::c4_deterministic_probe_mask().iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>(),
+        &p01_stark::compact::c4_deterministic_probe_mask(),
     );
     assert_eq!(trace[0][94], amount_hash, "C4: boundary row 94 (amount_hash)");
     assert_eq!(trace[0][158], old_commitment, "C4: boundary row 158 (old_commitment)");
@@ -638,7 +632,7 @@ pub fn check_semantics_4(w: &W4, data: &p01_stark::compact::GenericCompactProofD
     for col in 0..cw {
         assert_eq!(
             trace[col][ffr],
-            BaseElement::new(mask[col]),
+            mask.as_slice()[col],
             "C4: row {ffr} of column {col} must be that column's first mask element -- the \
              blinding region starts at FIRST_FREE_ROW and is the mask verbatim",
         );
@@ -647,8 +641,8 @@ pub fn check_semantics_4(w: &W4, data: &p01_stark::compact::GenericCompactProofD
     // Rows 224 and 225 are two different MASK rows now, not a hash state and
     // its successor: the "cycle 7 right input is 0" and "real hash, not a
     // frozen copy" pins of the pre-mask C4 are retired with the padding cycle.
-    assert_eq!(trace[1][ffr], BaseElement::new(mask[1]), "C4: row 224 col 1 is the mask, not a zero right input");
-    assert_eq!(trace[0][ffr + 1], BaseElement::new(mask[cw]), "C4: row 225 is the second mask row, verbatim");
+    assert_eq!(trace[1][ffr], mask.as_slice()[1], "C4: row 224 col 1 is the mask, not a zero right input");
+    assert_eq!(trace[0][ffr + 1], mask.as_slice()[cw], "C4: row 225 is the second mask row, verbatim");
 
     sweep_transitions(
         "C4",
@@ -718,7 +712,7 @@ pub fn check_semantics_5(w: &W5, data: &p01_stark::compact::GenericCompactProofD
         amount: f(w.out_amount_2), recipient: f(w.out_recipient_2), randomness: f(w.out_rand_2),
     };
     let (trace, _, _, _, _, _, _) =
-        transfer::build_transfer_trace(sk, mint, &input_1, &input_2, &output_1, &output_2, &p01_stark::compact::c5_deterministic_probe_mask().iter().map(|&v| BaseElement::new(v)).collect::<Vec<_>>());
+        transfer::build_transfer_trace(sk, mint, &input_1, &input_2, &output_1, &output_2, &p01_stark::compact::c5_deterministic_probe_mask());
 
     assert_eq!(trace[0][158], nullifier_1, "C5: boundary row 158 (nullifier_1)");
     assert_eq!(trace[0][254], nullifier_2, "C5: boundary row 254 (nullifier_2)");
@@ -778,11 +772,7 @@ pub fn check_semantics_6(w: &W6, data: &p01_stark::compact::GenericCompactProofD
     // is the SHAPE: that the walk still lands where the boundary assertions say,
     // and that the transition sweep below still vanishes once 128 random rows
     // sit at the end of the trace.
-    let mask: Vec<BaseElement> =
-        p01_stark::compact::c6_deterministic_probe_mask(w.path_elements.len())
-            .into_iter()
-            .map(f)
-            .collect();
+    let mask = p01_stark::compact::c6_deterministic_probe_mask(w.path_elements.len());
     let trace = merkle_update::build_merkle_update_trace(
         old_leaf, new_leaf, &elems, &w.path_indices, &mask,
     );
