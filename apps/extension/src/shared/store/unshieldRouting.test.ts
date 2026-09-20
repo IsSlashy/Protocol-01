@@ -39,7 +39,8 @@ const svc = vi.hoisted(() => ({
   unshieldDenominatedStarkV3: vi.fn(),
   prepareUnshieldV4: vi.fn(),
   unshieldDenominatedStarkV4: vi.fn(),
-  isNullifierSpent: vi.fn(),
+  fetchSpentNullifierSet: vi.fn(),
+  isNullifierSpentInSet: vi.fn(),
 }));
 
 /**
@@ -53,6 +54,16 @@ vi.mock('../services/denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/denominatedPool')>();
   return { ...actual, ...svc };
 });
+
+/**
+ * The pool-wide spent set the pre-flight reads since EXT-RPC (2026-09-16).
+ * Mocked because this file's connection has no methods: the point here is the
+ * DECISION, and `services/spentSet.test.ts` measures the request itself.
+ */
+vi.mock('../services/spentSet', () => ({
+  fetchSpentNullifierSet: (...a: unknown[]) => svc.fetchSpentNullifierSet(...a),
+  isNullifierSpentInSet: (...a: unknown[]) => svc.isNullifierSpentInSet(...a),
+}));
 
 /** No RPC in this file. `getConnection` returns an object with no methods, so
  *  any code path that tried to reach the network would throw, loudly. */
@@ -147,7 +158,8 @@ beforeEach(() => {
     _keypair: { placeholder: true } as never,
   });
   svc.findPoolV3.mockReturnValue(POOL);
-  svc.isNullifierSpent.mockResolvedValue(false);
+  svc.fetchSpentNullifierSet.mockResolvedValue(new Set<string>());
+  svc.isNullifierSpentInSet.mockReturnValue(false);
   svc.prepareUnshield.mockResolvedValue({ v3: 'prepared' });
   svc.unshieldDenominatedStarkV3.mockResolvedValue('SIG_V3');
   svc.prepareUnshieldV4.mockResolvedValue({ v4: 'prepared' });
@@ -167,7 +179,7 @@ describe('refusal 1 — the payee is the funder', () => {
    */
   it('refuses a blank recipient, because blank means the funding wallet', async () => {
     await expect(unshield()).rejects.toThrow(/Refusing to withdraw to the wallet that pays/);
-    expect(svc.isNullifierSpent).not.toHaveBeenCalled();
+    expect(svc.fetchSpentNullifierSet).not.toHaveBeenCalled();
     expect(svc.prepareUnshieldV4).not.toHaveBeenCalled();
     expect(svc.prepareUnshield).not.toHaveBeenCalled();
   });
@@ -249,11 +261,47 @@ describe('refusal 2 — a note circuit 7 would only appear to protect', () => {
     expect(steps.join(' | ')).toMatch(/falling back to the C1 \+ C3 pair/i);
   });
 
+  it('prints no deposit epoch to the console on the way to the pair', async () => {
+    // EXT-UI fix round 2: `whyCircuit7Cannot` put the epoch in its reason and
+    // the fallback printed that reason with `console.warn` on every pre-blinding
+    // spend (`wp-logs/verify/EXT-UI-r2-ext-full.log`). The epoch dates the
+    // deposit, so a console reader could narrow the leaf by time.
+    const methods = ['log', 'warn', 'error', 'info', 'debug'] as const;
+    const spies = methods.map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    try {
+      seedNote(EPOCH_BLINDED);
+      await unshield({ recipient: ELSEWHERE });
+      const printed = spies
+        .flatMap((s) => s.mock.calls)
+        .map((args) =>
+          args
+            .map((a) =>
+              a instanceof Error
+                ? a.message
+                : typeof a === 'string'
+                  ? a
+                  : JSON.stringify(a, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+            )
+            .join(' '),
+        )
+        .join('\n');
+      // Positive control: the fallback warning was printed and read here.
+      expect(printed).toMatch(/circuit 7 (could not prove|refused)/i);
+      expect(printed).not.toContain(EPOCH_BLINDED);
+    } finally {
+      for (const s of spies) s.mockRestore();
+    }
+  });
+
   it('states the reason, and it is the one the web twin states', () => {
     const why = whyCircuit7Cannot({ depositEpoch: BigInt(EPOCH_BLINDED) });
     expect(why).toMatch(/circuit 7 needs at least/);
     expect(why).toMatch(/predates commitment blinding/);
-    expect(why).toContain('67838');
+    // EXT-UI fix round 2: the reason is printed by `console.warn` on the way to
+    // the pair, so it names the kind of blinding and never the epoch itself
+    // (`wp-logs/verify/EXT-UI-r2-probe/epoch-probe.log`).
+    expect(why).toMatch(/deposit epoch/);
+    expect(why).not.toContain('67838');
     expect(whyCircuit7Cannot({ depositEpoch: BigInt(PRF_BLINDED) })).toBeNull();
   });
 
@@ -405,10 +453,13 @@ describe('refusal 3 — what prepareUnshieldV4 itself throws', () => {
 
 describe('the pre-flight both routes share', () => {
   it('refuses an already-spent note before either prepare', async () => {
-    // One getAccountInfo. Without it a double-spend attempt costs ~2 SOL of
+    // One pool-wide read, and membership decided on the device (EXT-RPC,
+    // 2026-09-16; it was one getAccountInfo on this note's PDA before, which
+    // named the note to the RPC before the spend that creates it). Without the
+    // pre-flight at all, a double-spend attempt costs ~2 SOL of
     // buffer rent and 2-3 minutes to learn what the on-chain guard says for
     // free. It was missing on this path entirely until 2026-08-26.
-    svc.isNullifierSpent.mockResolvedValue(true);
+    svc.isNullifierSpentInSet.mockReturnValue(true);
     await expect(unshield({ recipient: ELSEWHERE })).rejects.toThrow(/already been withdrawn/);
     expect(svc.prepareUnshieldV4).not.toHaveBeenCalled();
     expect(svc.prepareUnshield).not.toHaveBeenCalled();
@@ -416,7 +467,7 @@ describe('the pre-flight both routes share', () => {
 
   it('runs on the v3 route too, not only on circuit 7', async () => {
     seedNote(EPOCH_BLINDED);
-    svc.isNullifierSpent.mockResolvedValue(true);
+    svc.isNullifierSpentInSet.mockReturnValue(true);
     await expect(unshield({ recipient: ELSEWHERE })).rejects.toThrow(/already been withdrawn/);
     expect(svc.unshieldDenominatedStarkV3).not.toHaveBeenCalled();
   });

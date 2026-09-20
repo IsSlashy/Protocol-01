@@ -24,7 +24,8 @@ import { Keypair, PublicKey } from '@solana/web3.js';
 
 const svc = vi.hoisted(() => ({
   findPoolV3: vi.fn(),
-  isNullifierSpent: vi.fn(),
+  fetchSpentNullifierSet: vi.fn(),
+  isNullifierSpentInSet: vi.fn(),
   prepareUnshield: vi.fn(),
   prepareSubscribeV4: vi.fn(),
   subscribePrivateStarkV4: vi.fn(),
@@ -44,10 +45,14 @@ vi.mock('./denominatedPool', async (importOriginal) => {
   return {
     ...actual,
     findPoolV3: svc.findPoolV3,
-    isNullifierSpent: svc.isNullifierSpent,
     prepareUnshield: svc.prepareUnshield,
   };
 });
+/** The pool-wide spent set (what it asks the RPC is measured in spentSet.test.ts). */
+vi.mock('./spentSet', () => ({
+  fetchSpentNullifierSet: svc.fetchSpentNullifierSet,
+  isNullifierSpentInSet: svc.isNullifierSpentInSet,
+}));
 vi.mock('./subscribePrivateStarkV4', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./subscribePrivateStarkV4')>();
   return {
@@ -176,7 +181,8 @@ beforeEach(() => {
     _keypair: WALLET as never,
   });
   svc.findPoolV3.mockReturnValue(POOL);
-  svc.isNullifierSpent.mockResolvedValue(false);
+  svc.fetchSpentNullifierSet.mockResolvedValue(new Set<string>());
+  svc.isNullifierSpentInSet.mockReturnValue(false);
   svc.saveSecret.mockResolvedValue(undefined);
   svc.prepareSubscribeV4.mockResolvedValue({ v4: 'prepared' });
   svc.subscribePrivateStarkV4.mockResolvedValue({ txSig: 'SIG_V4', vaultPDA: POOL.poolPDA });
@@ -214,6 +220,37 @@ describe('the route is per note', () => {
     await subscribe(receipt(EPOCH_BLINDED), { onProgress: (s) => steps.push(s) });
     expect(steps.join(' | ')).toMatch(/falling back to the C1 \+ C3 pair/i);
     expect(steps.join(' | ')).toMatch(/will publish the note commitment/i);
+  });
+
+  it('prints no deposit epoch to the console on the way to the pair', async () => {
+    // EXT-UI fix round 2: `whyCircuit7Cannot` put the epoch in its reason and
+    // the fallback printed that reason with `console.warn` on every pre-blinding
+    // spend (`wp-logs/verify/EXT-UI-r2-ext-full.log`). The epoch dates the
+    // deposit, so a console reader could narrow the leaf by time.
+    const methods = ['log', 'warn', 'error', 'info', 'debug'] as const;
+    const spies = methods.map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    try {
+      await subscribe(receipt(EPOCH_BLINDED));
+      const printed = spies
+        .flatMap((s) => s.mock.calls)
+        .map((args) =>
+          args
+            .map((a) =>
+              a instanceof Error
+                ? a.message
+                : typeof a === 'string'
+                  ? a
+                  : JSON.stringify(a, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)),
+            )
+            .join(' '),
+        )
+        .join('\n');
+      // Positive control: the fallback warning was printed and read here.
+      expect(printed).toMatch(/circuit 7 (could not prove|refused)/i);
+      expect(printed).not.toContain(EPOCH_BLINDED.toString());
+    } finally {
+      for (const s of spies) s.mockRestore();
+    }
   });
 
   it('binds the terms BEFORE the proof: rate, interval, vk and vault reach prepare', async () => {
@@ -273,8 +310,8 @@ describe('what prepareSubscribeV4 itself throws', () => {
 
 describe('the pre-flights both routes share', () => {
   it('refuses an already-spent note before either prepare', async () => {
-    svc.isNullifierSpent.mockResolvedValue(true);
-    await expect(subscribe(receipt(PRF_BLINDED))).rejects.toThrow();
+    svc.isNullifierSpentInSet.mockReturnValue(true);
+    await expect(subscribe(receipt(PRF_BLINDED))).rejects.toThrow(/already been spent/);
     expect(svc.prepareSubscribeV4).not.toHaveBeenCalled();
     expect(svc.prepareUnshield).not.toHaveBeenCalled();
   });

@@ -461,7 +461,7 @@ export async function prepareSubscribeV4(
   );
   if (missing.length > 0) {
     console.warn(
-      `[Subscribe/ext-v4] prepareSubscribeV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`,
+      `[Subscribe/ext-v4] prepareSubscribeV4: ${missing.length} missing leaf gap(s)`,
     );
   }
 

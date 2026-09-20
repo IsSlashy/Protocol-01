@@ -45,12 +45,8 @@ import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { useSubscriptionVaultStore } from '@/shared/store/subscriptionVault';
 import { type SubscriptionInterval } from '@/shared/services/stream';
 import { getConnection, type NetworkType } from '@/shared/services/wallet';
-import {
-  findPoolV3,
-  createNullifierV3,
-  goldilocksU64To32,
-  deriveNullifierPDA,
-} from '@/shared/services/denominatedPool';
+import { findPoolV3 } from '@/shared/services/denominatedPool';
+import { fetchSpentNullifierSet, isNullifierSpentInSet } from '@/shared/services/spentSet';
 import { deriveVaultPDA } from '@/shared/services/subscriptionVault';
 import { starkProver } from '@/shared/services/starkProver';
 import { licenseKeyForPrivate, licenseServiceTag } from '@/shared/services/license';
@@ -382,34 +378,60 @@ export default function CreateSubscription() {
 
   // Spent-note scan: a denominated note is single-use (one note = one
   // subscription/withdrawal). After it's spent, its on-chain NullifierRecord
-  // PDA exists. The local store can go stale (e.g. spent on another device, or
-  // a tx that landed despite a client-side RPC timeout), so on mount we batch
-  // getMultipleAccountsInfo over every note's nullifier PDA and drop any that
-  // are already spent — otherwise one of them funds this screen and fails ~2min
-  // into the proof.
+  // PDA exists. The local store can go stale (spent on another device, or a tx
+  // that landed despite a client-side RPC timeout), so on mount we read the
+  // POOL'S spent set and drop any note already in it — otherwise one of them
+  // funds this screen and fails ~2 min into the proof.
+  //
+  // ⛔ THIS USED TO BATCH `getMultipleAccountsInfo` OVER EVERY NOTE'S NULLIFIER
+  // PDA. Those accounts do not exist yet — a nullifier is secret until its
+  // spend publishes it — so opening the popup handed the RPC provider a list of
+  // addresses that a later withdrawal would each create, and the provider can
+  // join on one to recover the device that asked. It is now ONE
+  // `getProgramAccounts` per pool, naming no note, with membership decided
+  // here. Pinned by `CreateSubscription.test.tsx` ("what the subscribe screen
+  // asks the RPC on mount") and `shared/services/spentSet.test.ts`.
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const notes = getNotes();
+      if (notes.length === 0) return;
+      const conn = getConnection(network);
+
+      // One read per POOL, not per note.
+      const groups = new Map<string, { poolPDA: PublicKey; notes: typeof notes }>();
+      for (const n of notes) {
+        const pool = findPoolV3(n.token, n.denominationHuman);
+        if (!pool) continue;
+        const key = pool.poolPDA.toBase58();
+        const group = groups.get(key);
+        if (group) group.notes.push(n);
+        else groups.set(key, { poolPDA: pool.poolPDA, notes: [n] });
+      }
+      if (groups.size === 0) return;
+
       try {
-        const notes = getNotes();
-        if (notes.length === 0) return;
-        const conn = getConnection(network);
-        const entries = notes
-          .map((n) => {
-            const pool = findPoolV3(n.token, n.denominationHuman);
-            if (!pool) return null;
-            const nul = createNullifierV3(n.nullifierPreimage, n.secret);
-            const [pda] = deriveNullifierPDA(pool.poolPDA, goldilocksU64To32(nul));
-            return { noteId: n.commitment.toString(), pda };
-          })
-          .filter((e): e is { noteId: string; pda: PublicKey } => e !== null);
-        if (entries.length === 0) return;
-        const infos = await conn.getMultipleAccountsInfo(entries.map((e) => e.pda));
-        if (cancelled) return;
-        infos.forEach((info, i) => {
-          if (info !== null) removeNote(entries[i].noteId);
-        });
-      } catch { /* best-effort — fail-fast in subscribePrivate still guards */ }
+        for (const group of groups.values()) {
+          const spent = await fetchSpentNullifierSet(conn, group.poolPDA);
+          if (cancelled) return;
+          for (const n of group.notes) {
+            if (isNullifierSpentInSet(spent, group.poolPDA, n.nullifierPreimage, n.secret)) {
+              removeNote(n.commitment.toString());
+            }
+          }
+        }
+      } catch {
+        // FAIL CLOSED, AND SAY SO. The old code swallowed this and carried on
+        // as though every note were live. No note is dropped on a failed read
+        // either: a read that did not happen is not evidence that a note is
+        // gone, and for an imported note this store holds the only copy.
+        if (!cancelled) {
+          fail(
+            'Could not check which notes are already spent. Check your connection ' +
+              'and reopen this screen.',
+          );
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, [network]);

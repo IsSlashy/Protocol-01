@@ -56,6 +56,7 @@ import { cn } from '@/shared/utils';
 import { useDenominatedPoolStore, whyCircuit7Cannot } from '@/shared/store/denominatedPool';
 import { useWalletStore } from '@/shared/store/wallet';
 import { Amount, Button, EmptyState, Field, Panel, Pill, Screen } from '@/popup/ui';
+import { NoteName } from '@/popup/components/NoteName';
 
 type Mode = 'regular' | 'emergency';
 
@@ -200,9 +201,7 @@ export default function DenominatedUnshield() {
           <Panel tone="quiet">
             <div className="flex items-center justify-between gap-3">
               <Amount value={selectedNote.denominationHuman} unit={selectedNote.token} size="sm" />
-              <span className="font-mono text-tiny text-p01-text-dim">
-                leaf {selectedNote.leafIndex}
-              </span>
+              <NoteName note={selectedNote} className="text-tiny text-p01-text-dim" />
             </div>
           </Panel>
         ) : (
@@ -231,9 +230,7 @@ export default function DenominatedUnshield() {
                       <Amount value={note.denominationHuman} unit={note.token} size="sm" />
                       {note.source === 'received' && <Pill>Received</Pill>}
                     </span>
-                    <span className="shrink-0 font-mono text-tiny text-p01-text-dim">
-                      leaf {note.leafIndex}
-                    </span>
+                    <NoteName note={note} className="shrink-0 text-tiny text-p01-text-dim" />
                   </button>
                 );
               })}

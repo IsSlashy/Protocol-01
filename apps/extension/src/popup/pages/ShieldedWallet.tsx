@@ -29,11 +29,12 @@ import { useShieldedStore } from '@/shared/store/shielded';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { useConfidentialStore } from '@/shared/store/confidential';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
-import { noteMaturity, type SlotInfo } from '@/shared/services/maturity';
+import { NoteName } from '@/popup/components/NoteName';
+import type { TaggableNote } from '@/shared/services/noteLabel';
 
 export default function ShieldedWallet() {
   const navigate = useNavigate();
-  const { publicKey, solBalance, network } = useWalletStore();
+  const { publicKey, solBalance } = useWalletStore();
   const {
     isInitialized,
     isLoading,
@@ -71,41 +72,22 @@ export default function ShieldedWallet() {
   const denomBalanceSol = denomNotes
     .filter((n) => n.token === 'SOL')
     .reduce((sum, n) => sum + n.denominationHuman, 0);
+  // A row is named by the tag of the note's secrets, never by its leaf index,
+  // a commitment prefix or a countdown off its deposit epoch: all three are
+  // published by the deposit. A legacy `zk:` note has no nullifier preimage, so
+  // `name` is null and the row shows its amount alone. The mount no longer reads
+  // the slot either. Pinned by `ShieldedWallet.test.tsx` ("a note is named by
+  // its tag, not by its place in the tree").
   const displayNotes = [
     ...denomNotes.map((n) => ({
       label: `${n.denominationHuman} ${n.token}`,
-      index: n.leafIndex as number | undefined,
-      tag: String(n.commitment ?? '').slice(0, 8),
-      depositEpoch: n.depositEpoch ? BigInt(n.depositEpoch) : undefined,
+      name: n as TaggableNote | null,
     })),
     ...notes.map((n) => ({
       label: `${(Number(n.amount) / 1e9).toFixed(4)} SOL`,
-      index: n.leafIndex as number | undefined,
-      tag: String(n.commitment ?? '').slice(0, 8),
-      depositEpoch: undefined as bigint | undefined,
+      name: null as TaggableNote | null,
     })),
   ];
-
-  // Live, ticking maturity countdown — same logic as the subscribe picker
-  // (shared/services/maturity.ts): fetch the slot once, extrapolate by
-  // wall-clock, and tick every second so the "Matures in …" label counts down.
-  const [slotInfo, setSlotInfo] = useState<SlotInfo | null>(null);
-  const [nowTs, setNowTs] = useState(() => Date.now());
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const { getConnection } = await import('@/shared/services/wallet');
-        const slot = await getConnection(network).getSlot('confirmed');
-        if (alive) setSlotInfo({ slot, at: Date.now() });
-      } catch { /* leave null → countdown hidden */ }
-    })();
-    return () => { alive = false; };
-  }, [network]);
-  useEffect(() => {
-    const id = setInterval(() => setNowTs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
 
   // This wallet's post-quantum receive address (X25519 + ML-KEM-768), derived
   // from the local seed. Safe to share; senders encrypt notes to it.
@@ -184,7 +166,9 @@ export default function ShieldedWallet() {
       } else {
         setSyncResult({
           success: false,
-          message: `Root mismatch! Local: ${result.localRoot.slice(0, 20)}... On-chain: ${result.onChainRoot.slice(0, 20)}...`
+          // Role words, no root values (EXT-UI fix round 2; ShieldedWallet.test.tsx,
+          // "a failed sync names neither tree root on screen").
+          message: 'Root mismatch: the local tree does not match the pool.'
         });
       }
     } catch (err) {
@@ -616,9 +600,6 @@ export default function ShieldedWallet() {
             ) : (
               <div className="divide-y divide-p01-border/50">
                 {displayNotes.slice(0, 5).map((note, index) => {
-                  const mat = note.depositEpoch !== undefined
-                    ? noteMaturity(note.depositEpoch, slotInfo, nowTs)
-                    : null;
                   return (
                   <div key={index} className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -629,22 +610,11 @@ export default function ShieldedWallet() {
                         <p className="text-p01-text font-medium font-mono">
                           {showBalance ? note.label : '****'}
                         </p>
-                        <p className="text-p01-chrome text-xs">
-                          Index: {note.index ?? 'pending'}
-                        </p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-p01-chrome/60 text-xs font-mono">
-                        {note.tag}
-                      </p>
-                      {mat && mat.label && (
-                        <p className={cn(
-                          'text-[10px] font-mono mt-0.5',
-                          mat.ready ? 'text-p01-cyan' : 'text-yellow-400',
-                        )}>
-                          {mat.ready ? '✓ Mature' : `🔒 ${mat.label}`}
-                        </p>
+                      {note.name && (
+                        <NoteName note={note.name} className="text-p01-chrome/60 text-xs" />
                       )}
                     </div>
                   </div>

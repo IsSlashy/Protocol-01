@@ -22,11 +22,26 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import ShieldedWallet from './ShieldedWallet';
+import { noteTag } from '@/shared/services/noteTag';
 
 const mockNavigate = vi.fn();
+const mockGetSlot = vi.fn(() => Promise.resolve(10_000_000));
+const mockGetConnection = vi.fn(() => ({ getSlot: mockGetSlot }));
+
+/**
+ * The RPC, doubled so a request can be COUNTED. The page used to fetch the
+ * current slot on mount to drive a "Matures in …" countdown off each note's
+ * deposit epoch; EXT-UI removed both. Spreading the real module keeps every
+ * other export intact — the confidential store is not mocked in this file and
+ * imports from here.
+ */
+vi.mock('@/shared/services/wallet', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/shared/services/wallet')>();
+  return { ...actual, getConnection: (...args: unknown[]) => mockGetConnection(...(args as [])) };
+});
 const mockInitialize = vi.fn(() => Promise.resolve());
 const mockShield = vi.fn(() => Promise.resolve());
 const mockUnshield = vi.fn(() => Promise.resolve());
@@ -55,25 +70,33 @@ vi.mock('@/shared/store/wallet', () => ({
   }),
 }));
 
+/**
+ * The legacy `zk:` notes. The default pair is what every older case expects; the
+ * EXT-UI fix-round-1 cases below swap in notes with distinctive commitments and
+ * leaf indices, and put the default back after each.
+ */
+const defaultLegacyNotes = () => [
+  {
+    amount: BigInt(1_500_000_000).toString(),
+    commitment: 'commitment_hash_1',
+    nullifier: 'nullifier_1',
+    leafIndex: 0,
+  },
+  {
+    amount: BigInt(1_000_000_000).toString(),
+    commitment: 'commitment_hash_2',
+    nullifier: 'nullifier_2',
+    leafIndex: 1,
+  },
+];
+let legacyNotes: Array<Record<string, unknown>> = defaultLegacyNotes();
+
 vi.mock('@/shared/store/shielded', () => ({
   useShieldedStore: () => ({
     isInitialized: true,
     isLoading: false,
     shieldedBalance: 2.5,
-    notes: [
-      {
-        amount: BigInt(1_500_000_000).toString(),
-        commitment: 'commitment_hash_1',
-        nullifier: 'nullifier_1',
-        leafIndex: 0,
-      },
-      {
-        amount: BigInt(1_000_000_000).toString(),
-        commitment: 'commitment_hash_2',
-        nullifier: 'nullifier_2',
-        leafIndex: 1,
-      },
-    ],
+    notes: legacyNotes,
     zkAddress: 'zk:0x1234567890abcdef...',
     pendingTransactions: [],
     initialize: mockInitialize,
@@ -94,7 +117,7 @@ vi.mock('@/shared/store/shielded', () => ({
  * assertion about the Transfer button measured the empty case by accident. That
  * matters here: Transfer's destination used to depend on this list.
  */
-let denomNotes: Array<{ token: string; denominationHuman: number }> = [];
+let denomNotes: Array<Record<string, unknown>> = [];
 vi.mock('@/shared/store/denominatedPool', () => {
   const store = (selector?: (s: unknown) => unknown) => {
     const state = { serializedNotes: denomNotes, getMyNoteAddress: () => null };
@@ -398,5 +421,218 @@ describe('ShieldedWallet', () => {
     );
 
     expect(mockInitialize).toHaveBeenCalled();
+  });
+});
+
+/**
+ * WHAT THE FUNDS LIST CALLS A NOTE.
+ *
+ * Each row used to read `Index: {note.index}` with the head of the note's
+ * commitment beside it, and a countdown computed from its deposit epoch. All
+ * three are values the deposit published: the index and the commitment appear in
+ * the pool's `LeafInserted` event, and the epoch dates it. A screenshot of this
+ * list therefore named the deposits. Rows are now named by the tag of the note's
+ * secrets (`shared/services/noteLabel.ts`, `noteLabel.test.ts`).
+ *
+ * The canary cases pin one spelling of one value. The invariance case is the one
+ * that holds the property: two notes that differ ONLY in what a chain reader can
+ * see must render the same text, whatever the row is later rewritten to print.
+ * It carries a positive control (a pair differing in the amount must differ) so
+ * that a render which stopped producing text cannot pass it.
+ */
+describe('ShieldedWallet — a note is named by its tag, not by its place in the tree', () => {
+  const POOL = '6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS';
+  /** The canary the plan names. */
+  const CANARY_LEAF = 987654;
+  /** Its head, "13579135", is what a commitment prefix would show. */
+  const CANARY_COMMITMENT = '1357913579135791357';
+
+  /** A note in the shape the STORE persists: decimal strings, not bigints. */
+  const storedNote = (over: Record<string, unknown> = {}) => ({
+    secret: '3141592653589793238462643383279502884197169399375105820974944592',
+    nullifierPreimage: '2718281828459045235360287471352662497757247093699959574966967627',
+    depositEpoch: '7284991002338477113',
+    tokenMint: '0',
+    commitment: CANARY_COMMITMENT,
+    leafIndex: CANARY_LEAF,
+    denomination: '1000000000',
+    pool: POOL,
+    token: 'SOL',
+    denominationHuman: 1,
+    shieldedAt: 1_700_000_000_000,
+    ...over,
+  });
+
+  const tagOf = (n: Record<string, unknown>) =>
+    noteTag({
+      pool: n.pool as string,
+      secret: n.secret as string,
+      nullifierPreimage: n.nullifierPreimage as string,
+    }).text;
+
+  const view = () =>
+    render(
+      <MemoryRouter>
+        <ShieldedWallet />
+      </MemoryRouter>,
+    );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    denomNotes = [];
+  });
+
+  it('shows the tag and neither the leaf index nor the commitment', () => {
+    const note = storedNote();
+    denomNotes = [note];
+    const { container } = view();
+    const text = container.textContent ?? '';
+
+    expect(text).toContain(tagOf(note));
+    expect(text).not.toContain(String(CANARY_LEAF));
+    expect(text).not.toContain('13579135');
+    expect(text).not.toContain('Index:');
+  });
+
+  /**
+   * Legacy notes with digits no other text on this screen carries. The first
+   * version of this case used the double's `commitment_hash_1`, whose 8-character
+   * prefix ("commitme") never contains the string it looked for, so a row that
+   * put the prefix back passed (round-1 verifier, mutants L1b and L2b in
+   * `wp-logs/verify/EXT-UI-r1-mut/mutants.log`).
+   */
+  const LEGACY_A = { commitment: '8642086420864208642', nullifier: '7531975319753197531', leafIndex: 555333 };
+  const LEGACY_B = { commitment: '2718271827182718271', nullifier: '3141531415314153141', leafIndex: 777111 };
+  const legacy = (
+    a: Record<string, unknown>,
+    b: Record<string, unknown>,
+    amounts: [bigint, bigint] = [1_500_000_000n, 1_000_000_000n],
+  ) => [
+    { amount: amounts[0].toString(), ...a },
+    { amount: amounts[1].toString(), ...b },
+  ];
+  const windows = (s: string, n = 8) =>
+    Array.from({ length: Math.max(0, s.length - n + 1) }, (_, k) => s.slice(k, k + n));
+
+  it('shows a legacy zk note by its amount alone', () => {
+    // A legacy note has a commitment and a leaf index and no nullifier
+    // preimage, so there is nothing to compute a tag from — and neither may
+    // stand in for one, whole or in part.
+    denomNotes = [];
+    legacyNotes = legacy(LEGACY_A, LEGACY_B);
+    try {
+      const { container } = view();
+      const text = container.textContent ?? '';
+
+      expect(text).toContain('1.5000 SOL');
+      expect(text).toContain('1.0000 SOL');
+      for (const n of [LEGACY_A, LEGACY_B]) {
+        for (const w of windows(n.commitment)) expect(text).not.toContain(w);
+        for (const w of windows(n.nullifier)) expect(text).not.toContain(w);
+        expect(text).not.toContain(String(n.leafIndex));
+      }
+      expect(text).not.toContain('Index:');
+    } finally {
+      legacyNotes = defaultLegacyNotes();
+    }
+  });
+
+  it('renders the same text for two legacy lists that differ only in commitment, nullifier and leaf', () => {
+    denomNotes = [];
+    try {
+      legacyNotes = legacy(LEGACY_A, LEGACY_B);
+      const first = view();
+      const textA = first.container.textContent ?? '';
+      const htmlA = first.container.innerHTML;
+      first.unmount();
+
+      legacyNotes = legacy(
+        { commitment: '1111122222333334444', nullifier: '5555566666777778888', leafIndex: 3 },
+        { commitment: '9999988888777776666', nullifier: '4444433333222221111', leafIndex: 4 },
+      );
+      const second = view();
+      const textB = second.container.textContent ?? '';
+      const htmlB = second.container.innerHTML;
+      second.unmount();
+
+      expect(textB).toBe(textA);
+      // Attributes too: a leaf in a title, an aria-label or a colour derived from it
+      // changes no text (EXT-UI fix round 2, wp-logs/EXT-UI-fix2/mutants.log).
+      expect(htmlB).toBe(htmlA);
+
+      // Positive control: a different amount on the SECOND legacy row must show.
+      legacyNotes = legacy(LEGACY_A, LEGACY_B, [1_500_000_000n, 2_000_000_000n]);
+      const third = view();
+      expect(third.container.textContent ?? '').not.toBe(textA);
+    } finally {
+      legacyNotes = defaultLegacyNotes();
+    }
+  });
+
+  it('renders the same text for two notes that differ only in leaf, commitment and shield time', () => {
+    denomNotes = [storedNote()];
+    const first = view();
+    const textA = first.container.textContent ?? '';
+    const htmlA = first.container.innerHTML;
+    first.unmount();
+
+    denomNotes = [
+      storedNote({
+        leafIndex: 12,
+        commitment: '9999999999999999999',
+        shieldedAt: 1_500_000_000_000,
+        depositEpoch: '1618033988749894848204586834365638117720',
+      }),
+    ];
+    const second = view();
+    const textB = second.container.textContent ?? '';
+    const htmlB = second.container.innerHTML;
+    second.unmount();
+
+    expect(textB).toBe(textA);
+    // Attributes too: a leaf in a title, an aria-label or a colour derived from it
+    // changes no text (EXT-UI fix round 2, wp-logs/EXT-UI-fix2/mutants.log).
+    expect(htmlB).toBe(htmlA);
+
+    // Positive control: the comparison still sees a real difference.
+    denomNotes = [storedNote({ denominationHuman: 10, denomination: '10000000000' })];
+    const third = view();
+    expect(third.container.textContent ?? '').not.toBe(textA);
+  });
+
+  it('asks the chain for nothing, and dates no note on screen', async () => {
+    // The mount used to fetch the current slot to tick a countdown off the
+    // note's deposit epoch — a chain read on a screen that needs none, and a
+    // deposit time on a screen that should carry none.
+    denomNotes = [storedNote({ depositEpoch: '67838' })];
+    const { container } = view();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockGetConnection).not.toHaveBeenCalled();
+    expect(mockGetSlot).not.toHaveBeenCalled();
+    expect(container.textContent ?? '').not.toMatch(/Matur|Ready|✓/);
+  });
+
+  it('a failed sync names neither tree root on screen', async () => {
+    // EXT-UI fix round 2: the mismatch toast printed a 20-character prefix of
+    // the local and the on-chain root (`wp-logs/verify/EXT-UI-r2-verdict.log`).
+    const LOCAL = '4242424242424242424242424242424242';
+    const ON_CHAIN = '8383838383838383838383838383838383';
+    mockSyncFromBlockchain.mockResolvedValueOnce({
+      success: false,
+      localRoot: LOCAL,
+      onChainRoot: ON_CHAIN,
+    });
+    view();
+    fireEvent.click(screen.getByRole('button', { name: /Sync from blockchain/i }));
+    const status = await screen.findByRole('status');
+
+    // Positive control: the failure did reach the screen.
+    expect(status.textContent ?? '').toMatch(/mismatch|does not match/i);
+    for (const root of [LOCAL, ON_CHAIN]) {
+      for (const w of windows(root)) expect(status.textContent ?? '').not.toContain(w);
+    }
   });
 });

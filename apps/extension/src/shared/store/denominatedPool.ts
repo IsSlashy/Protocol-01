@@ -25,13 +25,13 @@ import {
   unshieldDenominatedStarkV3,
   prepareUnshieldV4,
   unshieldDenominatedStarkV4,
-  isNullifierSpent,
   V4Unprovable,
   prepareTransfer,
   transferDenominatedStarkV3,
   importNote,
   shareableNoteToReceipt,
 } from '../services/denominatedPool';
+import { fetchSpentNullifierSet, isNullifierSpentInSet } from '../services/spentSet';
 import {
   decryptNote,
   createNoteEncryptionAddress,
@@ -149,8 +149,11 @@ export function whyCircuit7Cannot(receipt: Pick<ShieldReceipt, 'depositEpoch'>):
     // needs at least` included, so a reader diffing the two surfaces sees one
     // design. ⚠️ Nothing here ROUTES on the wording — see `V4Unprovable`.
     return (
+      // The epoch itself stays out of this text: it dates the deposit, and the
+      // reason is printed to the console on the way to the pair (EXT-UI fix
+      // round 2; `store/unshieldRouting.test.ts`, "prints no deposit epoch").
       'circuit 7 needs at least a randomised blinding, and this note carries its deposit ' +
-      `epoch (${receipt.depositEpoch}) instead — it predates commitment blinding. Proving ` +
+      'epoch instead — it predates commitment blinding. Proving ' +
       'it on circuit 7 would hide the commitment while leaving the leaf recoverable from ' +
       'the published nullifier by trying a few thousand epochs, which is worse than the ' +
       'C1 + C3 pair only in that it looks private. Falling back to the pair.'
@@ -632,7 +635,9 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const notes = get().getNotes();
         const receipt = notes.find((n) => n.commitment.toString() === noteId);
         if (!receipt) {
-          throw new Error(`Note ${noteId} not found in store`);
+          // noteId is the commitment; the screens render this message.
+          // Pinned by the error-carries-note-value rule in noteIdentifierScan.test.ts.
+          throw new Error('This note is no longer in the wallet');
         }
 
         const { signer, connection } = createWalletSigner();
@@ -716,16 +721,32 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
 
           // ── PRE-FLIGHT: IS THE NOTE ALREADY SPENT? ──────────────────────
           //
-          // One `getAccountInfo` against the nullifier PDA, no proof. On BOTH
-          // routes, not just circuit 7 — this was missing entirely before, and a
-          // double-spend attempt therefore cost ~2 SOL of buffer rent and 2-3
-          // minutes of proving to learn what the on-chain guard would have said
-          // for free. `transferNote` in this same store has carried its balance
-          // and maturity pre-flights for exactly this reason; the withdrawal had
-          // neither.
+          // The POOL'S spent set, in ONE `getProgramAccounts` that names no
+          // note, and then membership decided here. On BOTH routes, not just
+          // circuit 7 — this was missing entirely before, and a double-spend
+          // attempt therefore cost ~2 SOL of buffer rent and 2-3 minutes of
+          // proving to learn what the on-chain guard would have said for free.
+          //
+          // ⛔ IT USED TO BE ONE `getAccountInfo` ON THIS NOTE'S NULLIFIER PDA,
+          // seconds before the withdrawal that creates it. That account does not
+          // exist yet, so the request was a promise about the future: whoever
+          // served it can join it to the spend that follows. On the RELAYED
+          // route the spend arrives from another IP, which makes that pre-query
+          // the one thing tying the withdrawal back to this wallet. Pinned by
+          // `services/spentSet.test.ts` ("the unshield pre-flight reads
+          // pool-wide and fails closed").
+          //
+          // ⛔ AND IT THROWS RATHER THAN GUESSING. An unreadable pool must stop
+          // the withdrawal: treating it as "nothing is spent" is how a note gets
+          // proved twice. The note is kept, because a read that failed is not
+          // evidence that it is gone.
           onProgress?.('Checking the note is unspent...');
-          const spent = await isNullifierSpent(
+          const spentNullifiers = await fetchSpentNullifierSet(
             connection,
+            poolConfig.poolPDA,
+          );
+          const spent = isNullifierSpentInSet(
+            spentNullifiers,
             poolConfig.poolPDA,
             receipt.nullifierPreimage,
             receipt.secret,
@@ -770,14 +791,14 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
               // same realm, so `instanceof` survives and cannot be broken by
               // rewording a message.
               if (!(err instanceof V4Unprovable)) throw err;
+              console.warn('[DenomPool/ext] circuit 7 refused this note:', err.message);
               v4Refusal = err.message;
             }
           }
           if (v4Refusal !== null) {
             console.warn(
               '[DenomPool/ext] circuit 7 could not prove this note; falling back to the ' +
-                'C1 + C3 pair, which publishes the note commitment:',
-              v4Refusal,
+                'C1 + C3 pair, which publishes the note commitment.',
             );
             // The user is TOLD the withdrawal became the linkable kind. A silent
             // downgrade is the failure mode this whole change exists to avoid.
@@ -840,7 +861,8 @@ export const useDenominatedPoolStore = create<DenominatedPoolState>()(
         const notes = get().getNotes();
         const receipt = notes.find((n) => n.commitment.toString() === noteId);
         if (!receipt) {
-          throw new Error(`Note ${noteId} not found in store`);
+          // Same rule as unshieldNote above (noteIdentifierScan.test.ts).
+          throw new Error('This note is no longer in the wallet');
         }
 
         const poolConfig: PoolConfig | undefined = findPoolV3(receipt.token, receipt.denominationHuman);

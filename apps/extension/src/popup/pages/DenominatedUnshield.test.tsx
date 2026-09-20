@@ -20,10 +20,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import DenominatedUnshield from './DenominatedUnshield';
+import { noteTag } from '@/shared/services/noteTag';
 
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
@@ -61,6 +62,17 @@ vi.mock('@/shared/store/wallet', () => ({
   useWalletStore: () => ({ publicKey: WALLET }),
 }));
 
+/** The 1 SOL V3 pool, which is the pool a note's tag is computed against. */
+const POOL = '6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS';
+
+/**
+ * The secrets a note carries on the wire. Synthetic, never a real note: they are
+ * the vector TAG-0 pinned (`apps/web/lib/privacy/pool/fixtures/noteTagVector.json`),
+ * so the tag these fixtures produce is the one three clients agree on.
+ */
+const SECRET = 3_141_592_653_589_793_238n;
+const NULLIFIER_PREIMAGE = 2_718_281_828_459_045_235n;
+
 /** MEASURED 2026-08-26: the live epoch is slot/7200 = 67,838. Five digits. */
 function preBlindingNote() {
   return {
@@ -71,6 +83,9 @@ function preBlindingNote() {
     denominationHuman: 1,
     token: 'SOL' as const,
     shieldedAt: Date.now() - 86_400_000,
+    pool: POOL,
+    secret: SECRET,
+    nullifierPreimage: NULLIFIER_PREIMAGE,
   };
 }
 
@@ -84,6 +99,9 @@ function blindedNote() {
     denominationHuman: 1,
     token: 'SOL' as const,
     shieldedAt: Date.now() - 86_400_000,
+    pool: POOL,
+    secret: SECRET + 1n,
+    nullifierPreimage: NULLIFIER_PREIMAGE,
   };
 }
 
@@ -189,5 +207,193 @@ describe('the recipient field, now that blank is a refused value', () => {
       noteId: 'note-blinded',
       recipient: ELSEWHERE,
     });
+  });
+});
+
+/**
+ * WHAT THIS SCREEN CALLS A NOTE.
+ *
+ * The picker read `leaf {note.leafIndex}` (lines 204 and 235 before EXT-UI). The
+ * leaf index is the position of the deposit that created the note, published by
+ * the pool's `LeafInserted` event together with the wallet that paid for it and
+ * the slot it landed in — so a screenshot of this screen, or a support ticket
+ * with one attached, named the deposit. Rows are now named by the tag of the
+ * note's secrets (`shared/services/noteLabel.ts`, `noteLabel.test.ts`).
+ *
+ * The invariance case is what carries the property: two notes that differ only
+ * in what a chain reader can already see must render the same text. A canary
+ * pins one value; this fails for any value derived from the leaf, the commitment
+ * or the shield time, however it is later spelled. Its positive control is a
+ * pair that differs in the amount and must therefore render differently.
+ */
+describe('the note is named by its tag, not by its leaf', () => {
+  /** The canary the plan names, and a commitment whose head would show as a prefix. */
+  const CANARY_LEAF = 987654;
+  const CANARY_COMMITMENT = '1357913579135791357';
+
+  const canaryNote = (over: Record<string, unknown> = {}) => ({
+    ...blindedNote(),
+    commitment: { toString: () => CANARY_COMMITMENT },
+    leafIndex: CANARY_LEAF,
+    ...over,
+  });
+
+  const tagOf = (n: { pool: string; secret: bigint; nullifierPreimage: bigint }) =>
+    noteTag({ pool: n.pool, secret: n.secret, nullifierPreimage: n.nullifierPreimage }).text;
+
+  it('one note: the tag is on screen and the leaf is not', () => {
+    const only = canaryNote();
+    notes = [only];
+    const { container } = view();
+    const text = container.textContent ?? '';
+
+    expect(text).toContain(tagOf(only));
+    expect(text).not.toContain(String(CANARY_LEAF));
+    expect(text).not.toContain('13579135');
+    expect(text).not.toMatch(/leaf\s*#?\s*\d/i);
+  });
+
+  it('several notes: every row is named, and the names differ', () => {
+    const a = canaryNote();
+    const b = canaryNote({
+      commitment: { toString: () => 'note-other' },
+      leafIndex: 424242,
+      secret: SECRET + 7n,
+    });
+    notes = [a, b];
+    const { container } = view();
+    const text = container.textContent ?? '';
+
+    expect(text).toContain(tagOf(a));
+    expect(text).toContain(tagOf(b as never));
+    expect(tagOf(a)).not.toBe(tagOf(b as never));
+    expect(text).not.toContain(String(CANARY_LEAF));
+    expect(text).not.toContain('424242');
+    expect(text).not.toMatch(/leaf\s*#?\s*\d/i);
+  });
+
+  it('renders the same text for two notes that differ only in leaf, commitment and shield time', () => {
+    notes = [canaryNote()];
+    const first = view();
+    const textA = first.container.textContent ?? '';
+    const htmlA = first.container.innerHTML;
+    first.unmount();
+
+    notes = [
+      canaryNote({
+        commitment: { toString: () => '9999999999999999999' },
+        leafIndex: 12,
+        shieldedAt: Date.now() - 172_800_000,
+      }),
+    ];
+    const second = view();
+    const textB = second.container.textContent ?? '';
+    const htmlB = second.container.innerHTML;
+    second.unmount();
+
+    expect(textB).toBe(textA);
+    // Attributes too: a leaf in a title, an aria-label or a colour derived from it
+    // changes no text (EXT-UI fix round 2, wp-logs/EXT-UI-fix2/mutants.log).
+    expect(htmlB).toBe(htmlA);
+
+    // Positive control: the comparison can still see a difference.
+    notes = [canaryNote({ denominationHuman: 10, denomination: 10_000_000_000n })];
+    const third = view();
+    expect(third.container.textContent ?? '').not.toBe(textA);
+  });
+});
+
+/**
+ * THE PICKER ROWS, NOT ONLY THE SINGLE-NOTE PANEL (EXT-UI fix round 1).
+ *
+ * The invariance case above renders ONE note, so it only walks the
+ * `notes.length === 1` panel. The round-1 verifier added a commitment suffix and
+ * `#${leafIndex % 1000}` to the multi-note rows and every test stayed green
+ * (`wp-logs/verify/EXT-UI-r1-mut/mutants.log`, U1 and U2). This case renders two
+ * notes, then the same two with only their leaf, commitment and shield time
+ * changed, and asks for the same text.
+ */
+describe('the picker rows are named by their tag, not by their leaf', () => {
+  const pair = (world: 'a' | 'b', over: Record<string, unknown> = {}) => [
+    {
+      ...blindedNote(),
+      commitment: { toString: () => (world === 'a' ? '1357913579135791357' : '8642086420864208642') },
+      leafIndex: world === 'a' ? 987654 : 555333,
+      shieldedAt: world === 'a' ? 1_700_000_000_000 : 1_500_000_000_000,
+    },
+    {
+      ...blindedNote(),
+      secret: SECRET + 7n,
+      commitment: { toString: () => (world === 'a' ? '2468024680246802468' : '9753197531975319753') },
+      leafIndex: world === 'a' ? 424242 : 131313,
+      shieldedAt: world === 'a' ? 1_700_000_100_000 : 1_500_000_100_000,
+      ...over,
+    },
+  ];
+
+  it('renders the same text for two note lists that differ only in leaf, commitment and shield time', () => {
+    notes = pair('a');
+    const first = view();
+    const textA = first.container.textContent ?? '';
+    const htmlA = first.container.innerHTML;
+    first.unmount();
+
+    notes = pair('b');
+    const second = view();
+    const textB = second.container.textContent ?? '';
+    const htmlB = second.container.innerHTML;
+    second.unmount();
+
+    expect(textB).toBe(textA);
+    // Attributes too: a leaf in a title, an aria-label or a colour derived from it
+    // changes no text (EXT-UI fix round 2, wp-logs/EXT-UI-fix2/mutants.log).
+    expect(htmlB).toBe(htmlA);
+
+    // Positive control: the rows, not only the panel, are read — a change in the
+    // SECOND row's amount must show.
+    notes = pair('a', { denominationHuman: 10, denomination: 10_000_000_000n });
+    const third = view();
+    expect(
+      within(screen.getByRole('radiogroup', { name: /Note to withdraw/i })).getAllByRole('radio'),
+    ).toHaveLength(2);
+    expect(third.container.textContent ?? '').not.toBe(textA);
+  });
+});
+
+/**
+ * AN ERROR ON THE WAY TO A WITHDRAWAL NAMES NO LEAF (EXT-UI fix round 1).
+ *
+ * The screen renders `err.message` (`setError`, the `role="alert"` line). On a
+ * note older than the fetched history, `buildMerkleProofFromLeavesV3` threw
+ * "target leafIndex 987654 not found …", which put the user's own leaf number on
+ * screen (`wp-logs/verify/EXT-UI-r1-closure-probe.log`). The store is a double,
+ * so the error is produced by calling the REAL function with that note's leaf
+ * missing from the history; only its delivery through the store is doubled.
+ */
+describe('an error on the way to a withdrawal names no leaf', () => {
+  it('shows the history error in words, without the leaf number', async () => {
+    const { buildMerkleProofFromLeavesV3 } = await vi.importActual<
+      typeof import('@/shared/services/denominatedPool')
+    >('@/shared/services/denominatedPool');
+    let thrown: unknown;
+    try {
+      buildMerkleProofFromLeavesV3({ leavesByIndex: [11n, 22n, 33n], targetLeafIndex: 987654 });
+    } catch (e) {
+      thrown = e;
+    }
+    // Rethrown as itself if the harness is wrong, never wrapped in an assertion.
+    if (!(thrown instanceof Error)) throw new Error('harness: the real function did not throw');
+    mockUnshieldNote.mockRejectedValue(thrown);
+
+    notes = [{ ...blindedNote(), leafIndex: 987654 }];
+    view();
+    fireEvent.change(screen.getByLabelText(/Send to/i), { target: { value: ELSEWHERE } });
+    fireEvent.click(screen.getByRole('button', { name: /Withdraw 1 SOL/i }));
+
+    const alert = await screen.findByRole('alert');
+    // Positive control: the real message IS what reached the screen.
+    expect(alert.textContent).toBe(thrown.message);
+    expect(alert.textContent).not.toContain('987654');
+    expect(alert.textContent).not.toMatch(/leaf\s*(index)?\s*#?\s*\d/i);
   });
 });

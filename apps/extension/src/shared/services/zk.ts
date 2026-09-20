@@ -811,14 +811,12 @@ export class ZkServiceExtension {
       if (result.zk_tree_leaves) {
         const rawTreeLeaves = JSON.parse(result.zk_tree_leaves) as string[];
         const U64_MAX = 1n << 64n;
-        const treeLeaves = rawTreeLeaves.filter((s) => {
-          const v = BigInt(s);
-          if (v >= U64_MAX) {
-            console.warn('[ZK] Dropping legacy BN254 tree leaf (re-shield required):', s);
-            return false;
-          }
-          return true;
-        });
+        // The stored leaf is not printed, only how many were dropped. Pinned by
+        // the console-carries-a-value rule in noteIdentifierScan.test.ts.
+        const treeLeaves = rawTreeLeaves.filter((s) => BigInt(s) < U64_MAX);
+        if (treeLeaves.length < rawTreeLeaves.length) {
+          console.warn(`[ZK] Dropped ${rawTreeLeaves.length - treeLeaves.length} legacy BN254 tree leaves (re-shield required)`);
+        }
 
         for (const leafStr of treeLeaves) {
           this.merkleTree.insert(BigInt(leafStr));
@@ -853,7 +851,7 @@ export class ZkServiceExtension {
             }))
             .filter((note: Note) => {
               if (note.commitment >= U64_MAX) {
-                console.warn('[ZK] Dropping legacy BN254 note (re-shield required):', note.commitment.toString());
+                console.warn('[ZK] Dropping a legacy BN254 note (re-shield required)');
                 return false;
               }
               return true;
@@ -866,7 +864,7 @@ export class ZkServiceExtension {
                 const commitmentStr = note.commitment.toString();
                 const correctIndex = treeLeavesSet.get(commitmentStr);
                 if (correctIndex !== undefined && correctIndex !== note.leafIndex) {
-                  console.warn(`[ZK] Correcting note leaf index: ${note.leafIndex} -> ${correctIndex}`);
+                  console.warn('[ZK] Correcting a note position from the local tree');
                   note.leafIndex = correctIndex;
                 }
               }
@@ -893,7 +891,7 @@ export class ZkServiceExtension {
             }))
             .filter((note: Note) => {
               if (note.commitment >= U64_MAX) {
-                console.warn('[ZK] Dropping legacy BN254 note (re-shield required):', note.commitment.toString());
+                console.warn('[ZK] Dropping a legacy BN254 note (re-shield required)');
                 return false;
               }
               return true;
@@ -1118,10 +1116,9 @@ export class ZkServiceExtension {
 
         if (!ixData) {
           if (isShield || isUnshield || isTransfer) {
-            console.warn('[ZK Sync] Failed to extract ix data for',
+            console.warn('[ZK Sync] Failed to extract ix data for a',
               isShield ? 'Shield' : isUnshield ? 'Unshield' : 'Transfer',
-              'tx:', signature.slice(0, 16) + '...',
-              'leafIndex:', leafIndex, 'transferIndices:', transferIndices);
+              'transaction');
           }
           continue;
         }
@@ -1174,7 +1171,7 @@ export class ZkServiceExtension {
     for (let i = 0; i < onChainLeafCount; i++) {
       const commitment = commitmentMap.get(i);
       if (!commitment) {
-        throw new Error(`Missing commitment at index ${i} - cannot rebuild tree`);
+        throw new Error('A commitment is missing from the fetched history - cannot rebuild tree');
       }
       commitments.push(commitment);
     }
@@ -1203,7 +1200,7 @@ export class ZkServiceExtension {
         }
       }
     } catch (e) {
-      console.warn('[ZK Sync] Could not compare commitments:', e);
+      console.warn('[ZK Sync] Could not compare the stored tree with the chain:', e);
     }
 
     // Rebuild Merkle tree
@@ -1218,8 +1215,6 @@ export class ZkServiceExtension {
     if (rootMatches) {
     } else {
       console.warn('[ZK Sync] ⚠️ Root mismatch detected - on-chain root is stale');
-      console.warn('[ZK Sync] Correct tree root:', newTree.root.toString());
-      console.warn('[ZK Sync] Stale on-chain root:', onChainRoot.toString());
       console.warn('[ZK Sync] Updating local tree with correct data');
       console.warn('[ZK Sync] 💡 To fix on-chain root: Shield a small amount (0.001 SOL)');
       console.warn('[ZK Sync] This will update on-chain root to the correct value');
@@ -1434,7 +1429,7 @@ export class ZkServiceExtension {
         );
 
         if (computedCommitment !== note.commitment) {
-          console.warn('[ZK Import] Skipping note with invalid commitment');
+          console.warn('[ZK Import] Skipping a note that does not verify');
           skipped++;
           continue;
         }
@@ -1457,9 +1452,7 @@ export class ZkServiceExtension {
           if (treeCommitment === note.commitment) {
             foundIndex = note.leafIndex;
           } else {
-            console.warn(`[ZK Import] Commitment mismatch at claimed index ${note.leafIndex}, searching tree...`);
-            console.warn(`[ZK Import] Claimed: ${note.commitment}`);
-            console.warn(`[ZK Import] At idx:  ${treeCommitment}`);
+            console.warn('[ZK Import] The claimed position does not match, searching the tree...');
           }
         }
 

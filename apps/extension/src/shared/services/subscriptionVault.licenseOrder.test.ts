@@ -51,7 +51,8 @@ const h = vi.hoisted(() => ({
   submitAndVerifyStarkProof: vi.fn(),
   closeStarkProofBuffer: vi.fn(),
   prepareUnshield: vi.fn(),
-  isNullifierSpent: vi.fn(),
+  fetchSpentNullifierSet: vi.fn(),
+  isNullifierSpentInSet: vi.fn(),
   findPoolV3: vi.fn(),
   confirmTransaction: vi.fn(),
   walletState: { publicKey: null as string | null, _keypair: null as unknown, network: 'devnet' },
@@ -67,16 +68,21 @@ vi.mock('./stark', async (importOriginal) => {
   };
 });
 
-/** Same: the real pool module, with proving and the two RPC lookups stubbed. */
+/** Same: the real pool module, with proving and the pool lookup stubbed. */
 vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
     ...actual,
     prepareUnshield: h.prepareUnshield,
-    isNullifierSpent: h.isNullifierSpent,
     findPoolV3: h.findPoolV3,
   };
 });
+
+/** The pool-wide spent set; what it asks the RPC is measured in spentSet.test.ts. */
+vi.mock('./spentSet', () => ({
+  fetchSpentNullifierSet: h.fetchSpentNullifierSet,
+  isNullifierSpentInSet: h.isNullifierSpentInSet,
+}));
 
 vi.mock('../store/wallet', () => ({
   useWalletStore: { getState: () => h.walletState },
@@ -187,7 +193,8 @@ beforeEach(() => {
     treePDA: TREE_PDA,
     version: 'v3',
   });
-  h.isNullifierSpent.mockResolvedValue(false);
+  h.fetchSpentNullifierSet.mockResolvedValue(new Set<string>());
+  h.isNullifierSpentInSet.mockReturnValue(false);
   h.prepareUnshield.mockResolvedValue({
     c1ProofResult: proofResult,
     c3ProofResult: proofResult,

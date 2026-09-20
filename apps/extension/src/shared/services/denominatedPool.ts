@@ -637,30 +637,10 @@ export function deriveNullifierPDA(
   );
 }
 
-/**
- * Check whether a note has already been spent (subscribed or unshielded) by
- * looking up its on-chain NullifierRecord PDA at
- * [b"nullifier", pool, goldilocksU64To32(nullifier)].
- *
- * Cheap pre-flight: a single getAccountInfo, no proof. Lets callers fail fast
- * instead of burning a ~2-minute STARK proof + buffer rent on a note the
- * on-chain double-spend guard would reject anyway (subscribe_private_stark
- * inits the NullifierRecord, so a live record => "Allocate ... already in use").
- * The nullifier value is recomputed locally via `createNullifierV3` (identical
- * to the C1 public input), so no proof generation is needed.
- */
-export async function isNullifierSpent(
-  connection: Connection,
-  poolPDA: PublicKey,
-  nullifierPreimage: bigint,
-  secret: bigint,
-): Promise<boolean> {
-  const nullifier = createNullifierV3(nullifierPreimage, secret);
-  const nullifierBytes = goldilocksU64To32(nullifier);
-  const [nullifierPDA] = deriveNullifierPDA(poolPDA, nullifierBytes);
-  const info = await connection.getAccountInfo(nullifierPDA);
-  return info !== null;
-}
+// The per-note spent check (`isNullifierSpent`, one getAccountInfo on the
+// note's own nullifier PDA) was removed 2026-09-16: it named a note to the RPC
+// before its spend. Use `spentSet.ts` (`fetchSpentNullifierSet` +
+// `isNullifierSpentInSet`), pinned by `services/spentSet.test.ts`.
 
 // ---------------------------------------------------------------------------
 // goldilocksU64To32 (mirrors mobile/subscriptionVault line 44 + extension)
@@ -1048,8 +1028,8 @@ export async function prepareShieldInsert(
   } else {
     throw new Error(
       `Shield pre-flight failed: cannot reconstruct the on-chain Merkle root ` +
-      `(${onChainRoot}) from the pool's filled_subtrees for leaf #${leafCount}. ` +
-      `Neither layout matched (direct=${oldRootDirect}, shifted=${oldRootSliced}). ` +
+      `from the pool's filled_subtrees for the next leaf. ` +
+      `Neither layout (direct or shifted) matched. ` +
       `The tree state has diverged from this client — refusing to burn proof rent ` +
       `on a guaranteed InvalidProof. Retry shortly; if it persists the pool tree ` +
       `was advanced by an incompatible client.`,
@@ -1493,10 +1473,14 @@ export function buildMerkleProofFromLeavesV3(params: {
     leavesByIndex[targetLeafIndex] === undefined ||
     leavesByIndex[targetLeafIndex] === ZERO_VALUE_V3
   ) {
+    // Role words and a count only: the pages render this message (setError), and
+    // the leaf number names the deposit. Pinned by DenominatedUnshield.test.tsx
+    // ("an error on the way to a withdrawal names no leaf") and the
+    // error-carries-note-value rule in noteIdentifierScan.test.ts.
+    const nonEmpty = leavesByIndex.filter((l) => l !== undefined && l !== ZERO_VALUE_V3);
     throw new Error(
-      `buildMerkleProofFromLeavesV3: target leafIndex ${targetLeafIndex} not found ` +
-      `among ${leavesByIndex.filter((l) => l !== undefined && l !== ZERO_VALUE_V3).length} non-empty leaves. ` +
-      `Try increasing maxSignatures or check that the note's leafIndex is correct.`,
+      `This note's leaf was not found among the ${nonEmpty.length} non-empty leaves fetched from the pool history. ` +
+      `The history may be truncated (raise maxSignatures), or the note's stored position is wrong.`,
     );
   }
 
@@ -1706,7 +1690,7 @@ export async function prepareUnshield(
   );
 
   if (missing.length > 0) {
-    console.warn(`[DenomPool/ext] prepareUnshield: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+    console.warn(`[DenomPool/ext] prepareUnshield: ${missing.length} missing leaf gap(s)`);
   }
 
   onProgress?.('Building Merkle proof from leaf history...');
@@ -1739,9 +1723,8 @@ export async function prepareUnshield(
         const retryInCurrent = bytesEqual(retryRootBytes, parsed.currentRoot);
         const retryInHist = parsed.historicalRoots.some((r) => bytesEqual(retryRootBytes, r));
         if (!retryInCurrent && !retryInHist) {
-          const hex = (u: Uint8Array) => Array.from(u).map((b) => b.toString(16).padStart(2, '0')).join('');
           throw new Error(
-            `PRE-FLIGHT FAIL: Rebuilt Merkle root 0x${hex(retryRootBytes).slice(0, 24)}… ` +
+            `PRE-FLIGHT FAIL: the rebuilt Merkle root ` +
             `is not in pool's known roots (current + ${parsed.historicalRoots.length} historical). ` +
             `This would burn STARK proof rent (~2 SOL). Aborting. ` +
             `Wait ~10s for RPC to index recent transactions, then retry.`,
@@ -2211,7 +2194,7 @@ export async function prepareUnshieldV4(
     { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
   );
   if (missing.length > 0) {
-    console.warn(`[DenomPool/ext-v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+    console.warn(`[DenomPool/ext-v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s)`);
   }
 
   onProgress?.('Building Merkle proof from leaf history...');
@@ -2743,8 +2726,8 @@ export async function prepareTransfer(
   } else {
     throw new Error(
       `Transfer pre-flight failed: cannot reconstruct the on-chain Merkle root ` +
-      `(${onChainRoot}) from the pool's filled_subtrees for leaf #${leafCount} ` +
-      `(direct=${oldRootDirect}, shifted=${oldRootSliced}). Refusing to burn C6 ` +
+      `from the pool's filled_subtrees for the next leaf ` +
+      `(neither the direct nor the shifted layout matched). Refusing to burn C6 ` +
       `proof rent on a guaranteed InvalidProof — retry shortly.`,
     );
   }

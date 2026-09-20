@@ -58,7 +58,6 @@ import { starkProver } from './starkProver';
 import {
   deriveNullifierPDA,
   goldilocksToLeBytes32,
-  isNullifierSpent,
   prepareUnshield,
   findPoolV3,
   CIRCUIT_MERKLE_PATH,
@@ -66,6 +65,7 @@ import {
   type ShieldReceipt,
   type PoolConfig,
 } from './denominatedPool';
+import { fetchSpentNullifierSet, isNullifierSpentInSet } from './spentSet';
 import { whyCircuit7Cannot } from '../store/denominatedPool';
 import {
   prepareSubscribeV4,
@@ -972,10 +972,19 @@ export async function subscribePrivate(params: {
   // Fail-fast: a note is single-use. If its nullifier record already exists
   // on-chain (prior subscribe/unshield), subscribe_private_stark will reject
   // it with "Allocate ... already in use" — but only AFTER we've spent ~2min
-  // generating + uploading the proofs. Check the (cheap) nullifier PDA first.
+  // generating + uploading the proofs.
+  //
+  // ⛔ ASK THE POOL, NEVER THIS NOTE'S PDA. A per-note getAccountInfo seconds
+  // before a spend whose v4 send may be relayed from another IP hands the RPC
+  // the join between this device and that spend. The pool-wide read names no
+  // note, membership is decided on the device, and a failed read THROWS, so
+  // nothing is proved on a note we could not check. Pinned by
+  // `services/spentSet.test.ts` ("the subscribe pre-flight reads pool-wide and
+  // fails closed").
   onProgress?.('Checking note is unspent...');
-  const alreadySpent = await isNullifierSpent(
-    connection,
+  const spentSet = await fetchSpentNullifierSet(connection, poolPDA);
+  const alreadySpent = isNullifierSpentInSet(
+    spentSet,
     poolPDA,
     receipt.nullifierPreimage,
     receipt.secret,
@@ -1091,7 +1100,9 @@ export async function subscribePrivate(params: {
     onProgress?.(
       'Falling back to the C1 + C3 pair (this subscription will publish the note commitment).',
     );
-    console.warn('[SubscriptionVault] circuit 7 refused:', v4Refusal);
+    // A fixed phrase, not `v4Refusal`: the console carries no note value
+    // (`noteIdentifierScan.test.ts`, strict console rule; `subscribeRouting.test.ts`).
+    console.warn('[SubscriptionVault] circuit 7 refused: the note carries a legacy blinding.');
   }
 
   if (preparedV4 !== null) {
@@ -1512,7 +1523,7 @@ export async function fetchAllVaults(walletPubkey: string): Promise<VaultInfo[]>
         const vault = parseVaultAccount(dataBuffer, vaultPubkey.toBase58());
         vaults.push(vault);
       } catch (error) {
-        console.error('[SubscriptionVault] Failed to parse vault:', vaultPubkey.toBase58(), error);
+        console.error('[SubscriptionVault] Failed to parse a vault account:', error);
       }
     }
 

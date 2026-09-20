@@ -54,6 +54,7 @@ import { cn, copyToClipboard } from '@/shared/utils';
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
 import { isNoteEncryptionAddress } from '@/shared/services/noteCrypto';
 import { Amount, Button, EmptyState, Panel, Pill, Screen } from '@/popup/ui';
+import { NoteName } from '@/popup/components/NoteName';
 
 export default function DenominatedTransfer() {
   const navigate = useNavigate();
@@ -248,9 +249,7 @@ export default function DenominatedTransfer() {
                 <Amount value={selectedNote.denominationHuman} unit={selectedNote.token} size="sm" />
                 {selectedNote.source === 'received' && <Pill>Received</Pill>}
               </span>
-              <span className="font-mono text-tiny text-p01-text-dim">
-                leaf {selectedNote.leafIndex}
-              </span>
+              <NoteName note={selectedNote} className="text-tiny text-p01-text-dim" />
             </div>
           </Panel>
         ) : (
@@ -279,9 +278,7 @@ export default function DenominatedTransfer() {
                       <Amount value={note.denominationHuman} unit={note.token} size="sm" />
                       {note.source === 'received' && <Pill>Received</Pill>}
                     </span>
-                    <span className="shrink-0 font-mono text-tiny text-p01-text-dim">
-                      leaf {note.leafIndex}
-                    </span>
+                    <NoteName note={note} className="shrink-0 text-tiny text-p01-text-dim" />
                   </button>
                 );
               })}
