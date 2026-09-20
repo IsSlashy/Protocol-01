@@ -1,9 +1,10 @@
 import React from 'react';
 import { Composition } from 'remotion';
 import { StyxPitch, STYX_PITCH_FRAMES } from './StyxPitch';
+import { StyxSpeed, STYX_SPEED_FRAMES } from './speed/StyxSpeed';
 
 /**
- * One film.
+ * Two films.
  *
  * This project used to hold eight compositions: five weekly or launch updates, a
  * Colosseum pitch cut in April, and an intro sting. Every event they were made
@@ -12,19 +13,32 @@ import { StyxPitch, STYX_PITCH_FRAMES } from './StyxPitch';
  * Their rendered files are what survives them, and git has the source if a cut
  * ever needs to be reproduced.
  *
- * Render with `pnpm render:styx`. Never `remotion render` directly: a single-pass
- * 4K/60fps render bluescreens this machine with 0x1A MEMORY_MANAGEMENT, which is
- * the whole reason scripts/render-chunked.mjs exists.
+ * StyxSpeed (2026-09-13) is the public announcement of the September timings:
+ * words and figures in src/speed/copy.ts, backgrounds in public/speed/.
+ *
+ * Render with `pnpm render:styx` or `pnpm render:speed`. Never `remotion render`
+ * directly: a single-pass 4K/60fps render bluescreens this machine with 0x1A
+ * MEMORY_MANAGEMENT, which is the whole reason scripts/render-chunked.mjs exists.
  */
 export const RemotionRoot: React.FC = () => {
   return (
-    <Composition
-      id="StyxPitch"
-      component={StyxPitch}
-      durationInFrames={STYX_PITCH_FRAMES}
-      fps={60}
-      width={3840}
-      height={2160}
-    />
+    <>
+      <Composition
+        id="StyxPitch"
+        component={StyxPitch}
+        durationInFrames={STYX_PITCH_FRAMES}
+        fps={60}
+        width={3840}
+        height={2160}
+      />
+      <Composition
+        id="StyxSpeed"
+        component={StyxSpeed}
+        durationInFrames={STYX_SPEED_FRAMES}
+        fps={60}
+        width={3840}
+        height={2160}
+      />
+    </>
   );
 };

@@ -40,6 +40,23 @@ if (!compositionId || !output) {
   process.exit(1);
 }
 
+/* ffmpeg and ffprobe: the machine's own if it has them on PATH, otherwise the
+   pair Remotion ships in its compositor package. Measured 2026-09-13: a full
+   2,700-frame render finished all six chunks and then died on
+   "'ffmpeg' n'est pas reconnu", because nothing outside Remotion had ever
+   installed one here. */
+function resolveTool(name) {
+  const probe = spawnSync(name, ['-version'], { stdio: 'ignore', shell: true });
+  if (probe.status === 0) return name;
+  const shipped = resolve(
+    appRoot, '../../node_modules/@remotion/compositor-win32-x64-msvc', `${name}.exe`,
+  );
+  if (existsSync(shipped)) return `"${shipped}"`;
+  throw new Error(`${name} not found on PATH nor in Remotion's compositor package`);
+}
+const FFMPEG = resolveTool('ffmpeg');
+const FFPROBE = resolveTool('ffprobe');
+
 const chunkSize = Number(flags.chunk ?? 500);
 const gl = String(flags.gl ?? 'angle');
 /* Every composition in this project is 60fps. It is needed at the remux step to
@@ -203,7 +220,7 @@ mkdirSync(dirname(outputPath), { recursive: true });
 
 const rawPath = join(partsDir, 'concat.h264');
 const toRaw = spawnSync(
-  'ffmpeg',
+  FFMPEG,
   [
     '-y', '-f', 'concat', '-safe', '0', '-i', concatFile,
     '-c', 'copy', '-bsf:v', 'h264_mp4toannexb',
@@ -240,11 +257,17 @@ if (audioFile) {
     console.error(`audio file not found: ${audioPath}`);
     process.exit(1);
   }
-  const fadeOutStart = Math.max(0, videoSeconds - fadeSeconds).toFixed(3);
+  /* One `volume` filter with a per-frame expression, not `afade`: Remotion's
+     bundled ffmpeg (the one this script falls back to) is built with a short
+     filter allowlist that has `volume` and not `afade`, and failed the remux
+     with "Filter not found" on 2026-09-13. The expression is the same curve:
+     linear up over fadeSeconds, hold at the gain, linear down into the end. */
+  const D = videoSeconds.toFixed(3);
+  const F = fadeSeconds;
   remuxArgs.push(
     '-i', audioPath,
     '-filter:a',
-    `volume=${audioGain},afade=t=in:st=0:d=${fadeSeconds},afade=t=out:st=${fadeOutStart}:d=${fadeSeconds}`,
+    `"volume='${audioGain}*min(1\\,t/${F})*min(1\\,max(0\\,(${D}-t)/${F}))':eval=frame"`,
     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
     /* An explicit duration, NOT -shortest.
        -shortest produced `audio:0KiB`, a declared aac stream with nothing in it.
@@ -259,7 +282,7 @@ if (audioFile) {
 }
 remuxArgs.push('-movflags', '+faststart', outputPath);
 
-const concat = spawnSync('ffmpeg', remuxArgs, { stdio: 'inherit', shell: true });
+const concat = spawnSync(FFMPEG, remuxArgs, { stdio: 'inherit', shell: true });
 if (concat.status !== 0) {
   console.error('ffmpeg remux failed');
   process.exit(concat.status ?? 1);
@@ -268,7 +291,7 @@ if (concat.status !== 0) {
 /* Refuse to report success on a file whose clock disagrees with its frames. That
    is the defect this rewrite exists for, and it was invisible for one render. */
 const probe = spawnSync(
-  'ffprobe',
+  FFPROBE,
   ['-v', 'error', '-select_streams', 'v:0',
    '-show_entries', 'stream=nb_frames,pix_fmt,color_range',
    '-show_entries', 'format=duration',
@@ -309,7 +332,7 @@ if (pixFmt === 'yuvj420p' || range === 'pc') {
    audio track and every player plays as silence. Costed three test cycles. */
 if (audioFile) {
   const aprobe = spawnSync(
-    'ffprobe',
+    FFPROBE,
     ['-v', 'error', '-select_streams', 'a:0',
      '-show_entries', 'stream=codec_name,channels',
      '-of', 'default=noprint_wrappers=1:nokey=1', outputPath],
@@ -317,7 +340,7 @@ if (audioFile) {
   );
   const audioOk = /\S/.test(String(aprobe.stdout || ''));
   const size = spawnSync(
-    'ffprobe',
+    FFPROBE,
     ['-v', 'error', '-select_streams', 'a:0', '-show_entries', 'packet=size',
      '-read_intervals', '%+2', '-of', 'csv=p=0', outputPath],
     { encoding: 'utf8', shell: true },

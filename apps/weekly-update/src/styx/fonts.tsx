@@ -2,11 +2,16 @@ import React, { useEffect, useState } from 'react';
 import { continueRender, delayRender, staticFile } from 'remotion';
 
 /**
- * Newsreader, loaded from public/fonts rather than from a CDN.
+ * Newsreader, Inter and JetBrains Mono, loaded from public/fonts rather than
+ * from a CDN.
  *
  * Local on purpose: a render runs headless, so a network fetch is one more thing
  * that can silently fail into a fallback face, and @remotion/fonts is not
- * installed, so this avoids a dependency for one typeface.
+ * installed, so this avoids a dependency for three typefaces. Inter and
+ * JetBrains Mono are the latin subsets the printed design document embeds
+ * (docs/_styx-print-fonts.css); neither is installed on the render machine, and
+ * before 2026-09-13 the sans and mono lines were silently set in Segoe UI and
+ * Consolas.
  *
  * WHY THIS IS A COMPONENT AND NOT A MODULE SIDE EFFECT. The first version called
  * `delayRender()` at module scope, which is the old Remotion 3 pattern. It
@@ -25,7 +30,7 @@ import { continueRender, delayRender, staticFile } from 'remotion';
  * Mount it once, at the top of the composition, above everything that draws type.
  */
 export const StyxFonts: React.FC = () => {
-  const [handle] = useState(() => delayRender('Loading Newsreader'));
+  const [handle] = useState(() => delayRender('Loading Styx fonts'));
 
   useEffect(() => {
     const faces = [
@@ -39,6 +44,16 @@ export const StyxFonts: React.FC = () => {
         `url(${staticFile('fonts/newsreader-latin-italic.woff2')}) format('woff2')`,
         { weight: '200 800', style: 'italic', display: 'block' },
       ),
+      new FontFace('Inter', `url(${staticFile('fonts/inter.woff2')}) format('woff2')`, {
+        weight: '100 900',
+        style: 'normal',
+        display: 'block',
+      }),
+      new FontFace(
+        'JetBrains Mono',
+        `url(${staticFile('fonts/jetbrains-mono.woff2')}) format('woff2')`,
+        { weight: '100 800', style: 'normal', display: 'block' },
+      ),
     ];
 
     let cancelled = false;
@@ -50,7 +65,7 @@ export const StyxFonts: React.FC = () => {
         if (!cancelled) continueRender(handle);
       })
       .catch((err) => {
-        console.error('Newsreader failed to load, rendering in the fallback serif', err);
+        console.error('A Styx font failed to load, rendering in the fallback face', err);
         if (!cancelled) continueRender(handle);
       });
 
