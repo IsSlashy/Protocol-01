@@ -5,8 +5,14 @@
   <h2>Accepting a proof has one cost. Refusing has two.</h2>
 
   <p>
-    Verification is a Solana program, not a service. The verifier runs on devnet
-    as 840,168 bytes of BPF, deployed 4 August 2026, and it does the work itself:
+    Verification is a Solana program, not a service. When this section was
+    measured the verifier ran on devnet as 840,168 bytes of BPF, deployed
+    4 August 2026; it was redeployed on 12 September 2026 (slot 497235406,
+    801,457 bytes) with blinding masks on all eight circuits, and that build's
+    per-circuit acceptance transactions and compute figures are in
+    BENCHMARK-2026-09-13 §6 (circuit 7: 890,643 compute units, both phases in
+    one transaction). The 4 August figures below stay as measured. The program
+    does the work itself:
     the SHA&#8209;256 transcript, the DEEP composition, and every FRI fold. Solana has
     no proof precompile, so there is nothing to delegate to and no off&#8209;chain
     step to trust.

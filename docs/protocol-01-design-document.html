@@ -761,7 +761,7 @@ pre {
     <tr><td>Round constants</td><td>90, byte&#8209;identical as an ordered list between prover and verifier</td></tr>
     <tr><td>Proof tree hash</td><td>SHA&#8209;256, 32&#8209;byte nodes, leaf tag <span class="mono">0x00</span>, node tag <span class="mono">0x01</span></td></tr>
     <tr><td>FRI</td><td>Blowup 16, fold factor 2, terminal polynomial of 16 coefficients, degree bound 1</td></tr>
-    <tr><td>Queries</td><td>27 on circuits 0, 1, 2 and 4; 22 on circuits 3, 5 and 6; 22 bits of grinding</td></tr>
+    <tr><td>Queries</td><td>27 on circuits 0, 1, 2 and 4; 22 on circuits 3, 5, 6 and 7; 22 bits of grinding</td></tr>
     <tr><td>Trace</td><td>Committed on a multiplicative coset, shift <span class="mono">h = 7</span>, at no extra wire bytes</td></tr>
   </table>
   <p class="note" style="margin-top:2mm;">
@@ -777,7 +777,7 @@ pre {
         SHA&#8209;256 of <span class="mono">0x01</span> and its two children, so no
         node preimage is ever a valid leaf preimage. The tag lives in the preimage,
         never on the wire: it cost 16,194 to 32,960 compute units across the seven
-        circuits and changed no proof size.
+        circuits measured at the time (circuit 7 came later) and changed no proof size.
       </p>
     </div>
     <div>
@@ -900,8 +900,14 @@ pre {
   <h2>Accepting a proof has one cost. Refusing has two.</h2>
 
   <p>
-    Verification is a Solana program, not a service. The verifier runs on devnet
-    as 840,168 bytes of BPF, deployed 4 August 2026, and it does the work itself:
+    Verification is a Solana program, not a service. When this section was
+    measured the verifier ran on devnet as 840,168 bytes of BPF, deployed
+    4 August 2026; it was redeployed on 12 September 2026 (slot 497235406,
+    801,457 bytes) with blinding masks on all eight circuits, and that build's
+    per-circuit acceptance transactions and compute figures are in
+    BENCHMARK-2026-09-13 §6 (circuit 7: 890,643 compute units, both phases in
+    one transaction). The 4 August figures below stay as measured. The program
+    does the work itself:
     the SHA&#8209;256 transcript, the DEEP composition, and every FRI fold. Solana has
     no proof precompile, so there is nothing to delegate to and no off&#8209;chain
     step to trust.
@@ -1224,12 +1230,12 @@ pre {
   <div class="headrule"></div>
 
   <div class="eyebrow">Programs on devnet</div>
-  <h2>Eight programs are live at the address they declare.</h2>
+  <h2>Four programs carry the product. Six resolve at the address they declare.</h2>
 
   <p class="lede">
-    Fifteen program directories sit in the repository. Eight of them resolve to an
+    Ten program directories sit in the repository. Six of them resolve to an
     executable devnet account at the exact address their own declare_id! names,
-    each with a live programData record, read on 11 August 2026.
+    read on 14 September 2026. Four of those six are on the path a payment takes.
   </p>
 
   <table>
@@ -1240,67 +1246,67 @@ pre {
       <col style="width:20mm">
     </colgroup>
     <thead>
-      <tr><th>Program</th><th>Program id</th><th>Role</th><th>Success</th></tr>
+      <tr><th>Program</th><th>Program id</th><th>Role</th><th>Path</th></tr>
     </thead>
     <tbody>
       <tr>
         <td class="m">zk_shielded</td>
         <td class="m">GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c</td>
-        <td>Shielded pool and notes</td>
-        <td class="n">2026-08-06</td>
+        <td>Shielded pool, notes, private subscriptions and withdrawals</td>
+        <td class="n">product</td>
       </tr>
       <tr>
         <td class="m">p01_stark_verifier</td>
         <td class="m">DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs</td>
-        <td>Verifies STARK proofs</td>
-        <td class="n">2026-08-06</td>
-      </tr>
-      <tr>
-        <td class="m">p01_relayer</td>
-        <td class="m">2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW</td>
-        <td>Relay jobs and heartbeat</td>
-        <td class="n">2026-08-11</td>
-      </tr>
-      <tr>
-        <td class="m">specter</td>
-        <td class="m">FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL</td>
-        <td>Stealth payment accounts</td>
-        <td class="n">2026-07-24</td>
+        <td>Verifies STARK proofs; redeployed 12 September 2026, slot 497235406, 801,457 bytes</td>
+        <td class="n">product</td>
       </tr>
       <tr>
         <td class="m">p01_registry</td>
         <td class="m">QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB</td>
         <td>Stealth keys and merchants</td>
-        <td class="n">2026-08-04</td>
+        <td class="n">product</td>
       </tr>
       <tr>
-        <td class="m">p01_quantum_vault</td>
-        <td class="m">9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv</td>
-        <td>Winternitz withdrawals</td>
-        <td class="n">2026-04-16</td>
+        <td class="m">p01_relayer</td>
+        <td class="m">2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW</td>
+        <td>Relay jobs and heartbeat</td>
+        <td class="n">product</td>
       </tr>
       <tr>
-        <td class="m">p01_quantum_wallet</td>
-        <td class="m">D7RBAFcMq2gGddwFvabZKuJB1eWZFvESVrcJ3i15FFtz</td>
-        <td>STARK-gated custody PDA</td>
-        <td class="n faint">not read</td>
+        <td class="m">p01_arcium</td>
+        <td class="m">FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT</td>
+        <td>MPC bridge; no client calls it</td>
+        <td class="n faint">off path</td>
       </tr>
       <tr>
-        <td class="m">p01-fee-splitter</td>
-        <td class="m">UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM</td>
-        <td>Fee split on a transfer</td>
-        <td class="n faint">not read</td>
+        <td class="m">p01_liquidity</td>
+        <td class="m">6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg</td>
+        <td>Instant-unshield liquidity pool</td>
+        <td class="n faint">off path</td>
       </tr>
     </tbody>
   </table>
 
   <p class="note">
-    Success is a successful invocation read from the chain on that date, and for
-    the first five it is the newest one. The vault figure is its 2026-04-16
-    Winternitz withdrawal; the last two were not measured. Anchor.toml disagrees
-    with four of its thirteen devnet entries and the README table with three of
-    its eleven rows, so declare_id! is the only address this document treats as
-    authoritative.
+    The four product programs were exercised end to end on 12 September 2026 on
+    the redeployed verifier: shield, subscription and withdrawal, with the
+    transaction signatures and timings in BENCHMARK-2026-09-13 §6c. declare_id!
+    is the only address this document treats as authoritative.
+  </p>
+
+  <h4>Closed on devnet, 13 September 2026</h4>
+
+  <div class="row"><span class="row-key">specter</span><span class="row-lead"></span><span class="row-val">FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL</span></div>
+  <div class="row"><span class="row-key">p01_quantum_vault</span><span class="row-lead"></span><span class="row-val">9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv</span></div>
+  <div class="row"><span class="row-key">p01_quantum_wallet</span><span class="row-lead"></span><span class="row-val">D7RBAFcMq2gGddwFvabZKuJB1eWZFvESVrcJ3i15FFtz</span></div>
+  <div class="row"><span class="row-key">p01-fee-splitter</span><span class="row-lead"></span><span class="row-val">UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM</span></div>
+
+  <p style="margin-top:3mm;">
+    Closing a program is irreversible; the rent came back to the upgrade
+    authority and the four crates left the repository the same day
+    (HANDOFF-2026-09-13 §11 and §12). Stealth announcements and payment
+    streams, which specter carried, are parked until a replacement ships.
   </p>
 
   <h4>Declared, and not deployed</h4>
@@ -1313,23 +1319,20 @@ pre {
   <p style="margin-top:3mm;">
     Those four addresses return null on devnet: nothing is deployed where the
     source says it is. The recurring payment path that does run lives inside
-    zk_shielded, and streaming exists only as an account type inside specter, of
-    which zero instances exist on chain. Three further directories are outside
-    this count: a separate project, a removed capability, and one that calls
-    itself undeployed.
-</p>
+    zk_shielded.
+  </p>
 
   <div class="admission">
     <h4>One key can replace all of it</h4>
     <p style="margin:0;">
-      Every program deployed on devnet, eighteen counting superseded builds, is
+      Every program deployed on devnet, superseded builds included, is
       upgradeable by one key,
       <span class="mono">7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU</span>. No
       multisig, no timelock, none immutable: whoever holds that key can replace
-      the bytecode behind any address above. Nor is the verifier's bytecode
-      proven to come from this repository's source: its deploy commit is not on
-      master. The 878,208 zk_shielded bytes on chain do match a local build from
-      a commit on master, byte for byte.
+      the bytecode behind any address above. The 12 September verifier build
+      was staged and checked against the shipped proving blob before the
+      upgrade (HANDOFF-2026-09-13 §6), but no on-chain record ties it to a
+      commit on master.
     </p>
   </div>
 </div>
@@ -1355,7 +1358,7 @@ pre {
       </tr>
     </thead>
     <tbody>
-      <tr><td class="m">privacy-sdk</td><td class="n">1.0.4</td><td class="n">66</td><td>Shielded pool client, 14 subpath entries</td></tr>
+      <tr><td class="m">privacy-sdk</td><td class="n">1.0.5</td><td class="n">66</td><td>Shielded pool client, 14 subpath entries</td></tr>
       <tr><td class="m">privacy-toolkit</td><td class="n">1.0.4</td><td class="n">22</td><td>Commitment and nullifier primitives</td></tr>
       <tr><td class="m">specter-sdk</td><td class="n">0.4.3</td><td class="n">210</td><td>Stealth addresses, hybrid post-quantum</td></tr>
       <tr><td class="m">stark-prover</td><td class="n">0.1.3</td><td class="n">18</td><td>The WebAssembly proving blob</td></tr>
@@ -1393,10 +1396,12 @@ pre {
   </div>
 
   <p style="margin-top:4.5mm;">
-    The prover blob inside stark-prover 0.1.3 is 229,640 bytes with sha256
-    51a947e3, and the same size and hash come from the working tree and from
-    packages/stark-prover/wasm/p01_stark_bg.wasm on GitHub master. specter-sdk
-    0.4.3 ships the identical blob.
+    The prover blob inside stark-prover 0.1.3 on npm is 229,640 bytes with
+    sha256 51a947e3, and specter-sdk 0.4.3 ships the identical blob. Since
+    12 September 2026 the working tree and GitHub master carry a newer blob,
+    265,324 bytes, digest 0ad6d7f1, the one the redeployed verifier was measured
+    against (BENCHMARK-2026-09-13 §6); stark-prover 0.2.0, privacy-sdk 2.0.0 and
+    specter-sdk 0.5.0 are built around it and not yet published.
   </p>
 
   <div class="admission" style="margin-top:4mm;">
@@ -1795,8 +1800,8 @@ pre {
     </thead>
     <tbody>
       <tr>
-        <td>Eight programs run on devnet at the address their own source declares</td>
-        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives fifteen addresses. Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
+        <td>Six programs run on devnet at the address their own source declares, four of them on the product path</td>
+        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives ten addresses (read 14 September 2026). Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
       </tr>
       <tr>
         <td>A STARK proof verified in one instruction, 809,662 CU of 1,399,850</td>
@@ -1811,8 +1816,8 @@ pre {
         <td>Read <span class="mono">HfSsGRgVFJ</span>&#8230; the 0.1 SOL pool, with <span class="mono">getAccountInfo</span>: next_leaf_index and note_count, per <span class="mono">pool_v3.rs</span>. The 1 SOL pool <span class="mono">6NUS4E5PhQ</span>&#8230; holds 6 over 25.</td>
       </tr>
       <tr>
-        <td>The prover on npm emits the bytes the deployed verifier accepts</td>
-        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span>.</td>
+        <td>The prover on npm emits the bytes the 4 August verifier accepted; master carries the blob the 12 September verifier was measured with</td>
+        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 12 September 2026: 265,324 bytes, digest <span class="mono">0ad6d7f1</span>, per-circuit signatures in BENCHMARK-2026-09-13 §6.</td>
       </tr>
       <tr>
         <td>Soundness is 42 to 46 bits unconditional, not the 104 to 124 the source claims</td>
@@ -1820,7 +1825,7 @@ pre {
       </tr>
       <tr>
         <td>The live homepage still publishes claims this document contradicts</td>
-        <td><span class="mono">curl -s https://protocol-01.dev | grep -i 'nothing they can trace'</span> returns three hits.</td>
+        <td><span class="mono">curl -s https://protocol-01.dev | grep -i 'nothing they can trace'</span> returned three hits on 11 August 2026 and zero on 14 September 2026.</td>
       </tr>
     </tbody>
   </table>

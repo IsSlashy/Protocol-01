@@ -1,21 +1,22 @@
-# Protocol 01 — Hackathon Evaluator Guide
+# Styx (formerly Protocol 01) — Evaluator Guide
 
-> Quick start for Colosseum Frontier judges (Superteam IE / Quantum Ireland track).
-> Full pitch in [colosseum-frontier-submission.md](./colosseum-frontier-submission.md).
+> Quick start for Colosseum Frontier judges (Superteam IE / Quantum Ireland track) and for anyone evaluating a grant application.
+> Narrative and market story: the [pitch deck](https://protocol-01.dev/pitch-deck.pdf). Technical write-up: the [design document](https://protocol-01.dev/protocol-01-design-document.pdf) and the root [`README.md`](../README.md).
+> Every figure on this page names the document it was measured in; the latest numbers are in [`BENCHMARK-2026-09-13.md`](./BENCHMARK-2026-09-13.md).
 
-This page is built to let a judge confirm in five minutes that the project exists, runs, and ships what the submission claims.
-For the narrative, market story, and deep technical write-up, jump to the submission document linked above.
+This page is built to let an evaluator confirm in five minutes that the project exists, runs, and ships what the application claims.
+Last checked against devnet and the npm registry on 2026-09-14.
 
 ---
 
 ## TL;DR (30 seconds)
 
-- Privacy layer for Solana, post-quantum end-to-end.
-- ZK-STARKs (Goldilocks / Poseidon) + ML-KEM-768 + Winternitz OTS, no trusted setup.
-- 14 Anchor programs, 12 of them deployed on devnet (see table below).
-- 6 STARK AIRs proven on-device, verified on-chain by a custom FRI verifier (~900K CU).
-- Mobile app (Android, v0.9.9), Chrome MV3 extension, Next.js web, 8 npm SDKs, all live.
-- Built solo by Slashy Fx in roughly 70 days.
+- Private payments on Solana: a shielded pool where the proof is hash-based (STARK over Goldilocks / Poseidon, no trusted setup) and the stealth-address key exchange is hybrid X25519 + ML-KEM-768, the NIST post-quantum KEM.
+- Four Anchor programs on the product path, live on devnet (verifier, shielded pool, registry, relayer); two more deployed but not called by any shipping flow (see the table below).
+- Eight STARK circuits, all proven on the user's device from a 265,324-byte WASM blob and verified on-chain by an FRI verifier written for Solana (C7 spend: 890,643 CU, both phases in one transaction, `BENCHMARK-2026-09-13.md` §6).
+- Measured on devnet 2026-09-12 (`BENCHMARK-2026-09-13.md` §6c): shield 1 SOL 18.6 s, private subscription 23.0 s, private withdrawal 20.8 s, end to end through the app's own code.
+- Android APK (latest tag v1.0.3), Chrome MV3 extension, Next.js web app, 11 npm packages under `@protocol-01`.
+- Built solo by Slashy Fx. Not audited, not on mainnet; both are stated on the site.
 
 ---
 
@@ -31,23 +32,21 @@ For the narrative, market story, and deep technical write-up, jump to the submis
 
 Pick one of the three options below. They are independent.
 
-### Option A. Install the Android APK (fastest)
+### Option A. Use the web app (fastest)
 
-1. Grab the latest APK from [GitHub Releases](https://github.com/IsSlashy/Protocol-01/releases/latest).
-2. Verify the artifact matches the current build:
-   - Version: `0.9.9`
-   - Android `versionCode`: `23`
-   - APK size: `~96 MB` (`100,860,376 bytes`)
-   - Bundle id: `com.protocol01.app`
-   - Min Android: API 29 (Android 10).
-3. Install on a physical Android device (allow "Install from unknown sources" when prompted).
-4. Run the demo flow:
-   - Create wallet, save the 12-word seed, set a PIN.
-   - Privacy tab, Shield 0.1 SOL on devnet (proof generation runs on-device, ~4 to 8 s).
-   - Streams tab, pick a seeded merchant (Netflix, Spotify, YouTube, Disney+ are pre-registered on devnet), Subscribe Private.
-   - Privacy tab, Subscription Vaults, Cancel and watch the auto re-denomination breakdown.
+1. Open [protocol-01.dev](https://protocol-01.dev) with a devnet wallet that holds some SOL (`solana airdrop 2 --url devnet`).
+2. Shield 1 SOL. The STARK proof is generated in a worker in your browser; the flow was measured at 18.6 s end to end on devnet on 2026-09-12 (`BENCHMARK-2026-09-13.md` §6c).
+3. Withdraw it to another address. The withdrawal transaction names no deposit field; the same measurement puts it at 20.8 s.
 
-> If the APK link 404s during the evaluation window, build it yourself with the steps in Option B.
+The web app on `master` carries the prover blob that matches the verifier deployed on 2026-09-12 (`HANDOFF-2026-09-13.md` §7).
+
+### Option A'. Install the Android APK
+
+1. Grab the latest APK from [GitHub Releases](https://github.com/IsSlashy/Protocol-01/releases/latest) (latest tag v1.0.3, 2026-06-16; the launcher still shows "Protocol 01", the build predates the rename).
+2. Install on a physical Android device, Android 10 / API 29 or newer (allow "Install from unknown sources" when prompted).
+3. Create a wallet, save the 12-word seed, set a PIN; the Privacy tab shields on devnet and the Streams tab subscribes to a seeded demo merchant.
+
+> Known limit, stated in the README: the v1.0.3 APK's prover blob predates the verifier redeployed on 2026-09-12, so its proofs are rejected by the chain until a new APK is released. Use Option A for a working end-to-end flow today.
 
 ### Option B. Inspect and build the code
 
@@ -62,59 +61,62 @@ pnpm dev:web        # Next.js marketing site + docs at http://localhost:3000
 pnpm dev:mobile     # Expo dev client (requires a connected Android device or emulator)
 
 pnpm test           # Turbo orchestrated unit tests across all packages
-pnpm test:e2e-stark # End-to-end STARK shield -> transfer -> unshield against devnet
 ```
+
+Test status per suite as of 2026-09-13 is in [`HANDOFF-2026-09-13.md`](./HANDOFF-2026-09-13.md) §4c; the live devnet flows (`liveDevnet*.test.ts` in `apps/web`) are the ones timed in the benchmark.
 
 Useful entry points are listed in the root [`package.json`](../package.json) under `scripts`.
 
 ### Option C. Verify devnet deployments
 
-Source of truth for program ids: [`Anchor.toml`](../Anchor.toml) `[programs.devnet]`.
+Source of truth for program ids: the `declare_id!` in each crate under [`programs/`](../programs/), mirrored in [`Anchor.toml`](../Anchor.toml) `[programs.devnet]`. Checked against the devnet cluster on 2026-09-14.
 Every link below points to Solana Explorer on devnet.
+
+**On the product path, live:**
 
 | Program | Role | Devnet program id |
 | --- | --- | --- |
-| `p01_registry` | Stealth meta-address directory + on-chain merchant registry (the PMF surface) | [`QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB`](https://explorer.solana.com/address/QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB?cluster=devnet) |
-| `p01_stark_verifier` | Custom on-chain FRI verifier, 6 circuits | [`EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z`](https://explorer.solana.com/address/EXmAQqmkQmq1vnSmKXY2rnUUrrWHqxddjXaJv8aNEL4Z?cluster=devnet) |
-| `zk_shielded` | Shielded pool (shield, transfer, unshield, subscribe, cancel) | [`2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms`](https://explorer.solana.com/address/2w4WRvujjrZYip1dUrp3X4nzoPVWeRZF9KnjtvSstGms?cluster=devnet) |
-| `p01_zkspl` | Confidential SPL balances (Poseidon commitments) | [`AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT`](https://explorer.solana.com/address/AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT?cluster=devnet) |
-| `specter` | Stealth address + private streams | [`8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh`](https://explorer.solana.com/address/8rywsvheQZPp8efQ4bsZ37J9GWMLY2ER76f3o8opPsYh?cluster=devnet) |
-| `p01_relayer` | On-chain trustless relayer + fee accounting | [`Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw`](https://explorer.solana.com/address/Ud2JYaq4frePBy3L2DmddmtPT3nXC1nqxsXEX934Hbw?cluster=devnet) |
-| `p01_quantum_vault` | WOTS+ vault, hash-timelock, commit-reveal | [`9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv`](https://explorer.solana.com/address/9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv?cluster=devnet) |
-| `p01_arcium` | Arcium MPC bridge (9 Arcis circuits, Cerberus) | [`9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ`](https://explorer.solana.com/address/9kMjmVMYxBa8V9D1aoEjZtUNXTe2gjfzYdKLycn7JvgQ?cluster=devnet) |
-| `p01_subscription` | Recurring payment vaults with STARK ownership proofs | [`3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW`](https://explorer.solana.com/address/3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW?cluster=devnet) |
-| `p01_stream` | Time-locked payment streaming | [`C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx`](https://explorer.solana.com/address/C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx?cluster=devnet) |
-| `p01_whitelist` | Developer access control | [`5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33`](https://explorer.solana.com/address/5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33?cluster=devnet) |
-| `p01_fee_splitter` | Protocol fee routing (0.3 to 0.5%) | [`UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM`](https://explorer.solana.com/address/UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM?cluster=devnet) |
-| `p01_bundler` | Tx bundling helper | Experimental, not deployed on devnet |
-| `p01_liquidity` | Instant-unshield liquidity prefund pool | Experimental, not deployed on devnet |
+| `p01_stark_verifier` | On-chain FRI/STARK verifier written for Solana, 8 circuits; redeployed 2026-09-12, slot 497,235,406, 801,457 bytes | [`DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs`](https://explorer.solana.com/address/DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs?cluster=devnet) |
+| `zk_shielded` | Shielded pool: shield, unshield v4, subscribe v4, pause, resume, permissionless claim | [`GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c`](https://explorer.solana.com/address/GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c?cluster=devnet) |
+| `p01_registry` | On-chain merchant registry + stealth meta-address directory | [`QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB`](https://explorer.solana.com/address/QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB?cluster=devnet) |
+| `p01_relayer` | Relay program (deployed; no hosted node operates it since 2026-08-28) | [`2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW`](https://explorer.solana.com/address/2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW?cluster=devnet) |
+
+**Deployed, not called by any shipping flow:**
+
+| Program | Role | Devnet program id |
+| --- | --- | --- |
+| `p01_arcium` | Arcium MPC bridge; client integration removed 2026-07 | [`FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT`](https://explorer.solana.com/address/FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT?cluster=devnet) |
+| `p01_liquidity` | Instant-unshield liquidity prefund pool (SDK module + mobile service) | [`6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg`](https://explorer.solana.com/address/6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg?cluster=devnet) |
+
+**In the repo, declared id not deployed on devnet:** `p01_zkspl`, `stream`, `subscription`, `whitelist`.
+
+**Closed on devnet on 2026-09-13 and deleted from the repo** ([`HANDOFF-2026-09-13.md`](./HANDOFF-2026-09-13.md) §11, §12): `specter`, `p01_quantum_vault`, `p01_quantum_wallet`, `p01_fee_splitter`. Older deployments of some of them under superseded ids still exist on devnet; no crate declares them and no product path calls them.
 
 ---
 
 ## Architecture at a glance
 
 ```
-User generates a STARK proof on-device (Winterfell, Goldilocks / Poseidon)
-    -> Proof submitted to the on-chain FRI verifier (~900K CU)
-        -> Shielded program applies the state transition
-            -> Funds land at a stealth address (X25519 + ML-KEM-768)
-                -> No on-chain link between sender and recipient
-    (optional) MPC threshold decryption via Arcium Cerberus
+User generates a STARK proof on-device (Winterfell prover, Goldilocks / Poseidon, 265,324-byte WASM blob)
+    -> Proof uploaded in 4,096-byte transaction v1 chunks (21 to 25 per proof) and verified by the on-chain FRI verifier
+       (C7 spend: 890,643 CU, both phases in one transaction)
+        -> zk_shielded applies the state transition
+            -> Funds land at a one-time stealth address (X25519 + ML-KEM-768)
 ```
 
-Groth16 was fully retired during the March 2026 migration.
-Six legacy Circom circuits are kept under `circuits/` for migration history only and are not wired into any shipping client path.
+What the pool hides and what it does not is stated precisely in the README section "What is hidden, and what is not"; read that before relying on it.
+Groth16 was fully retired during the March 2026 migration; the legacy Circom circuits have since been deleted and `circuits/` holds one design note.
 
 ---
 
 ## Code stats
 
-- 14 Anchor programs (12 deployed on devnet, 2 experimental).
-- 6 STARK AIRs (subscriber ownership, pool commitment, balance proof, Merkle path, confidential balance, transfer).
-- 9 Arcis MPC circuits running on Arcium Cerberus, devnet offset 456.
-- ~2,400 unit and integration tests across 70+ files (see [`README.md`](../README.md#testing) for the full breakdown).
-- 8 npm SDKs published under `@protocol-01/*` (specter, merchant, privacy, zkspl, zk, arcium, auth, whitelist), plus `p01-js`, `privacy-toolkit`, `react-native-zk`, `rpc-config`.
-- Mobile prover bundled as a 122 KB WASM artifact, executed inside a hidden WebView on Android.
+- 10 Anchor crates under `programs/`: 4 live on the product path, 2 deployed off-path, 4 not deployed (table above).
+- 8 STARK AIRs in `stark/src/air/`: subscriber ownership, denominated pool (pool commitment), balance proof, Merkle path, confidential balance, transfer, Merkle update (shield), spend (unshield v4, subscription v4). All eight carry a blinding mask; the hiding argument is statistical in the random-oracle model, written in [`zk-simulation-argument.md`](./zk-simulation-argument.md) and measured by the X5 uniformity test on all eight.
+- 9 Arcis MPC circuits in `@protocol-01/arcium-sdk`; no shipping client calls them.
+- Test counts per suite: [`README.md`](../README.md#testing) (measured 2026-08-04) and [`HANDOFF-2026-09-13.md`](./HANDOFF-2026-09-13.md) §4c (2026-09-13).
+- 11 npm packages published under `@protocol-01/*` (versions read from the registry 2026-09-14): p01-js, merchant-sdk, auth-sdk, privacy-sdk, specter-sdk, privacy-toolkit, arcium-sdk, stark-prover, zk-sdk, zkspl-sdk, rpc-config. Repo holds 16.
+- Prover bundled as a 265,324-byte WASM blob (`packages/stark-prover/wasm/p01_stark_bg.wasm`, digest prefix `0ad6d7f1`), run in a browser worker on the web and inside a hidden WebView on Android.
 
 > If a number above looks off, treat the file paths as the source of truth, not this summary.
 
@@ -124,11 +126,11 @@ Six legacy Circom circuits are kept under `circuits/` for migration history only
 
 These five paths give the densest view of the work in the shortest time.
 
-- [`programs/p01_stark_verifier/`](../programs/p01_stark_verifier/) — the only on-chain FRI verifier on Solana, six circuits, Goldilocks field, ~900K CU.
-- [`stark/`](../stark/) — Winterfell-based prover, Poseidon AIR, WASM build that the mobile and extension clients consume.
+- [`programs/p01_stark_verifier/`](../programs/p01_stark_verifier/) — an on-chain FRI/STARK verifier written for Solana, eight circuits, Goldilocks field; C7 spend verifies at 890,643 CU in one transaction (`BENCHMARK-2026-09-13.md` §6).
+- [`stark/`](../stark/) — Winterfell-based prover, Poseidon AIRs, blinding masks, the X5 uniformity test (`stark/src/compact/zk_hiding.rs`), WASM build that the web, extension and mobile clients consume.
 - [`programs/p01_registry/`](../programs/p01_registry/) — service registry, the surface that turns the privacy layer into a private subscriptions product.
-- [`programs/zk_shielded/`](../programs/zk_shielded/) — shielded pool, STARK-only since March 2026, including subscribe / pause / resume / cancel.
-- [`apps/mobile/`](../apps/mobile/) — primary client, on-device proof generation, Expo 54 + React Native 0.81.
+- [`programs/zk_shielded/`](../programs/zk_shielded/) — shielded pool, STARK-only since March 2026, including subscribe / pause / resume; there is no cancel and no refund, by design (README, "Service Registry + Private Subscriptions").
+- [`apps/web/`](../apps/web/) — the client that carries the current prover blob; the live devnet flows timed in the benchmark are its `liveDevnet*.test.ts`.
 
 ---
 
@@ -146,7 +148,7 @@ MIT on 2026-08-04.)
 ## Contact
 
 - Author: Slashy Fx (Volta Team)
-- Twitter / X: [@Protocol01_](https://x.com/Protocol01_)
+- Twitter / X: [@Styx_PQ](https://x.com/Styx_PQ)
 - Discord: [discord.gg/EfqnVmb2dV](https://discord.gg/EfqnVmb2dV)
 - GitHub: [IsSlashy/Protocol-01](https://github.com/IsSlashy/Protocol-01)
 - Website: [protocol-01.dev](https://protocol-01.dev)

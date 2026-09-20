@@ -1,5 +1,9 @@
 # Tx-Opacity Master Plan — End-to-End Anonymization on Protocol-01
 
+> **Note du 2026-09-14.** Ce document est une archive datée. Les programmes `p01_fee_splitter`, `p01_quantum_wallet`, `specter` qu'il cite ont été fermés sur devnet le 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
+> La liste des programmes en vie, le nombre de circuits (8) et les temps mesurés sont dans `README.md` et `docs/BENCHMARK-2026-09-13.md`.
+
+
 **Drafté** : 2026-05-06
 **Auteur** : Slashy (avec Claude Opus 4.7)
 **Scope** : fermer chaque leak public observable on-chain dans les flows V3 (shield, unshield, transfer) en composant les primitives déjà déployées. Sortir du périmètre : redesign du système ZK (pool universel, denomination cachée).

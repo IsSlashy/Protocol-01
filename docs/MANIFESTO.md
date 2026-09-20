@@ -1,5 +1,9 @@
 # The Protocol 01 Manifesto
 
+> **Note, 2026-09-14.** This document is a dated archive. The programs `p01_fee_splitter`, `p01_quantum_vault`, `specter` it names were closed on devnet on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
+> The live program list, the circuit count (8) and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
+
+
 Every transaction you make on a public blockchain is a confession. Who paid you, who you paid, how much you hold, what you subscribe to, when you wake up and when you sleep. Solana settles in 400 milliseconds and remembers forever.
 
 We think that is backwards. Cash never asked for your identity. Your bank statement was never a public document. Privacy is not a feature you bolt on for criminals, it is the default state of money that every ledger before the blockchain simply had.

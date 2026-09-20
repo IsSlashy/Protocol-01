@@ -72,6 +72,10 @@ style: |
   .judge-pill { display: inline-block; padding: 4px 10px; margin: 2px; border-radius: 4px; background: rgba(57, 197, 187, 0.1); border: 1px solid rgba(57, 197, 187, 0.3); color: #39c5bb; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.05em; }
 ---
 
+
+> **Note, 2026-09-14.** This document is a dated archive. The programs `p01_quantum_vault`, `specter` it names were closed on devnet on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
+> The live program list, the circuit count (8) and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
+
 <!-- _class: cover -->
 
 <div class="brand-number">01</div>

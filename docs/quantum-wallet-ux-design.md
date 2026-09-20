@@ -1,5 +1,9 @@
 # Quantum Wallet UX Design — "User doesn't feel they're using a different wallet"
 
+> **Note du 2026-09-14.** Ce document est une archive datée. Les programmes `p01_quantum_vault`, `p01_quantum_wallet` qu'il cite ont été fermés sur devnet le 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
+> La liste des programmes en vie, le nombre de circuits (8) et les temps mesurés sont dans `README.md` et `docs/BENCHMARK-2026-09-13.md`.
+
+
 **Drafté** : 2026-05-09
 **Auteur** : Slashy + Claude Opus 4.7
 **Statut** : Design (post-judging execution)

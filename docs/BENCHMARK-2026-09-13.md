@@ -159,10 +159,10 @@ one transaction`). Single runs; vitest's per-test wall clock.
 
 | flow | wall clock | what it contains | signature |
 |---|---|---|---|
-| **Shield 1 SOL** (`liveDevnetShield`, test 1) | **21.9 s** | tree read, C6 proof, pricing, funding the ephemeral (1 tx), buffer (1 tx), 22 v1 chunks, verify (1 tx), `shield_denominated_v3`, close, rent return | `4b5XBfdA…AEQwgP`, leaf 105 |
+| **Shield 1 SOL** (`liveDevnetShield`, test 1) | **21.9 s** | tree read, C6 proof, pricing, funding the ephemeral (1 tx), buffer (1 tx), 22 v1 chunks, verify (1 tx), `shield_denominated_v3`, close, rent return | `4b5XBfdA…AEQwgP` |
 | Subscription with that note, C1 + C3 pair (`liveDevnetShield`, test 2) | 145.6 s | **"Locating your note" 90+ s** (history walk), C1 + C3 proofs, two buffers, four verify transactions, `subscribe_private_stark` | `6o28FNye…VWeaeQE` |
-| **Subscription v4**, one C7 proof (`liveDevnetSubscribeV4`) | 436.8 s for the whole test | pool scan (history walk), a fresh shield, note location (history walk again), C7 proof, one buffer, `subscribe_private_stark_v4`; "no commitment in 238 instruction byte-windows" | shield `CWCjEPZd…35tMp` leaf 106, subscription `3H9hPjBB…URw3km` |
-| **Unshield v4**, one C7 proof (`liveDevnetUnshieldV4`, fresh unnamed key funded from the project key) | 357.9 s for the whole test | pool scan (history walk), a fresh shield, note location (history walk again), C7 proof, one buffer, `unshield_denominated_stark_v4`; payee received 0.995 SOL | shield `5WNd7EXP…drusU6dT` leaf 107, withdrawal `3uAzC3tT…Dxb8zR1` |
+| **Subscription v4**, one C7 proof (`liveDevnetSubscribeV4`) | 436.8 s for the whole test | pool scan (history walk), a fresh shield, note location (history walk again), C7 proof, one buffer, `subscribe_private_stark_v4`; "no commitment in 238 instruction byte-windows" | shield `CWCjEPZd…35tMp`, subscription `3H9hPjBB…URw3km` |
+| **Unshield v4**, one C7 proof (`liveDevnetUnshieldV4`, fresh unnamed key funded from the project key) | 357.9 s for the whole test | pool scan (history walk), a fresh shield, note location (history walk again), C7 proof, one buffer, `unshield_denominated_stark_v4`; payee received 0.995 SOL | shield `5WNd7EXP…drusU6dT`, withdrawal `3uAzC3tT…Dxb8zR1` |
 
 What the rows say: the STARK half is no longer where a flow's time goes; the
 **pool-history walk** is (`fetchPoolCommitments`: `getSignaturesForAddress`
@@ -330,13 +330,28 @@ till as recipient, presents the withdrawal to `/api/claim-for-payment`, and
 
 | leg | time | landed |
 |---|---|---|
-| shield leg (not the exchange) | 27.6 s | `2DWBY13t…` leaf 120 |
+| shield leg (not the exchange) | 27.6 s | `2DWBY13t…`, the buyer's own fresh leaf |
 | harness gap (registry reload) | 15.0 s | — |
 | **exchange: withdraw to the till** | prepare 3.6 s + execute 17.4 s = 21.0 s | `2xm8EGkp…`, till credited 995,000,000 lamports |
 | **exchange: claim** | 0.6 s | 200, kind `pool-withdrawal` |
-| **exchange: issue** | 6.3 s | leaf 92, deposited by the treasury before this buyer existed |
-| **exchange total** | **28.1 s** | leaf 120 → leaf 92; inventory 318 notes |
+| **exchange: issue** | 6.3 s | an older treasury leaf, deposited before this buyer existed |
+| **exchange total** | **28.1 s** | a fresh leaf in, an older one out; inventory 318 notes |
 
 Whole test 70.4 s. The exchange is one v4 withdrawal plus two API calls; the
 6.3 s of `issue-note` is the server sealing the older note to the buyer's
 address. Under the 60 s target, above the 20 s the flows reach.
+
+## 7. Why §5 and §6d name no leaf numbers
+
+The leaf numbers those two tables used to print are out. §6d named both halves
+of one exchange — the leaf the buyer's payment funded and the older leaf the
+deployment issued — and naming both in one record joins a wallet's deposit to
+the note it received. Nothing on chain publishes that link, because the
+issuance happens off chain. The signatures stay, since a deposit is public on
+chain either way (`docs/LEAK-LEDGER.md` B6), and every timing above is
+unchanged. `apps/web/__tests__/lib/docsNoLeafJoin.test.ts` keeps the pair out
+of `docs/`, `apps/web/app/`, `apps/web/__tests__/` and `verify/records/`. The
+same pair was published twice more, and is out of both: §4 of
+`docs/BENCHMARK-2026-09-02.md` named the collected leaf at the end of a
+signature chain, and `verify/records/note-in-exchange-2026-09-03.json` carried
+it as two fields. The git history still carries the old text.

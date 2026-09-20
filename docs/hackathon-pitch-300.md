@@ -1,5 +1,9 @@
 Protocol 01, Privacy & Payments Layer for Solana
 
+> **Note, 2026-09-14.** This document is a dated archive. The programs `p01_fee_splitter`, `p01_quantum_vault`, `specter` it names were closed on devnet on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
+> The live program list, the circuit count (8) and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
+
+
 Protocol 01 is the privacy and payments layer Solana doesn't have yet. We ship a complete stack, post-quantum ZK-STARKs, stealth addresses, on-chain stealth relayer, service registry, confidential SPL, behind plug-and-play SDKs. Every flow exists in two parallel modes on the same rail: classic (transparent, fast, cheap) and private (STARK-shielded, unlinkable). Live on devnet across mobile, extension, and web.
 
 Core tech. Winterfell STARK prover over Goldilocks with Poseidon hashing, 6 AIRs (shield, unshield, transfer, confidential balance, pool commitment, Merkle update), no trusted setup, hash-based, quantum-resistant. A native multi-circuit FRI verifier on Solana checks proofs in <1.4M CU. Hybrid stealth addresses combine X25519 + ML-KEM-768 (NIST PQC). A WOTS+ vault hedges against Ed25519 ever breaking. An on-chain relayer network (`p01_relayer`) with N-relayer failover and chunked submission breaks tx-graph links. Arcium MPC bridge handles multi-leg flows STARKs can't express.

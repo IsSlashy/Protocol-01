@@ -1,5 +1,9 @@
 # STRK20 vs Protocol 01 — document technique
 
+> **Note du 2026-09-14.** Ce document est une archive datée. Les programmes `specter` qu'il cite ont été fermés sur devnet le 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
+> La liste des programmes en vie, le nombre de circuits (8) et les temps mesurés sont dans `README.md` et `docs/BENCHMARK-2026-09-13.md`.
+
+
 Établi le 22 juillet 2026. Complément du brief `brief-starknet-22-juillet.pdf` et de `starknet-buildathon-2026-07-22-roadmap.md`.
 
 Deux règles de lecture:

@@ -235,7 +235,7 @@
       <p class="small muted">
         Solana raised the per-tx CU ceiling.<br>
         On-chain STARK verification became economical (~900K CU, &lt;0.001 SOL per verify).<br>
-        Custom FRI verifiers in 792 KB SBF binaries became feasible.
+        Custom FRI verifiers in 801 KB SBF binaries became feasible.
       </p>
     </div>
     <div class="card card-pink">
@@ -329,10 +329,10 @@
     <div class="card card-cyan">
       <h3 class="cyan">What is proven, today</h3>
       <ul class="small muted" style="line-height: 1.7; padding-left: 5mm;">
-        <li>14 Anchor programs deployed on devnet &middot; 6 STARK AIRs in a custom 792 KB FRI verifier</li>
+        <li>4 Anchor programs on the devnet product path &middot; 8 STARK AIRs in a custom 801 KB FRI verifier (BENCHMARK-2026-09-13)</li>
         <li>Registry program live: <span class="mono micro">QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB</span></li>
         <li>22/22 live-devnet E2E checks: register &rarr; fetch &rarr; deregister, every field byte-equal, rent refunded</li>
-        <li>2,400+ tests passing across 14 SDKs &middot; 26/26 fresh-project tarball install</li>
+        <li>11 packages on npm &middot; 26/26 fresh-project tarball install &middot; per-suite test counts in HANDOFF-2026-09-13 &sect;4c</li>
         <li>Mobile (Android), Chrome extension, web &mdash; all three clients shipped</li>
       </ul>
       <div class="code micro" style="margin-top: 4mm;">
@@ -410,28 +410,26 @@ setInterval(<span class="kw">async</span> () =&gt; {
 <!-- =========================== SLIDE 7 — STACK =========================== -->
 <div class="slide">
   <div class="slide-header"><span>Solana stack</span><span class="mark">01</span></div>
-  <h1>14 programs. 1 custom STARK verifier.</h1>
+  <h1>4 programs on the product path. 1 custom STARK verifier.</h1>
 
   <div class="grid-2" style="flex: 1; margin-top: 5mm;">
     <div>
       <h3>Our deployed programs</h3>
       <table>
-        <tr><td><span class="badge badge-cyan">VERIFIER</span></td><td class="small mono">p01_stark_verifier &mdash; FRI, 6 AIRs</td></tr>
+        <tr><td><span class="badge badge-cyan">VERIFIER</span></td><td class="small mono">p01_stark_verifier &mdash; FRI, 8 AIRs</td></tr>
         <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">zk_shielded &mdash; pool + sub vault</td></tr>
-        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">specter &mdash; stealth + streams</td></tr>
         <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">p01_registry &mdash; merchant directory</td></tr>
-        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">p01_zkspl &mdash; confidential SPL</td></tr>
-        <tr><td><span class="badge badge-pink">PQ</span></td><td class="small mono">p01_quantum_vault &mdash; WOTS+ + hash-lock</td></tr>
+        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">p01_zkspl &mdash; confidential SPL (in repo, not deployed)</td></tr>
         <tr><td><span class="badge badge-pink">PQ</span></td><td class="small mono">p01_arcium &mdash; Cerberus MPC bridge</td></tr>
-        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_relayer &mdash; trustless relay</td></tr>
+        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_relayer &mdash; fee-paying relay</td></tr>
         <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_liquidity &mdash; instant unshield</td></tr>
-        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">subscription / stream / fee-splitter</td></tr>
+        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">subscription / stream (in repo, not deployed); fee-splitter closed 2026-09-13</td></tr>
       </table>
     </div>
     <div>
       <h3>Solana primitives leveraged</h3>
       <table>
-        <tr><td class="cyan small mono">Anchor 0.32</td><td class="small">DSL/framework, all 14 programs</td></tr>
+        <tr><td class="cyan small mono">Anchor 0.32</td><td class="small">DSL/framework, all 10 program crates</td></tr>
         <tr><td class="cyan small mono">SPL Token</td><td class="small">USDC + native SOL handling</td></tr>
         <tr><td class="cyan small mono">PDAs</td><td class="small">deterministic registry / vault keys</td></tr>
         <tr><td class="cyan small mono">Compute Budget</td><td class="small">1.4M CU for STARK verify</td></tr>
@@ -443,8 +441,8 @@ setInterval(<span class="kw">async</span> () =&gt; {
       </table>
       <div class="card card-cyan" style="margin-top: 4mm;">
         <p class="small">
-          The custom FRI/STARK verifier fits in a <span class="mono cyan bold">792 KB</span> SBF binary.
-          ~900K CU per verification. No other L1 hosts a verifier of this scope at this cost.
+          The custom FRI/STARK verifier fits in an <span class="mono cyan bold">801 KB</span> SBF binary.
+          890,643 CU for a circuit 7 verification, both phases in one transaction (BENCHMARK-2026-09-13 &sect;6).
         </p>
       </div>
     </div>
@@ -459,19 +457,19 @@ setInterval(<span class="kw">async</span> () =&gt; {
   <h1>Built today, in under five months, alone.</h1>
 
   <div class="grid-4" style="margin-top: 6mm;">
-    <div class="card card-cyan stat"><div class="stat-num cyan">14</div><div class="stat-label">Anchor programs</div></div>
-    <div class="card card-pink stat"><div class="stat-num pink">17</div><div class="stat-label">SDKs published</div></div>
-    <div class="card card-yellow stat"><div class="stat-num yellow">6</div><div class="stat-label">STARK AIRs</div></div>
-    <div class="card card-green stat"><div class="stat-num green">2,400+</div><div class="stat-label">Tests passing</div></div>
+    <div class="card card-cyan stat"><div class="stat-num cyan">4</div><div class="stat-label">Programs on the product path</div></div>
+    <div class="card card-pink stat"><div class="stat-num pink">11</div><div class="stat-label">Packages on npm</div></div>
+    <div class="card card-yellow stat"><div class="stat-num yellow">8</div><div class="stat-label">STARK AIRs</div></div>
+    <div class="card card-green stat"><div class="stat-num green">18.6 s</div><div class="stat-label">Private deposit, devnet</div></div>
   </div>
 
   <div class="grid-2" style="margin-top: 6mm;">
     <div class="card card-cyan">
       <h3 class="cyan">Shipped</h3>
       <ul class="small muted" style="margin-top: 2mm; padding-left: 5mm; line-height: 1.7;">
-        <li>14 Anchor programs deployed on devnet, ~340 program tests</li>
-        <li>Custom FRI/STARK verifier (792 KB SBF, 6 circuits)</li>
-        <li>Mobile app v1.0.2 Tx-Opacity (Android APK)</li>
+        <li>4 Anchor programs on the devnet product path, 6 deployed at their declared address</li>
+        <li>Custom FRI/STARK verifier (801 KB SBF, 8 circuits)</li>
+        <li>Mobile app v1.0.3 (Android APK, GitHub releases)</li>
         <li>Chrome extension MV3 with on-device WASM prover</li>
         <li>Relayer-submitted spends, scrubbed events, uniform proofs (v1.0)</li>
         <li>Web marketing site &middot; design doc &middot; economic charter</li>
@@ -544,12 +542,12 @@ setInterval(<span class="kw">async</span> () =&gt; {
   <div class="grid-2" style="flex: 1;">
     <div>
       <ul class="small" style="line-height: 2; padding-left: 5mm;">
-        <li>Custom on-chain <span class="cyan bold">FRI/STARK verifier</span> (Goldilocks field, Poseidon AIR, 6 circuits, 792 KB SBF binary)</li>
+        <li>Custom on-chain <span class="cyan bold">FRI/STARK verifier</span> (Goldilocks field, Poseidon AIR, 8 circuits, 801 KB SBF binary)</li>
         <li>Hybrid <span class="cyan bold">X25519 + ML-KEM-768</span> stealth address construction (own design, not a reference port)</li>
-        <li><span class="cyan bold">WOTS+</span> post-quantum signature scheme + SHA-256 hash-timelock vault</li>
+        <li>Blinding masks on all 8 circuits; hiding is statistical in the random-oracle model, measured by the X5 test (docs/zk-simulation-argument.md)</li>
         <li>Deterministic <span class="cyan bold">HKDF note-secret derivation</span> &mdash; one seed, every shielded note recoverable cross-device</li>
         <li>Custom <span class="cyan bold">MPC bridge to Arcium Cerberus</span> &mdash; 9 Arcis circuits, threshold compute</li>
-        <li><span class="cyan bold">14 Anchor programs</span>, 14 SDKs, 2,400+ tests &mdash; all written by the same person</li>
+        <li><span class="cyan bold">10 program crates</span>, 11 packages on npm, three clients &mdash; all written by the same person</li>
       </ul>
     </div>
     <div>
@@ -614,9 +612,9 @@ setInterval(<span class="kw">async</span> () =&gt; {
       <span class="yellow">Solana</span> is the chain.
     </div>
     <div style="margin-top: 6mm; font-family:'JetBrains Mono',monospace; font-size:8pt; color:var(--text-muted); letter-spacing:0.1em; text-transform:uppercase; line-height:1.7;">
-      protocol-01.dev &middot; @Protocol01_<br>
+      protocol-01.dev &middot; @Styx_PQ<br>
       Volta Team &middot; Slashy Fx &middot; Solo, full-time<br>
-      v1.0.2 Tx-Opacity &middot; 2026-06-11
+      v1.0.3 &middot; figures refreshed 2026-09-14
     </div>
   </div>
 

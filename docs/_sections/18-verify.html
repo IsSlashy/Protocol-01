@@ -19,8 +19,8 @@
     </thead>
     <tbody>
       <tr>
-        <td>Eight programs run on devnet at the address their own source declares</td>
-        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives fifteen addresses. Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
+        <td>Six programs run on devnet at the address their own source declares, four of them on the product path</td>
+        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives ten addresses (read 14 September 2026). Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
       </tr>
       <tr>
         <td>A STARK proof verified in one instruction, 809,662 CU of 1,399,850</td>
@@ -35,8 +35,8 @@
         <td>Read <span class="mono">HfSsGRgVFJ</span>&#8230; the 0.1 SOL pool, with <span class="mono">getAccountInfo</span>: next_leaf_index and note_count, per <span class="mono">pool_v3.rs</span>. The 1 SOL pool <span class="mono">6NUS4E5PhQ</span>&#8230; holds 6 over 25.</td>
       </tr>
       <tr>
-        <td>The prover on npm emits the bytes the deployed verifier accepts</td>
-        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span>.</td>
+        <td>The prover on npm emits the bytes the 4 August verifier accepted; master carries the blob the 12 September verifier was measured with</td>
+        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 12 September 2026: 265,324 bytes, digest <span class="mono">0ad6d7f1</span>, per-circuit signatures in BENCHMARK-2026-09-13 §6.</td>
       </tr>
       <tr>
         <td>Soundness is 42 to 46 bits unconditional, not the 104 to 124 the source claims</td>
@@ -44,7 +44,7 @@
       </tr>
       <tr>
         <td>The live homepage still publishes claims this document contradicts</td>
-        <td><span class="mono">curl -s https://protocol-01.dev | grep -i 'nothing they can trace'</span> returns three hits.</td>
+        <td><span class="mono">curl -s https://protocol-01.dev | grep -i 'nothing they can trace'</span> returned three hits on 11 August 2026 and zero on 14 September 2026.</td>
       </tr>
     </tbody>
   </table>

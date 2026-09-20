@@ -1,5 +1,9 @@
 # SDK Migration Guide
 
+> **Note, 2026-09-14.** This document is a dated archive. The programs `specter` it names were closed on devnet on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
+> The live program list, the circuit count (8) and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
+
+
 Protocol 01 is consolidating around a single canonical SDK: **`@protocol-01/privacy-sdk`**.
 
 The older SDK packages remain installable and functional during the deprecation window, but emit a console warning at import time and should no longer be used in new code.

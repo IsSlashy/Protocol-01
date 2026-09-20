@@ -20,7 +20,7 @@
     <tr><td>Round constants</td><td>90, byte&#8209;identical as an ordered list between prover and verifier</td></tr>
     <tr><td>Proof tree hash</td><td>SHA&#8209;256, 32&#8209;byte nodes, leaf tag <span class="mono">0x00</span>, node tag <span class="mono">0x01</span></td></tr>
     <tr><td>FRI</td><td>Blowup 16, fold factor 2, terminal polynomial of 16 coefficients, degree bound 1</td></tr>
-    <tr><td>Queries</td><td>27 on circuits 0, 1, 2 and 4; 22 on circuits 3, 5 and 6; 22 bits of grinding</td></tr>
+    <tr><td>Queries</td><td>27 on circuits 0, 1, 2 and 4; 22 on circuits 3, 5, 6 and 7; 22 bits of grinding</td></tr>
     <tr><td>Trace</td><td>Committed on a multiplicative coset, shift <span class="mono">h = 7</span>, at no extra wire bytes</td></tr>
   </table>
   <p class="note" style="margin-top:2mm;">
@@ -36,7 +36,7 @@
         SHA&#8209;256 of <span class="mono">0x01</span> and its two children, so no
         node preimage is ever a valid leaf preimage. The tag lives in the preimage,
         never on the wire: it cost 16,194 to 32,960 compute units across the seven
-        circuits and changed no proof size.
+        circuits measured at the time (circuit 7 came later) and changed no proof size.
       </p>
     </div>
     <div>

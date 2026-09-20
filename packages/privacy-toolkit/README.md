@@ -224,4 +224,4 @@ The table below lists only packages that resolve on npm today.
 | **@protocol-01/specter-sdk** | Stealth wallets, transfers, registry |
 | **@protocol-01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
 
-[Website](https://protocol-01.dev) · [Twitter](https://twitter.com/Protocol01_) · [Discord](https://discord.gg/EfqnVmb2dV)
+[Website](https://protocol-01.dev) · [Twitter](https://x.com/Styx_PQ) · [Discord](https://discord.gg/EfqnVmb2dV)

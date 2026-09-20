@@ -19,7 +19,7 @@
       </tr>
     </thead>
     <tbody>
-      <tr><td class="m">privacy-sdk</td><td class="n">1.0.4</td><td class="n">66</td><td>Shielded pool client, 14 subpath entries</td></tr>
+      <tr><td class="m">privacy-sdk</td><td class="n">1.0.5</td><td class="n">66</td><td>Shielded pool client, 14 subpath entries</td></tr>
       <tr><td class="m">privacy-toolkit</td><td class="n">1.0.4</td><td class="n">22</td><td>Commitment and nullifier primitives</td></tr>
       <tr><td class="m">specter-sdk</td><td class="n">0.4.3</td><td class="n">210</td><td>Stealth addresses, hybrid post-quantum</td></tr>
       <tr><td class="m">stark-prover</td><td class="n">0.1.3</td><td class="n">18</td><td>The WebAssembly proving blob</td></tr>
@@ -57,10 +57,12 @@
   </div>
 
   <p style="margin-top:4.5mm;">
-    The prover blob inside stark-prover 0.1.3 is 229,640 bytes with sha256
-    51a947e3, and the same size and hash come from the working tree and from
-    packages/stark-prover/wasm/p01_stark_bg.wasm on GitHub master. specter-sdk
-    0.4.3 ships the identical blob.
+    The prover blob inside stark-prover 0.1.3 on npm is 229,640 bytes with
+    sha256 51a947e3, and specter-sdk 0.4.3 ships the identical blob. Since
+    12 September 2026 the working tree and GitHub master carry a newer blob,
+    265,324 bytes, digest 0ad6d7f1, the one the redeployed verifier was measured
+    against (BENCHMARK-2026-09-13 §6); stark-prover 0.2.0, privacy-sdk 2.0.0 and
+    specter-sdk 0.5.0 are built around it and not yet published.
   </p>
 
   <div class="admission" style="margin-top:4mm;">
