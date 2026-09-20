@@ -402,6 +402,18 @@ jobs:
       - name: cargo test (prover — 171 tests that ran in no CI job at all)
         run: cargo test --release -p p01-stark
 
+      # [WP1 2026-09-20] The security calculator and the prose check ran in no CI
+      # job: `/tools/` was gitignored, so the crate was not even in the checkout.
+      # It is committable now, and this step is what makes the two guards real —
+      # `docs/SECURITY-LEVELS.md` must equal the calculator's output, and every
+      # "N bits" figure in README.md, docs/, apps/web/i18n/ and apps/web/app/ must
+      # be a published figure for the regime its sentence names or be listed in
+      # tools/security-levels/prose-ledger.tsv. It is its own workspace (its own
+      # Cargo.lock), so `--manifest-path` is required; it has no dependency and
+      # builds in seconds. Measured 2026-09-20: 46 tests, 2.7s of test time.
+      - name: cargo test (security levels — the generated figures and the prose that quotes them)
+        run: cargo test --locked --manifest-path tools/security-levels/Cargo.toml
+
       # `continue-on-error: true` was on this step, which made it advisory: a real
       # failure still passed the job, so `-D warnings` pinned nothing. Removed.
       # zk_shielded's three warnings (an unused import and two constants orphaned
@@ -417,10 +429,16 @@ jobs:
   #
   # `honest_liveness` is 2,208s on a 6c/12t laptop in --release; a hosted
   # runner has fewer cores, so it is slower. `c6_padding_rows` is 308s. Neither
-  # is negotiable: honest_liveness is what proves an honest C7 proof clears
-  # BOTH verifier phases, and its dispatch used to fall through to `_ => Ok(())`
-  # so a circuit added to the fixtures and forgotten there passed phase 2
-  # VACUOUSLY.
+  # is negotiable: honest_liveness proves that 160 honest proofs of every
+  # circuit, C0 through C7, clear BOTH verifier phases, and its dispatch used to
+  # fall through to `_ => Ok(())` so a circuit added to the fixtures and
+  # forgotten there passed phase 2 VACUOUSLY.
+  #
+  # [WP0a 2026-09-18] This block said honest_liveness proved C7 liveness while
+  # the suite generated no C7 witness at all (c7_pin_coverage.rs listed the
+  # hole). It generates 160 now. Measured 2026-09-18 on a 24-core desktop with
+  # other builds running: 1099s in all, of which C7 is 144s and C5 414s, so C7
+  # adds about 15% to this job's honest_liveness time.
   #
   # ⚠️ THE PIN LIST IS NOT DUPLICATED HERE — the same ALL_PINS is asserted in
   # both jobs and each runs its half. Splitting the assertion would let a pin
@@ -632,6 +650,81 @@ jobs:
       # and not from a table keyed by probe id.
       - name: Reality pin — the first circuit-7 subscription
         run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-subscribe
+
+      # 🚨 THE ROOT CHANNEL, WHICH EVERY STEP ABOVE REPORTS AS CLEAN.
+      #
+      # P1, P2 and P4 PASS on all five v4 fixtures, and they are silent about
+      # the one field a v4 spend still chooses: `merkle_root`. The pool keeps
+      # its old roots in a ring and accepts any of them, a root is created by
+      # exactly one insertion, and a client that spends with the Merkle path it
+      # stored at shield time names the root of ITS OWN deposit. So a spend can
+      # publish no commitment, pass three probes, and still date the deposit
+      # behind it. MEASURED on devnet 2026-09-15, 1 SOL pool: of 34 v4 spends, 1
+      # named a root 4 insertions old.
+      #
+      # ⛔ P12 AND P13 ARE BUILT ONLY WHEN `--max-root-age` IS SET, and that is
+      # not timidity. An always-on probe would have turned the eight steps above
+      # red twice over: their manifests carry no pin for it (the self-test fails
+      # any probe with no pin, on purpose) and their frozen RPC sets hold no
+      # answer for the tree walk it needs (a replay miss is a hard stop, also on
+      # purpose). The flag lives in these two manifests instead, so the older
+      # fixtures did not need one byte changed. Forcing it onto one of them
+      # shows the miss rather than a silent skip.
+      #
+      # The pair is one world with one field changed — the 32 bytes of
+      # `merkle_root` — so neither half can go green for a reason the other does
+      # not share. Both are HAND-BUILT: recording the real stale spend would
+      # freeze the deposit it dates into a public repository, and these logs are
+      # public too. See each fixture's README.
+      - name: Root age — a stale root must stay detected (pinned FAIL, age 4)
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-stale-root
+
+      # The positive half. Without it, a P12 that failed every spend would sail
+      # through the step above and a future green would be unfalsifiable — the
+      # same argument fixtures/v4-synthetic makes for P1/P2/P4.
+      - name: Root age — a fresh root must stay reportable (pinned PASS, age 0)
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-fresh-root
+
+      # A tree walk that stopped at its budget must report NO age. Every other
+      # fixture's walk completes, so dropping the walker's `complete` flag
+      # between the walk and P12/P13 left the steps above green (measured,
+      # VERIFY-1 fix round 2). The named root is inside what was read here, so
+      # a dropped flag prints an age the manifest does not pin.
+      - name: Root age — a truncated walk must stay inconclusive (pinned FAIL, no measure)
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-truncated-walk
+
+      # The stale spend again, with nothing inserted after it. Every step above
+      # takes P12's upper size bound from an insertion after the spend, so the
+      # pool account's `next_leaf_index` was never the bound, and handing P12
+      # that count minus one, or null, left them all green (measured, VERIFY-1
+      # round 3, R1/R2). A live spend at the tip of the tree has this shape. Its
+      # newest insertion sits one slot before the spend, so a spend slot handed
+      # over 2 or more slots early reads a lower age (the false-clean side). Its
+      # manifest also pins the words P13 and P12 print: the geometry ("16
+      # buckets of 2048 leaves"), which a verdict and a measure could not see
+      # (R14), and the age as one number, which a slot handed over one early
+      # turns into "3 to 4" (V13, VERIFY-1 web-run fix round 1).
+      - name: Root age — a stale root at the tip of the tree (pinned FAIL, age 4, bound from the pool account)
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-stale-root-at-tip
+
+      # `--since-slot` fails a run that examined no v4 spend newer than the
+      # slot: the regression it closes is a green about a client nobody looked
+      # at. The fixture's spend lands at slot 1000, so 999 must pass and 1000
+      # must fail with the gate's own message; a gate that stopped firing
+      # falls through to the self-test, which exits 0, and turns the second
+      # step red.
+      - name: --since-slot — a v4 spend after the slot passes the gate
+        run: node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-stale-root --since-slot 999
+
+      - name: --since-slot — no v4 spend after the slot fails the run
+        run: |
+          set +e
+          node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-stale-root --since-slot 1000 > since-slot.out 2>&1
+          code=$?
+          set -e
+          cat since-slot.out
+          test "$code" -eq 1
+          grep -q -- '--since-slot 1000: NONE of the' since-slot.out
 
       # NOT about unlinkability, and it lives here for a mechanical reason: it
       # imports only node: builtins and two sibling .mjs files, so this is the

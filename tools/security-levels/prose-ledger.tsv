@@ -1,0 +1,184 @@
+# prose-ledger.tsv: every "N bit(s)" figure in README.md, docs/, apps/web/i18n/ and
+# apps/web/app/ that does not match docs/SECURITY-LEVELS.md for the regime its line
+# names, with why. Read by tools/security-levels/tests/prose.rs; list them all with
+#   cargo run --manifest-path tools/security-levels/Cargo.toml -- --prose
+#
+# Columns, tab-separated: kind, path, snippet, count, reason. The snippet is a
+# substring of the line that CONTAINS the figure(s) the row covers: a row covers
+# only the figures inside its snippet, so a figure added to or changed on a listed
+# line is not covered by that line's row. "*" instead of a snippet covers every
+# unmatched figure of the file, and then needs a count.
+#
+# Kinds:
+#   verified     checked by hand: correct, but the scanner cannot tell which figure of
+#                the line belongs to which regime, or it is a parameter
+#   historical   a past, withdrawn or superseded figure, described as such
+#   external     a figure about something the calculator does not cover (another
+#                system, a cipher, a hash the proof system does not use)
+#   not-a-level  a width, an entropy or a quoted rule, not a security level
+#   v2-candidate a v2 design figure quoted as a candidate
+#   stale        FINDING: stated as a current level or parameter, and not what the
+#                calculator or the verifier gives. Left for Phase 1 (this run does not
+#                edit README, docs or i18n). The number of figures stale rows cover, and
+#                the set of stale rows, are pinned exactly in tests/prose.rs.
+#
+# A row that covers nothing any more fails the test: delete it when its line is fixed.
+historical	README.md	"124-bit" security. That figure was wrong		the withdrawn figure, said so
+historical	docs/AUDIT-2026-09-03.md	matching Miden/Plonky2, at 128 bits. None of that reproduces		describes the claimed 128-bit Poseidon constants as not reproducing (finding F1)
+not-a-level	docs/AUDIT-2026-09-03.md	**The 64-bit Merkle node.**		the width of a v1 Merkle node (finding F2)
+historical	docs/AUDIT-2026-09-03.md	quotes ~85-bit collision resistance from the retired BN254 tree		describes the BN254 figure as retired
+not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	Use the **full 256-bit** recipient hash		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
+not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	A single felt gives 64-bit binding		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
+not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	truncates to the same 64 bits		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
+not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	puts a 63-bit secret blinding		the width of the blinding secret
+not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	masked to 63 bits		the width of the blinding secret
+not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	A single-felt recipient_hash gives 64-bit binding		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
+not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	grind a keypair colliding on 64 bits		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
+not-a-level	docs/FREEZE-until-2026-09-04.md	pool-v3-64bit-leaf-collision		an artifact name carrying the v1 leaf width
+historical	docs/HANDOFF-2026-09-02.md	still quotes ~85-bit collision resistance from the retired BN254 tree		describes the BN254 figure as retired
+not-a-level	docs/HANDOFF-2026-09-02.md	first, or 128 bits about		quotes the forbidden phrase of the standing rules, not a level
+not-a-level	docs/HANDOFF-2026-09-11.md	« 128 bits »		quotes the forbidden phrase of the standing rules, not a level
+not-a-level	docs/LEAK-LEDGER.md	min-entropie ≥ 2·largeur·63 bits		the min-entropy of the masks, a privacy figure
+not-a-level	docs/LEAK-LEDGER.md	republierait le blinding 63 bits		the width of the blinding secret
+not-a-level	docs/LEAK-LEDGER.md	Capacité d'éponge 64 bits		the v1 sponge capacity; its collision cost 2^32 is the v1-digest hash line
+not-a-level	docs/LEAK-LEDGER.md	3 bits de bucket		a bucket-index width (a privacy leak size)
+not-a-level	docs/LEAK-LEDGER.md	log2(travail)−22` bits choisis par preuve		the nonce bits a prover chooses per proof (log2 of its work minus 22), a privacy figure; read since fix round 2 blanks the backticks
+stale	docs/MOBILE_PROVER_LATENCY.md	| 16-bit grinding = 65,536 serial SHA-256 compressions |		Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs), 2^22 compressions; this dated analysis (2026-07-27) cites the constant of that date as CONFIRMED
+not-a-level	docs/PAY_HANDOFF_OPUS5.md	lacks 64-bit accessors		an integer width
+not-a-level	docs/PAY_HANDOFF_OPUS5.md	patch the 64-bit Buffer accessors		an integer width
+not-a-level	docs/SUBSCRIBE_V4_SPEC-2026-08-26.md	63-bit PRF		the width of the blinding PRF output
+not-a-level	docs/SUBSCRIBE_V4_SPEC-2026-08-26.md	a hard 3-bit narrowing		a bucket-index width (a privacy leak size)
+not-a-level	docs/UNIFORM-MASKING-2026-09-11.md	by the 64-bit field on every circuit		the challenge field width
+not-a-level	docs/UNIFORM-MASKING-2026-09-11.md	by the 64-bit base field on every circuit		the challenge field width
+not-a-level	docs/UNLINKABILITY-STATE-2026-08-21.md	log2(11) ≈ 3,5 bits		an anonymity-set entropy, a privacy figure
+verified	docs/_sections/06-proof-system.html	22 bits of grinding		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+not-a-level	docs/_sections/07-soundness.html	carries more than 64 bits		the challenge field width
+verified	docs/_sections/07-soundness.html	110 to 130 bits and is cut down to it		the conjectured query term, 22 x 4 + 22 = 110.00 (C0, C3 to C7) to 27 x 4 + 22 = 130.00 (C1, C2) in the term tables; the range wraps across the line break (read whole since fix round 2)
+verified	docs/_sections/07-soundness.html	it binds and the 22 bits of		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+verified	docs/_sections/07-soundness.html	that is 4.000 bits per query		log2(1/rho) = 4 at rho = 1/16, the per-query term of the conjectured regime (the term tables' 130.00 is 27 x 4 + 22)
+historical	docs/_sections/07-soundness.html	104 to 124 bits, which the project no longer stands behind		the withdrawn figures, said so; the range wraps across the line break (read whole since fix round 2)
+not-a-level	docs/_sections/07-soundness.html	floor bound by the 64&#8209;bit challenge		the challenge field width
+verified	docs/protocol-01-design-document.html	22 bits of grinding		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+not-a-level	docs/protocol-01-design-document.html	carries more than 64 bits		the challenge field width
+verified	docs/protocol-01-design-document.html	110 to 130 bits and is cut down to it		the conjectured query term, 22 x 4 + 22 = 110.00 (C0, C3 to C7) to 27 x 4 + 22 = 130.00 (C1, C2) in the term tables; the range wraps across the line break (read whole since fix round 2)
+verified	docs/protocol-01-design-document.html	it binds and the 22 bits of		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+verified	docs/protocol-01-design-document.html	that is 4.000 bits per query		log2(1/rho) = 4 at rho = 1/16, the per-query term of the conjectured regime (the term tables' 130.00 is 27 x 4 + 22)
+historical	docs/protocol-01-design-document.html	104 to 124 bits, which the project no longer stands behind		the withdrawn figures, said so; the range wraps across the line break (read whole since fix round 2)
+not-a-level	docs/protocol-01-design-document.html	floor bound by the 64&#8209;bit challenge		the challenge field width
+stale	docs/_sections/16-security.html	the measured 42 to 46 bit		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
+stale	docs/_sections/16-security.html	to about 21 to 26 bits		the quantum lines as shipped (CMS19, half) are 20.98 to 22.92 for unique decoding and 22.80 to 23.45 for the conjecture; 26 is half of the retired C0 figure 52
+stale	docs/protocol-01-design-document.html	the measured 42 to 46 bit		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
+stale	docs/protocol-01-design-document.html	to about 21 to 26 bits		the quantum lines as shipped (CMS19, half) are 20.98 to 22.92 for unique decoding and 22.80 to 23.45 for the conjecture; 26 is half of the retired C0 figure 52
+stale	docs/_sections/18-verify.html	Soundness is 42 to 46 bits unconditional		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
+stale	docs/protocol-01-design-document.html	Soundness is 42 to 46 bits unconditional		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
+not-a-level	docs/arcium-integration.md	Goldilocks 64-bit field		a field width
+not-a-level	docs/arcium-integration.md	a fresh 64-bit `computation_offset`		an integer width
+stale	docs/distribution-strategy-2026-07-01.md	solo-built a 124-bit on-chain STARK verifier		the withdrawn 124-bit figure stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+stale	docs/hackathon-pitch.md	124-bit soundness		the withdrawn 124-bit figure stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+not-a-level	docs/pitch-x-quantum-2026-05-24.html	we use 256-bit hashes		a hash output width
+stale	docs/pitch-x-quantum-2026-05-24.html	so 128-bit PQ effective		no v1 quantum line reaches it: 20.98 to 23.45 as shipped (CMS19), and SHA-256's quantum collision bound is 85.33
+stale	docs/pitch-x-quantum-2026-05-24.md	128-bit PQ effective security		no v1 quantum line reaches it: 20.98 to 23.45 as shipped (CMS19), and SHA-256's quantum collision bound is 85.33
+not-a-level	docs/privy-removal-spec.md	On-chain owner identity is ~64 bits		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	We do NOT market HKDF outputs as 256-bit		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	owner identity entropy is ~64 bits		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	a *false* impression of 256-bit on-chain separation		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	"~64-bit on-chain owner entropy		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	Document ~64-bit ceiling; never market HKDF outputs as 256-bit		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	JSDoc: ~64-bit ceiling		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	from ~64 to ~128+ bits		owner-key entropy, not a soundness level
+not-a-level	docs/privy-removal-spec.md	or accept ~64 bits and only fix doc/marketing		owner-key entropy, not a soundness level
+not-a-level	docs/project-tree.html	Uses 64-bit range checks		an amount width
+not-a-level	docs/project-tree.html	range-check difference to 64 bits		an amount width
+stale	docs/quantum-resistance.md	~85-bit quantum collision resistance		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
+external	docs/quantum-resistance.md	Grover (256→128 bit, sufficient)		symmetric-cipher key sizes, outside the calculator
+external	docs/quantum-resistance.md	Grover (128-bit post-quantum)		generic Grover preimage bound of 256-bit hashes; the collision bound Merkle binding needs is SHA-256's 85.33 (hash lines)
+external	docs/quantum-resistance.md	Required logical qubits for 255-bit ECC		an elliptic-curve size, outside the calculator
+external	docs/quantum-resistance.md	| XSalsa20-Poly1305 (256-bit key) | 256 bits | 128 bits |		symmetric-cipher key sizes, outside the calculator
+external	docs/quantum-resistance.md	| AES-256-CBC | 256 bits | 128 bits |		symmetric-cipher key sizes, outside the calculator
+verified	docs/quantum-resistance.md	| SHA-256 | 128-bit collision | 85-bit collision (BHT) |		both SHA-256 hash lines, 128.00 classical and 85.33 quantum; the scanner cannot tell the two columns apart
+not-a-level	docs/quantum-resistance.md	| Poseidon (BN254 field, 254-bit) |		a field width
+stale	docs/quantum-resistance.md	| ~127-bit collision | ~85-bit collision |		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
+external	docs/quantum-resistance.md	| Keccak256 | 128-bit collision | ~85-bit collision |		generic bounds of a hash the proof system does not use
+external	docs/quantum-resistance.md	| HKDF-SHA256 | 256-bit PRF | 128-bit PRF |		key-derivation strength, outside the calculator
+external	docs/quantum-resistance.md	All symmetric primitives already use 256-bit keys		symmetric-cipher key sizes, outside the calculator
+external	docs/quantum-resistance.md	| XSalsa20-Poly1305 (nacl.secretbox) | 256-bit | 128-bit (SAFE) |		symmetric-cipher key sizes, outside the calculator
+external	docs/quantum-resistance.md	| X25519+XSalsa20-Poly1305 (nacl.box) | 256-bit | 128-bit key, but X25519 BROKEN |		symmetric-cipher key sizes, outside the calculator
+external	docs/quantum-resistance.md	| AES-256-CBC | 256-bit | 128-bit (SAFE) |		symmetric-cipher key sizes, outside the calculator
+external	docs/quantum-resistance.md	| XSalsa20-Poly1305 (BLE), PIN-derived (NFC) | 256-bit | 128-bit (SAFE) |		symmetric-cipher key sizes, outside the calculator
+stale	docs/quantum-resistance.md	| Poseidon (BN254 field) | Note commitments, nullifier derivation, owner key derivation, Merkle tree | ~85-bit collision, ~127-bit preimage |		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
+verified	docs/quantum-resistance.md	| SHA-256 | View tag generation, stealth seed derivation, key derivation, metadata hashing | ~85-bit collision, ~128-bit preimage |		85 is SHA-256's quantum collision bound (85.33) and the row has no quantum word for the scanner; 128 is Grover's preimage bound for a 256-bit digest (256/2), and the calculator publishes no preimage line, so both are checked by hand
+external	docs/quantum-resistance.md	| SHA-512 | Ed25519→X25519 private key conversion (internal) | ~170-bit collision, ~256-bit preimage |		generic bounds of a hash the proof system does not use
+external	docs/quantum-resistance.md	| BLAKE2b | Fast hashing, keyed MAC (in p01-js SDK) | ~85-bit collision, ~128-bit preimage |		generic bounds of a hash the proof system does not use
+external	docs/quantum-resistance.md	| Keccak256 | Verification key hashing (on-chain), Winternitz Vault | ~85-bit collision, ~128-bit preimage |		generic bounds of a hash the proof system does not use
+stale	docs/quantum-resistance.md	All hash functions provide at least 85-bit collision resistance post-quantum		the v1 Poseidon digest is one Goldilocks element: 21.33 quantum, 32.00 classical (finding F2)
+stale	docs/quantum-resistance.md	resulting in ~85-bit collision resistance		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
+external	docs/quantum-resistance.md	Proof size: ~4,437 bytes at 128-bit security		a 2025 measurement study's figure (ePrint 2025/1741) for another system
+stale	docs/quantum-resistance.md	~85-bit collision resistance (Poseidon over BN254 field)		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
+stale	docs/quantum-resistance.md	higher post-quantum collision resistance at ~128 bits		SHA-256's quantum collision bound is 85.33 (BHT); 128.00 is its classical bound
+external	docs/quantum-resistance.md	HKDF(sha256) | SAFE (128-bit)		key-derivation strength, outside the calculator
+external	docs/quantum-resistance.md	| Quantum security | Hash preimage (~128-bit PQ) | Hash preimage + one-time (~128-bit PQ) | EUF-CMA under hash assumptions (~128-bit PQ) |		signature-scheme preimage bounds, outside the calculator
+stale	docs/quantum-wallet-ux-design.md	Réduit security 124-bit → 62-bit		124 is withdrawn and 62 is half of it; no v1 quantum line reaches it: 20.98 to 23.45 as shipped (CMS19), and SHA-256's quantum collision bound is 85.33
+stale	docs/quantum-wallet-ux-design.md	infaisable (62-bit		62 is half of the withdrawn 124; the v1 quantum lines are 20.98 to 23.45 as shipped (CMS19)
+stale	docs/quantum-wallet-ux-design.md	~62-bit residual security on Poseidon		the v1 Poseidon digest's quantum collision bound is 21.33, the quantum soundness lines 20.98 to 23.45
+not-a-level	docs/security-model.md	Range proofs on all amounts (64-bit)		an amount width
+stale	docs/starknet-foundation-brief-2026-07-22.md	pas d'extension de corps → 128 bits		the brief's "exact figures, checked in the code" give Protocol 01 128 bits (and parameters that are not the deployed ones); v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	salt sur 120 bits		STRK20's amount salt, another system
+not-a-level	docs/strk20-vs-protocol01-technique-2026-07-22.md	Pourquoi pas un corps 64 bits		a field width
+not-a-level	docs/strk20-vs-protocol01-technique-2026-07-22.md	lanes 32 bits		a SIMD lane width
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	70 requêtes, 26 bits de grinding, cible 96 bits de soundness		stwo-cairo's own parameters and conjectured target
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.md	| Grinding | aucun | **16 bits** |		Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.md	| Soundness | 128 bits |		the brief's 128, in the brief column of a table of corrections, marked to correct
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.md	**124 bits** (27q) / **104 bits** (22q)		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.md	avec un commentaire "128-bit security"		quotes the "128-bit security" comment of a dead file, as dead
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.md	// 27 × 4 + 16 = 124 bits > 100-bit target		quotes retired code
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.md	Le terme Schwartz-Zippel est donc bien en dessous de 124 bits		says the old 124 was too high
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	("96 bits of **conjectured** soundness")		stwo-cairo's own parameters and conjectured target
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	| Grinding | 26 bits + PoW d'interaction |		stwo-cairo's own parameters and conjectured target
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.md	PoW d'interaction | 16 bits |		Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	| Soundness annoncée | 96 bits **conjecturés** |		stwo-cairo's own parameters and conjectured target
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.md	| 124 / 104 bits, classique, formule naïve |		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	ce qui n'atteint 96 bits que sous l'hypothèse conjecturale		stwo-cairo's own parameters and conjectured target
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	masqué par hash-and-add, salt 120 bits		STRK20's amount salt, another system
+external	docs/strk20-vs-protocol01-technique-2026-07-22.md	cible 96 bits conjecturés		stwo-cairo's own parameters and conjectured target
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.md	"Blake3-256, 32 requêtes, folding 8, pas de grinding, 128 bits"		quotes the brief's wrong parameter line as the text to correct
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.md	grinding 16 bits, 124 ou 104 bits en soundness classique		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46; grinding is 22
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	salt 120 bits, choisi par l'émetteur		STRK20's amount salt, another system
+not-a-level	docs/strk20-vs-protocol01-technique-2026-07-22.html	Pourquoi pas un corps 64 bits		a field width
+not-a-level	docs/strk20-vs-protocol01-technique-2026-07-22.html	lanes 32 bits		a SIMD lane width
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	70 requêtes, 26 bits de grinding		stwo-cairo's own parameters and conjectured target
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	96 bits conjecturés</span> (régime list-decoding)		stwo-cairo's own parameters and conjectured target
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.html	<td class="cyan bold">16 bits</td><td class="red">à corriger</td>		Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.html	<tr><td>Soundness</td><td class="dim">128 bits</td>		the brief's 128, in the brief column of a table of corrections, marked to correct
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.html	<td class="cyan bold">124 bits (27q) / 104 bits (22q)</td>		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.html	avec un commentaire « 128-bit security »		quotes the comment of a dead file, as dead
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.html	// 27 × 4 + 16 = 124 bits &gt; 100-bit target		quotes retired code
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.html	C3, C5 et C6 utilisent 22 requêtes, soit 104 bits		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.html	le terme Schwartz-Zippel est donc bien en dessous de 124 bits		says the old 124 was too high
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	96 bits of <span class="bold">conjectured</span> soundness		stwo-cairo's own parameters and conjectured target
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	<td>26 bits + PoW d'interaction</td>		stwo-cairo's own parameters and conjectured target
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.html	PoW d'interaction</td><td>16 bits</td>		Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	<td class="yellow">96 bits conjecturés</td>		stwo-cairo's own parameters and conjectured target
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.html	<td class="yellow">124 / 104 bits		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	ce qui n'atteint 96 bits que sous l'hypothèse conjecturale		stwo-cairo's own parameters and conjectured target
+external	docs/strk20-vs-protocol01-technique-2026-07-22.html	masqué par hash-and-add, salt 120 bits		STRK20's amount salt, another system
+historical	docs/strk20-vs-protocol01-technique-2026-07-22.html	« Blake3-256, 32 requêtes, folding 8, pas de grinding, 128 bits »		quotes the brief's wrong parameter line as the text to correct
+stale	docs/strk20-vs-protocol01-technique-2026-07-22.html	grinding 16 bits, 124 ou 104 bits e		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46; grinding is 22
+stale	docs/zk-simulation-argument.md	42 to 52 bits, floor-bound by the field		stated as the current soundness (lines 393-394, the figure wrapped across the break): unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45) and conjectured 45.60 to 46.91 (floors 45 to 46); 52 is no circuit's figure, it was C0 before the uniform masks, and 42 is the uniform-challenge model's floor
+not-a-level	docs/zk-simulation-argument.md	`2 · width · 63` bits of min-entropy		the min-entropy of an unopened leaf preimage, a privacy figure (the same quantity as the LEAK-LEDGER row); read since fix round 2 blanks the backticks
+stale	apps/web/i18n/en.ts	16x blowup and 16 bits of grinding		the live site's parameter list: Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
+historical	apps/web/i18n/en.ts	This page used to claim 124 bits		the withdrawn figure, said so
+stale	apps/web/i18n/fr.ts	facteur de blowup 16 et 16 bits de grinding		the live site's parameter list: Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
+historical	apps/web/i18n/fr.ts	Cette page annon\u00e7ait 124 bits		the withdrawn figure, said so
+historical	apps/web/app/demo/pitch/page.tsx	a security level of 124 bits that measurement contradicts		the withdrawn figure, said so
+historical	apps/web/app/docs/page.tsx	Deleting the old "124-bit" claim		the withdrawn figure, said so
+stale	apps/web/app/parcours/_components/data.ts	47 à 52 bits sous conjecture, 42 à 46 bits inconditionnellement		conjectured as shipped is 45.60 to 46.91 (floors 45 to 46); 52 was C0 before the uniform masks, 47 is the uniform-challenge model; unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
+stale	apps/web/app/parcours/_components/data.ts	autour de 21 à 26 bits		the quantum lines as shipped (CMS19, half) are 20.98 to 22.92 for unique decoding and 22.80 to 23.45 for the conjecture; 26 is half of the retired C0 figure 52
+historical	apps/web/app/parcours/page.tsx	Ma documentation annonçait 124 bits		the withdrawn figure, said so
+historical	apps/web/app/parcours/page.tsx	chaque requête valait environ 1 bit et non 4		the per-query value before the composition fix, told in the past tense
+historical	apps/web/app/parcours/page.tsx	et les 124 bits annoncés en valaient réellement		the withdrawn figure, said so
+verified	apps/web/app/parcours/page.tsx	et 4,000 bits par requête		log2(1/rho) = 4 at rho = 1/16, the per-query term of the conjectured regime (the term tables' 130.00 is 27 x 4 + 22)
+historical	apps/web/app/parcours/page.tsx	le terme de requête avait gagné 72 à 87 bits		a past measurement told in the past tense: a gain of the query term, not a level; not re-derived here
+stale	apps/web/app/parcours/page.tsx	autour de 48 à 52 bits		the Fiat-Shamir field floor is 45.60 to 46.91 as shipped (46.60 to 47.91 uniform), the Field floor rows of the conjectured regime; 52 was C0 before the uniform masks
+stale	apps/web/app/parcours/page.tsx	47 à 52 bits sous conjecture		conjectured as shipped is 45.60 to 46.91 (floors 45 to 46); 52 was C0 before the uniform masks, 47 is the uniform-challenge model
+stale	apps/web/app/parcours/page.tsx	42 à 46 bits inconditionnellement		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
+historical	apps/web/app/updates/page.tsx	the 124-bit soundness figure is withdrawn		the withdrawn figure, said so

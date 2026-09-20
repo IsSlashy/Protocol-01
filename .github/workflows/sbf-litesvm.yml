@@ -1,0 +1,166 @@
+name: SBF — build the programs, run the litesvm suites
+
+# WP0g, 2026-09-18.
+#
+# The litesvm suites execute REAL program bytecode, so they need the .so that
+# `cargo-build-sbf` produces, and ci.yml's Rust job has no SBF toolchain. Until
+# this workflow they ran nowhere:
+#   - ci.yml skips the three `unshield_c5_membership` guards that load the
+#     program, and says so itself ("this line is a deferral, not a resolution");
+#   - `eras_and_depth`, `subscribe_v4_adversarial` and `subscription_lifecycle`
+#     are named in no workflow;
+#   - cu_budget.rs's CI_UNRUN_TEST_TARGETS excuses `cu_budget` and
+#     `l2_presized_buffers` because the job has no cargo-build-sbf.
+#
+# This job builds zk_shielded, p01_stark_verifier and the C7 probe with the
+# cargo-build-sbf that Anchor.toml's `solana_version` pins, then runs every suite
+# that loads one of them against the bytes it just built. Each suite is first
+# run against a file that is not a program and must fail while loading it, so a
+# suite that reads some other .so cannot go green here. The logic lives in
+# scripts/ci/sbf-litesvm.sh, so a dev box runs the same checks.
+#
+# ⚠️ `/scripts/` is gitignored (.gitignore:67), so `git add` skips the helper
+# without a word. Commit it with `git add -f scripts/ci/sbf-litesvm.sh`. The
+# step below fails by name when it is missing.
+
+# The two path lists are the same list. They are written out twice rather than
+# shared through a YAML anchor, so the file does not depend on anchor support.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'programs/**'
+      # p01-stark is a dev-dependency of the verifier suites (cu_budget proves
+      # on the spot).
+      - 'stark/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Anchor.toml'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      # Read by cu_budget.rs at compile time (include_str!).
+      - '.github/workflows/ci.yml'
+      - '.gitignore'
+      - 'apps/mobile/services/stark/index.ts'
+      - '.github/workflows/sbf-litesvm.yml'
+      - 'scripts/ci/sbf-litesvm.sh'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'programs/**'
+      - 'stark/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'Anchor.toml'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - '.github/workflows/ci.yml'
+      - '.gitignore'
+      - 'apps/mobile/services/stark/index.ts'
+      - '.github/workflows/sbf-litesvm.yml'
+      - 'scripts/ci/sbf-litesvm.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: sbf-litesvm-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sbf-litesvm:
+    name: SBF build + litesvm suites
+    runs-on: ubuntu-latest
+    # Measured on a 32-thread Windows box (WP0g report): the three SBF builds
+    # take about 2.5 minutes cold, and cu_budget about 3 minutes including its
+    # release build. A hosted runner has fewer cores; 60 leaves room for a cold
+    # cache without letting a hang run for hours.
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: never
+      P01_SBF_OUT_DIR: ${{ github.workspace }}/target/sbf-litesvm/deploy
+      P01_SBF_TARGET_DIR: ${{ github.workspace }}/target/sbf-litesvm/sbf
+      P01_SBF_LOG_DIR: ${{ github.workspace }}/target/sbf-litesvm/logs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: The helper script is in this commit
+        run: |
+          if [ ! -f scripts/ci/sbf-litesvm.sh ]; then
+            echo "::error title=sbf-litesvm::scripts/ci/sbf-litesvm.sh is not in this commit. /scripts/ is gitignored (.gitignore:67); commit it with: git add -f scripts/ci/sbf-litesvm.sh"
+            exit 1
+          fi
+
+      # The reader that turns a libtest log into a verdict, against planted logs
+      # it must accept and reject. No toolchain, no cargo.
+      - name: Self-test of the log reader
+        run: bash scripts/ci/sbf-litesvm.sh selftest
+
+      - name: Read the pinned Solana version from Anchor.toml
+        id: pin
+        run: |
+          v="$(tr -d '\r' < Anchor.toml | sed -n 's/^[[:space:]]*solana_version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | awk 'NR == 1')"
+          if [ -z "$v" ]; then
+            echo "::error title=sbf-litesvm::Anchor.toml has no solana_version"
+            exit 1
+          fi
+          echo "solana_version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Solana platform-tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/solana
+          key: sbf-litesvm-platform-tools-${{ steps.pin.outputs.solana_version }}
+
+      # The script checks that the cargo-build-sbf it runs reports exactly this
+      # version, so a changed installer cannot switch the compiler quietly.
+      - name: Install the Solana CLI (Agave) at the Anchor.toml pin
+        run: sh -c "$(curl -sSfL https://release.anza.xyz/v${{ steps.pin.outputs.solana_version }}/install)"
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-sbf-litesvm-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-sbf-litesvm-registry-
+
+      # Host test binaries only. The SBF target dir and the out dir are not
+      # cached: every .so under test is built by this run.
+      - name: Cache host test build
+        uses: actions/cache@v4
+        with:
+          path: target/release
+          key: ${{ runner.os }}-sbf-litesvm-host-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-sbf-litesvm-host-
+
+      - name: Build zk_shielded, p01_stark_verifier and the C7 probe (cargo-build-sbf)
+        run: bash scripts/ci/sbf-litesvm.sh build
+
+      - name: zk_shielded litesvm suites (control on a non-program, then the run)
+        run: bash scripts/ci/sbf-litesvm.sh zk
+
+      - name: Verifier litesvm suites, cu_budget and l2_presized_buffers (control, then the run)
+        run: bash scripts/ci/sbf-litesvm.sh cu
+
+      - name: Upload the build manifest and the suite logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbf-litesvm-logs
+          path: |
+            target/sbf-litesvm/deploy/MANIFEST
+            target/sbf-litesvm/logs/
+          if-no-files-found: ignore
+          retention-days: 14

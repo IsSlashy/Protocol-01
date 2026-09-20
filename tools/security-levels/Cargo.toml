@@ -1,0 +1,32 @@
+[package]
+name = "p01-security-levels"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+publish = false
+description = "Protocol 01: the one source of STARK parameters and the soundness calculator that writes docs/SECURITY-LEVELS.md"
+
+# Standalone on purpose. The repository workspace (root Cargo.toml) builds the
+# Solana programs with the SBF toolchain; this crate is a host tool with no
+# dependencies, and it must not pull the programs' dependency graph in. It
+# still reads the verifier's parameters from the verifier's own source file,
+# see `src/lib.rs`.
+[workspace]
+
+[lib]
+name = "p01_security_levels"
+path = "src/lib.rs"
+
+[[bin]]
+name = "security-levels"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints.rust.unexpected_cfgs]
+level = "allow"
+check-cfg = ['cfg(target_os, values("solana"))']
+
+# The Johnson regimes search m exhaustively; keep `cargo test` fast.
+[profile.dev]
+opt-level = 3

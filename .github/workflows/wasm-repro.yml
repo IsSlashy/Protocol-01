@@ -1,0 +1,140 @@
+name: Wasm repro
+
+# Rebuilds the shipped STARK prover blob (packages/stark-prover/wasm/p01_stark_bg.wasm)
+# from this tree with a pinned toolchain, twice from clean target dirs, and fails
+# unless both builds are byte-identical to each other, to the shipped blob, to its
+# wasm-bindgen glue and to the four base64 twins the clients import. No other
+# workflow runs wasm-pack: ci.yml only type-checks the `wasm` feature and checks
+# that the twins agree with the checked-in blob, not that the blob comes from
+# this source.
+#
+# The recipe and the reason for every pin are in scripts/ci/wasm-repro.mjs (header).
+# In short, measured 2026-09-18 (WP0c):
+#   - Windows runner: cargo hashes the host triple into -C metadata of every crate
+#     with a build script or proc-macro in its closure, so a Linux build of the same
+#     tree is other code (one function fewer), whatever paths it is given.
+#   - The shipped blob embeds the builder's registry path; the script remaps this
+#     runner's CARGO_HOME onto it, which restores the shipped bytes and changes
+#     nothing else.
+#   - wasm-bindgen-cli is built from crates.io: the GitHub release binary of the
+#     same version stamps its commit into the producers section, so its output
+#     differs by 12 bytes.
+#   - wasm-pack and binaryen are release binaries checked against the sha256
+#     digests their projects publish.
+#
+# A red run after a change under stark/ or Cargo.lock means the shipped blob is no
+# longer what the tree builds. The fix is a reship or a revert, never an edit here.
+
+# The two path lists are the same list; keep them in step.
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/wasm-repro.yml'
+      - 'scripts/ci/wasm-repro.mjs'
+      - 'scripts/ci/wasm-repro.test.mjs'
+      - 'stark/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'packages/stark-prover/wasm/**'
+      - 'packages/stark-prover/scripts/wasm-artifacts.mjs'
+      - 'apps/web/lib/privacy/pool/starkWasmData.ts'
+      - 'apps/extension/src/shared/services/starkWasmData.ts'
+      - 'apps/mobile/services/stark/wasmData.ts'
+      - 'packages/react-native-zk/src/wasmData.ts'
+  pull_request:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/wasm-repro.yml'
+      - 'scripts/ci/wasm-repro.mjs'
+      - 'scripts/ci/wasm-repro.test.mjs'
+      - 'stark/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'packages/stark-prover/wasm/**'
+      - 'packages/stark-prover/scripts/wasm-artifacts.mjs'
+      - 'apps/web/lib/privacy/pool/starkWasmData.ts'
+      - 'apps/extension/src/shared/services/starkWasmData.ts'
+      - 'apps/mobile/services/stark/wasmData.ts'
+      - 'packages/react-native-zk/src/wasmData.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wasm-repro-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rebuild:
+    name: Rebuild the prover blob twice and compare
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUST_VERSION: 1.98.1
+      WASM_BINDGEN_VERSION: 0.2.114
+      WASM_PACK_VERSION: v0.14.0
+      WASM_PACK_SHA256: d484c8e8bcd9e8c30097fbac78b52dd159598f99d11e43a50f5d143b67c721f1
+      BINARYEN_VERSION: version_117
+      BINARYEN_SHA256: b09f260176483bd30194303ccb15ac81c2247e4e566894f9d931e4313cb36d58
+
+    steps:
+      # Before the checkout: the sources must reach rustc byte for byte as they
+      # are in git (seven files under stark/src are stored with CRLF, the rest LF).
+      - name: Check out files as stored
+        run: git config --global core.autocrlf false
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+
+      - name: Comparator tests (planted blobs, no toolchain)
+        run: node --test scripts/ci/wasm-repro.test.mjs
+
+      - name: Install Rust ${{ env.RUST_VERSION }} with the wasm32 target
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --target wasm32-unknown-unknown
+          echo "RUSTUP_TOOLCHAIN=$RUST_VERSION" >> "$GITHUB_ENV"
+
+      - name: Build wasm-bindgen-cli ${{ env.WASM_BINDGEN_VERSION }} from crates.io
+        run: |
+          cargo install wasm-bindgen-cli --version "=$WASM_BINDGEN_VERSION" --locked --root "$RUNNER_TEMP/wasm-bindgen"
+          cygpath -w "$RUNNER_TEMP/wasm-bindgen/bin" >> "$GITHUB_PATH"
+
+      - name: Download wasm-pack and binaryen (sha256-checked)
+        run: |
+          mkdir -p "$RUNNER_TEMP/tools"
+          cd "$RUNNER_TEMP/tools"
+          wp="wasm-pack-$WASM_PACK_VERSION-x86_64-pc-windows-msvc"
+          bn="binaryen-$BINARYEN_VERSION-x86_64-windows"
+          curl -sSfL --retry 3 -o "$wp.tar.gz" "https://github.com/rustwasm/wasm-pack/releases/download/$WASM_PACK_VERSION/$wp.tar.gz"
+          curl -sSfL --retry 3 -o "$bn.tar.gz" "https://github.com/WebAssembly/binaryen/releases/download/$BINARYEN_VERSION/$bn.tar.gz"
+          echo "$WASM_PACK_SHA256  $wp.tar.gz" | sha256sum -c -
+          echo "$BINARYEN_SHA256  $bn.tar.gz" | sha256sum -c -
+          tar -xzf "$wp.tar.gz"
+          tar -xzf "$bn.tar.gz"
+          cygpath -w "$PWD/$wp" >> "$GITHUB_PATH"
+          cygpath -w "$PWD/binaryen-$BINARYEN_VERSION/bin" >> "$GITHUB_PATH"
+
+      - name: Rebuild twice and compare with the shipped blob and its twins
+        run: node scripts/ci/wasm-repro.mjs --runs 2 --work-dir "$RUNNER_TEMP/wasm-repro"
+
+      - name: Keep the rebuilt blobs for inspection
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-repro-rebuilds
+          path: ${{ runner.temp }}/wasm-repro/out-*
+          if-no-files-found: ignore
