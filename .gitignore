@@ -64,9 +64,16 @@ apps/mobile/android/app/build/
 
 # Scripts, services, tools (kept in Protocol-01-backup) — anchored to repo
 # root so they don't swallow apps/*/services, apps/*/scripts, etc.
-/scripts/
+#
+# `/scripts/*` and `/tools/*`, not `/scripts/` and `/tools/`: git never looks
+# inside an EXCLUDED DIRECTORY, so a `!` rule written after `/tools/` re-includes
+# nothing (measured, WP1-fix1b-gitignore-probe.log). Excluding the ENTRIES instead
+# leaves the directory readable, and the two `!` rules below then work.
+/scripts/*
+!/scripts/ci/
 /services/
-/tools/
+/tools/*
+!/tools/security-levels/
 /p01/
 .test-runner/
 
@@ -124,6 +131,10 @@ target/idl/*
 !target/idl/*.json
 target/types/*
 !target/types/*.ts
+# `!target/` above re-includes EVERY directory named target, at any depth, so the
+# build output of the re-included tools/security-levels crate needs its own rule,
+# and it has to come after that line to win (measured, 12-gitignore-after.log).
+/tools/security-levels/target/
 
 # Environment
 .env
@@ -329,3 +340,13 @@ __pycache__/
 
 # Conway colony secrets
 agents/conway/.env
+
+# Generated Android build output (an injected bundle carries the RPC key)
+apps/mobile/out/
+apps/mobile/**/ui*.xml
+
+# Sandbox probes a stopped run can leave behind
+apps/web/probe-*.test.tsx
+apps/web/vitest.probe*.mts
+apps/web/vitest.probe*.ts
+apps/web/__tests__/zz-*-probe.test.ts
