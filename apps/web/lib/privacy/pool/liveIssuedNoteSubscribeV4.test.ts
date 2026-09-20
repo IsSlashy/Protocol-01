@@ -76,8 +76,6 @@ function loadKeypair(): Keypair {
 
 interface HeldNote {
   sealedNote: string;
-  leafIndex: number;
-  commitment: string;
   paySig: string | null;
   claimCode: string | null;
 }
@@ -120,7 +118,7 @@ describe.skipIf(!LIVE)('a subscription paid with a note the buyer never deposite
       let held: Partial<HeldNote> =
         noteFile && existsSync(noteFile) ? (JSON.parse(readFileSync(noteFile, 'utf8')) as Partial<HeldNote>) : {};
       if (held.sealedNote) {
-        say(`reusing the note bought earlier: leaf ${held.leafIndex}`);
+        say('reusing the note bought earlier');
       } else {
         if (!held.claimCode) {
           const terms = await (await fetch(`${BASE}/api/claim-for-payment`)).json();
@@ -180,30 +178,29 @@ describe.skipIf(!LIVE)('a subscription paid with a note the buyer never deposite
         });
         const issued = await issueRes.json();
         expect(issueRes.status, JSON.stringify(issued)).toBe(200);
-        say(`3. NOTE   leaf ${issued.leafIndex}  commitment ${String(issued.commitment).slice(0, 18)}…`);
-        held = {
-          ...held,
-          sealedNote: issued.sealedNote,
-          leafIndex: issued.leafIndex,
-          commitment: String(issued.commitment),
-        };
+        // ⛔ THE REPLY NAMES NO LEAF AND NO COMMITMENT, and a run log the
+        // founder may share must not print one either. Both live inside the
+        // sealed blob alone, so the leaf below is read off the note the buyer
+        // OPENED (`__tests__/api/issue-note.node.test.ts` "does not move when
+        // the leaf moves, and does not name the recipient").
+        say('3. NOTE   sealed to this buyer');
+        held = { ...held, sealedNote: issued.sealedNote };
         keep(held);
         if (noteFile) say(`   sealed note kept at ${noteFile} for a re-run`);
       }
       expect(held.sealedNote).toBeTruthy();
-      expect(typeof held.leafIndex).toBe('number');
       const sealedNote = held.sealedNote as string;
-      const leafIndex = held.leafIndex as number;
 
       const imported = (await handlePoolRequest({
         kind: 'poolImportNote',
         meta,
         sealedNote,
       } as never)) as { note: { leafIndex: number; denomination: number }; encryptedNote: string };
-      expect(imported.note.leafIndex).toBe(leafIndex);
+      const leafIndex = imported.note.leafIndex;
+      expect(typeof leafIndex, 'the blob opened to no leaf').toBe('number');
       expect(imported.note.denomination).toBe(DENOMINATION);
       expect(typeof imported.encryptedNote).toBe('string');
-      say(`4. OPENED leaf ${imported.note.leafIndex}  ${imported.note.denomination} SOL, the buyer never deposited it`);
+      say(`4. OPENED ${imported.note.denomination} SOL, the buyer never deposited it`);
 
       // ------------------------------------------------ 5. prepare (v4)
       const retailerKp = Keypair.fromSeed(

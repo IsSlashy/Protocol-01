@@ -1,10 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { Connection, PublicKey } from '@solana/web3.js';
 
-import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+import { getStore, rateLimitExceeded, type KvLike } from '@/lib/waitlist/store';
+import { clientIp, rateLimitAdvisories } from '@/lib/net/clientIp';
+import { notePaidCodeKey, relayPaymentContributionKey } from '@/lib/privacy/paymentBinding';
 import { activeTreasurySeed, treasurySeeds } from '@/lib/privacy/treasurySeeds';
 import {
-  buildMerkleProofFromLeavesV3,
   createCommitmentV3,
   deriveNoteMaterial,
   fetchPoolCommitments,
@@ -17,6 +19,7 @@ import {
 } from '@/lib/privacy/pool/denominatedPool';
 import { deriveNoteBlinding } from '@/lib/privacy/pool/noteBlinding';
 import { encryptNote, isNoteEncryptionAddress } from '@/lib/privacy/pool/noteCrypto';
+import { installKvPoolHistory } from '@/lib/privacy/pool/kvPoolHistory';
 
 /**
  * issue-note — hand a caller a shielded note THIS DEPLOYMENT deposited.
@@ -72,6 +75,11 @@ import { encryptNote, isNoteEncryptionAddress } from '@/lib/privacy/pool/noteCry
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// [CACHE-1] The pool history this route walks is shared by every isolate
+// through one KV row per pool that holds public chain data only
+// (`lib/privacy/pool/kvPoolHistory.test.ts`).
+installKvPoolHistory();
+
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 const RATE_SALT = 'p01:issue-note:v1';
 /** Deliberately tighter than the funder's: this hands over value, not rent. */
@@ -88,16 +96,201 @@ const ISSUES_PER_IP_PER_HOUR = (() => {
   return Number.isInteger(raw) && raw >= 1 ? raw : 3;
 })();
 
+/**
+ * The reply a redeemed claim can be handed again, byte for byte.
+ *
+ * 🚨 NO LEAF INDEX AND NO COMMITMENT, and the absence is the point. Both used
+ * to travel beside the blob that already carries them for the buyer alone, so
+ * the reply — and any copy of the row that stores it — named the note. The
+ * clients never needed them: `shieldClient.ts` (`requestIssuedNote`) falls
+ * back to the opened note's own index, and `poolImportNote` recomputes the
+ * commitment from the secrets. Measured rather than listed by
+ * `__tests__/api/issue-note.node.test.ts` "does not move when the leaf moves",
+ * which runs the same request against two different leaves and compares the
+ * bytes.
+ */
+interface SealedReply {
+  sealedNote: string;
+  denomination: number;
+  token: 'SOL' | 'USDC';
+  merklePath: 'rebuilt' | 'none';
+  disclosure: string;
+}
+
+/** Where a redeemed claim's reply is kept: the hash of the code, never the code. */
+function sealedReplyKey(claimCode: string): string {
+  return `p01:note:sealed:${createHash('sha256').update(claimCode).digest('hex')}`;
+}
+
+/**
+ * Every sealed note's plaintext is padded to a multiple of this many bytes.
+ *
+ * 🚨 THE LENGTH OF THE BLOB WAS A FUNCTION OF THE LEAF. The note is JSON, so
+ * its byte count follows the digits of `leafIndex` and of the commitment its
+ * deposit published, and the sealed reply carried that count, with no key, to
+ * a capture of the response or a copy of the stored reply. Measured on this
+ * route before the pad, 2026-09-18: a note at a two-digit leaf was 399 bytes
+ * sealed to 2088 characters, one at a three-digit leaf 402 bytes sealed to
+ * 2092. The padding is spaces, which are JSON whitespace, so every reader that
+ * parses the note reads the same note. The longest note measured (a USDC note
+ * at the largest u32 index) is 485 bytes; a longer one pads to the next
+ * multiple rather than being refused.
+ * Pinned by `__tests__/api/issue-note.node.test.ts` "is the same length
+ * whichever note is sealed in it".
+ */
+const SEALED_NOTE_BYTES = 1024;
+
+function paddedNote(note: ShareableNote): Uint8Array {
+  const json = new TextEncoder().encode(JSON.stringify(note));
+  const size = Math.max(1, Math.ceil(json.length / SEALED_NOTE_BYTES)) * SEALED_NOTE_BYTES;
+  const out = new Uint8Array(size).fill(0x20);
+  out.set(json);
+  return out;
+}
+
+/**
+ * Delete the rows that name a claim code and the payment that bought it.
+ *
+ * 🚨 WHAT A COPY OF THE STORE JOINED. `claim-minted:<code>` holds
+ * `payment:<sig>`, the shape contribute-note and claim-for-payment write
+ * since KV-1: the code, and the signature of the payment that bought it,
+ * which resolves publicly to the wallet that made it. A claim sold before
+ * KV-1 still holds `contrib:<pool>:<leaf>:payment:<sig>`, which names the
+ * leaf that payment funded as well, and `/api/mint-claim` stores a digest
+ * with no payment in it. So the signature is read from either payment shape,
+ * unanchored, and the code's own row goes whatever it holds. `paid:<sig>:code`
+ * and the relay's binding say the same thing from the other side. Once the
+ * code has been redeemed, nothing reads any of the three again. Each shape
+ * has its own case in `__tests__/api/issue-note.node.test.ts` ("the rows
+ * that name a code and a payment together"), which also checks the shapes
+ * against the writers' source.
+ *
+ * ⛔ `p01:note:paid:<sig>` STAYS, and so does `p01:note:claim:<code>`: those
+ * are the gates that stop one payment buying two notes. Pinned by
+ * `__tests__/api/issue-note.node.test.ts` "are deleted at redemption, and the
+ * payment gate is kept", and read at rest by
+ * `__tests__/lib/kvRowsAtRest.test.ts`.
+ *
+ * ⚠️ IT COSTS THE BUYER NOTHING because it runs after the response. `after()`
+ * throws outside a request scope (next/dist/server/after/after.js), which is
+ * every caller that is not the running server, so the fallback does the same
+ * work inline rather than letting the deletions quietly not happen.
+ */
+async function forgetTheCodeToPaymentTrail(
+  kv: KvLike,
+  claimCode: string,
+  minted: string,
+): Promise<void> {
+  const signature = /payment:([1-9A-HJ-NP-Za-km-z]{32,90})/.exec(minted)?.[1];
+  const sweep = async () => {
+    const keys = [`p01:note:claim-minted:${claimCode}`];
+    if (signature) keys.push(notePaidCodeKey(signature), relayPaymentContributionKey(signature));
+    for (const key of keys) {
+      try {
+        await kv.del(key);
+      } catch {
+        // Best effort. A row that survives stays readable in a dump, which is
+        // the state this removes; it is never a failed sale.
+      }
+    }
+  };
+  try {
+    after(sweep);
+  } catch {
+    await sweep();
+  }
+}
+
+/**
+ * ⛔ NO TEXT FROM THE STORE OR THE CHAIN IN ANY ANSWER, whichever call failed.
+ *
+ * The production store client words a failed request as
+ * `${error}, command was: ${JSON.stringify(request body)}`
+ * (node_modules/@upstash/redis/nodejs.js:226): the command, its key and its
+ * value, and with auto-pipelining the commands of every other request batched
+ * into the same one. Passed on, that text handed a buyer the sealed note a
+ * failed write carried, and the retry that answer asked for then handed a
+ * second one for the same code; it named a leaf's key when its claim failed;
+ * and it gave one buyer another's claim code, which redeems (verifier probe P1-P3,
+ * web-run/logs/verify-ISSUE-1-r1/probe-upstash.log). A chain error names what
+ * it was asked about. So every refusal says what failed in words fixed here,
+ * and nothing else, and none of that text is logged either. Pinned by
+ * `__tests__/api/issue-note.node.test.ts` "every answer this route gives",
+ * which fails each store and chain call in turn with a text that names its
+ * arguments (red: web-run/logs/ISSUE-1-webfix2/sandbox-upstash/wp-logs/
+ * ISSUE-1-red.log).
+ */
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
 }
 
-function clientIp(req: NextRequest): string {
-  const real = req.headers.get('x-real-ip');
-  if (real) return real.trim();
-  const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return 'unknown';
+/**
+ * 🚨 AN EXHAUSTION REFUSAL IS A DATED READING OF THE INVENTORY.
+ *
+ * The refusals below the walk used to carry their counts — `spentLeaves`,
+ * `heldByOthers`, `tooYoung`, `waitSlots`, `notOurs` — and each of them goes
+ * through `release()`, which hands the claim code back. So a buyer holding ONE
+ * minted code could ask again, and again, and read the inventory each time: a
+ * rise in `spentLeaves` dates the spend of an issued note to the poll window,
+ * and joined with the public spends of that window it sorts them into issued
+ * notes and self-deposited ones. `heldByOthers` is the size of the issued-note
+ * set, and `waitSlots` is the next maturity time. The same words without the
+ * numbers still date the first spend after exhaustion, because the branch that
+ * answers changes with it — so the public answer is ONE answer for every
+ * exhaustion, status included.
+ *
+ * Nothing in this app reads those counts: they are diagnostics for whoever runs
+ * the deployment, and they are answered to a caller who proves they are that
+ * person (`asksAsOperator`). This is the rule the GET already follows: READY-1
+ * keeps the wait time out of the readiness answer.
+ *
+ * Pinned by `__tests__/api/issue-note.node.test.ts` "what a paying caller is
+ * told when no note comes out", which runs five worlds that differ only in the
+ * state of the inventory and requires one answer, plus the operator's view of
+ * the same five, which must differ.
+ */
+const EXHAUSTED_ERROR = 'no note could be handed over for this claim';
+/**
+ * ⚠️ WHAT THIS PROMISES HAD TO BECOME TRUE (gate r1, RED 7e).
+ *
+ * It used to say "asking again with the SAME code costs nothing". The CODE
+ * costs nothing — it is released on every exhausted path and is still worth a
+ * note. But every POST is charged against `ISSUES_PER_IP_PER_HOUR` (3 by
+ * default) below, so a buyer who has paid and follows that sentence is answered
+ * 429 on the fourth attempt and locked out for the hour. The hint now says both
+ * halves, because the second one is the one that decides what the buyer does
+ * next.
+ */
+const EXHAUSTED_HINT =
+  'Your claim code was NOT used up: it is still worth a note and the same code succeeds once ' +
+  'the deployment has one to give. Leave a few minutes between attempts — this deployment ' +
+  'limits how often one network may ask, and spending that allowance on retries is what would ' +
+  'cost you. Which state the inventory is in is answered to whoever runs the deployment ' +
+  '(repeat the request with the admin password), because an inventory state that can be read ' +
+  'over and over dates the notes that are spent.';
+
+/**
+ * Whether this request carries the operator's password.
+ *
+ * ⛔ AN UNSET PASSWORD IS NOT A MATCH. Comparing `undefined` with a missing
+ * header would make every caller an operator on a deployment that never set
+ * one, which is the shape this whole rule exists to refuse.
+ *
+ * The comparison is over sha256 digests, of equal length whatever the inputs,
+ * so a wrong password cannot be lengthened into a timing answer. The digests
+ * are of the password only: neither is logged, returned, or stored.
+ */
+function asksAsOperator(request: NextRequest): boolean {
+  const expected = process.env.ADMIN_PASSWORD ?? '';
+  const given = request.headers.get('x-admin-password') ?? '';
+  if (expected === '' || given === '') return false;
+  const a = createHash('sha256').update(expected).digest('hex');
+  const b = createHash('sha256').update(given).digest('hex');
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < a.length && i < b.length; i += 1) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 /**
@@ -402,12 +595,193 @@ async function inventoryLeaves(
   const seeded = seededInventoryLeaves();
   if (!poolKey) return seeded;
   const acquired = await acquiredInventoryLeaves(poolKey);
-  return [...new Set([...seeded, ...acquired, ...(discovered ?? [])])].slice(
-    0,
-    MAX_INVENTORY_LEAVES,
-  );
+  // ⛔ NOT CUT HERE ANY MORE. The union used to be sliced to 512 before a single
+  // gate ran, with the DISCOVERED leaves last, so a growing deployment's mature
+  // stock was dropped unexamined while the buyer was told the stock was too
+  // young. The pure gates in POST now see every candidate and the 512 cap falls
+  // on the ELIGIBLE ones (`__tests__/api/issue-note.node.test.ts` "an inventory
+  // larger than the walk"). The seeded half keeps its own typo guard above, and
+  // discovery its ceiling.
+  return [...new Set([...seeded, ...acquired, ...(discovered ?? [])])];
 }
 
+/**
+ * [READY-1] "Can a note be handed over RIGHT NOW?", answered on a fixed clock.
+ *
+ * `configured` says this deployment is set up to sell. It says nothing about
+ * whether the stock holds a note old enough, unspent and unsold, and the pool
+ * panel read nothing else: a buyer paid the till against stock that was all
+ * too young, and a deployment that could not answer sent them to a deposit of
+ * their own without asking (map-A defect 6).
+ *
+ * ⛔ ONE SAMPLE PER 10-MINUTE UTC BUCKET, NEVER REFRESHED BY A SALE. A flag
+ * recomputed on every issuance would tell anyone polling this GET the minute a
+ * note left stock, and so time a purchase against the note it bought. So:
+ *   - a GET in a bucket with no sample answers null and hands ONE sample to
+ *     `after()`, so the reply waits for no chain read;
+ *   - the sample runs the sale's own gates read-only (on the tree, ours, age,
+ *     spent, claimed) and writes `{ bucket, issuableNow }` with no expiry,
+ *     keeping a sample another instance already wrote for that bucket;
+ *   - every later GET of the bucket serves that sample; an older bucket's
+ *     sample is never served (null until the new one lands);
+ *   - POST never touches the row.
+ * Pinned by `__tests__/api/issue-note.test.ts` "READY-1" ("no snapshot gives
+ * null, with no RPC on the request path", "the value is stable inside a bucket
+ * across an issuance", "one sample per bucket", "the sample row holds its
+ * bucket and a yes or no").
+ *
+ * ⚠️ THE SAMPLE IS TAKEN WHEN THE BUCKET'S FIRST GET ARRIVES, not at the
+ * bucket's edge, so a caller who is alone in asking picks that moment inside
+ * the bucket. It still gets one sample per bucket, and the row names no leaf,
+ * no count and no wait. What a copy of the store shows is the last bucket in
+ * which somebody asked, and whether stock was issuable then.
+ */
+const READINESS_BUCKET_MS = 10 * 60 * 1000;
+const KV_READINESS_PREFIX = 'p01:note:readiness:';
+
+interface ReadinessSample {
+  bucket: number;
+  issuableNow: boolean;
+}
+
+/** A stored sample, or null for anything that is not exactly one. */
+function readinessSampleOf(raw: unknown): ReadinessSample | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { bucket, issuableNow } = raw as Record<string, unknown>;
+  if (!Number.isSafeInteger(bucket) || typeof issuableNow !== 'boolean') return null;
+  return { bucket: bucket as number, issuableNow };
+}
+
+/** The bucket this instance has a sample in flight for, so repeated GETs hand over one. */
+let samplingBucket: number | null = null;
+
+/**
+ * Whether a POST now would hand a note over: the sale's reads and gates, in
+ * the sale's order, with nothing claimed and nothing written.
+ *
+ * `null` when that cannot be told: a read failed, the RPC is not devnet, or
+ * the history came back without a leaf that could have been the answer. That
+ * is never guessed as "no", for the reason the sale gives for its own 502.
+ */
+async function sampleIssuableNow(
+  kv: KvLike,
+  pool: { poolPDA: PublicKey; tokenMint: PublicKey },
+): Promise<boolean | null> {
+  const allSeeds = treasurySeeds();
+  const activeSeed = allSeeds[0];
+  if (!activeSeed) return null;
+  const connection = new Connection(
+    process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com',
+    'confirmed',
+  );
+  let commitments: Map<string, OnChainCommitment>;
+  let spent: ReadonlySet<string>;
+  let currentSlot: number;
+  try {
+    // Devnet only, like the sale: no walk against another cluster.
+    if ((await connection.getGenesisHash()) !== DEVNET_GENESIS) return null;
+    commitments = await fetchPoolCommitments(connection, pool.poolPDA);
+    spent = await fetchSpentNullifierSet(connection, pool.poolPDA);
+    currentSlot = await connection.getSlot('finalized');
+  } catch {
+    return null;
+  }
+  const poolKey = pool.poolPDA.toBase58();
+  const seedForLeaf = new Map<number, Uint8Array>();
+  const discovered: number[] = [];
+  for (const candidate of allSeeds) {
+    for (const leafIndex of discoverOwnedLeaves(candidate, pool, commitments)) {
+      if (seedForLeaf.has(leafIndex)) continue;
+      seedForLeaf.set(leafIndex, candidate);
+      discovered.push(leafIndex);
+    }
+  }
+  const leaves = await inventoryLeaves(poolKey, discovered);
+  const minAge = minAgeSlots();
+  let maxLeafOnTree = -1;
+  const onTreeAt = new Set<number>();
+  for (const e of commitments.values()) {
+    onTreeAt.add(e.leafIndex);
+    if (e.leafIndex > maxLeafOnTree) maxLeafOnTree = e.leafIndex;
+  }
+  let unread = 0;
+  let claimReads = 0;
+  for (const leafIndex of leaves) {
+    const leafSeed = seedForLeaf.get(leafIndex) ?? activeSeed;
+    const { secret, nullifierPreimage } = deriveNoteMaterial(leafSeed, pool.poolPDA, leafIndex);
+    const commitment = createCommitmentV3(
+      nullifierPreimage,
+      secret,
+      deriveNoteBlinding(leafSeed, pool.poolPDA, leafIndex),
+      pubkeyToField(pool.tokenMint),
+    );
+    const onChain = commitments.get(commitment.toString());
+    // Not deposited yet, or not read back: the sale's two gates, in its order.
+    if (!onChain && maxLeafOnTree >= 0 && leafIndex > maxLeafOnTree) continue;
+    if (!onTreeAt.has(leafIndex)) {
+      unread += 1;
+      continue;
+    }
+    if (!onChain || onChain.leafIndex !== leafIndex) continue;
+    // An unknown slot is too young, as in the sale.
+    if (onChain.depositSlot === null || currentSlot - onChain.depositSlot < minAge) continue;
+    if (isNullifierSpentInSet(spent, pool.poolPDA, nullifierPreimage, secret)) continue;
+    // The sale's walk stops at the same number of claims.
+    if (claimReads >= MAX_INVENTORY_LEAVES) return false;
+    claimReads += 1;
+    let claimed: unknown;
+    try {
+      // READ, never `incr`: the sample takes nothing out of stock.
+      claimed = await kv.get(`p01:note:issued:${poolKey}:${leafIndex}`);
+    } catch {
+      return null;
+    }
+    if (claimed === null || claimed === undefined) return true;
+  }
+  return unread > 0 ? null : false;
+}
+
+/**
+ * The request path of the readiness answer: ONE KV read, and no chain.
+ * The sample, when this bucket has none, is scheduled here and runs after the
+ * reply (see "[READY-1]" above).
+ */
+async function readIssuableNow(kv: KvLike): Promise<boolean | null> {
+  const pool = getPoolsForTokenV3('SOL').find((p) => p.denomination === inventoryDenomination());
+  if (!pool) return null;
+  const key = KV_READINESS_PREFIX + pool.poolPDA.toBase58();
+  const bucket = Math.floor(Date.now() / READINESS_BUCKET_MS);
+  let sample: ReadinessSample | null = null;
+  try {
+    sample = readinessSampleOf(await kv.get(key));
+  } catch {
+    // Unreadable is no sample: null, and a sample is asked for below.
+  }
+  if (sample && sample.bucket === bucket) return sample.issuableNow;
+  if (samplingBucket === bucket) return null;
+  const task = async () => {
+    try {
+      // One sample per bucket: keep one another instance already wrote.
+      if (readinessSampleOf(await kv.get(key))?.bucket === bucket) return;
+      const issuableNow = await sampleIssuableNow(kv, pool);
+      if (issuableNow === null) return;
+      if (readinessSampleOf(await kv.get(key))?.bucket === bucket) return;
+      await kv.set(key, { bucket, issuableNow });
+    } catch {
+      // No sample this time; the next GET of the bucket asks again.
+    } finally {
+      if (samplingBucket === bucket) samplingBucket = null;
+    }
+  };
+  try {
+    after(task);
+    samplingBucket = bucket;
+  } catch {
+    // Outside a request scope `after()` throws: nothing is sampled, and the
+    // answer stays null ("outside a request scope, a GET samples nothing").
+  }
+  return null;
+}
 
 export async function GET() {
   // Readiness, in the shape /api/fund-ephemeral uses: every way this is switched
@@ -423,15 +797,22 @@ export async function GET() {
   if (leaves.length === 0) reasons.push('P01_TREASURY_NOTE_LEAVES lists no leaf indices.');
   if (!process.env.P01_FUNDER_TICKET) reasons.push('P01_FUNDER_TICKET is unset.');
   if (!kv) reasons.push('No durable KV store, so issued notes cannot be tracked and this refuses.');
+  // [READY-1] One KV read, no chain: see readIssuableNow.
+  const issuableNow = reasons.length === 0 && kv ? await readIssuableNow(kv) : null;
   return NextResponse.json({
     ok: true,
     configured: reasons.length === 0,
     inventorySize: leaves.length,
+    // true, false, or null (not known this bucket): one sample per 10-minute
+    // bucket, never a wait time (`__tests__/api/issue-note.test.ts` "READY-1").
+    issuableNow,
     // The client asks for THIS, rather than assuming. Leaf indices only mean
     // something inside one pool.
     denomination: inventoryDenomination(),
     token: 'SOL',
     reasons,
+    // Never folded into `configured` (__tests__/lib/rateLimitKey.test.ts).
+    advisories: rateLimitAdvisories(),
     note:
       'inventorySize counts what was CONFIGURED, not what is still unissued — reading the ' +
       'remaining count would require the KV lookups an issuance does, and an endpoint that ' +
@@ -455,6 +836,10 @@ export async function POST(request: NextRequest) {
   } catch {
     return bad(400, 'body must be JSON');
   }
+
+  // Read once, from the headers, before anything is consumed: it only decides
+  // how an exhaustion is WORDED (`exhausted`), never what the route does.
+  const operator = asksAsOperator(request);
 
   const recipientAddress = String(body.recipientAddress ?? '');
   if (!isNoteEncryptionAddress(recipientAddress)) {
@@ -488,8 +873,8 @@ export async function POST(request: NextRequest) {
         limit: ISSUES_PER_IP_PER_HOUR,
       });
     }
-  } catch (e) {
-    return bad(503, `the rate limiter could not be read: ${(e as Error).message}`);
+  } catch {
+    return bad(503, 'the rate limiter could not be read');
   }
 
   const connection = new Connection(
@@ -502,8 +887,8 @@ export async function POST(request: NextRequest) {
   let genesis: string;
   try {
     genesis = await connection.getGenesisHash();
-  } catch (e) {
-    return bad(502, `the configured RPC could not be reached: ${(e as Error).message}`);
+  } catch {
+    return bad(502, 'the configured RPC could not be reached');
   }
   if (genesis !== DEVNET_GENESIS) {
     return bad(403, 'this issuer is devnet-only and the configured RPC is not devnet', { genesis });
@@ -537,22 +922,72 @@ export async function POST(request: NextRequest) {
     // claim cannot be spent twice even if two requests arrive together. Reading
     // then writing would let both pass and hand out two notes for one payment.
     claimed = await kv.incr(`p01:note:claim:${claimCode}`);
-  } catch (e) {
-    return bad(503, `the claim could not be read: ${(e as Error).message}`);
+  } catch {
+    return bad(503, 'the claim could not be read');
   }
+  const sealedKey = sealedReplyKey(claimCode);
   if (claimed !== 1) {
+    /**
+     * 🚨 A RETRY IS NOT A SECOND SALE, and this is where a lost answer used to
+     * become a lost note. The claim is consumed by `incr` before the chain is
+     * read, so a response that never arrived — a dropped connection, a closed
+     * tab — left the buyer with 409 forever and the leaf claimed for nobody.
+     *
+     * The reply of the call that worked is kept under the hash of the code, so
+     * the same code returns the same bytes and no second leaf leaves stock
+     * (`__tests__/api/issue-note.node.test.ts` "the same code, retried").
+     *
+     * ⛔ A code with no stored reply is still refused. That is the guessing
+     * case and the concurrent-redemption case, and both must stay 409.
+     */
+    let stored: SealedReply | null = null;
+    try {
+      stored = await kv.get<SealedReply>(sealedKey);
+    } catch {
+      // Unreadable: answered as already used below, which is what this request
+      // received before any reply was stored.
+    }
+    if (stored && typeof stored.sealedNote === 'string') {
+      return NextResponse.json({ ok: true, ...stored, replayed: true });
+    }
     return bad(409, 'this claim code has already been used', {
-      hint: 'A claim is worth one note. If a note was not received, recover it rather than reissuing — the first one is spendable.',
+      hint: 'A claim is worth one note. If a note was not received, ask again with the SAME code: the reply of the call that worked is kept.',
     });
   }
   // A claim must have been MINTED, not merely typed. `incr` above created the
   // key if it was absent, so the existence check has to be separate — and it
   // has to come after the claim, or two callers race on an unminted code.
+  //
+  // The reply an earlier attempt may have stored for this code is read in
+  // the same breath, and decided on below the release helper (`earlier`).
+  const earlierRead = kv.get<SealedReply>(sealedKey).then(
+    (stored) => ({ stored }),
+    () => null,
+  );
   let minted: string | null = null;
   try {
     minted = await kv.get<string>(`p01:note:claim-minted:${claimCode}`);
   } catch {
-    // Treated as unminted below: an unreadable store must not authorise value.
+    /**
+     * ⛔ UNREADABLE IS NOT UNMINTED, so the code goes back. The 402 below
+     * burns a code on purpose, because its answer is a verdict: this code was
+     * never sold. A read that failed is no verdict, and answering it with the
+     * 402 burned a code somebody had paid for on a store blip and told them
+     * they never paid. Nothing is issued either way: a code nobody could check
+     * authorises no value. Giving it back opens no guessing oracle. This answer
+     * is the same for a paid code and a guessed one, and a guess is still read
+     * exactly once before it is burned
+     * (`__tests__/api/issue-note.node.test.ts` "a claim row the store could
+     * not read"; red: web-run/logs/ISSUE-1-webfix3/sandbox-minted/wp-logs/
+     * ISSUE-1-red.log).
+     */
+    try {
+      await kv.del(`p01:note:claim:${claimCode}`);
+    } catch {
+      // Best effort, as in `release` below: a failed release costs this buyer
+      // their retry, and no note moved either way.
+    }
+    return bad(503, 'the claim could not be checked; retry with the same code');
   }
   if (!minted) {
     return bad(402, 'this claim code was never issued against a payment', {
@@ -596,10 +1031,69 @@ export async function POST(request: NextRequest) {
     return res;
   };
 
-  // The pool's leaves, once, for the discovery below, the on-chain check further
-  // down and the Merkle path. Building the path HERE rather than leaving the
-  // recipient to rebuild it is the difference between a subscription that starts
-  // immediately and one that walks the pool's whole history first.
+  /**
+   * The one answer every exhaustion gives a caller who is not the operator
+   * (see EXHAUSTED_ERROR above). Same status, same bytes, whatever the walk
+   * found — so a code that comes back cannot be re-polled into a reading of the
+   * inventory. The operator, who proved it with the password, still gets the
+   * exhaustion that actually happened, counts and all.
+   */
+  /**
+   * ⚠️ IT EQUALIZES THE BYTES, NOT THE WORK — A DISCLOSED RESIDUAL, FOR THE
+   * FOUNDER (gate r1, RED 7f).
+   *
+   * Two worlds that answer identically can still take different numbers of
+   * store round trips to get here: the walk takes the atomic claim (`kv.incr`)
+   * on a candidate that turns out to be spoken for, and skips to the next leaf
+   * BEFORE that line when the candidate is spent or too young. So the latency
+   * still moves with the inventory state, and a re-poller holding one released
+   * claim code can read a transition the byte-equal answer hides.
+   *
+   * ⛔ NOT PATCHED HERE, BECAUSE THE OBVIOUS FIX IS WORSE: equalizing the work
+   * means taking the claim on every candidate in every world, which consumes
+   * inventory to answer a refusal. A constant-time walk or a fixed delay is a
+   * decision about latency on a paid path. Measured and pinned by
+   * `__tests__/api/issue-note.node.test.ts`, "equalizes the BYTES of the refusal
+   * and not the WORK behind it — residual, measured", which fails the day it is
+   * closed.
+   */
+  const exhausted = (status: number, error: string, extra: Record<string, unknown> = {}) =>
+    operator ? bad(status, error, extra) : bad(503, EXHAUSTED_ERROR, { hint: EXHAUSTED_HINT });
+
+  /**
+   * 🚨 A REPLY ALREADY STORED FOR THIS CODE IS THE NOTE, EVEN ON A FIRST CLAIM.
+   *
+   * A reply write can land while its answer, and then its read-back, are
+   * lost. The route cannot tell that from a write that never landed, so it
+   * gives the code back and answers 503 "retry with the same code", and the
+   * reply sits in the store all the same. A retry that sold again handed over
+   * a second note, and a retry overlapping it replayed the first: one paid
+   * code, two notes (verifier web-run r3 probe P-DOUBLE,
+   * web-run/logs/verify-ISSUE-1-r3/probe-double.log). So a first claim
+   * replays a stored reply exactly as a retry of a spent claim does, and the
+   * code stays spent, because this answer delivers the note.
+   *
+   * ⛔ AN UNREADABLE REPLY IS NOT AN ABSENT ONE. Selling while it cannot be
+   * read is the same double, so the code goes back and nothing leaves stock.
+   *
+   * Pinned by `__tests__/api/issue-note.node.test.ts` "gives one note for one
+   * code when the write landed but could not be read back, however the
+   * retries overlap" and "does not sell again while the reply an earlier
+   * attempt stored cannot be read" (red: web-run/logs/ISSUE-1-webfix4/
+   * sandbox-double/wp-logs/ISSUE-1-red.log). The read shares the claim
+   * row's round trip, so a sale waits for no extra one
+   * (web-run/logs/ISSUE-1-webfix4/probe-real-client-after.log, P0).
+   */
+  const earlier = await earlierRead;
+  if (!earlier) return release(bad(503, 'the claim could not be checked; retry with the same code'));
+  if (earlier.stored && typeof earlier.stored.sealedNote === 'string') {
+    await forgetTheCodeToPaymentTrail(kv, claimCode, minted);
+    return NextResponse.json({ ok: true, ...earlier.stored, replayed: true });
+  }
+
+  // The pool's leaves, once, for the discovery below and the on-chain checks
+  // further down. No Merkle path is built from them any more: see "the sealed
+  // note" in `__tests__/api/issue-note.node.test.ts`.
   //
   // ⚠ READ BEFORE THE INVENTORY IS DECIDED, and that ordering moved. The
   // inventory used to be a pure read of configuration, so "no inventory" could
@@ -611,8 +1105,8 @@ export async function POST(request: NextRequest) {
   let commitments: Map<string, OnChainCommitment>;
   try {
     commitments = await fetchPoolCommitments(connection, pool.poolPDA);
-  } catch (e) {
-    return release(bad(502, `the pool's history could not be read: ${(e as Error).message}`));
+  } catch {
+    return release(bad(502, 'the pool\'s history could not be read'));
   }
 
   /**
@@ -657,7 +1151,7 @@ export async function POST(request: NextRequest) {
    *
    * MEASURED 2026-08-18: leaf 26 was the whole inventory and a subscription
    * spent it. Nothing in this route noticed. What prevented the next buyer
-   * from being handed it was the `:to` marker refusing a different recipient —
+   * from being handed it was a recipient marker that is gone (map-A defect 3) —
    * protection by accident, from a mechanism written for something else.
    *
    * `fetchSpentNullifierSet` reads addresses only, never bodies, and names no
@@ -666,10 +1160,10 @@ export async function POST(request: NextRequest) {
   let spent: ReadonlySet<string>;
   try {
     spent = await fetchSpentNullifierSet(connection, pool.poolPDA);
-  } catch (e) {
+  } catch {
     // ⛔ Refuse rather than issue blind. An unread spent-set is not an empty
     // one, and the failure mode of guessing is handing over spent money.
-    return release(bad(502, `the pool's spent notes could not be read: ${(e as Error).message}`));
+    return release(bad(502, 'the pool\'s spent notes could not be read'));
   }
 
   // The clock the maturity rule is measured against. Read once, after the
@@ -680,22 +1174,23 @@ export async function POST(request: NextRequest) {
   let currentSlot: number;
   try {
     currentSlot = await connection.getSlot('finalized');
-  } catch (e) {
+  } catch {
     // ⛔ Refuse rather than issue blind. An unknown clock is not an old note.
-    return release(bad(502, `the chain's slot could not be read: ${(e as Error).message}`));
+    return release(bad(502, 'the chain\'s slot could not be read'));
   }
   const minAge = minAgeSlots();
 
   const poolKey = pool.poolPDA.toBase58();
   /**
-   * Leaves that exist and are spoken for, but not by this caller.
+   * Leaves that exist and have already left stock.
    *
    * Without this the walk ends at the same "the note inventory is empty" as a
    * genuinely unstocked deployment, and those two need opposite reactions:
-   * one is "deposit more notes", the other is "you are asking from the wrong
-   * address". MEASURED 2026-08-18: the wrong message sent us looking at stock
-   * levels while the real cause was a reloaded page presenting a fresh note
-   * address, and it cost a single-use claim code to find out.
+   * one is "deposit more notes", the other is "the stock is sold, and a lost
+   * answer comes back with the same claim code".
+   *
+   * ⛔ IT NO LONGER DEPENDS ON WHO IS ASKING. The per-leaf counter alone says a
+   * leaf is gone, so nothing stores the address it went to (map-A defect 3).
    */
   // The highest leaf the tree actually holds. Needed to tell a leaf that is
   // NOT DEPOSITED YET from one whose commitment does not match — see the gate
@@ -718,8 +1213,18 @@ export async function POST(request: NextRequest) {
    * minutes earlier. One stale entry in a list of 318 refused a paid customer.
    */
   let notOurs = 0;
+  /**
+   * Inventory indices, configured or acquired, the history read did not bring
+   * back, although the tree has reached them (or the read came back with
+   * nothing at all).
+   */
+  let missingFromHistory = 0;
   /** How long the closest of those still has to wait, in slots. */
   let shortestWait = Number.POSITIVE_INFINITY;
+  // Which indices the read returned, from the entries themselves: an index
+  // holding somebody else's deposit is ON the tree, an absent one is unknown.
+  const onTreeAt = new Set<number>();
+  for (const e of commitments.values()) onTreeAt.add(e.leafIndex);
   // 🚨 SERVED IN RANDOM ORDER, AND IT WAS SERVED IN LIST ORDER.
   //
   // The loop used to walk `leaves` as configured, so the first buyer always
@@ -740,7 +1245,32 @@ export async function POST(request: NextRequest) {
     const j = Math.floor(Math.random() * (i + 1));
     [served[i], served[j]] = [served[j], served[i]];
   }
+  /**
+   * 🚨 THE WALK CAP COUNTS CLAIMS, NOT CANDIDATES (map-A defect 5), AND THE
+   * WALK IS LAZY.
+   *
+   * The cap used to cut the shuffled union to 512 before any gate ran, so a
+   * mature note past the cut was never examined. It now bounds only the
+   * `incr` round trips below; a candidate the pure gates skip does not count.
+   * One case per gate in `__tests__/api/issue-note.node.test.ts` "an inventory
+   * larger than the walk": "issues a candidate past the 512th" (too young; its
+   * control counts all 600) and, with the free leaf as the 600th candidate,
+   * "issues a free note behind 599 spent ones", "... behind 599 leaves the
+   * history read did not bring back" and "... behind 599 leaves not deposited
+   * yet". Counting any of those candidates stops the walk at 512 (reds:
+   * web-run/logs/ISSUE-2-webfix2/sandbox-V1, -V13 and -V14).
+   *
+   * ⚠️ The gates run one candidate at a time and the walk stops at the first
+   * note issued. Gating the whole union first made every sale pay a spent
+   * check (a PDA derivation) per mature candidate: 1,239.6 ms median for one
+   * happy-path POST at a union of 2,048 (wp-logs/ISSUE-2-fix1/
+   * bench-before-fix1.log). Pinned by the same file's "stops at the first note
+   * it can issue". A refusal still comes after a full walk (or the cap), so its
+   * counts are unchanged.
+   */
+  let claimAttempts = 0;
   for (const leafIndex of served) {
+    if (claimAttempts >= MAX_INVENTORY_LEAVES) break;
     // 🚨 EVERY REASON TO SKIP THIS LEAF IS DECIDED BEFORE THE CLAIM IS
     // TAKEN, AND THAT ORDER IS LOAD-BEARING.
     //
@@ -810,6 +1340,23 @@ export async function POST(request: NextRequest) {
       notYetDeposited += 1;
       continue;
     }
+    // 🚨 AN INDEX THE READ DID NOT RETURN IS UNKNOWN, NOT SOMEBODY ELSE'S (map-A
+    // defect 4). The tree is append-only, so every index up to its top exists;
+    // one missing from the map means the history walk came back short. It used
+    // to fall through to the claim, be counted as `notOurs` and stay claimed for
+    // ever, so a short read burned a note that was perfectly good — and an
+    // EMPTY read burned every configured one while answering 'the seed is
+    // wrong'. Skipped here, before the claim, and refused with 502 below when
+    // nothing was issued (`__tests__/api/issue-note.node.test.ts` "a leaf the
+    // history read did not bring back"; `__tests__/api/issue-note.test.ts` "an
+    // EMPTY commitment map still fails LOUD"). It holds for an ACQUIRED leaf,
+    // the refill set, as much as for a configured one: the same describe's "is
+    // never claimed when it was ACQUIRED rather than configured" (red:
+    // web-run/logs/ISSUE-2-webfix2/sandbox-V5).
+    if (!onTreeAt.has(leafIndex)) {
+      missingFromHistory += 1;
+      continue;
+    }
     // 🚨 AGE, BEFORE ANYTHING IS SEALED. See DEFAULT_MIN_AGE_SLOTS: a note
     // young enough to have been minted for this caller carries their clock, and
     // no amount of crowd or later delay takes it back off. Skip to the next
@@ -836,6 +1383,7 @@ export async function POST(request: NextRequest) {
       spentLeaves += 1;
       continue;
     }
+    claimAttempts += 1;
 
     // ATOMIC CLAIM, before any SIDE EFFECT. `incr` returns 1 only for the caller
     // that created the key, so exactly one concurrent request can win a leaf.
@@ -852,47 +1400,36 @@ export async function POST(request: NextRequest) {
     let claim: number;
     try {
       claim = await kv.incr(claimKey);
-    } catch (e) {
-      return release(bad(503, `the inventory could not be claimed: ${(e as Error).message}`));
+    } catch {
+      return release(bad(503, 'the inventory could not be claimed'));
     }
     if (claim !== 1) {
-      // 🚨 IDEMPOTENT FOR THE SAME RECIPIENT, and it has to be.
-      //
-      // The leaf used to be consumed outright the first time it was handed out,
-      // before the client could confirm it had opened the note. So any failure
-      // after this point — a bad field in the blob, a lost tab, a reload —
-      // destroyed the inventory as well as the claim, and the retry got "the
-      // note inventory is empty". MEASURED: it happened on the first live run,
-      // and again on the second.
-      //
-      // In production that is a paying customer's note burned by a transient
-      // error. Re-sealing the SAME note to the SAME address gives them what
-      // they already paid for, because it IS the same note: one commitment, one
-      // nullifier, spendable exactly once by whoever holds the secrets.
-      //
-      // ⛔ A DIFFERENT address is refused. Two people holding one note is a race
-      // where the loser paid for nothing, and no amount of convenience is worth
-      // manufacturing that.
-      let previous: string | null = null;
-      try {
-        previous = await kv.get<string>(`${claimKey}:to`);
-      } catch {
-        // Unreadable: treat as claimed by someone else and move on.
-      }
-      if (previous !== recipientAddress) {
-        heldByOthers += 1;
-        continue;
-      }
-    } else {
-      // Record who it went to, so the branch above can recognise a retry. Best
-      // effort: a lost write costs an inventory slot, never a double issue.
-      try {
-        await kv.set(`${claimKey}:to`, recipientAddress);
-      } catch {
-        /* the leaf stays claimed, which is the safe direction */
-      }
+      /**
+       * 🚨 SPOKEN FOR, WHOEVER IS ASKING — and it used to depend on who.
+       *
+       * The branch here re-sealed the SAME leaf when a stored `:to` row named
+       * this recipient. A true retry of one claim code never reached it: the
+       * claim counter refuses that far above, and the reply of the call that
+       * worked is replayed from `sealedReplyKey`. So the only caller who ever
+       * got here had paid a SECOND time, and was charged a claim for the note
+       * they already held while a note they could have been given sat in
+       * stock (map-A defect 1).
+       *
+       * ⛔ AND THE ROW IT READ WAS THE LEAK. `issued:<pool>:<leaf>:to` was a
+       * permanent leaf → recipient table: a copy of the store named who
+       * received a given note and grouped every note one buyer had ever been
+       * handed (map-A defect 3). Nothing writes it now, and
+       * `scripts/scrubIssuedTo.mts` deletes what an earlier deployment left.
+       *
+       * Pinned by `__tests__/api/issue-note.node.test.ts` ("a second paid code
+       * never gets a note the address already holds"). That nothing writes the
+       * `:to` row, under any spelling, is pinned by the same file's "what the
+       * reply and the store hold does not move when the leaf moves, and does
+       * not name the recipient", which compares every row across worlds.
+       */
+      heldByOthers += 1;
+      continue;
     }
-
 
     // The note must actually BE on the tree, at the leaf we think it is. A
     // mismatch means issuing it would hand someone a blob that cannot be spent:
@@ -916,23 +1453,13 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    let merkle: Pick<ShareableNote, 'merkle_root' | 'merkle_path_elements' | 'merkle_path_indices'> = {};
-    try {
-      let maxIdx = -1;
-      for (const e of commitments.values()) if (e.leafIndex > maxIdx) maxIdx = e.leafIndex;
-      const leavesByIndex: bigint[] = maxIdx >= 0 ? new Array<bigint>(maxIdx + 1).fill(0n) : [];
-      for (const e of commitments.values()) leavesByIndex[e.leafIndex] = e.commitment;
-      const built = buildMerkleProofFromLeavesV3({ leavesByIndex, targetLeafIndex: leafIndex });
-      merkle = {
-        merkle_root: built.root.toString(),
-        merkle_path_elements: built.pathElements.map((e) => e.toString()),
-        merkle_path_indices: built.pathIndices,
-      };
-    } catch {
-      // Ship the note without a path rather than with a wrong one. The
-      // recipient rebuilds from history: slower, always correct.
-    }
-
+    // 🚨 NO ROOT AND NO PATH IN THE BLOB (LEAK-LEDGER B11). A root built here is
+    // the tree at ONE moment, and a spend that proves against it dates the
+    // deposit of the note it spends (map-C). The recipient rebuilds against the
+    // pool's current root instead, and so does an old cached client, because
+    // its rebuild branch is taken whenever the fields are absent. Pinned by
+    // `__tests__/api/issue-note.node.test.ts` "the sealed note carries no root
+    // and no path".
     const shareable: ShareableNote = {
       version: 1,
       pool: poolKey,
@@ -959,22 +1486,35 @@ export async function POST(request: NextRequest) {
       leafIndex,
       token,
       denominationHuman: denomination,
-      ...merkle,
     };
 
-    const sealedNote = encryptNote(
-      recipientAddress,
-      new TextEncoder().encode(JSON.stringify(shareable)),
-    );
+    /**
+     * ⛔ EVERYTHING BEFORE THE SEAL IS REVERSIBLE, AND THIS IS WHERE THAT ENDS.
+     *
+     * A throw here used to leave the route with the leaf claimed and the claim
+     * spent, and the buyer holding neither — a paying customer's note burned
+     * by an error that handed nothing over. Nothing HAS been handed over yet,
+     * so both go back: `__tests__/api/issue-note.node.test.ts` "gives back the
+     * leaf AND the claim when the sealing fails".
+     */
+    let sealedNote: string;
+    try {
+      sealedNote = encryptNote(recipientAddress, paddedNote(shareable));
+    } catch {
+      try {
+        await kv.del(claimKey);
+      } catch {
+        // The leaf stays claimed, which is the safe direction: a note nobody
+        // can be given beats one given twice.
+      }
+      return release(bad(503, 'the note could not be sealed'));
+    }
 
-    return NextResponse.json({
-      ok: true,
+    const reply: SealedReply = {
       sealedNote,
-      leafIndex,
-      commitment: commitment.toString(),
       denomination,
       token,
-      merklePath: merkle.merkle_root ? 'rebuilt' : 'none',
+      merklePath: 'none',
       // Said in the response, not only in a doc, because whatever renders this
       // will be the last thing between the claim and a user believing it.
       disclosure:
@@ -982,14 +1522,82 @@ export async function POST(request: NextRequest) {
         'subscription back to its deposit lands on us rather than on you. It does NOT hide you ' +
         'from us: the note derives from a seed this server holds, so we can identify every ' +
         'subscription bought with it, and we can spend it ourselves until you do.',
-    });
+    };
+
+    /**
+     * 🚨 THE LAST SIDE EFFECT, AND THE ONE A RETRY DEPENDS ON.
+     *
+     * ⛔ NO TTL, for the reason `__tests__/api/claim-does-not-expire.test.ts`
+     * records for the claim itself: a lifetime here would make the retry work
+     * for a day and then tell somebody who paid that they never did.
+     *
+     * ⚠️ AND A LEAF IS NEVER RELEASED ONCE THIS WRITE HAS BEEN ATTEMPTED. A
+     * store that failed to answer may still have taken the write, so the reply
+     * may be reachable; two buyers holding one note is worse than one buyer
+     * retrying. The CODE goes back instead, which costs nobody anything
+     * (`__tests__/api/issue-note.node.test.ts` "keeps the leaf but releases the
+     * code when the reply cannot be stored"). If the write did land, the
+     * retry finds the reply and replays it (`earlier`, above), so the code
+     * going back never buys a second note.
+     *
+     * ⛔ AND THE 503 CARRIES NOTHING OF THE FAILURE. The store's error names
+     * the write, value included, and that value is this note: passed on, it
+     * handed the buyer the note the answer says was not delivered, and the
+     * retry then a second one (see `bad`; the same test, "one paid code left
+     * the buyer holding more than one note").
+     */
+    try {
+      await kv.set(sealedKey, reply);
+    } catch {
+      let stored: SealedReply | null = null;
+      try {
+        stored = await kv.get<SealedReply>(sealedKey);
+      } catch {
+        // Unreadable too, so the write cannot be shown to have landed.
+      }
+      if (!stored || typeof stored.sealedNote !== 'string') {
+        return release(bad(503, 'the note was not delivered; retry with the same code'));
+      }
+    }
+
+    await forgetTheCodeToPaymentTrail(kv, claimCode, minted);
+    return NextResponse.json({ ok: true, ...reply });
+  }
+
+  // Said before every other exhaustion, because while the read is short every
+  // count below is a count of what could be SEEN: a note may be sitting at an
+  // index that did not come back. Counts only, never an index. Pinned by
+  // `__tests__/api/issue-note.node.test.ts` "answers that the history is
+  // incomplete, instead of blaming the seed" (exact key set, and a body
+  // byte-identical whichever index is missing). The order is pinned beside
+  // each exhaustion it can meet, one case each: "even beside a note that is
+  // already spent", "... only too young", "... when another configured leaf
+  // is somebody else's", "... already held" and, for the "empty" answer,
+  // "even beside a leaf not deposited yet". In
+  // web-run/logs/ISSUE-2-webfix1/resume/ordering-final.log every slot and
+  // guard mutant goes red but E1, a guard giving way to the 500 below, which
+  // no test can tell apart: the 500 needs every configured leaf in `notOurs`,
+  // and a missing leaf is never counted there.
+  if (missingFromHistory > 0) {
+    return release(exhausted(502, 'the pool\'s history came back incomplete, so the inventory could not be checked', {
+      configured: leaves.length,
+      missingFromHistory,
+      spentLeaves,
+      tooYoung,
+      heldByOthers,
+      notOurs,
+      hint:
+        'Some configured leaves sit below the top of the tree but were not in the history the RPC ' +
+        'returned. They were not claimed, so nothing left stock. Retry; if it persists, the pool ' +
+        'history walk is short, not the seed. Nothing was charged.',
+    }));
   }
 
   // Said separately from "empty", because the two need opposite reactions from
   // whoever runs the deployment: one means deposit more notes, the other means
   // the notes are there and gone. Both used to read as "empty".
   if (spentLeaves > 0) {
-    return release(bad(503, 'every note in this deployment\'s inventory has already been spent', {
+    return release(exhausted(503, 'every note in this deployment\'s inventory has already been spent', {
       configured: leaves.length,
       spentLeaves,
       heldByOthers,
@@ -1008,7 +1616,7 @@ export async function POST(request: NextRequest) {
   // answer is a time, not a mystery.
   if (tooYoung > 0) {
     const waitSlots = Number.isFinite(shortestWait) ? shortestWait : null;
-    return release(bad(503, 'the notes in stock are too recently deposited to be issued', {
+    return release(exhausted(503, 'the notes in stock are too recently deposited to be issued', {
       configured: leaves.length,
       tooYoung,
       notOurs,
@@ -1028,7 +1636,7 @@ export async function POST(request: NextRequest) {
   // the deployment is misconfigured rather than out of stock. `notOurs` counts
   // configured indices the tree has reached whose commitment is not ours.
   if (notOurs > 0 && notOurs === leaves.length) {
-    return release(bad(500, 'the configured inventory does not match the chain', {
+    return release(exhausted(500, 'the configured inventory does not match the chain', {
       configured: leaves.length,
       notOurs,
       hint:
@@ -1038,7 +1646,7 @@ export async function POST(request: NextRequest) {
     }));
   }
   if (notOurs > 0 && spentLeaves === 0 && tooYoung === 0 && heldByOthers === 0) {
-    return release(bad(503, 'the configured inventory names leaves this deployment does not own', {
+    return release(exhausted(503, 'the configured inventory names leaves this deployment does not own', {
       configured: leaves.length,
       notOurs,
       hint:
@@ -1049,20 +1657,23 @@ export async function POST(request: NextRequest) {
   }
 
   if (heldByOthers > 0) {
-    return release(bad(503, 'every note in stock is already issued to a different address', {
+    // ⛔ THE REFUSAL NAMES NO ADDRESS. It used to echo `recipientAddress` back,
+    // which put the buyer's note address into a response body and into
+    // whatever logged it. Pinned by `__tests__/api/issue-note.test.ts` "is
+    // refused to a different address WITHOUT the refusal naming one", which
+    // asserts the refusal to two different askers is byte-identical.
+    return release(exhausted(503, 'every note in stock is already issued', {
       configured: leaves.length,
       heldByOthers,
-      recipientAddress,
       hint:
-        'A note is re-issued only to the address it was first sealed to, so this reads as empty ' +
-        'from where you are asking. If you expected to own one of these, you are presenting a ' +
-        'different note address than the one that received it — derive from the same wallet. ' +
-        'Otherwise the deployment needs more notes: deposit from the treasury and extend ' +
-        'P01_TREASURY_NOTE_LEAVES.',
+        'A note leaves stock once and is never handed out twice, so a stocked pool can still ' +
+        'have nothing left to give. If a claim of yours was redeemed and the answer was lost, ' +
+        'ask again with the SAME code — the reply is kept. Otherwise the deployment needs more ' +
+        'notes: deposit from the treasury and extend P01_TREASURY_NOTE_LEAVES.',
     }));
   }
 
-  return release(bad(503, 'the note inventory is empty', {
+  return release(exhausted(503, 'the note inventory is empty', {
     configured: leaves.length,
     notOurs,
     hint: 'Deposit more notes from the treasury wallet and extend P01_TREASURY_NOTE_LEAVES.',

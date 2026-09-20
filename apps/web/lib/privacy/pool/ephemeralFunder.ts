@@ -85,6 +85,7 @@ import {
   rememberRelayPayment,
   storageAvailable,
 } from './relayPaymentReceipts';
+import { storeSession } from '../sealedStore';
 import { claimChallenge } from '@/lib/privacy/claimChallenge';
 
 export interface FundingGrant {
@@ -750,9 +751,32 @@ export interface JobFundingRequest {
    * one outcome they cannot detect afterwards and cannot undo. Refusing costs
    * them a retry; falling back costs them the property they came for.
    *
-   * Default false, because a deployment with no funder must still work.
+   * Default false. Since FUND-1 it no longer decides a SPEND: a value-0 job
+   * refuses the wallet whatever this says, unless `allowWalletFundedSpend` is
+   * set. What it still decides alone is a job carrying the user's own value
+   * outside the relay (the public treasury deposit), which it refuses too.
    */
   neverExposeWallet?: boolean;
+  /**
+   * Let the connected wallet pre-fund a job that moves no value of its own: a
+   * withdrawal, a subscription, an exchange.
+   *
+   * ⛔ DEFAULT FALSE, AND NO SCREEN SETS IT (FUND-1). Such a job takes nothing
+   * from the wallet but its address: the pre-fund is a public transfer to the
+   * ephemeral that then signs the spend as its fee payer, so the wallet sits
+   * one hop from the spend, on chain, for good. The flags the screens pass
+   * never refused that (the subscribe screen sets `neverExposeWallet` false,
+   * the withdrawal screen does not set it), so every funder outage became that
+   * transfer without a word. Now a funder that cannot serve is a
+   * `WalletExposureRefusedError` with a retry sentence, before anything is
+   * signed (fundEphemeralForJob.test.ts, "FUND-1: a spend is never funded by
+   * the wallet" and "FUND-1 through the client: a refused spend never reaches
+   * execute").
+   *
+   * `true` is for a harness or an operator tool that means it, by name.
+   * `false` and absent are the same closed default.
+   */
+  allowWalletFundedSpend?: boolean;
   connection: Connection;
   /** Sign one transaction with the connected wallet. */
   signOne: (tx: Transaction) => Promise<Transaction>;
@@ -792,6 +816,16 @@ export interface JobFundingRequest {
    * that cannot produce it never pays.
    */
   signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+  /**
+   * The identity whose sealed stores this job belongs to.
+   *
+   * [SWEEP4 round 1, confirmed item 5] REQUIRED on the relayed path: the
+   * payment receipt is sealed to this identity's own address and opened in the
+   * worker, so the receipt that stops the second charge cannot be written or
+   * read without it (`pool/relayPaymentReceipts.ts`). A float-only job never
+   * pays a till and never writes one.
+   */
+  meta?: string;
   onProgress?: (step: string) => void;
 }
 
@@ -845,19 +879,37 @@ export class DirtyEphemeralError extends Error {
 }
 
 /**
- * Thrown when `neverExposeWallet` was set and the funder could not serve.
+ * Thrown when the wallet would otherwise have paid for a job: a spend without
+ * `allowWalletFundedSpend` (FUND-1), or any job under `neverExposeWallet`.
  *
  * Named so the UI can say the right thing: this is NOT "the subscription
  * failed", it is "the subscription was not made, because making it would have
- * put your wallet on chain and you asked it not to". Nothing was spent and
- * nothing is stranded — the refusal happens before any lamport moves.
+ * put your wallet on chain". None of the user's funds move: the refusal comes
+ * before the wallet is asked (fundEphemeralForJob.test.ts, "FUND-1: a value-0
+ * job never asks the wallet when the funder refuses"). One edge is not the
+ * user's money: a funder reply lost after its grant landed leaves the float's
+ * lamports on the ephemeral, and the retry then stops at `DirtyEphemeralError`,
+ * which points at Recover ("points the user at Recover, which is the actual
+ * cure").
+ *
+ * `retryable` says which of two situations this is. True: the funder was
+ * asked and did not serve (a 429, a drained float, an outage), so the same
+ * click can work in a minute. False: nobody was asked (no funder in this
+ * bundle, or a job carrying the user's own value), so a retry changes nothing
+ * and the message must not promise one ("FUND-1: no funder in the bundle is
+ * not an outage, and no retry is promised").
  */
 export class WalletExposureRefusedError extends Error {
-  constructor(readonly funderReason: string) {
+  constructor(
+    readonly funderReason: string,
+    readonly retryable: boolean = false,
+  ) {
     super(
       'Stopped before spending anything: the funder could not cover this job, and paying for it ' +
-        `from your own wallet would put your address on chain — which you asked to avoid. The ` +
-        `funder said: ${funderReason}`,
+        'from your own wallet would put your address on chain next to it. Your wallet signed ' +
+        'nothing and none of your funds moved. ' +
+        (retryable ? 'Try again in a minute. ' : 'Trying again will not change this. ') +
+        `The funder said: ${funderReason}`,
     );
     this.name = 'WalletExposureRefusedError';
   }
@@ -911,6 +963,8 @@ export async function fundEphemeralForJob(
   let operatorFeeLamports: number | undefined;
   let paymentSignature: string | undefined;
   let sweepTo = owner.toBase58();
+  /** The funder was asked and did not serve: the one case a retry can fix. */
+  let funderRefusedJob = false;
 
   // ── Guard 2: never let the treasury buy a note ───────────────────────────
   //
@@ -1095,7 +1149,22 @@ export async function fundEphemeralForJob(
     // The relay releases its one-shot claim on every path that hands nothing
     // over, precisely so the SAME receipt can be presented again. This is the
     // half that makes that reachable.
-    const prior = recallRelayPayment(ephemeralPubkey);
+    //
+    // ⛔ ASYNC SINCE THE RECEIPT WAS SEALED (SWEEP4 round 1, item 5). The body
+    // is opened in the worker, so this is a round trip and it is AWAITED before
+    // the guard below — a promise read as truthy would have made every job look
+    // like it had an outstanding payment, and a promise read as a record would
+    // have compared `undefined` amounts. The worker refuses rather than
+    // answering "none" when it predates the record kind (`StaleWorkerError`),
+    // which is what keeps a version skew from reading as "nothing outstanding".
+    if (!req.meta) {
+      throw new RelayCannotServeJobError(
+        'no-receipt-store',
+        'This session has no identity to seal the payment receipt to, and a relayed deposit pays ' +
+          'before it is forwarded. Reconnect the wallet and sign, then try again. Nothing was signed.',
+      );
+    }
+    const prior = await recallRelayPayment(req.meta, ephemeralPubkey);
     if (prior && (prior.requiredLamports !== requiredLamports || prior.till !== terms.till)) {
       // ⛔ NOT a second payment. The job or the till moved under an outstanding
       // receipt, so neither reusing it nor paying again is safe: reusing it
@@ -1124,12 +1193,23 @@ export async function fundEphemeralForJob(
     }
 
     let paySig: string;
+    /** The receipt this job is holding: what `forgetRelayPayment` names once the
+     *  lamports have moved. The store's ids are random (see its header), so the
+     *  id has to be carried rather than recomputed. */
+    let receiptId: string | undefined = prior?.id;
     if (prior) {
       // Same job, same till, same amount: the money already moved. Present the
       // receipt again rather than making a second one.
       req.onProgress?.('Resuming: your payment already went through, asking the deployment again...');
       paySig = prior.signature;
     } else {
+      // ⛔ FETCHED BEFORE THE WALLET IS ASKED FOR ANYTHING. Sealing the receipt
+      // needs only this identity's PUBLIC address, so the write below stays
+      // synchronous — it sits between `sendRawTransaction` returning and the
+      // confirmation being awaited, and a round trip there is a window in which
+      // a landed payment has no receipt. A session that cannot be derived
+      // throws here, before any money has moved.
+      const receiptSession = await storeSession(req.meta);
       req.onProgress?.('Paying the deployment, which will fund the deposit (your wallet stays off the pool)...');
       // ⚠️ `confirmed`, NOT `finalized`, AND THE REASON IS THE CLOCK.
       //
@@ -1214,7 +1294,7 @@ export async function fundEphemeralForJob(
       // Recording a payment that ultimately FAILED on chain is the harmless
       // direction — the relay reads the till's real balance delta and answers
       // 400 'that transaction paid the till nothing', which names the problem.
-      rememberRelayPayment({
+      receiptId = rememberRelayPayment(receiptSession, {
         ephemeralPubkey,
         signature: sent,
         valueLamports,
@@ -1232,7 +1312,7 @@ export async function fundEphemeralForJob(
       if (payConf.value.err) {
         // Landed and failed: nothing moved, so the receipt is worthless and
         // keeping it would block the retry that should happen.
-        forgetRelayPayment(ephemeralPubkey);
+        forgetRelayPayment(receiptId);
         throw new Error(`Payment to the deployment failed: ${JSON.stringify(payConf.value.err)}`);
       }
     }
@@ -1258,7 +1338,7 @@ export async function fundEphemeralForJob(
     // The lamports have moved. From here the receipt has done its job and
     // keeping it would make a future deposit on this key resume a spent
     // payment.
-    forgetRelayPayment(ephemeralPubkey);
+    forgetRelayPayment(receiptId);
     fundedBy = 'funder';
     funderSignature = relayed.signature;
     operatorFeeLamports = feeLamports;
@@ -1282,8 +1362,33 @@ export async function fundEphemeralForJob(
       sweepTo = grant.sweepTo;
     } catch (e) {
       funderFallbackReason = e instanceof Error ? e.message : String(e);
-      req.onProgress?.('The funder could not cover this job — falling back to your wallet.');
+      funderRefusedJob = true;
+      // Only where the wallet really is next: otherwise the refusal below
+      // follows at once, and this line would have promised the opposite.
+      if (req.allowWalletFundedSpend === true && !req.neverExposeWallet) {
+        req.onProgress?.('The funder could not cover this job — falling back to your wallet.');
+      }
     }
+  }
+
+  // ── FUND-1: a spend is never funded by the wallet ────────────────────────
+  //
+  // A job carrying no value of the user's own arrives here with `fundedBy`
+  // still 'wallet' for one of two reasons: the funder was asked and did not
+  // serve, or there was none to ask. Either way the wallet would pay only to be
+  // named, because its pre-fund is the transfer that funds the spend's fee
+  // payer. The `neverExposeWallet` refusal below would stop that, but the
+  // screens run with it off, so this one does not ask it. It fires before any
+  // lamport moves and before the wallet is asked (fundEphemeralForJob.test.ts,
+  // "FUND-1: a spend is never funded by the wallet"). `!(x > 0)` rather than
+  // `x === 0`, so a NaN or a negative value is treated as a spend, not as a
+  // deposit the rule does not cover.
+  const isSpend = !(valueLamports > 0);
+  if (fundedBy === 'wallet' && isSpend && req.allowWalletFundedSpend !== true) {
+    throw new WalletExposureRefusedError(
+      funderFallbackReason ?? 'this deployment has no funder configured.',
+      funderRefusedJob,
+    );
   }
 
   // The refusal, before any lamport moves and before the wallet is even asked
@@ -1293,6 +1398,7 @@ export async function fundEphemeralForJob(
   if (fundedBy === 'wallet' && req.neverExposeWallet) {
     throw new WalletExposureRefusedError(
       funderFallbackReason ?? 'this deployment has no funder configured.',
+      funderRefusedJob,
     );
   }
 

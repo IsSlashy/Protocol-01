@@ -424,6 +424,22 @@ function writeKeptSubscriptions(
 }
 
 /**
+ * Append one sealed record to this label's bucket, without opening anything.
+ *
+ * All it needs is the session's PUBLIC address, so it is what every failure
+ * AFTER a session exists falls back to. The store is append-only ciphertext
+ * and the read side keeps the LAST record per vault, so the replace semantics
+ * land the moment a worker opens the bucket again.
+ */
+function appendSealedSubscription(session: StoreSession, rec: StoredSubscription): void {
+  const all = readMap<string>(SUB_STORE_KEY);
+  const list = all[session.label] ?? [];
+  list.push(sealSubscription(session, rec));
+  all[session.label] = list;
+  writeMap(SUB_STORE_KEY, all);
+}
+
+/**
  * Remember a subscription so the list can draw it. Re-recording the same
  * vault replaces the record exactly — the sealed store is opened, filtered on
  * `vaultPDA` and re-sealed, since randomized ciphertext has no equality of
@@ -435,8 +451,12 @@ export async function recordSubscription(
   rec: StoredSubscription,
 ): Promise<void> {
   if (typeof localStorage === 'undefined') return;
+  // [SWEEP4 round 1, storage lane] Held outside the try: once a session
+  // exists, the catch below can still SEAL, and must never write the
+  // wallet-keyed cleartext row (see the catch).
+  let session: StoreSession | null = null;
   try {
-    const session = await storeSession(meta);
+    session = await storeSession(meta);
     migrateSubscriptionStore(session, walletPubkey);
     const { records, opened, staleWorker } = await openSubscriptions(meta, session);
     if (staleWorker) {
@@ -449,18 +469,36 @@ export async function recordSubscription(
       // Append instead: the store is append-only ciphertext anyway, and the
       // read side keeps the LAST record per vault, so the replace semantics
       // land the moment a current worker opens the bucket.
-      const all = readMap<string>(SUB_STORE_KEY);
-      const list = all[session.label] ?? [];
-      list.push(sealSubscription(session, rec));
-      all[session.label] = list;
-      writeMap(SUB_STORE_KEY, all);
+      appendSealedSubscription(session, rec);
     } else {
       const keep = records.filter((r) => r.vaultPDA !== rec.vaultPDA);
       keep.push(cleanRecord(rec));
       writeKeptSubscriptions(session, keep, opened);
     }
   } catch {
-    // No session or quota failure. This record is the only pointer to a vault
+    // 🚨 [SWEEP4 round 1, storage lane] A SESSION IN HAND MEANS THE CLEARTEXT
+    // STORE IS NOT THE FALLBACK. Everything above opens the store through the
+    // worker, and that is what fails in the ordinary ways: the worker
+    // restarted under the open tab ("No pool keys…"), or the round trip timed
+    // out. The cached session still holds the public address, and sealing
+    // needs nothing else — so the record is appended sealed, exactly as the
+    // version-skew branch above does. Writing `p01_pay_subscriptions_v1[<wallet
+    // pubkey>]` instead published the whole (wallet → note → vault →
+    // merchant) row this store was sealed to remove, on a path a restarted
+    // worker reaches routinely (`storeEncryption.test.ts`, "[SWEEP4-STORAGE] a
+    // subscription write that fails late does not fall back to cleartext").
+    if (session) {
+      try {
+        appendSealedSubscription(session, rec);
+        announceSubscriptionsChanged();
+        return;
+      } catch {
+        // Sealing or the write itself refused (quota, private mode): the v1
+        // store below is what is left, and a worse index beats a lost record.
+      }
+    }
+    // No session at all — the wallet has not signed in this page's life, so
+    // nothing can be sealed. This record is the only pointer to a vault
     // nothing can re-discover (see the header), so dropping it silently is the
     // one unacceptable outcome; the v1 store is the last resort, and every
     // read path still unions it.

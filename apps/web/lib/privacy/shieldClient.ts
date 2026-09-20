@@ -28,7 +28,7 @@ import {
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
-import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, concatBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 import { poolRequest } from './workerClient';
 import {
@@ -56,6 +56,7 @@ import {
   type StoreSession,
 } from './sealedStore';
 import type { PoolNoteView, PoolScanResponse } from './worker/poolHandlers';
+import type { NoteTag } from './pool/noteTag';
 
 /** Sign one transaction with the connected wallet. */
 export type SignOne = (tx: Transaction) => Promise<Transaction>;
@@ -100,7 +101,12 @@ export interface ShieldParams {
 export interface ShieldOutcome {
   txSig: string;
   commitment: string;
+  /** A handle for the page, never a label: screens show `tag` (UI-1,
+   *  `PoolPanel.test.tsx` "an own deposit: the tag, and neither the leaf nor
+   *  the commitment"; `noteIdentifierTripwire.test.ts`). */
   leafIndex: number;
+  /** The new note's display name, computed in the worker from its secrets. */
+  tag?: NoteTag;
   denomination: number;
   /** Already encrypted to the user's own PQ address — safe to persist as-is. */
   encryptedNote: string;
@@ -192,6 +198,8 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
   const feePool = findPoolV3(token, denomination);
   const funding = await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
+    // The identity the relayed payment receipt is sealed to (SWEEP4 item 5).
+    meta,
     requiredLamports: prep.requiredLamports,
     valueLamports: prep.valueLamports,
     owner,
@@ -231,6 +239,7 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
     txSig: done.txSig,
     commitment: done.commitment,
     leafIndex: done.leafIndex,
+    tag: done.tag,
     denomination: done.denomination,
     encryptedNote: done.encryptedNote,
     fundedLamports: prep.requiredLamports,
@@ -254,7 +263,12 @@ export interface UnshieldParams {
   leafIndex: number;
   /** Address that receives the funds. */
   recipient: PublicKey;
-  /** Wallet paying the proof float; receives the swept residual. */
+  /**
+   * The user's wallet: identity for the payee refusal, not a payer. Since
+   * FUND-1 it pre-funds nothing on this leg: a funder that cannot serve is a
+   * refusal (fundEphemeralForJob.test.ts, "FUND-1: a withdrawal whose funder
+   * refuses stops after prepare, and the wallet signs nothing").
+   */
   owner: PublicKey;
   /** Note blobs stored at shield time. The worker picks the one matching this
    *  note and uses its Merkle path, skipping the history rebuild. */
@@ -272,6 +286,13 @@ export interface UnshieldParams {
    * recipient at byte 88 in the same transaction, so it hands an auditor the
    * note, the payee and the payer at once. Hardening only the leg that was
    * being demonstrated is how a demo passes and a user does not.
+   *
+   * ⚠️ Since FUND-1 a withdrawal refuses a wallet pre-fund with or without
+   * this flag: `fundEphemeralForJob` does it by default for every value-0 job.
+   * No longer read: `unshieldFromPool` asks the funder with it set whatever the
+   * caller passes (`pool/unshieldV4ClientRouting.test.ts`, "a direct withdrawal
+   * asks the funder with neverExposeWallet set, whatever the caller passed").
+   * Kept so the callers that set it, the exchange among them, still typecheck.
    */
   neverExposeWallet?: boolean;
   /**
@@ -309,8 +330,11 @@ export interface UnshieldParams {
 
 /**
  * Withdraw one note. Same two-phase shape as a shield: the worker proves and
- * prices, the wallet signs a single pre-fund, the worker uploads both proofs
- * and withdraws.
+ * prices, the deployment's funder pays a single pre-fund, the worker uploads
+ * both proofs and withdraws. Never the wallet since FUND-1: a funder that
+ * cannot serve is a refusal before anything is signed (fundEphemeralForJob.test.ts,
+ * "FUND-1: a withdrawal whose funder refuses stops after prepare, and the
+ * wallet signs nothing").
  */
 export interface UnshieldOutcome {
   txSig: string;
@@ -347,15 +371,22 @@ export interface UnshieldOutcome {
    */
   version: 'v3' | 'v4';
   /**
-   * Who paid for the job, and therefore whether the user's wallet is on chain
-   * for this withdrawal. A RESULT, never a request parameter — the caller asks
-   * for a funder, it may not be there, and the user is entitled to know which
-   * of the two worlds they ended up in.
+   * Who paid for the job. A RESULT, never a request parameter: the screen says
+   * which of the two happened.
+   *   'funder'   the deployment's funder pre-funded the withdrawal signer.
+   *   'relayer'  the relayer sent and paid for it; nothing was pre-funded.
+   * Never 'wallet': since FUND-1 a withdrawal the funder cannot serve is
+   * refused before anything moves, and a funding answer that names the wallet
+   * stops it before execute (`pool/unshieldV4ClientRouting.test.ts`, "FUND-1: a
+   * withdrawal never reports or takes the wallet as its payer").
    */
-  fundedBy: 'wallet' | 'funder';
+  fundedBy: 'funder' | 'relayer';
   /** Why the funder was not used, when one was configured but did not serve.
    *  🚨 Render it. A 429, a 409 and an operator switching the funder off are
-   *  otherwise indistinguishable, and all three put the wallet back on chain. */
+   *  otherwise indistinguishable. Since FUND-1 none of the three puts the
+   *  wallet on chain: `unshieldFromPool` does not opt in to a wallet-funded
+   *  spend, so each throws `WalletExposureRefusedError` instead and this is
+   *  not set on a withdrawal it returns. */
   funderFallbackReason?: string;
 }
 
@@ -420,6 +451,12 @@ export interface ContributeOutcome {
    * `poolRecover` sweeps.
    */
   depositLanded: boolean;
+  /**
+   * The id of the pending-payment record this contribution wrote. The caller
+   * clears it (`clearContribution`) once the issued note is in hand, and not
+   * before: until then it is the proof a note is owed.
+   */
+  pendingId: string;
 }
 
 /**
@@ -501,8 +538,12 @@ export async function claimForPayment(params: {
       payer: typeof body.payer === 'string' ? body.payer : '',
     };
   }
+  // No signature in the sentence: for an exchange the payment IS the spend of
+  // the note, and the panels print this on their error line
+  // (exchangeNote.test.ts, "names no withdrawal when the claim retries run
+  // out"). The caller holds the signature; the device keeps the receipt.
   throw new Error(
-    `The deployment could not find payment ${params.signature} after ${attempts} attempts. ` +
+    `The deployment could not find the payment after ${attempts} attempts. ` +
       'It is confirmed on our node; retry in a minute. The payment is recorded on this ' +
       'device and is not lost.',
   );
@@ -551,7 +592,11 @@ export async function resumeContribution(params: {
   onProgress?: (step: string) => void;
 }): Promise<IssuedNoteOutcome | null> {
   const { meta, owner, signMessage, onProgress } = params;
-  const pending = pendingFor(owner.toBase58());
+  // Opened in the worker: the record is sealed on disk (DEV-1). A worker that
+  // cannot read it throws `StaleWorkerError`, never "nothing outstanding"
+  // (`pendingContribution.test.ts`, "a worker that cannot read the store says
+  // reload, never 'nothing owed'").
+  const pending = await pendingFor(meta, owner.toBase58());
   if (!pending) return null;
 
   onProgress?.(
@@ -565,7 +610,7 @@ export async function resumeContribution(params: {
       pending.kind === 'exchange'
         ? await collectExchangeClaim(pending, onProgress)
         : await collectContributionClaim(pending, signMessage, onProgress);
-    attachClaim(owner.toBase58(), pending.leafIndex, claimCode);
+    attachClaim(await storeSession(meta), pending.id, claimCode);
   }
 
   const issued = await requestIssuedNote({
@@ -578,7 +623,7 @@ export async function resumeContribution(params: {
   });
   // ⛔ Cleared only once the note is in hand. Clearing on the claim alone
   // would lose the one record proving this buyer is owed something.
-  clearContribution(owner.toBase58(), pending.leafIndex);
+  clearContribution(pending.id);
   return issued;
 }
 
@@ -618,10 +663,14 @@ async function collectExchangeClaim(
   onProgress?: (step: string) => void,
 ): Promise<string> {
   if (!pending.paymentSignature || !pending.claimProof) {
+    // The withdrawal is the spend of the note given up, so the sentence does not
+    // quote it; the record kept on this device holds it for support
+    // (exchangeNote.test.ts, "a receipt with no proof refuses to resume without
+    // quoting the withdrawal").
     throw new Error(
-      `An exchange you paid for (withdrawal ${pending.txSig ?? 'unknown'}) has no proof of ` +
-        'payment recorded on this device, so its note cannot be collected from here. The ' +
-        'withdrawal is on chain and one note is owed for it; keep the signature for support.',
+      'An exchange you paid for has no proof of payment recorded on this device, so its ' +
+        'note cannot be collected from here. The withdrawal is on chain and one note is ' +
+        'owed for it; the record on this device keeps its signature for support.',
     );
   }
   const claimed = await claimForPayment({
@@ -652,15 +701,14 @@ async function collectContributionClaim(
     // A record from before the payment was kept. Confirm now needs the
     // signature and the payer's proof, so nothing here can present it.
     throw new Error(
-      `A deposit you paid for (leaf ${leafIndex}) was recorded without its payment ` +
-        'signature, so it cannot be confirmed from this device. Do NOT shield again, that ' +
-        'would pay a second time; the leaf index and your wallet identify the payment for ' +
-        'support.',
+      'A deposit you paid for was recorded without its payment signature, so it cannot be ' +
+        'confirmed from this device. Do NOT shield again, that would pay a second time; the ' +
+        'payment from your wallet identifies it for support.',
     );
   }
   if (!signMessage) {
     throw new Error(
-      `A deposit you paid for (leaf ${leafIndex}) needs this wallet to sign a message to ` +
+      'A deposit you paid for needs this wallet to sign a message to ' +
         'collect its note, and this session has no message signer. Nothing was spent; ' +
         'connect the wallet that paid and try again.',
     );
@@ -693,7 +741,7 @@ async function collectContributionClaim(
     return claimed.claimCode;
   } catch (e) {
     throw new Error(
-      `A deposit you paid for (leaf ${leafIndex}, payment ${paymentSignature}) could not be ` +
+      `A deposit you paid for (payment ${paymentSignature}) could not be ` +
         `collected yet. Confirm said: ${confirmFailure} The fallback said: ` +
         `${(e as Error).message || String(e)} Do NOT shield again, that would pay a second ` +
         'time. Retry in a minute; the payment is recorded on this device and one note is ' +
@@ -707,7 +755,16 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     params;
 
   onProgress?.('Reserving a leaf from the treasury...');
-  const reserved = await contributeApi({ action: 'reserve', token });
+  // The store session (this identity's label and V1 address) is fetched
+  // alongside the reservation, not after it: the record below is sealed
+  // before the wallet is asked for anything, synchronously, and sealing needs
+  // the address (DEV-1). No session means no worker keys, so nothing is paid
+  // (`pool/contributeFallback.test.ts`, "refuses before any payment when the
+  // record could not be sealed").
+  const [reserved, session] = await Promise.all([
+    contributeApi({ action: 'reserve', token }),
+    storeSession(meta),
+  ]);
   const leafIndex = Number(reserved.leafIndex);
   const commitment = String(reserved.commitment ?? '');
   if (!Number.isInteger(leafIndex) || leafIndex < 0 || !commitment) {
@@ -721,7 +778,7 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
    * entry with no `claimCode` means "this buyer may already have paid for this
    * leaf" — exactly what a resume needs to know.
    */
-  rememberContribution({
+  const pendingId = rememberContribution(session, {
     leafIndex,
     owner: owner.toBase58(),
     token,
@@ -741,6 +798,8 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
   const feePool = findPoolV3(token, denomination);
   const funding = await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
+    // The identity the relayed payment receipt is sealed to (SWEEP4 item 5).
+    meta,
     requiredLamports: prep.requiredLamports,
     valueLamports: prep.valueLamports,
     owner,
@@ -764,7 +823,7 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
   // before anything was paid) says "this buyer may have paid"; this one says
   // which transaction did, which is what every route from here on needs.
   if (funding.paymentSignature) {
-    attachPayment(owner.toBase58(), leafIndex, funding.paymentSignature);
+    attachPayment(session, pendingId, funding.paymentSignature);
   }
 
   let done: { txSig: string; leafIndex: number; commitment: string } | null = null;
@@ -783,8 +842,8 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     onProgress?.('Collecting what the contribution is owed...');
     if (!funding.paymentSignature) {
       throw new Error(
-        `The contribution landed at leaf ${done.leafIndex} (${done.txSig}) but no payment ` +
-          'signature was recorded, so the confirm cannot prove who paid.',
+        'The contribution landed on chain but no payment signature was recorded, so the ' +
+          'confirm cannot prove who paid.',
       );
     }
     const confirmed = await contributeApi({
@@ -799,9 +858,8 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
       // The deposit landed and the claim did not: say so precisely, because
       // the money moved and a vague error would send the buyer to do it again.
       throw new Error(
-        `The contribution landed at leaf ${done.leafIndex} (${done.txSig}) but no claim came back. ` +
-          'Do NOT contribute again: confirm that leaf instead; the deposit is on chain and one ' +
-          'claim is owed for it.',
+        'The contribution landed on chain but no claim came back. Do NOT contribute again: ' +
+          'the next Shield click confirms it; the deposit is on chain and one claim is owed for it.',
       );
     }
   } catch (err) {
@@ -831,7 +889,7 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
       );
     }
   }
-  attachClaim(owner.toBase58(), leafIndex, claimCode);
+  attachClaim(session, pendingId, claimCode);
 
   return {
     txSig: done?.txSig ?? '',
@@ -840,6 +898,7 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     claimCode,
     fundedBy: funding.fundedBy,
     depositLanded: done !== null,
+    pendingId,
   };
 }
 
@@ -917,18 +976,38 @@ export async function unshieldFromPool(params: UnshieldParams): Promise<Unshield
     );
   }
 
+  // RECOVER-1: marked BEFORE the funding, so a tab closed mid-funding still
+  // leaves the default Recover this key to read (`pool/recoverReads.test.ts`,
+  // "withdrawal: …" and "exchange: …"). The relayed path funds nothing and
+  // marks nothing, so its key is never read (same file, "relayed withdrawal: …").
+  if (!params.relayerUrl) await recordSpendAttempt(meta, spendNoteKey(token, denomination, leafIndex));
+
+  // FUND-1, the client half (`pool/unshieldV4ClientRouting.test.ts`, "FUND-1: a
+  // withdrawal never reports or takes the wallet as its payer"). The relayed
+  // path funds nothing, so it reports the relayer: it used to report 'wallet',
+  // and the card then said the wallet had paid. The direct path always asks with
+  // `neverExposeWallet`, so the refusal does not rest on the value-0 rule alone.
   const funding = params.relayerUrl
-    ? { sweepTo: undefined, fundedBy: 'wallet' as const, operatorFeeLamports: 0, funderFallbackReason: undefined }
+    ? { sweepTo: undefined, fundedBy: 'relayer' as const, operatorFeeLamports: 0, funderFallbackReason: undefined }
     : await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
+    // The identity the relayed payment receipt is sealed to (SWEEP4 item 5).
+    meta,
     requiredLamports: prep.requiredLamports,
     valueLamports: 0,
     owner,
     connection,
     signOne,
     onProgress,
-    neverExposeWallet: params.neverExposeWallet,
+    neverExposeWallet: true,
       });
+  if (funding.fundedBy === 'wallet') {
+    throw new Error(
+      'The funding step named your wallet as the payer of this withdrawal, which a withdrawal ' +
+        'never uses, so it was not sent. If your wallet signed a transfer for it, Recover funds ' +
+        'returns it.',
+    );
+  }
 
   // 🚨 THE PAYEE IS SENT AT EXECUTE ON BOTH CIRCUITS, AND ON v4 IT IS A CHECK
   // RATHER THAN AN INSTRUCTION.
@@ -1130,6 +1209,13 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
     );
   }
 
+  // BEFORE the spend: the receipt written the moment the withdrawal lands is
+  // sealed (DEV-1), and sealing needs this identity's store session. Asked for
+  // after the spend, a missing session would lose the only receipt
+  // (`pool/exchangeNote.test.ts`, "refuses before the spend when the receipt
+  // could not be sealed").
+  const session = await storeSession(meta);
+
   const spent = await unshieldFromPool({
     meta,
     token,
@@ -1152,14 +1238,18 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
   if (pool) await recordSpentNote(meta, ownerKey, `${pool}:${leafIndex}`);
 
   if (!spent.claimProof) {
+    // The signature rides on the error, not in the sentence; the panels offer
+    // it behind "Show the on-chain links" (exchangeNote.test.ts, "says so when
+    // the worker returned no proof"; PoolPanel.test.tsx, "an exchange that
+    // spent but did not collect keeps the spend off the error line until asked").
     throw new ExchangeAfterSpendError(
-      `The withdrawal ${spent.txSig} paid the till, but the worker returned no proof of ` +
+      'The withdrawal paid the till, but the worker returned no proof of ' +
         'payment (a worker from before the exchange existed?). The payment is on chain and ' +
         'one note is owed for it; keep the signature for support.',
       spent.txSig,
     );
   }
-  rememberContribution({
+  const pendingId = rememberContribution(session, {
     kind: 'exchange',
     leafIndex,
     owner: ownerKey,
@@ -1182,13 +1272,18 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
       })
     ).claimCode;
   } catch (e) {
+    // The signature rides on the error (`spendSig`), not in the sentence: the
+    // spend leads back to the note it spent, and this is the message a user
+    // pastes into a support ticket (exchangeNote.test.ts, "keeps the signature
+    // and the proof when the claim is refused" and "names no withdrawal when
+    // the claim retries run out"). The receipt on this device is what resumes it.
     throw new ExchangeAfterSpendError(
-      `${(e as Error).message || String(e)} The withdrawal ${spent.txSig} paid the till and ` +
+      `${(e as Error).message || String(e)} The withdrawal paid the till and ` +
         'its receipt is kept on this device; the next Shield click resumes collecting the note.',
       spent.txSig,
     );
   }
-  attachClaim(ownerKey, leafIndex, claimCode);
+  attachClaim(session, pendingId, claimCode);
 
   let issued: IssuedNoteOutcome;
   try {
@@ -1208,7 +1303,7 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
     );
   }
   // Only once the note is in hand: the record is the proof a note is owed.
-  clearContribution(ownerKey, leafIndex);
+  clearContribution(pendingId);
 
   return {
     spendSig: spent.txSig,
@@ -1232,7 +1327,12 @@ export interface SubscribeParams {
   intervalSlots: bigint;
   /** Registry `serviceId`. Omitted, the key is scoped to the retailer address. */
   serviceId?: string | null;
-  /** Wallet paying the proof float; receives the swept residual. */
+  /**
+   * The user's wallet. Since FUND-1 it pre-funds nothing here: a funder that
+   * cannot serve is a refusal, whatever `neverExposeWallet` says
+   * (fundEphemeralForJob.test.ts, "FUND-1: a subscription made with the
+   * screen’s own flags stops after prepare when the funder refuses").
+   */
   owner: PublicKey;
   /** Note blobs stored at shield time; the worker uses the matching Merkle path. */
   encryptedNotes?: string[];
@@ -1240,13 +1340,17 @@ export interface SubscribeParams {
   signOne: SignOne;
   onProgress?: (step: string) => void;
   /**
-   * Refuse rather than let the wallet pay. See `fundEphemeralForJob`.
+   * Refuse a note or a funder that reaches the wallet. See `fundEphemeralForJob`.
    *
-   * This is the only switch in this file that can turn a working subscription
-   * into a refusal, and it exists because the alternative is worse: a user told
-   * their wallet stays off chain, whose funder was unavailable, ends up with a
-   * subscription they cannot tell apart from the private one and a public
-   * transfer they cannot undo.
+   * ⚠️ ITS FUNDING HALF IS EVERY SPEND'S DEFAULT SINCE FUND-1. A user whose
+   * funder was unavailable used to end up with a subscription they could not
+   * tell apart from a funder-paid one and a public transfer they could not undo,
+   * unless this was set, and the screen sets it false. The funding refusal now
+   * happens with it off too (fundEphemeralForJob.test.ts, "FUND-1: a
+   * subscription made with the screen’s own flags stops after prepare when the
+   * funder refuses"). What this flag still adds alone is the two refusals in
+   * `subscribeFromPool`: `SelfDepositedNoteError` and
+   * `SpendFunderNamesWalletError`.
    */
   neverExposeWallet?: boolean;
 }
@@ -1261,21 +1365,22 @@ export interface SubscribeParams {
  * you asked for, no matter who pays — use a note somebody else deposited".
  */
 export class SelfDepositedNoteError extends Error {
-  constructor(
-    readonly depositPayer: string | null,
-    readonly depositSignature: string | null,
-  ) {
+  /**
+   * `'unknown'` = the worker named no provenance (one older than RPC-1), which
+   * is read as an own deposit and says so. No address and no signature: the
+   * verdict is decided on this device and names nothing on chain
+   * (`selfDepositedNote.test.ts`, "deposit verdict local and pessimistic").
+   */
+  constructor(readonly provenance: 'own-deposit' | 'unknown') {
     super(
-      depositPayer === null
-        ? 'Stopped before spending anything: this note\'s deposit could not be found in the ' +
-            'scanned history, so there is no way to tell whether your own wallet made it. ' +
-            'Spending republishes the deposit\'s identifier in the clear, so an unknown deposit ' +
-            'is an unknown exposure — it is not the same as a safe one.'
-        : 'Stopped before spending anything: this note was deposited by your own wallet ' +
-            `(${depositPayer}${depositSignature ? `, ${depositSignature.slice(0, 12)}…` : ''}). ` +
-            'Spending it republishes that deposit\'s identifier in the clear, so anyone reading ' +
-            'the subscription reaches your wallet in one hop through the deposit — whoever pays ' +
-            'for the subscription itself. Use a note deposited by someone else.',
+      provenance === 'unknown'
+        ? 'Stopped before spending anything: this device cannot tell where this note came from, ' +
+            'so it is treated as a note your own wallet deposited. Spending it would let anyone ' +
+            'reading the subscription reach the deposit, and an unknown origin is not the same ' +
+            'as a safe one.'
+        : 'Stopped before spending anything: this note was deposited by your own wallet. ' +
+            'Anyone reading the subscription can reach that deposit and, from it, your wallet, ' +
+            'whoever pays for the subscription itself. Use a note deposited by someone else.',
     );
     this.name = 'SelfDepositedNoteError';
   }
@@ -1351,20 +1456,20 @@ export interface SubscribeOutcome {
   fundedBy: 'wallet' | 'funder';
   /** Set when `fundedBy === 'funder'`; the funding transaction, for the user to check. */
   funderSignature?: string;
-  /** Why the funder was not used, when one was configured but did not serve. */
+  /** Why the funder was not used, when one was configured but did not serve.
+   *  Not set by `subscribeFromPool` since FUND-1: it does not opt in to a
+   *  wallet-funded spend, so that case throws `WalletExposureRefusedError`. */
   funderFallbackReason?: string;
   /**
-   * Who paid for the DEPOSIT of the note this subscription spent.
-   *
-   * Reported even when the run succeeded, because it is half the answer to
-   * "is my wallet reachable from this" and no other surface shows it. `null`
-   * means the deposit was not found in the scanned window — unknown, which the
-   * result screen must not render as clean.
+   * Where the spent note came from, as the worker decided it from this device's
+   * store: `'unknown'` when the worker named nothing (an older worker), which
+   * reads as an own deposit.
    */
-  depositPayer: string | null;
-  /** True when `depositPayer` is this wallet, or is unknown. The subscription
-   *  is then reachable from the buyer in one hop THROUGH THE DEPOSIT, whoever
-   *  paid for the subscription itself. */
+  noteProvenance: 'own-deposit' | 'received' | 'unknown';
+  /** True unless the note is known to be RECEIVED. An own deposit, or a note of
+   *  unknown origin, keeps the subscription reachable from the buyer through the
+   *  deposit, whoever paid for the subscription itself. Decided with no RPC
+   *  (`selfDepositedNote.test.ts`, "deposit verdict local and pessimistic"). */
   reachableViaDeposit: boolean;
   /**
    * True when the address that PAID for this subscription is co-named with the
@@ -1500,6 +1605,37 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
   // The worker decides the route: all three present means it tries circuit 7 and
   // falls back to the C1 + C3 pair when the rebuild cannot place the note, and
   // it reports which one it used as `prep.version`. This client never guesses.
+  //
+  // ── Who pays for THIS transaction, asked in the click, beside the prepare ──
+  //
+  // WHO is asked, and WHEN, are two different questions, and this path answers
+  // them differently on purpose.
+  //
+  // The lookup — which address the deployment funds spends from — is a call to
+  // the deployment itself. It needs nothing from the prepare, tells the RPC
+  // provider nothing, and is the slow half on a cold start, so it starts here,
+  // inside the click, beside the prepare, and never on mount
+  // (`selfDepositedNote.test.ts`, "the spend-funder check starts in the click,
+  // concurrent with prepare").
+  //
+  // 🚨 THE TWO SIGNATURE PAGES ARE NOT ASKED HERE (web sweep 4 round 1, item 27,
+  // ledger row D2). Intersecting the float's history with the wallet's is two
+  // `getSignaturesForAddress` calls sent together, and to the provider serving
+  // both that pair reads as "this wallet is about to spend in this pool, funded
+  // by that float". Started in the click it was also sent on every attempt that
+  // ends in a refusal and moves nothing — an incomplete history, a note this
+  // wallet deposited, a note already spent, the v3 "nothing was proved, retry"
+  // answer — and repeated on every retry of those. So the pages are read below,
+  // once the worker has answered with a job and the deposit verdict has let the
+  // spend through: the cost is one RPC round trip inside a flow whose prepare
+  // and proof are the wait, and the guard itself is unchanged
+  // (`selfDepositedNote.test.ts`, "the wallet is named to the RPC only once a
+  // spend is actually reachable").
+  const spendFunderLookup = fetchFunderLookup();
+  // Awaited below. Without this, a prepare that throws first would leave the
+  // lookup's own rejection unhandled; the same error is rethrown at the await.
+  spendFunderLookup.catch(() => undefined);
+
   const prep = await poolRequest(
     {
       kind: 'poolSubscribePrepare',
@@ -1519,85 +1655,32 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
 
   // ── Who DEPOSITED, which decides whether paying matters ───────────────────
   //
-  // 🚨 THE CONFIGURATION IN WHICH EVERYTHING ELSE HERE BUYS NOTHING.
+  // Spending a note the buyer deposited leaves the subscription reachable
+  // from the buyer through that deposit, whoever pays for the subscription
+  // itself: by the deposit's funder, and by timing when the float paid for it
+  // (scratchpad probes/logs/05-analyze.log: "float fundings of deposit ephemerals
+  // preceded by an exact payment within 10 s: 22/22").
   //
-  // Spending republishes the deposit's commitment in cleartext — the program
-  // forces it, and no client change can alter that before the verifier is
-  // redeployed. So a stranger walks: subscription → commitment at byte 160 →
-  // the deposit that emitted it → that deposit's fee payer. One hop, no
-  // cryptography.
-  //
-  // If that fee payer is the wallet now subscribing, the funder is irrelevant.
-  // The spend can be paid by a treasury, swept to a treasury, and signed by an
-  // ephemeral, and the buyer is STILL one hop away through their own deposit.
-  // It is the single way to do all of this correctly and remain findable, and
-  // nothing on the subscribe screen shows it — the note looks the same either
-  // way.
-  //
-  // So it is checked here, in code, rather than asked for in a runbook. Under
-  // `neverExposeWallet` it REFUSES; otherwise it is reported so the result
-  // screen can say which world the user ended up in.
-  //
-  // ⚠️ `null` means the leaf was not found in the scanned window, NOT that the
-  // deposit is safe. An unknown answer is refused under the flag for the same
-  // reason an unreadable funder lookup is: this file does not convert "could
-  // not see" into "there is nothing there".
-  // 🚨 COMPARED AGAINST `depositFunder`, NOT `depositPayer`. The first version
-  // of this used the payer and could therefore never fire: a deposit is signed
-  // by a fresh ephemeral, so its payer is a key nobody has heard of and never
-  // equals the wallet. MEASURED on a real devnet shield — wallet `BRop…TjNN`,
-  // deposit payer `8Eq1jsbB…`. The guard would have passed, the screen would
-  // have said "your wallet did not sign or pay for this subscription", and that
-  // true sentence would have been read as "nobody can reach me" while the walk
-  // deposit → ephemeral → funder → wallet was one call away.
-  //
-  // Either being unknown is refused. An unresolvable deposit is not a safe one:
-  // it is far more often a pruned history than an origin that does not exist.
-  //
-  // 🚨 AND ONE HOP FURTHER STILL, BECAUSE EQUALITY WAS NEVER THE QUESTION.
-  //
-  // Comparing the wallet to the funder catches "I funded my own deposit". It
-  // does not catch the shape this deployment actually ships, where the wallet
-  // PAYS the funder and the funder deposits: two transfers, neither naming both
-  // ends, and the funder standing in the middle with a readable history that
-  // names both.
-  //
-  // MEASURED 2026-08-18, spend `4zWERbE1NPaR…`. This guard passed. The disclosure
-  // said the wallet was not reachable. It was, in two hops:
-  //   spend -> its payer -> the funder H8WtBx3Qap… (probe P6 prints it)
-  //         -> that funder's history -> `21PjRyhLLg…`, SIGNED BY THE WALLET,
-  //            paying the funder 1.003 SOL one second before it financed the
-  //            depositing ephemeral. The amount is the note. The clock is a hint.
-  //
-  // ⛔ SO: NOT `funder === wallet`, BUT `does any transaction name both`. Cheap,
-  // and cheap is the point — this is the extraction an auditor actually runs.
-  // `getSignaturesForAddress` on each address and intersect: a transaction
-  // naming both appears in BOTH lists, so two calls answer it with no
-  // `getTransaction` at all.
-  //
-  // The bound is honest in the only direction that matters. A HIT is proof. An
-  // absence is only trustworthy if neither history was truncated, so a full page
-  // returns `null` — unknown — and `null` is refused exactly like every other
-  // unknown on this path. It sees direct co-naming, not an arbitrary chain: a
-  // funder laundered through a third address still passes here, which is why the
-  // probe file walks further and why this comment does not claim otherwise.
-  onProgress?.('Checking who paid for this note...');
-  const funderNamesWallet =
-    prep.depositFunder === null
-      ? null
-      : await sharesATransactionWith(connection, prep.depositFunder, owner.toBase58());
-
-  const selfDeposited =
-    prep.depositPayer === null ||
-    prep.depositFunder === null ||
-    prep.depositPayer === owner.toBase58() ||
-    prep.depositFunder === owner.toBase58() ||
-    funderNamesWallet !== false;
+  // The verdict is LOCAL and PESSIMISTIC. The worker says where the note came
+  // from, from this device's store; only a note filed as received is clean,
+  // and an answer that names nothing (an older worker) reads as an own
+  // deposit. One known limit on the other side: every imported note is filed
+  // as received, including one the buyer deposited from another wallet they
+  // control (`PoolSubscribePrepareResponse.noteProvenance`).
+  // No RPC is made for it: the chain walk it replaced named the
+  // depositing ephemeral from this IP and called a relayed own deposit
+  // unreachable (`selfDepositedNote.test.ts`, "deposit verdict local and
+  // pessimistic"; `noPointedNullifierRead.test.ts`, "subscribe prepare never
+  // names the depositing ephemeral").
+  const noteProvenance: SubscribeOutcome['noteProvenance'] =
+    (prep as { noteProvenance?: unknown }).noteProvenance === 'received'
+      ? 'received'
+      : (prep as { noteProvenance?: unknown }).noteProvenance === 'own-deposit'
+        ? 'own-deposit'
+        : 'unknown';
+  const selfDeposited = noteProvenance !== 'received';
   if (params.neverExposeWallet && selfDeposited) {
-    throw new SelfDepositedNoteError(
-      prep.depositFunder ?? prep.depositPayer,
-      prep.depositSignature,
-    );
+    throw new SelfDepositedNoteError(noteProvenance === 'unknown' ? 'unknown' : 'own-deposit');
   }
 
   // ── Who pays for THIS transaction, which is the other half of the walk ────
@@ -1618,12 +1701,13 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
   // problem. Which is why refusing here must NOT trigger the panel's
   // swap-to-another-note recovery: see SpendFunderNamesWalletError.
   //
-  // state 'none' is deliberately NOT a refusal here. No funder means the wallet
-  // itself pre-funds, which is worse, is already refused under this same flag by
-  // fundEphemeralForJob, and has a different cure — reporting it here would
-  // replace an accurate error with a misleading one.
-  onProgress?.('Checking who pays for the subscription...');
-  const spendFunder = await fetchFunderLookup();
+  // state 'none' is deliberately NOT a refusal here. No funder would mean the
+  // wallet itself pre-funds, which is worse, is refused by fundEphemeralForJob
+  // with or without this flag since FUND-1 (fundEphemeralForJob.test.ts,
+  // "FUND-1: a value-0 job never asks the wallet when this bundle carries no
+  // funder"), and has a different cure — reporting it here would replace an
+  // accurate error with a misleading one.
+  const spendFunder = await spendFunderLookup;
   const spendFunderNamesWallet =
     spendFunder.state === 'configured'
       ? await sharesATransactionWith(connection, spendFunder.pubkey, owner.toBase58())
@@ -1645,8 +1729,14 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
   // `valueLamports: 0` because a subscribe's pre-fund is float only — two proof
   // buffers' rent, the nullifier record's, the vault's, and a fee budget. The
   // note's value comes from the POOL, not from the payer.
+  //
+  // RECOVER-1: the note is marked BEFORE the funding, as in `unshieldFromPool`
+  // (`pool/recoverReads.test.ts`, "subscription: …").
+  await recordSpendAttempt(meta, spendNoteKey(token, denomination, leafIndex));
   const funding = await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
+    // The identity the relayed payment receipt is sealed to (SWEEP4 item 5).
+    meta,
     requiredLamports: prep.requiredLamports,
     valueLamports: 0,
     owner,
@@ -1684,7 +1774,7 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     fundedBy,
     funderSignature,
     funderFallbackReason,
-    depositPayer: prep.depositFunder ?? prep.depositPayer,
+    noteProvenance,
     reachableViaDeposit: selfDeposited,
     reachableViaSpendFunder,
     // 🚨 REPORTED, NEVER ASSUMED. A caller that sent the terms asked for circuit
@@ -1716,6 +1806,16 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
  * to the user's wallet and write that wallet back onto the ephemeral. A failed
  * fetch degrades to the old behaviour, which is correct exactly when there is
  * no funder — see `fetchFunderPubkey`.
+ *
+ * 🚨 WHICH OF `leafIndices` HAVE THEIR SPEND KEY READ (RECOVER-1). Reading the
+ * key of a note never spent names the key that will pay for its spend, to the
+ * RPC, before the spend exists. So by default only the notes with a spend
+ * attempt or a spent mark on record here are read (`recordSpendAttempt`,
+ * `knownSpentNoteKeys`): their key has already touched the chain from this
+ * browser. `everyNote: true` reads every one, and only the user's own labelled
+ * click sets it. `skippedNotes` says how many were left unread, so no screen
+ * calls an unchecked note "nothing stranded" (`pool/recoverReads.test.ts`,
+ * "default Recover names no untouched note’s spend key").
  */
 export async function recoverStuckFunds(
   meta: string,
@@ -1723,6 +1823,7 @@ export async function recoverStuckFunds(
   owner: PublicKey,
   onProgress?: (step: string) => void,
   leafIndices?: number[],
+  opts: { everyNote?: boolean } = {},
 ) {
   // ⚠️ THE THREE-STATE ANSWER MATTERS HERE AND NOWHERE ELSE SO MUCH.
   // "no funder" lets a sweep go home; "could not tell" must not, because
@@ -1731,7 +1832,23 @@ export async function recoverStuckFunds(
   // accountKeys[0] of that subscription. One transient fetch failure used to be
   // enough, and it fires on a Recover click, i.e. after the verification run.
   const lookup = await fetchFunderLookup();
-  return poolRequest(
+  const held = [...new Set(leafIndices ?? [])];
+  let read = held;
+  if (opts.everyNote !== true && held.length > 0) {
+    // Strictly `true`: a click handler that passed its event here must not
+    // read as consent. An unreadable store marks nothing and reads nothing
+    // (`pool/recoverReads.test.ts`, "only a literal `everyNote: true` reads
+    // every note…" and "a mark store the worker cannot open reads no spend key…").
+    const pool = findPoolV3('SOL', denomination)?.poolPDA.toBase58();
+    let marked = new Set<string>();
+    try {
+      marked = await recoverMarks(meta, owner.toBase58());
+    } catch {
+      // `skippedNotes` below says so.
+    }
+    read = pool ? held.filter((leaf) => marked.has(`${pool}:${leaf}`)) : [];
+  }
+  const res = await poolRequest(
     {
       kind: 'poolRecover',
       meta,
@@ -1740,10 +1857,11 @@ export async function recoverStuckFunds(
       ownerPubkey: owner.toBase58(),
       funderPubkey: lookup.state === 'configured' ? lookup.pubkey : undefined,
       funderUnknown: lookup.state === 'unknown',
-      unshieldLeafIndices: leafIndices,
+      unshieldLeafIndices: read,
     },
     onProgress,
   );
+  return { ...res, skippedNotes: held.length - read.length };
 }
 
 /**
@@ -1814,8 +1932,25 @@ export function mergeScanWithLocal(
 ): PoolNoteView[] {
   const seen = new Set(chainNotes.map((n) => `${n.pool}:${n.leafIndex}`));
   return [...chainNotes, ...localNotes.filter((n) => !seen.has(`${n.pool}:${n.leafIndex}`))].sort(
-    (a, b) => a.denomination - b.denomination || a.leafIndex - b.leafIndex,
+    byDenominationThenTag,
   );
+}
+
+/**
+ * The order every note list renders in: denomination, then tag (UI-1). It was
+ * leaf order, which lists the oldest deposit first, so a screenshot ranked the
+ * user's notes by age (`__tests__/components/PoolPanel.test.tsx` and
+ * `SendForm.test.tsx`, "renders the same list when only the leaves and
+ * commitments differ"). The leaf only breaks a tie between notes without a
+ * tag, i.e. rows from a worker older than UI-1. Same rule as the worker's
+ * `poolScanLocal`.
+ */
+function byDenominationThenTag(a: PoolNoteView, b: PoolNoteView): number {
+  if (a.denomination !== b.denomination) return a.denomination - b.denomination;
+  const ta = a.tag?.text ?? '￿';
+  const tb = b.tag?.text ?? '￿';
+  if (ta !== tb) return ta < tb ? -1 : 1;
+  return a.leafIndex - b.leafIndex;
 }
 
 export interface ImportNoteOutcome {
@@ -1846,6 +1981,9 @@ export async function importReceivedNote(params: {
   meta: string;
   walletPubkey: string;
   sealedNote: string;
+  /** Set for an ISSUED note only: the code it was bought with, whose one-time
+   *  key it was sealed to (`requestIssuedNote`). */
+  claimCode?: string;
   onProgress?: (step: string) => void;
 }): Promise<ImportNoteOutcome> {
   const res = await poolRequest(
@@ -1854,6 +1992,7 @@ export async function importReceivedNote(params: {
       meta: params.meta,
       sealedNote: params.sealedNote,
       encryptedNotes: await loadEncryptedNotes(params.meta, params.walletPubkey),
+      ...(params.claimCode ? { claimCode: params.claimCode } : {}),
     },
     params.onProgress,
   );
@@ -1891,7 +2030,10 @@ export async function exportPoolSeed(meta: string) {
 
 export interface IssuedNoteOutcome {
   note: PoolNoteView;
-  /** The deployment's leaf index, so the caller can name what it received. */
+  /** The deployment's leaf index: a handle for the caller, never a label.
+   *  Screens name the note by `note.tag` (UI-1, `PoolPanel.test.tsx` "a
+   *  contribution: neither the funded leaf, nor the issued leaf, nor the funded
+   *  deposit" and "state 5: the exchange card"). */
   leafIndex: number;
   /** Whether a Merkle path travelled with it, or the spend must rebuild one. */
   merklePath: 'stored' | 'none';
@@ -1981,14 +2123,34 @@ export async function deriveAnonymousBuyer(params: {
  * which reads like a derivation bug.
  *
  * Returns null when this deployment issues nothing, or could not say.
+ *
+ * [READY-1] `issuableNow` is the route's answer to "can a note be handed over
+ * right now": true, false, or null when it has no sample for this 10-minute
+ * bucket (`__tests__/api/issue-note.test.ts` "READY-1"). Anything but a
+ * literal boolean is null, never "yes" (`pool/contributeFallback.test.ts`
+ * "READY-1"). The pool panel stops before paying on false and on a null
+ * return (`__tests__/components/PoolPanel.test.tsx` "READY-1").
  */
-export async function fetchIssuableNote(): Promise<{ denomination: number; token: PoolToken } | null> {
+export async function fetchIssuableNote(): Promise<{
+  denomination: number;
+  token: PoolToken;
+  issuableNow: boolean | null;
+} | null> {
   try {
     const res = await fetch('/api/issue-note', { method: 'GET' });
-    const body: { ok?: boolean; configured?: boolean; denomination?: number; token?: string } =
-      await res.json();
+    const body: {
+      ok?: boolean;
+      configured?: boolean;
+      denomination?: number;
+      token?: string;
+      issuableNow?: unknown;
+    } = await res.json();
     if (!res.ok || !body.ok || !body.configured || !body.denomination) return null;
-    return { denomination: body.denomination, token: body.token === 'USDC' ? 'USDC' : 'SOL' };
+    return {
+      denomination: body.denomination,
+      token: body.token === 'USDC' ? 'USDC' : 'SOL',
+      issuableNow: typeof body.issuableNow === 'boolean' ? body.issuableNow : null,
+    };
   } catch {
     return null;
   }
@@ -2038,10 +2200,16 @@ export async function requestIssuedNote(params: {
   const ticket = funderTicket();
   if (!ticket) throw new Error('This deployment does not issue notes.');
 
-  // The address is derived in the worker from the pool seed, so the server only
-  // ever learns a public encryption key — never a secret, and never the wallet.
+  // The address is derived in the worker from the pool seed AND this claim
+  // code (DEV-1): a fresh public key per purchase, never the published one, so
+  // the issuer cannot group one buyer's purchases under one key, and a retry
+  // with the same code re-derives it and opens the reply the issuer kept
+  // (`worker/issueAddress.test.ts`, "two issuances, unlinkable addresses" and
+  // "the same code, retried after a lost answer, opens the reply the issuer kept").
   params.onProgress?.('Asking for a note (your wallet does not deposit one)...');
-  const recipientAddress = await fetchNoteReceiveAddress(params.meta);
+  const recipientAddress = (
+    await poolRequest({ kind: 'poolIssueAddress', meta: params.meta, claimCode: params.claimCode })
+  ).address;
 
   const res = await fetch('/api/issue-note', {
     method: 'POST',
@@ -2056,6 +2224,8 @@ export async function requestIssuedNote(params: {
   let body: {
     ok?: boolean;
     error?: string;
+    /** What the buyer should do next. See the refusal below. */
+    hint?: string;
     sealedNote?: string;
     leafIndex?: number;
     disclosure?: string;
@@ -2066,6 +2236,22 @@ export async function requestIssuedNote(params: {
     throw new Error(`The note issuer replied with a non-JSON ${res.status}.`);
   }
   if (!res.ok || !body.ok || !body.sealedNote) {
+    /**
+     * ⛔ THE HINT IS RENDERED, AND IT IS THE HALF THAT SAYS WHAT TO DO
+     * (gate r1, RED 7e).
+     *
+     * Every exhaustion now answers a buyer the same sentence, so `error` alone
+     * is one flat line where the buyer used to see a reason. The route sends
+     * the reason and the retry guidance in `hint`, and this was reading
+     * `body.error` only — so the guidance the uniformity fix was written to
+     * give reached nobody. The buyer has PAID at this point; "your code is
+     * still worth a note" is the whole difference between waiting and
+     * concluding the money is gone.
+     */
+    if (!res.ok || !body.ok) {
+      const reason = body.error ?? `The issuer replied ${res.status}.`;
+      throw new Error(body.hint ? `No note was issued: ${reason} ${body.hint}` : `No note was issued: ${reason}`);
+    }
     throw new Error(body.error ? `No note was issued: ${body.error}` : `The issuer replied ${res.status}.`);
   }
 
@@ -2079,6 +2265,7 @@ export async function requestIssuedNote(params: {
     meta: params.meta,
     walletPubkey: params.walletPubkey,
     sealedNote: body.sealedNote,
+    claimCode: params.claimCode,
   });
 
   return {
@@ -2151,10 +2338,52 @@ const SPENT_STORE_KEY = 'p01_pay_spent_notes_v2';
 const PAYOUT_STORE_KEY = 'p01_pay_pool_payouts_v2';
 
 /** The pre-L5 stores, keyed by wallet pubkey. Read as migration fallback
- *  forever; written never (except the quota-failure note path below). */
+ *  forever; written never. The one exception, the note path below, now
+ *  writes under a random DEVICE label, never under a wallet (DEV-1). */
 const NOTE_STORE_KEY_V1 = 'p01_pay_notes_v1';
 const SPENT_STORE_KEY_V1 = 'p01_pay_spent_notes_v1';
 const PAYOUT_STORE_KEY_V1 = 'p01_pay_pool_payouts_v1';
+
+/**
+ * Where the random label of this DEVICE's note fallback lives (DEV-1).
+ *
+ * A received note whose sealed-store write failed used to land in
+ * `p01_pay_notes_v1` under the WALLET PUBKEY: the (wallet, holds a received
+ * note) row the v2 store exists to remove. It now lands under this label: 16
+ * random bytes, drawn once per browser profile, shared by every identity on
+ * it, derived from nothing (`pool/storeEncryption.test.ts`, "failed v2 write
+ * keeps the note and names no wallet"). Every note read unions that bucket,
+ * because a received note's blob is its only copy.
+ */
+const DEVICE_NOTE_BUCKET_KEY = 'p01_pay_device_note_bucket_v1';
+
+/** This device's fallback label, or null when none was ever drawn. A read never draws one. */
+function deviceNoteBucket(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const label = localStorage.getItem(DEVICE_NOTE_BUCKET_KEY);
+    return label && /^[0-9a-f]{32}$/.test(label) ? label : null;
+  } catch {
+    return null;
+  }
+}
+
+/** This device's fallback label, drawn and persisted on first use. */
+function ensureDeviceNoteBucket(): string {
+  const existing = deviceNoteBucket();
+  if (existing) return existing;
+  const label = bytesToHex(randomBytes(16));
+  localStorage.setItem(DEVICE_NOTE_BUCKET_KEY, label);
+  return label;
+}
+
+/** The note blobs the v1 store holds for this wallet: its pre-L5 bucket, plus
+ *  this device's fallback bucket. */
+function legacyNoteBlobs(walletPubkey: string): string[] {
+  const old = readMap<string>(NOTE_STORE_KEY_V1);
+  const device = deviceNoteBucket();
+  return [...(old[walletPubkey] ?? []), ...(device ? old[device] ?? [] : [])];
+}
 
 // The session (label + sealing address), map helpers and `sealRecord` live in
 // `sealedStore.ts`, shared with the handoff store — see its header.
@@ -2290,12 +2519,14 @@ export async function storeEncryptedNote(
     // No session, quota, or private mode. Every caller reaches here moments
     // after a successful worker round trip, so "no session" is near-impossible
     // — but a received note's blob is its only record, so the last resort is
-    // the v1 store, which every read path still unions.
+    // the v1 store, which every read path still unions, filed under this
+    // device's random label and never under the wallet (DEV-1).
     try {
+      const bucket = ensureDeviceNoteBucket();
       const all = readMap<string>(NOTE_STORE_KEY_V1);
-      const list = all[walletPubkey] ?? [];
+      const list = all[bucket] ?? [];
       if (!list.includes(blob)) list.push(blob);
-      all[walletPubkey] = list;
+      all[bucket] = list;
       writeMap(NOTE_STORE_KEY_V1, all);
     } catch {
       // Quota failure on both: recovery-by-scan still covers a shielded note.
@@ -2313,14 +2544,16 @@ export async function loadEncryptedNotes(meta: string, walletPubkey: string): Pr
     migrateNoteStore(walletPubkey, label);
     return [
       ...(readMap<string>(NOTE_STORE_KEY)[label] ?? []),
-      // Post-migration this is empty; until then (or after a quota failure
-      // above) it is where the blobs still live.
-      ...(readMap<string>(NOTE_STORE_KEY_V1)[walletPubkey] ?? []),
+      // Post-migration the wallet's bucket is empty; until then it is where
+      // the blobs still live. The device bucket holds what a failed write
+      // above kept; a blob of another identity on this device opens under no
+      // seed of this one and the worker skips it.
+      ...legacyNoteBlobs(walletPubkey),
     ];
   } catch {
     // No worker session: only the v1 view exists. Callers that need the blobs
     // for a worker request are about to fail on the same missing session anyway.
-    return readMap<string>(NOTE_STORE_KEY_V1)[walletPubkey] ?? [];
+    return legacyNoteBlobs(walletPubkey);
   }
 }
 
@@ -2509,6 +2742,54 @@ async function recordSpentNotes(
 }
 
 /**
+ * The key prefix a spend ATTEMPT carries in the spent store (RECOVER-1). Same
+ * store, same record kind as a spent mark, sealed alike. It never reads as a
+ * spend: `readNoteMarks` sorts it out of `knownSpentNoteKeys`, so the note
+ * stays offered (`pool/recoverReads.test.ts`, "an attempt is not a spend: the
+ * note stays offered by every picker").
+ */
+const SPEND_ATTEMPT_PREFIX = 'attempt:';
+
+/**
+ * Mark a note whose spend key is about to be funded (RECOVER-1).
+ *
+ * Recover reads the spend key of a note only when the note carries a mark
+ * (`recoverStuckFunds`): reading the key of a note never spent tells the RPC
+ * which key will pay for it. A withdrawal, exchange or subscribe that dies
+ * after its ephemeral is funded leaves float only that key can release, on a
+ * note still unspent, and this mark is what lets the default Recover reach it.
+ *
+ * BEFORE THE FUNDING, NEVER AFTER: a tab closed during the funding keeps what
+ * was written before it (`pool/recoverReads.test.ts`, "withdrawal: a funding
+ * that failed after sending leaves a key the default Recover reads", and the
+ * subscription and exchange cases). No dedup read, which would open every
+ * sealed record on the wait path; the read side's Set absorbs a repeat. A
+ * failed write is swallowed: the spend goes on, and "Check every note" still
+ * reaches the key.
+ */
+async function recordSpendAttempt(meta: string, noteKey: string | null): Promise<void> {
+  if (typeof localStorage === 'undefined' || !noteKey) return;
+  try {
+    const session = await storeSession(meta);
+    const all = readMap<string>(SPENT_STORE_KEY);
+    const list = all[session.label] ?? [];
+    list.push(
+      sealRecord(session.address, { p01store: 1, kind: 'spent', key: `${SPEND_ATTEMPT_PREFIX}${noteKey}` }),
+    );
+    all[session.label] = list;
+    writeMap(SPENT_STORE_KEY, all);
+  } catch {
+    // Quota, private mode or no session: see above.
+  }
+}
+
+/** The `pool:leafIndex` key of the note a spend is about to fund, or null. */
+function spendNoteKey(token: PoolToken, denomination: number, leafIndex: number): string | null {
+  const pool = findPoolV3(token, denomination)?.poolPDA.toBase58();
+  return pool ? `${pool}:${leafIndex}` : null;
+}
+
+/**
  * Every note this browser knows it has spent, keyed `pool:leafIndex`.
  *
  * Unions the explicit record above with the payout history, because a payout
@@ -2542,14 +2823,48 @@ export async function knownSpentNoteKeys(
   meta: string | null,
   walletPubkey: string,
 ): Promise<{ keys: Set<string>; staleWorker: boolean; lostSession: boolean }> {
+  const { keys, staleWorker, lostSession } = await readNoteMarks(meta, walletPubkey);
+  return { keys, staleWorker, lostSession };
+}
+
+/**
+ * The marks Recover filters on, as one set. The pools of one click run in
+ * parallel (`PoolPanel.handleRecover`) and each read opens every sealed record
+ * in the worker, so concurrent callers share the read in flight; a settled
+ * read is never reused (`pool/recoverReads.test.ts`, "one Recover click over
+ * every pool opens the mark store once").
+ */
+const marksInFlight = new Map<string, Promise<Set<string>>>();
+function recoverMarks(meta: string, walletPubkey: string): Promise<Set<string>> {
+  const key = `${meta}\n${walletPubkey}`;
+  let read = marksInFlight.get(key);
+  if (!read) {
+    read = readNoteMarks(meta, walletPubkey).then((m) => new Set([...m.keys, ...m.attempts]));
+    marksInFlight.set(key, read);
+    const drop = () => void marksInFlight.delete(key);
+    read.then(drop, drop);
+  }
+  return read;
+}
+
+/** `knownSpentNoteKeys` plus `attempts`: the notes with a spend attempt on
+ *  record (`recordSpendAttempt`), marks for Recover and never spends. */
+async function readNoteMarks(
+  meta: string | null,
+  walletPubkey: string,
+): Promise<{ keys: Set<string>; attempts: Set<string>; staleWorker: boolean; lostSession: boolean }> {
   const keys = new Set<string>();
+  const attempts = new Set<string>();
   let staleWorker = false;
   let lostSession = false;
   if (meta) {
     const view = await openLinkage(meta, walletPubkey);
     staleWorker = view.staleWorker;
     lostSession = view.lostSession;
-    for (const k of view.spentKeys) keys.add(k);
+    for (const k of view.spentKeys) {
+      if (k.startsWith(SPEND_ATTEMPT_PREFIX)) attempts.add(k.slice(SPEND_ATTEMPT_PREFIX.length));
+      else keys.add(k);
+    }
     for (const p of view.payouts) keys.add(`${p.pool}:${p.leafIndex}`);
   } else {
     for (const k of readMap<string>(SPENT_STORE_KEY_V1)[walletPubkey] ?? []) keys.add(k);
@@ -2571,7 +2886,7 @@ export async function knownSpentNoteKeys(
       keys.add(`${s.pool}:${s.leafIndex}`);
     }
   }
-  return { keys, staleWorker, lostSession };
+  return { keys, attempts, staleWorker, lostSession };
 }
 
 // ---------------------------------------------------------------------------
@@ -2688,7 +3003,7 @@ export function derivePoolPayoutKeypair(
   leafIndex: number,
 ): Keypair {
   if (!Number.isInteger(leafIndex) || leafIndex < 0) {
-    throw new Error(`Refusing to derive a payout key for leaf index ${leafIndex}.`);
+    throw new Error('Refusing to derive a payout key: the leaf index is not a non-negative integer.');
   }
   const pool = typeof poolPDA === 'string' ? new PublicKey(poolPDA) : poolPDA;
   const idx = new Uint8Array(4);
@@ -2707,6 +3022,12 @@ export interface PayoutRecord {
   /** Withdrawal signature, for the explorer link. */
   txSig: string;
   denomination: number;
+  /**
+   * The paying note's display name, which the payout row shows instead of its
+   * leaf (UI-1, `PoolPanel.test.tsx` state 6). Absent on records written
+   * before it; such a row shows the amount and the address alone.
+   */
+  tag?: NoteTag;
 }
 
 /**
@@ -2747,6 +3068,7 @@ export async function recordPayout(
         address: rec.address,
         txSig: rec.txSig,
         denomination: rec.denomination,
+        ...(rec.tag ? { tag: { text: rec.tag.text, color: rec.tag.color } } : {}),
       }),
     );
     all[session.label] = list;

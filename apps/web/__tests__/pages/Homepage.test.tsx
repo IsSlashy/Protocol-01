@@ -134,7 +134,7 @@ describe('Homepage, the Styx Protocol landing page', () => {
     // column. There are no aria-label-only icon links left on this route.
     it('links to X from the footer', () => {
       const x = screen.getByRole('link', { name: 'X' });
-      expect(x).toHaveAttribute('href', 'https://x.com/Protocol01_');
+      expect(x).toHaveAttribute('href', 'https://x.com/Styx_PQ');
       expect(x).toHaveAttribute('target', '_blank');
       expect(x).toHaveAttribute('rel', 'noopener noreferrer');
     });

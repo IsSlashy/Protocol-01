@@ -18,16 +18,13 @@ import Reveal from "../_styx/Reveal";
  *
  * COPY, and the two places it is still not clean:
  *
- *  1. Numbers. The stat cards are countable: 12 is the 13 ids under
- *     [programs.devnet] in Anchor.toml, and 7 is the AIR modules under stark/src/air with mod.rs set
- *     aside. The dictionaries disagree: founder.bio and
- *     founder.timeline.protocol01.desc both still enumerate "14 Solana
- *     programs, 7 STARK circuits, 3 client apps, 11 SDKs". 14 is wrong -- it was
- *     already wrong before the P2P escrow program was removed on 2026-08-19,
- *     and 11
- *     SDKs cannot be counted from this repository at all. i18n/ is off limits
- *     from this page, so rather than print 14 a few centimetres above a card
- *     that says 12, the page drops that one sentence. See dropBuildInventory
+ *  1. Numbers. The stat cards are countable: 4 is the programs the product
+ *     path calls, each checked executable on devnet on 2026-09-14 (verifier,
+ *     shielded pool, registry, relayer), and 8 is the AIR modules under
+ *     stark/src/air with mod.rs set aside. The dictionaries were realigned on
+ *     2026-09-14 (four live programs, eight circuits, three apps, eleven
+ *     packages on npm per `npm view`); dropBuildInventory stays as a guard
+ *     against the next drift. See dropBuildInventory
  *     below, which is the only string surgery in this file and is meant to be
  *     deleted the day the dictionaries say 12.
  *
@@ -70,11 +67,11 @@ const daysSinceStart = () => Math.floor((Date.now() - PROJECT_START.getTime()) /
 const stats: { value: string; labelKey: string; source?: string }[] = [
   { value: "7+", labelKey: "yearsCode" },
   {
-    value: "12",
+    value: "4",
     labelKey: "programs",
-    source: "Anchor.toml [programs.devnet]",
+    source: "devnet getAccountInfo, 2026-09-14",
   },
-  { value: "7", labelKey: "circuits", source: "stark/src/air/*.rs" },
+  { value: "8", labelKey: "circuits", source: "stark/src/air/*.rs" },
   { value: String(daysSinceStart()), labelKey: "days", source: "2026-01-18" },
   { value: "1", labelKey: "dev" },
   { value: "3", labelKey: "apps", source: "mobile / extension / web" },
@@ -95,7 +92,7 @@ const built = [
       "Solana programs in Anchor and Rust",
       "Shielded pool with a STARK-gated unshield",
       "On-chain STARK verifier over Goldilocks, FRI included",
-      "Registry, relayer and fee-splitter programs",
+      "Registry and relayer programs",
     ],
   },
   {
@@ -141,12 +138,11 @@ function lines(value: string): string[] {
 /**
  * Drops the one sentence that enumerates the build.
  *
- * founder.bio and founder.timeline.protocol01.desc both carry a stale
- * inventory: "14 Solana programs, 7 STARK circuits, 3 client apps, and 11 SDKs
- * on npm". Anchor.toml puts the program count at 12 and the SDK count is not
- * countable here, so the sentence is false in both locales while the stat card
- * beside it is right. i18n/ cannot be edited from this page, so the sentence is
- * withheld instead of contradicted.
+ * founder.bio and founder.timeline.protocol01.desc carried a stale inventory
+ * ("14 Solana programs, 7 STARK circuits, 3 client apps, and 11 SDKs on npm")
+ * until 2026-09-14, when both locales were realigned with the stat cards. The
+ * filter is kept so that the next drift in the dictionaries is withheld rather
+ * than contradicted by the card beside it.
  *
  * The marker is "STARK": in English and in French that word appears in the
  * inventory sentence and in no other sentence of founder.bio or of any

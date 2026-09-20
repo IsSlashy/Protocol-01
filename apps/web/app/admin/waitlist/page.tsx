@@ -90,6 +90,64 @@ interface StatsPayload {
 // saved credential. The rebrand is visible copy only.
 const STORAGE_KEY = "p01-wl-admin-key";
 
+/**
+ * 🚨 THE KEY LIVES FOR THE TAB, NOT FOR THE DISK.
+ *
+ * This key unlocks /api/waitlist/export: every subscriber's email, country,
+ * locale, interest and dates. Held in `localStorage` it outlived the tab, the
+ * session and the reboot, on the SAME ORIGIN as the pay app — so a storage or
+ * device dump of the operator's browser taken any time later, or any script
+ * that can read this origin, found a live credential rather than the trace of
+ * a page somebody once opened.
+ *
+ * `sessionStorage` is still same-origin: this shortens the credential's LIFE,
+ * it does not isolate it. What it buys is that the window in which a dump is
+ * worth anything is the window in which the operator is working.
+ *
+ * `readKey`/`rememberKey`/`forgetKey` are also where a browser with storage
+ * switched off stops being a crash: every access is guarded, and the page then
+ * simply asks for the key each time.
+ *
+ * Pinned by `__tests__/pages/WaitlistAdminKeyStorage.test.tsx`.
+ */
+function readKey(): string | null {
+  try {
+    // A key an older build persisted is dropped on sight, and never reused: it
+    // may already be in somebody's dump, and reconnecting with it would keep it
+    // alive across the very reboot this stops it surviving.
+    if (localStorage.getItem(STORAGE_KEY) !== null) localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // No storage: nothing to clean up.
+  }
+  try {
+    return sessionStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberKey(key: string): void {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, key);
+  } catch {
+    // Storage refused (private mode, quota, a blocked origin). The page works
+    // without it; the operator retypes the key after a reload.
+  }
+}
+
+function forgetKey(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Nothing to forget.
+  }
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Nothing to forget.
+  }
+}
+
 type InterestFilter = "all" | "mobile" | "extension" | "sdk" | "none";
 type StatusFilter = "all" | "pending" | "confirmed";
 
@@ -463,7 +521,7 @@ export default function WaitlistAdminPage() {
       ]);
       if (statsRes.status === 401 || recordsRes.status === 401) {
         setConnected(false);
-        localStorage.removeItem(STORAGE_KEY);
+        forgetKey();
         setError("Invalid key");
         return;
       }
@@ -480,7 +538,7 @@ export default function WaitlistAdminPage() {
       setStats(s);
       setRecords(r.records);
       setConnected(true);
-      localStorage.setItem(STORAGE_KEY, key);
+      rememberKey(key);
     } catch {
       setError("Network error");
     } finally {
@@ -490,7 +548,7 @@ export default function WaitlistAdminPage() {
 
   // Auto-reconnect with a stored key
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = readKey();
     if (saved) {
       setSecret(saved);
       fetchAll(saved);
@@ -510,7 +568,7 @@ export default function WaitlistAdminPage() {
   }, [secret]);
 
   const disconnect = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
+    forgetKey();
     setConnected(false);
     setSecret("");
     setStats(null);

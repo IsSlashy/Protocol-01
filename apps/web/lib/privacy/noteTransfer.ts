@@ -12,8 +12,8 @@
  * ────────────────────────────
  * The thing being handed over is the note's SECRETS. `PoolNoteView` — the only
  * note shape the main thread is ever given (`worker/poolHandlers.ts`) — carries
- * pool, denomination, counter, leaf index, commitment and spent-ness, and no
- * secret at all. So the page cannot build the payload even if it wanted to; the
+ * pool, denomination, counter, leaf index, commitment, tag and spent-ness, and
+ * no secret at all. So the page cannot build the payload even if it wanted to; the
  * worker encodes and seals it, and only ciphertext comes back. If a future
  * change makes it convenient to "just return the note and encrypt here", that
  * is the boundary being deleted, not a refactor.
@@ -34,6 +34,7 @@
 import { poolRequest } from './workerClient';
 import { isNoteEncryptionAddress } from './pool/noteCrypto';
 import type { PoolToken } from './pool/denominatedPool';
+import type { NoteTag } from './pool/noteTag';
 
 export interface SealNoteParams {
   /** Session key from `deriveMeta`. */
@@ -54,10 +55,13 @@ export interface SealedNoteHandoff {
   /** `p01enc1:…` — hybrid X25519 + ML-KEM-768, opened only by the recipient. */
   sealedNote: string;
   denomination: number;
-  leafIndex: number;
-  /** Public: the deposit put this on chain. Shown so the sender can tell two
-   *  handoffs apart. */
-  commitment: string;
+  /**
+   * The note's display name, shown so the sender can tell two handoffs apart.
+   * It replaced the leaf index and the commitment, which the deposit published
+   * and a screenshot of this screen therefore tied to it (UI-1,
+   * `SendForm.test.tsx` "the sealed result names the note by its tag").
+   */
+  tag: NoteTag;
   /** Whether a Merkle path travels with the note, and where it came from. */
   merklePath: 'stored' | 'rebuilt' | 'none';
 }
@@ -111,8 +115,7 @@ export async function sealNoteFor(params: SealNoteParams): Promise<SealedNoteHan
   return {
     sealedNote: res.sealedNote,
     denomination: res.denomination,
-    leafIndex: res.leafIndex,
-    commitment: res.commitment,
+    tag: res.tag,
     merklePath: res.merklePath,
   };
 }

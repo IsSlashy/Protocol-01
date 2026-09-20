@@ -11,9 +11,12 @@
  * regenerated the identity three times in one evening. Each time, a note the
  * deployment had already issued and sealed to the previous address became
  * unopenable, and the single-use claim code that paid for it was already spent.
- * `app/api/issue-note/route.ts` re-seals the same leaf to the same recipient
- * exactly so a retry recovers — and that branch could never once fire, because
- * the recipient address never survived long enough to ask twice.
+ * The route then re-sealed the same leaf to the same recipient so a retry could
+ * recover, and that branch could never once fire, because the recipient
+ * address never survived long enough to ask twice. That branch is gone (ISSUE-1):
+ * a retry with the same code now replays the stored reply, byte for byte, which
+ * is sealed to the FIRST address that asked (`__tests__/api/issue-note.node.test.ts`
+ * "the same code, retried") — so the key still has to outlive the tab.
  *
  * So the key is persisted. Everything downstream is unchanged: `p01Keypair`
  * already substitutes for the wallet adapter throughout `PayApp.tsx`.

@@ -56,7 +56,7 @@ const SECTIONS: {
       { label: "Careers", href: "/careers" },
       { label: "Waitlist", href: "/waitlist" },
       { label: "Discord", href: "https://discord.gg/EfqnVmb2dV", external: true },
-      { label: "X", href: "https://x.com/Protocol01_", external: true },
+      { label: "X", href: "https://x.com/Styx_PQ", external: true },
     ],
   },
 ];

@@ -77,7 +77,7 @@ const POOL_PROGRAM_ID = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c";
 const REPO_URL = "https://github.com/IsSlashy/Protocol-01";
 const EXPLORER_URL = `https://explorer.solana.com/address/${POOL_PROGRAM_ID}?cluster=devnet`;
 const X_FOUNDER = "https://x.com/Slashy_fx";
-const X_PROJECT = "https://x.com/Protocol01_";
+const X_PROJECT = "https://x.com/Styx_PQ";
 const DEV3PACK_URL = "https://hack.dev3pack.xyz";
 
 /* `styx-step` ships 2rem of vertical padding and `styx-h3` a 0.7rem heel, which
@@ -1075,7 +1075,7 @@ function Slide10Closing() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            x.com/Protocol01_
+            x.com/Styx_PQ
           </a>
         </span>
       </div>

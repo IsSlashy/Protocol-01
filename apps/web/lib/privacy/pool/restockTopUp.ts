@@ -363,6 +363,9 @@ export async function runTopUp(o: RunTopUpOptions): Promise<TopUpResult> {
 
   const lamports = plan.amountLamports - fee;
   if (lamports <= 0) {
+    // The top-up script publishes this message, redacted, and no fake-chain
+    // world reaches it: so it holds two amounts and nothing else, and the line
+    // is vetted by its exact text (`VETTED_ERROR_LINES` in ciLogHygiene.test.ts).
     throw new Error(`the top-up (${plan.amountLamports} lamports) is smaller than the network fee (${fee})`);
   }
 
@@ -375,19 +378,22 @@ export async function runTopUp(o: RunTopUpOptions): Promise<TopUpResult> {
   return { ...result, feeLamports: fee, sentLamports: lamports, signature };
 }
 
-/** One line for a log. Public keys and amounts only; nothing here can be a secret. */
+/**
+ * One line for a PUBLIC log: the verdict, and nothing else.
+ *
+ * 🚨 THIS LANDS IN A PUBLIC ACTIONS LOG (ledger row E5, map A defect 9). It
+ * used to carry the float and the restock wallet as base58, both balances, the
+ * surplus, the deficit, the quiet time, the amount moved and the signature of
+ * the transfer — between them enough to name the wallets that fund the
+ * inventory and to date every top-up. The numbers are all still on
+ * `TopUpResult` for a caller with somewhere private to put them; nothing that
+ * reaches the log may carry them.
+ *
+ * Pinned by `ciLogHygiene.test.ts` ("CI output names no key, signature, leaf,
+ * balance or jitter"), which builds this line in worlds differing by one value
+ * each and asserts it does not move, and by `restockTopUp.test.ts` ("the log
+ * line carries the verdict and nothing else").
+ */
 export function formatTopUpLine(r: TopUpResult): string {
-  const sol = (n: number) => (n / 1e9).toFixed(4);
-  const quiet =
-    r.secondsSinceLastFunderActivity === null
-      ? 'unknown'
-      : `${Math.floor(r.secondsSinceLastFunderActivity / 3600)}h${Math.floor((r.secondsSinceLastFunderActivity % 3600) / 60)}m`;
-  return (
-    `top-up ${r.dryRun ? 'dry-run' : 'live'} verdict=${r.plan.verdict} ` +
-    `float=${r.funder} ${sol(r.funderLamports)} SOL (floor ${sol(r.plan.funderFloorLamports)}, ` +
-    `surplus ${sol(r.plan.funderSurplusLamports)}) ` +
-    `restock=${r.restockWallet} ${sol(r.restockLamports)} SOL (target ${sol(r.plan.restockTargetLamports)}, ` +
-    `deficit ${sol(r.plan.restockDeficitLamports)}) quiet=${quiet} ` +
-    `moved=${sol(r.sentLamports)} SOL sig=${r.signature ?? 'none'}: ${r.plan.reason}`
-  );
+  return `top-up ${r.dryRun ? 'dry-run' : 'live'} verdict=${r.plan.verdict}`;
 }

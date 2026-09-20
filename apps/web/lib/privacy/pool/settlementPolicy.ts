@@ -105,6 +105,25 @@ export const MIN_PURCHASE_CREDIT_LAMPORTS = Math.min(ONE_PURCHASE_LAMPORTS, ONE_
  */
 export const PREFUND_WORST_CASE_LAMPORTS = 1_620_000_000;
 
+/**
+ * The smallest batch a settlement may carry, whatever the environment says.
+ *
+ * `envInt` already refuses 0, because 0 is the value that turns a rule off. For
+ * this one bound, 1 is worse than off: a settlement carrying one purchase IS
+ * that buyer's name, on an edge anyone can read, and no later transfer takes it
+ * back. The value arrives from two places an operator edits without reading
+ * this file — the deployment's own environment, and the GitHub repository
+ * variable `.github/workflows/restock-inventory.yml:108` hands to the top-up —
+ * so the refusal belongs in the reader rather than in a runbook.
+ *
+ * ⚠️ A FLOOR, NOT THE POLICY. `DEFAULT_SETTLEMENT_CONFIG.minPurchases` is 3 and
+ * stays 3; clamping bounds how far a configured value may lower it. Pinned by
+ * `settlementPolicy.test.ts > the batch floor an environment variable cannot
+ * lower (SETTLE-1)`, whose decision case reads `settle` on the unclamped reader
+ * (`wp-logs/SETTLE-1-red.log`).
+ */
+export const MIN_SETTLEMENT_BATCH = 2;
+
 export interface SettlementConfig {
   /** Fewest purchases a settlement may carry. The privacy floor. */
   minPurchases: number;
@@ -131,6 +150,14 @@ export interface SettlementConfig {
   holdSpreadSeconds: number;
   /** Remaining sequential deposits at or below which the float alarm fires. */
   alarmBelowDeposits: number;
+  /**
+   * Set when `minPurchases` was raised to `MIN_SETTLEMENT_BATCH` because the
+   * environment asked for less. Absent otherwise, so a config read from an
+   * environment that sets nothing stays deep-equal to the default. Pinned by
+   * `settlementPolicy.test.ts > … > reports the clamp, and reports nothing when
+   * it did not clamp`.
+   */
+  minPurchasesClamped?: true;
 }
 
 export const DEFAULT_SETTLEMENT_CONFIG: SettlementConfig = {
@@ -478,14 +505,31 @@ export function envInt(name: string, fallback: number, env = process.env): numbe
   // `minQuietSeconds` and `minPurchases` "off" is the shape this file exists to
   // refuse. A floor of 1 and no ceiling: an operator raising a bound is making
   // a decision about their own privacy, and a silently clamped value is worse
-  // than a high one they chose.
+  // than a high one they chose. `minPurchases` is the exception, because a
+  // floor of 1 is a decision about somebody else: `settlementConfigFromEnv`
+  // raises it to `MIN_SETTLEMENT_BATCH` and reports the clamp instead of
+  // applying it quietly. `envInt` itself is unchanged — it is shared with
+  // bounds where 1 is a legitimate choice, `alarmBelowDeposits` among them.
+  // Pinned by `settlementPolicy.test.ts > the batch floor an environment
+  // variable cannot lower (SETTLE-1)`.
   return Number.isInteger(raw) && raw >= 1 ? raw : fallback;
 }
 
 /** The whole config, from the environment, with every default intact. */
 export function settlementConfigFromEnv(env = process.env): SettlementConfig {
+  const requested = envInt(
+    'P01_SETTLE_MIN_PURCHASES',
+    DEFAULT_SETTLEMENT_CONFIG.minPurchases,
+    env,
+  );
+  const minPurchases = Math.max(requested, MIN_SETTLEMENT_BATCH);
   return {
-    minPurchases: envInt('P01_SETTLE_MIN_PURCHASES', DEFAULT_SETTLEMENT_CONFIG.minPurchases, env),
+    minPurchases,
+    // Only on a real clamp, so `'2'` is never reported as one and a config read
+    // from an empty environment stays deep-equal to `DEFAULT_SETTLEMENT_CONFIG`
+    // (`settlementPolicy.test.ts > … > an empty environment is the documented
+    // default, not an off switch`).
+    ...(minPurchases === requested ? {} : { minPurchasesClamped: true as const }),
     minQuietSeconds: envInt(
       'P01_SETTLE_MIN_QUIET_SECONDS',
       DEFAULT_SETTLEMENT_CONFIG.minQuietSeconds,

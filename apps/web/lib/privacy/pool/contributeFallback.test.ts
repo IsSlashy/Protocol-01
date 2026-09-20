@@ -33,7 +33,10 @@ vi.mock('./ephemeralFunder', () => ({
   funderTicket: () => 'test-ticket',
 }));
 
-vi.mock('./denominatedPool', () => ({
+// Partial: the real store handlers below load the real module; only the
+// pool lookup the client makes is pinned.
+vi.mock('./denominatedPool', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./denominatedPool')>()),
   findPoolV3: () => ({
     poolPDA: new PublicKey(POOL),
     token: 'SOL',
@@ -43,9 +46,10 @@ vi.mock('./denominatedPool', () => ({
   }),
 }));
 
-import { contributeToPool, resumeContribution } from '../shieldClient';
+import { contributeToPool, fetchIssuableNote, resumeContribution } from '../shieldClient';
 import { claimChallenge } from '../claimChallenge';
-import type { PoolNoteView } from '../worker/poolHandlers';
+import { handlePoolRequest, setPoolSeed, type PoolNoteView } from '../worker/poolHandlers';
+import { pendingRecords as openPending } from '../pendingContribution';
 
 const wallet = Keypair.generate();
 const OWNER = wallet.publicKey;
@@ -121,7 +125,10 @@ function stubDeployment(opts: { confirm?: number; claim?: number } = {}) {
       return json(200, { ok: true, claimCode: 'FALLBACK', kind: 'transfer', payer: OWNER.toBase58() });
     }
     if (url === '/api/issue-note' && method === 'POST') {
-      return json(200, { ok: true, sealedNote: 'p01enc1:SEALED', leafIndex: 21, disclosure: 'D' });
+      // No leafIndex: the route stopped sending one (`__tests__/api/
+      // issue-note.node.test.ts` "are not left expecting a field the reply no
+      // longer carries"), so the leaf asserted below is the opened note's.
+      return json(200, { ok: true, sealedNote: 'p01enc1:SEALED', disclosure: 'D' });
     }
     throw new Error(`unexpected fetch ${method} ${String(url)}`);
   });
@@ -145,13 +152,16 @@ function stubWorker(execute: 'ok' | 'throw') {
           leafIndex: LEAF,
         };
       case 'poolContributeExecute':
-        storeAtExecute = pendingRecords();
+        storeAtExecute = await pendingRecords();
         if (execute === 'throw') throw new Error('the worker went quiet');
         return { kind: 'poolContributeExecute', txSig: 'DEPOSIT', leafIndex: LEAF, commitment: '123' };
+      // The pending record is sealed and opened for real (DEV-1): these kinds
+      // go to the real handlers, under a real identity.
       case 'poolNoteAddress':
-        return { kind: 'poolNoteAddress', address: 'p01pq:ADDR' };
       case 'poolStoreLabel':
-        return { kind: 'poolStoreLabel', label: 'L', legacyAddress: 'p01pq:ADDR' };
+      case 'poolOpenRecords':
+      case 'poolIssueAddress':
+        return handlePoolRequest(req as never);
       case 'poolImportNote':
         return { kind: 'poolImportNote', encryptedNote: 'BLOB', note: ISSUED_NOTE, merklePath: 'stored' };
       default:
@@ -170,10 +180,12 @@ function installStorage(): Map<string, string> {
   return backing;
 }
 
+/** The store a build before DEV-1 wrote, in clear: what `seed` below plants. */
 const PENDING_KEY = 'p01:pending-contribution:v1';
 let storage: Map<string, string>;
-function pendingRecords(): Array<Record<string, unknown>> {
-  return JSON.parse(storage.get(PENDING_KEY) ?? '[]');
+/** The pending records, as the store opens them (they are sealed on disk). */
+async function pendingRecords(): Promise<Array<Record<string, unknown>>> {
+  return (await openPending('meta', OWNER.toBase58())) as unknown as Array<Record<string, unknown>>;
 }
 
 function contribute() {
@@ -194,6 +206,7 @@ beforeEach(() => {
   calls = [];
   storeAtExecute = null;
   storage = installStorage();
+  setPoolSeed('meta', new Uint8Array(64).fill(11));
   vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', 'test-ticket');
   fundEphemeralForJob.mockResolvedValue({
     fundedBy: 'funder',
@@ -247,6 +260,24 @@ describe('the ordinary contribution, now signed', () => {
     // No fallback was needed, so none was made.
     expect(posts('/api/claim-for-payment')).toEqual([]);
   });
+
+  it('refuses before any payment when the record could not be sealed', async () => {
+    // DEV-1: the record written before the wallet is asked is sealed, which
+    // needs this identity's store session. Without one nothing is paid.
+    await expect(
+      contributeToPool({
+        meta: 'meta-that-never-signed',
+        token: 'SOL',
+        denomination: 1,
+        owner: OWNER,
+        connection: {} as Connection,
+        signOne: async (t) => t,
+        signMessage,
+      }),
+    ).rejects.toThrow(/No pool keys/);
+    expect(fundEphemeralForJob).not.toHaveBeenCalled();
+    expect(poolRequest.mock.calls.map((c) => (c[0] as Req).kind)).not.toContain('poolContributePrepare');
+  });
 });
 
 describe('the deposit fails after the till was paid', () => {
@@ -272,7 +303,7 @@ describe('the deposit fails after the till was paid', () => {
       depositLanded: false,
     });
     // The record carries what a resume would need, and the code it earned.
-    expect(pendingRecords()[0]).toMatchObject({
+    expect((await pendingRecords())[0]).toMatchObject({
       leafIndex: LEAF,
       paymentSignature: 'PAYSIG',
       claimCode: 'FALLBACK',
@@ -294,7 +325,7 @@ describe('the deposit fails after the till was paid', () => {
     expect(String((err as Error).message)).toMatch(/went quiet/);
     expect(String((err as Error).message)).toMatch(/landed; confirm it/);
     expect(String((err as Error).message)).toMatch(/PAYSIG/);
-    const [record] = pendingRecords();
+    const [record] = await pendingRecords();
     expect(record).toMatchObject({ leafIndex: LEAF, paymentSignature: 'PAYSIG' });
     expect(record).not.toHaveProperty('claimCode');
   });
@@ -320,7 +351,7 @@ describe('resuming what was already paid for', () => {
     expect(verifiesUnderWallet(String(confirms[0]!.body!.proof), 'PAYSIG')).toBe(true);
     expect(posts('/api/claim-for-payment')).toEqual([]);
     expect(issued?.leafIndex).toBe(21);
-    expect(pendingRecords()).toEqual([]);
+    expect(await pendingRecords()).toEqual([]);
   });
 
   it('falls back on the payment when confirm refuses', async () => {
@@ -388,7 +419,7 @@ describe('resuming what was already paid for', () => {
       resumeContribution({ meta: 'meta', owner: OWNER, signMessage }),
     ).resolves.toBeNull();
     expect(calls.filter((c) => c.method === 'POST')).toEqual([]);
-    expect(pendingRecords(), 'the dead reservation was kept and will shadow again').toEqual([]);
+    expect(await pendingRecords(), 'the dead reservation was kept and will shadow again').toEqual([]);
   });
 
   it('🚨 a dead reservation does not shadow the paid record written after it', async () => {
@@ -420,5 +451,71 @@ describe('resuming what was already paid for', () => {
     expect(confirms, 'the paid record was never reached').toHaveLength(1);
     expect(confirms[0]!.body).toMatchObject({ leafIndex: LEAF, paymentSignature: 'PAYSIG' });
     expect(issued?.leafIndex).toBe(21);
+  });
+});
+
+/**
+ * READY-1: what the readiness GET says reaches the Shield click, unchanged.
+ *
+ * The route now answers `issuableNow` (true, false or null: one sample per
+ * 10-minute bucket, `__tests__/api/issue-note.test.ts` "READY-1"), and the
+ * panel stops before paying on false and on no answer
+ * (`__tests__/components/PoolPanel.test.tsx` "READY-1"). This is the wire in
+ * between: a false the client dropped would send the buyer to the till against
+ * stock that cannot be handed over, and anything but a literal boolean is "not
+ * known", never "yes".
+ */
+describe('READY-1: the readiness answer the client hands the panel', () => {
+  /** The deployment's GET, as the route shapes it, with `over` merged in. */
+  function stubReadiness(over: Record<string, unknown>) {
+    vi.stubGlobal('fetch', async (url: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ method, url: String(url), body: init?.body ? JSON.parse(init.body) : undefined });
+      if (url === '/api/issue-note' && method === 'GET') {
+        return json(200, {
+          ok: true,
+          configured: true,
+          inventorySize: 2,
+          denomination: 1,
+          token: 'SOL',
+          reasons: [],
+          advisories: [],
+          note: 'n',
+          ...over,
+        });
+      }
+      throw new Error(`unexpected fetch ${method} ${String(url)}`);
+    });
+  }
+
+  it('carries issuableNow as the route said it: false, true, and null for absent or anything else', async () => {
+    const cases: Array<[unknown, boolean | null]> = [
+      [false, false],
+      [true, true],
+      [null, null],
+      [undefined, null],
+      ['false', null],
+      [0, null],
+    ];
+    for (const [said, expected] of cases) {
+      stubReadiness(said === undefined ? {} : { issuableNow: said });
+      expect(await fetchIssuableNote(), `the route said ${JSON.stringify(said)}`).toEqual({
+        denomination: 1,
+        token: 'SOL',
+        issuableNow: expected,
+      });
+    }
+    // One bare GET per ask: nothing in it names the buyer or a note.
+    expect(calls).toHaveLength(cases.length);
+    for (const c of calls) expect(c).toEqual({ method: 'GET', url: '/api/issue-note', body: undefined });
+  });
+
+  it('a deployment that is not configured, or cannot be reached, is null as before', async () => {
+    stubReadiness({ configured: false, issuableNow: true });
+    expect(await fetchIssuableNote()).toBeNull();
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('offline');
+    });
+    expect(await fetchIssuableNote()).toBeNull();
   });
 });

@@ -7,7 +7,12 @@ const SRC = readFileSync(join(process.cwd(), 'lib/privacy/pool/ephemeralFunder.t
 /** The buyer's payment to the till: the one irreversible step of a relayed deposit. */
 const PAY = SRC.slice(
   SRC.indexOf("req.onProgress?.('Paying the deployment"),
-  SRC.indexOf('rememberRelayPayment({'),
+  // ⚠️ THE END MARKER IS A PREFIX, DELIBERATELY. It used to be the full call
+  // `rememberRelayPayment({`, and the SWEEP4 receipt fix gave the function a
+  // session parameter — `indexOf` then returned -1, `slice(start, -1)` swept in
+  // the treasury path's own blockhash, and this assertion failed for a line it
+  // is not about. A prefix survives an argument list changing shape.
+  SRC.indexOf('rememberRelayPayment('),
 );
 
 describe('the payment survives a slow wallet click', () => {

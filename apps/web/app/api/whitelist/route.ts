@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { kv } from '@vercel/kv';
 import { Resend } from 'resend';
+import { logFailure } from '@/lib/server/logSafely';
 
 // Keys for KV storage
 const WHITELIST_KEY = 'whitelist:data';
@@ -70,7 +71,7 @@ async function sendApprovalEmail(email: string, wallet: string, projectName?: st
       `,
     });
   } catch (error) {
-    console.error('Failed to send approval email:', error);
+    logFailure('[whitelist] approval email', error);
   }
 }
 
@@ -100,7 +101,7 @@ async function sendApprovalDiscord(wallet: string, email?: string, projectName?:
       }),
     });
   } catch (error) {
-    console.error('Failed to send Discord notification:', error);
+    logFailure('[whitelist] Discord notification', error);
   }
 }
 
@@ -117,13 +118,19 @@ interface WhitelistData {
   pending: WhitelistEntry[];
 }
 
-// Read whitelist from KV
+// Read whitelist from KV.
+//
+// ⛔ THE ERROR IS NEVER LOGGED AS AN OBJECT. The store's message carries the
+// command it was sent — here the whole `whitelist:data` value, every approved
+// and pending developer's wallet, email and project name. `logFailure` writes a
+// fixed tag and the error's class only (lib/server/logSafely.ts), and
+// `__tests__/api/serverLogHygiene.test.ts` fails these two calls to check it.
 async function readWhitelist(): Promise<WhitelistData> {
   try {
     const data = await kv.get<WhitelistData>(WHITELIST_KEY);
     return data || { approved: [], pending: [] };
   } catch (error) {
-    console.error('KV read error:', error);
+    logFailure('[whitelist] KV read', error);
     return { approved: [], pending: [] };
   }
 }
@@ -133,7 +140,7 @@ async function writeWhitelist(data: WhitelistData): Promise<void> {
   try {
     await kv.set(WHITELIST_KEY, data);
   } catch (error) {
-    console.error('KV write error:', error);
+    logFailure('[whitelist] KV write', error);
     throw error;
   }
 }
@@ -141,7 +148,28 @@ async function writeWhitelist(data: WhitelistData): Promise<void> {
 // GET - Check if wallet is whitelisted or get all entries (admin)
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const wallet = searchParams.get('wallet');
+  /**
+   * ⛔ A HEADER, NEVER THE QUERY STRING (SWEEP4 round 1, item 15).
+   *
+   * A URL is what every layer in front of this deployment writes down: Vercel's
+   * request log, an edge cache key, a proxy, a referrer. `?wallet=<address>` put
+   * a developer's Solana address in all of them, and the whitelist is a small
+   * set — one line names a person and says they build here. A header is not
+   * recorded that way, and the check needs nothing else.
+   *
+   * The old query form is REFUSED rather than accepted as a fallback: a
+   * fallback leaves the leak reachable for as long as one caller remembers it.
+   * `?admin=true` stays in the URL deliberately — it names nobody and it is what
+   * selects the view. Pinned by `__tests__/api/whitelist.test.ts`, "the wallet
+   * never travels in the request line".
+   */
+  if (searchParams.get('wallet')) {
+    return NextResponse.json(
+      { error: 'Send the wallet in the x-p01-wallet header, not in the query string' },
+      { status: 400 },
+    );
+  }
+  const wallet = request.headers.get('x-p01-wallet');
   const admin = searchParams.get('admin');
   const password = request.headers.get('x-admin-password');
 
@@ -274,7 +302,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Whitelist API error:', error);
+    logFailure('[whitelist] request', error);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }
@@ -288,8 +316,25 @@ export async function DELETE(request: NextRequest) {
   }
 
   try {
-    const { searchParams } = new URL(request.url);
-    const wallet = searchParams.get('wallet');
+    // ⛔ THE BODY, NEVER THE QUERY STRING (SWEEP4 round 1, item 15). Same reason
+    // as the GET above: a URL is written down by every layer in front of this
+    // deployment, and the address of a developer being REVOKED is exactly the
+    // line worth not writing. The old form is refused rather than accepted as a
+    // fallback. Pinned by `__tests__/api/whitelist.test.ts`, "refuses a removal
+    // that names the wallet in the query string".
+    if (new URL(request.url).searchParams.get('wallet')) {
+      return NextResponse.json(
+        { error: 'Send { wallet } in the request body, not in the query string' },
+        { status: 400 },
+      );
+    }
+    let wallet = '';
+    try {
+      const body = (await request.json()) as { wallet?: unknown };
+      wallet = typeof body.wallet === 'string' ? body.wallet : '';
+    } catch {
+      wallet = '';
+    }
 
     if (!wallet) {
       return NextResponse.json({ error: 'Wallet address required' }, { status: 400 });
@@ -308,7 +353,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true, message: 'Wallet removed' });
   } catch (error) {
-    console.error('Whitelist API error:', error);
+    logFailure('[whitelist] request', error);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }

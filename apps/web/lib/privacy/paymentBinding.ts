@@ -19,7 +19,25 @@
  *   p01:note:paid:<sig>:code               the code that payment earned
  *   p01:note:contrib-reserved:<pool>:<leaf>
  *   p01:note:contrib-confirmed:<pool>:<leaf>
- *   p01:note:contrib-claim:<pool>:<leaf>   the code a confirmed leaf earned
+ *
+ * ⛔ ONE ROW PAIRS A LEAF WITH A PAYMENT, AND IT IS THE BINDING ABOVE. A copy
+ * of this store is read by whoever takes a backup, and a payment signature
+ * resolves publicly to the wallet that made it — so a row holding a leaf and a
+ * signature, or a leaf and a claim code, names the buyer of that leaf for as
+ * long as the row exists.
+ *
+ *   - `contrib-claim:<pool>:<leaf>` held the code a confirmed leaf earned and
+ *     was read by NOTHING: both routes replay off `paid:<sig>:code`. Dropped
+ *     by KV-1.
+ *   - `claim-minted:<code>` holds `payment:<sig>` and no leaf.
+ *   - the binding is kept because confirm and the fallback need it, carries no
+ *     expiry (a TTL would refuse a paying buyer their own leaf), and is
+ *     deleted at redemption by `issue-note`'s sweep.
+ *
+ * Pinned by `__tests__/api/contribute-note.test.ts` "writes no leaf-to-code
+ * row", `__tests__/api/relay-to-buyer.test.ts` "the contribution binding
+ * carries no expiry", and measured across worlds by
+ * `__tests__/lib/kvRowsAtRest.test.ts`.
  */
 
 import { getPoolsForTokenV3, type PoolConfig } from '@/lib/privacy/pool/denominatedPool';
@@ -67,11 +85,6 @@ export function contribReservedKey(poolKey: string, leafIndex: number): string {
 /** One key per confirmed leaf. `incr` on it is the one-claim-per-deposit rule. */
 export function contribConfirmedKey(poolKey: string, leafIndex: number): string {
   return `p01:note:contrib-confirmed:${poolKey}:${leafIndex}`;
-}
-
-/** The claim code a confirmed contribution earned. */
-export function contribClaimKey(poolKey: string, leafIndex: number): string {
-  return `p01:note:contrib-claim:${poolKey}:${leafIndex}`;
 }
 
 /** The value the relay records and the confirm compares against. */

@@ -16,8 +16,8 @@
  *      block the import — it downgrades the claim to `spentKnown: false`.
  *
  * `noteCrypto` is deliberately NOT mocked: the real hybrid X25519 + ML-KEM-768
- * runs end to end, and only the single chain read (`isNullifierSpent`) is
- * stubbed, the same style as `poolExportNote.test.ts`.
+ * runs end to end, and only the pool-wide spent-set read is stubbed, the same
+ * style as `poolExportNote.test.ts`.
  *
  * Runs under `vitest.pool.config.mts` (node).
  */
@@ -112,14 +112,6 @@ vi.mock('./denominatedPool', async (importOriginal) => {
       return new Set<string>();
     },
     isNullifierSpentInSet: () => chain.spent,
-    // Still stubbed because the WITHDRAW path keeps the single-note pre-flight:
-    // it runs on the one note about to be spent, so its nullifier is published
-    // moments later and the RPC learns nothing it is not about to see.
-    isNullifierSpent: async () => {
-      chain.reads += 1;
-      if (chain.fail) throw new Error('rpc down');
-      return chain.spent;
-    },
     fetchPoolCommitments: async () => chainLeaves,
   };
 });
@@ -311,6 +303,40 @@ describe('importing a received note', () => {
     });
   });
 
+  /**
+   * [SWEEP4 round 1, storage lane] The STORED blob length said what the note
+   * is. A dump reads it without opening anything: a note carrying a Merkle
+   * path (a received or own note with its path filed) against one without,
+   * and the digit count of the leaf index. Padded, every note this store
+   * holds is one length — the same rule `sealRecord` now holds for the record
+   * stores and `paddedHandoff` already held for a handoff.
+   */
+  it('files every note at one length, path or no path, whatever its digits', async () => {
+    const plain = await handlePoolRequest(importReq());
+    const withPath = await handlePoolRequest(
+      importReq({
+        sealedNote: seal(
+          shareable({
+            merkle_root: '9'.repeat(77),
+            merkle_path_elements: Array.from({ length: 15 }, () => '8'.repeat(77)),
+            merkle_path_indices: Array.from({ length: 15 }, (_, i) => i % 2),
+          }),
+        ),
+      }),
+    );
+
+    expect(withPath.merklePath).toBe('stored');
+    expect(
+      withPath.encryptedNote.length,
+      'the stored blob is longer when the note carries a path',
+    ).toBe(plain.encryptedNote.length);
+
+    // POSITIVE CONTROL: the plaintexts really do differ in length, so the
+    // assertion above is about the padding and not about two equal notes.
+    expect(
+      JSON.stringify(openOwnBlob(withPath.encryptedNote)).length,
+    ).toBeGreaterThan(JSON.stringify(openOwnBlob(plain.encryptedNote)).length);
+  });
   it('opens a note sealed to the address published BEFORE the passphrase', async () => {
     // The sender may hold an address handed out months ago. Same candidate
     // search as every other blob reader: active seed first, then legacy.
@@ -533,5 +559,30 @@ describe('the EXISTING withdraw path can spend a received note', () => {
       /No note of yours found/,
     );
     expect(unshieldJobs).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Web sweep 4, round 1: the sender's time does not travel on.
+// ---------------------------------------------------------------------------
+
+describe('what the filed blob keeps of the sender', () => {
+  it("files no sender time: a note sealed with the sender's import moment files the same blob as one without", async () => {
+    // A sender's worker used to seal `shieldedAt`: for an issued or received
+    // note, the moment it imported the note, seconds after the till payment that
+    // bought it. Filing it kept it for every later handoff. The extension and
+    // older web builds still send it, so the import is where it stops.
+    const filed: Record<string, unknown>[] = [];
+    for (const shieldedAt of [1_758_300_123_456, 1_758_399_999_999, undefined]) {
+      clearPoolState();
+      setPoolSeed(META, SIGNATURE, PASSPHRASE);
+      const res = await handlePoolRequest(importReq({ sealedNote: seal(shareable({ shieldedAt })) }));
+      filed.push(openOwnBlob(res.encryptedNote));
+    }
+    // Anti-vacuity: the note was filed, with its secrets.
+    expect(filed[0]).toMatchObject({ secret: SECRET.toString(), leafIndex: LEAF, source: 'received' });
+    expect(filed[1], 'the filed blob keeps the time the sender sealed').toEqual(filed[0]);
+    expect(filed[2], 'the filed blob keeps a time of its own').toEqual(filed[0]);
+    expect(JSON.stringify(filed[0])).not.toContain('1758300123456');
   });
 });

@@ -96,6 +96,12 @@ const UNTRUE_EN: ReadonlyArray<[string, RegExp]> = [
   ['proof data is discarded immediately', /discarded immediately/i],
   // The STARK is hash-based; "quantum-resistant" is not a measured claim here.
   ['quantum resistance', /quantum-resistant/i],
+  // s2.keys.k2, under "Information We Do NOT Collect". The deployment's own
+  // store keeps each purchase: payer wallet -> claim code -> note address with
+  // no expiry, and `p01:note:paid:<sig>` for good, and that signature names the
+  // payer's wallet on chain (docs/LEAK-LEDGER.md row D4). Web sweep 4, round 1.
+  ['no transaction logs are kept', /logs? of your transactions/i],
+  ['on-chain data is never linked to identity', /link(s|ed)? (it|them) to your identity/i],
 ];
 
 const UNTRUE_FR: ReadonlyArray<[string, RegExp]> = [
@@ -112,6 +118,8 @@ const UNTRUE_FR: ReadonlyArray<[string, RegExp]> = [
   ['proof data is never persisted', /jamais persistées/i],
   ['proof data is discarded immediately', /supprimées immédiatement/i],
   ['quantum resistance', /résistantes? au quantique/i],
+  ['no transaction logs are kept', /aucun journal de vos transactions/i],
+  ['on-chain data is never linked to identity', /(relions|lions) pas à votre identité/i],
 ];
 
 /**
@@ -125,12 +133,16 @@ const MUST_SURVIVE_EN: ReadonlyArray<[string, RegExp]> = [
   ['on-chain metadata is inherently public', /inherently public/i],
   ['stealth addresses exist at all', /one-time addresses/i],
   ['a prover service exists at all', /prover service/i],
+  // Control for the s2.keys.k2 gate: withholding one row keeps the rest of
+  // section 2 (s2.keys.k5 here).
+  ['the rest of section 2 survives the withheld row', /browsing history/i],
 ];
 
 const MUST_SURVIVE_FR: ReadonlyArray<[string, RegExp]> = [
   ['on-chain metadata is inherently public', /intrinsèquement publiques/i],
   ['stealth addresses exist at all', /adresses à usage unique/i],
   ['a prover service exists at all', /service de preuve/i],
+  ['the rest of section 2 survives the withheld row', /historique de navigation/i],
 ];
 
 describe('PrivacyPolicy -- claims the page may not make', () => {
@@ -140,6 +152,44 @@ describe('PrivacyPolicy -- claims the page may not make', () => {
 
   it.each(UNTRUE_FR)('French never says: %s', (_claim, pattern) => {
     expect(renderIn('fr').text).not.toMatch(pattern);
+  });
+});
+
+/**
+ * What section 2 owes the reader about the ONE record this deployment keeps.
+ *
+ * Web sweep 4, round 1, item 3. The dictionary's "Transaction history" row said
+ * no logs are kept and nothing is linked to identity; the deployment's own store
+ * keeps each purchase (the payment signature, the claim code and the note
+ * address, with no expiry today — docs/LEAK-LEDGER.md row D4), and the payment
+ * signature resolves on chain to the wallet that signed it (row D15). The page
+ * withholds a row it cannot print, so the false version simply vanished and the
+ * reader was told nothing at all.
+ *
+ * These assertions are the other direction of the same rule as UNTRUE_*: the
+ * row must be there AND be true. Matched on the idea, loosely, so a reword
+ * cannot pass them by accident — and if the copy goes back to a sentence the
+ * filter refuses, the row disappears again and every one of these fails.
+ */
+const DISCLOSED_EN: ReadonlyArray<[string, RegExp]> = [
+  ['a purchase made here is recorded', /claim code/i],
+  ['the record has no expiry today', /no expiry/i],
+  ['the payment is public and names the wallet', /signed by your wallet/i],
+];
+
+const DISCLOSED_FR: ReadonlyArray<[string, RegExp]> = [
+  ['a purchase made here is recorded', /code de retrait/i],
+  ['the record has no expiry today', /sans expiration/i],
+  ['the payment is public and names the wallet', /signée par votre portefeuille/i],
+];
+
+describe('PrivacyPolicy -- section 2 states the record the deployment keeps', () => {
+  it.each(DISCLOSED_EN)('English discloses: %s', (_what, pattern) => {
+    expect(renderIn('en').text).toMatch(pattern);
+  });
+
+  it.each(DISCLOSED_FR)('French discloses: %s', (_what, pattern) => {
+    expect(renderIn('fr').text).toMatch(pattern);
   });
 });
 

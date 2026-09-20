@@ -5,6 +5,8 @@ import { useConnection, useWallet } from "@solana/wallet-adapter-react";
 import { Keypair, Transaction } from "@solana/web3.js";
 import { Buffer } from "buffer";
 import nacl from "tweetnacl";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import {
   Coins,
   CreditCard,
@@ -166,6 +168,16 @@ export default function PayApp() {
    */
   const [walletsKnown, setWalletsKnown] = useState(false);
   useEffect(() => setWalletsKnown(true), []);
+  // A browser that ran an older build still holds the list of wallet addresses
+  // that version wrote (item 17). Deleting it on mount, not on the next derive,
+  // is what stops it outliving the app in a profile nobody derives in again.
+  useEffect(() => {
+    try {
+      window.localStorage.removeItem("p01_deterministic_signer_v1");
+    } catch {
+      // Private mode or a blocked store: nothing was readable to begin with.
+    }
+  }, []);
   const { connection } = useConnection();
 
   const [asset, setAsset] = useState<Asset>(firstLive);
@@ -209,8 +221,11 @@ export default function PayApp() {
   // 🚨 THIS USED TO LIVE FOR EXACTLY AS LONG AS THE TAB, and the app sealed
   // paid notes to it anyway. MEASURED 2026-08-17/18: three reloads, three
   // orphaned identities, three spent single-use claim codes. The issuance
-  // route's own re-seal branch — same leaf, same recipient — could never fire,
-  // because the recipient address never survived long enough to ask twice.
+  // route's re-seal branch of the time — same leaf, same recipient — could
+  // never fire, because the recipient address never survived long enough to
+  // ask twice. The route now replays the stored reply to a same-code retry,
+  // sealed to the first address (`__tests__/api/issue-note.node.test.ts`
+  // "the same code, retried"), so the key still has to outlive the tab.
   //
   // `keyIsDevice` distinguishes a key this browser created and stored from a
   // phone paired over QR: only the first is ours to persist, back up or forget.
@@ -267,6 +282,16 @@ export default function PayApp() {
     : publicKey
       ? truncate(publicKey.toBase58(), 4, 4)
       : "";
+  /**
+   * Whether the thing that will sign is OURS: the in-page keypair, or the P01
+   * extension. Ours are deterministic by construction (`nacl.sign.detached`
+   * here, detached ed25519 in the extension), so they are asked once; anything
+   * else is asked twice, every first time, and the card below says so.
+   */
+  const ownSigner =
+    !!p01Keypair ||
+    (!!p01Extension &&
+      wallets.some((w) => w.adapter.connected && /protocol\s*01/i.test(w.adapter.name)));
 
   // Boot the stealth Web Worker (secret holder) and point it at our RPC.
   useEffect(() => {
@@ -350,22 +375,51 @@ export default function PayApp() {
   const step: 0 | 1 | 2 = !chainConnected ? 0 : !identity ? 1 : 2;
 
   /**
-   * Wallets whose signer has been shown to be deterministic, by pubkey.
+   * Signers shown to be deterministic — recorded as a label derived from the
+   * SIGNATURE, never as the wallet's address.
    *
-   * PUBLIC DATA ONLY — a list of addresses that passed a check. No signature,
-   * no seed, nothing derived from one. Losing or clearing it costs one extra
-   * prompt, never a key.
+   * 🚨 WHY NOT THE ADDRESS (web sweep 4 round 1, item 17). The previous version
+   * of this kept `[pubkey, pubkey, …]` in clear and never pruned it, so one
+   * storage dump named every Phantom, Solflare or Ledger that had ever derived
+   * in this browser profile — and with it the wallet behind the opaque store
+   * label, the pending index and the history rows stored beside it, which is
+   * exactly the property `lib/privacy/sealedStore.ts` claims ("possession of a
+   * storage dump no longer names the wallet"). Hashing the address would not
+   * have helped: the set of addresses worth guessing is published on chain, so
+   * a dump holder simply tests them.
+   *
+   * The label is `sha256("P01:signer-pass:v1" || signature)`, truncated. It can
+   * only be computed by whoever can produce the signature, so the dump holder
+   * learns nothing from it, while THIS browser recomputes it on the next visit
+   * from the first signature and skips the second prompt as before
+   * (`__tests__/components/PayAppSignerPass.test.tsx`).
+   *
+   * The cost of the change is that the answer is not known before the first
+   * signature, so the card above no longer promises one prompt to a remembered
+   * wallet — it promises two, and asks once. Over-promising a prompt is the safe
+   * direction; the opposite reads as a trap.
    *
    * Only PASSES are recorded. A wallet that failed is refused every time it
    * tries, because the cost of that mistake is notes that cannot be found next
    * session and the cost of re-asking is one popup.
    */
-  const SIGNER_VERIFIED_KEY = "p01_deterministic_signer_v1";
+  const SIGNER_PASS_KEY = "p01_signer_pass_v2";
+  /** The list of addresses the version before this one wrote. Deleted on sight,
+   *  on every mount, so an existing browser stops carrying it. */
+  const SIGNER_PASS_LEGACY_KEY = "p01_deterministic_signer_v1";
 
-  function deterministicSignerVerified(pubkey: string): boolean {
+  function signerPassLabel(sig: Uint8Array): string {
+    const tag = utf8ToBytes("P01:signer-pass:v1");
+    const buf = new Uint8Array(tag.length + sig.length);
+    buf.set(tag, 0);
+    buf.set(sig, tag.length);
+    return bytesToHex(sha256(buf)).slice(0, 32);
+  }
+
+  function deterministicSignerVerified(label: string): boolean {
     try {
-      const raw = window.localStorage.getItem(SIGNER_VERIFIED_KEY);
-      return raw ? (JSON.parse(raw) as string[]).includes(pubkey) : false;
+      const raw = window.localStorage.getItem(SIGNER_PASS_KEY);
+      return raw ? (JSON.parse(raw) as string[]).includes(label) : false;
     } catch {
       // Unreadable or private mode: re-ask. The cache is an optimisation, and
       // the safe direction when it is unavailable is to perform the check.
@@ -373,12 +427,12 @@ export default function PayApp() {
     }
   }
 
-  function rememberDeterministicSigner(pubkey: string): void {
+  function rememberDeterministicSigner(label: string): void {
     try {
-      const raw = window.localStorage.getItem(SIGNER_VERIFIED_KEY);
+      const raw = window.localStorage.getItem(SIGNER_PASS_KEY);
       const list = raw ? (JSON.parse(raw) as string[]) : [];
-      if (!list.includes(pubkey)) list.push(pubkey);
-      window.localStorage.setItem(SIGNER_VERIFIED_KEY, JSON.stringify(list));
+      if (!list.includes(label)) list.push(label);
+      window.localStorage.setItem(SIGNER_PASS_KEY, JSON.stringify(list));
     } catch {
       // Quota or private mode. The check simply runs again next time.
     }
@@ -454,10 +508,11 @@ export default function PayApp() {
       // by a check about wallets that do not.
       //
       // ⛔ Third-party wallets are unchanged. They are still asked twice.
-      const ownSigner =
-        !!p01Keypair || (!!p01Extension && wallets.some((w) => w.adapter.connected && /protocol\s*01/i.test(w.adapter.name)));
-      const alreadyVerified = ownSigner || deterministicSignerVerified(solPub.toBase58());
       const sig = await doSign(encoded);
+      // The pass is keyed by the signature, so the cache can only be consulted
+      // once the first signature is in hand (see `signerPassLabel`).
+      const passLabel = signerPassLabel(sig);
+      const alreadyVerified = ownSigner || deterministicSignerVerified(passLabel);
       if (!alreadyVerified) {
         await new Promise((r) => setTimeout(r, 250));
         let sig2: Uint8Array;
@@ -480,7 +535,7 @@ export default function PayApp() {
             t("pay.errors.notDeterministic")
           );
         }
-        rememberDeterministicSigner(solPub.toBase58());
+        rememberDeterministicSigner(passLabel);
       }
       const derived = await adapter.deriveMeta(sig);
       // The signature IS the root secret — wipe the main-thread copy once the
@@ -761,17 +816,20 @@ export default function PayApp() {
               design — that is the whole point of it — so a page that exists to
               correct overstatement must not ship the sentence that would now be
               false. Both branches keep their own ending. */}
+          {/* ⚠️ THE PREDICATE IS "IS THE SIGNER OURS", not "have we seen this
+              wallet". Since the pass is keyed by the signature (item 17), a
+              remembered wallet cannot be recognised before it signs, so it is
+              promised two prompts and asked for one. That direction is safe;
+              promising one and opening two is the trap the count leads on. */}
           <p className="text-sm text-p01-text-muted">
-            {solPub && deterministicSignerVerified(solPub.toBase58())
-              ? t("pay.derive.once")
-              : t("pay.derive.twice")}
+            {ownSigner ? t("pay.derive.once") : t("pay.derive.twice")}
           </p>
           <details className="text-left">
             <summary className="cursor-pointer list-none text-xs text-p01-text-muted underline decoration-dotted underline-offset-4 hover:text-p01-cyan">
               {t("pay.derive.detailSummary")}
             </summary>
             <p className="mt-2 text-xs text-p01-text-muted">
-              {(solPub && deterministicSignerVerified(solPub.toBase58())
+              {(ownSigner
                 ? t("pay.derive.detailOnce")
                 : t("pay.derive.detailTwice")) +
                 (keyIsDevice

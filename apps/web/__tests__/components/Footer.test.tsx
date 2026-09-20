@@ -96,7 +96,7 @@ describe('Footer -- Site navigation and community links', () => {
     it('links to Twitter/X (external)', () => {
       const links = screen.getAllByRole('link', { name: /Twitter/ });
       const twitterLink = links.find(
-        l => l.getAttribute('href') === 'https://x.com/Protocol01_'
+        l => l.getAttribute('href') === 'https://x.com/Styx_PQ'
       );
       expect(twitterLink).toBeDefined();
       expect(twitterLink).toHaveAttribute('target', '_blank');

@@ -20,7 +20,7 @@
  * payment) and names the leaf the relay funded WITH that payment.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import nacl from 'tweetnacl';
 import { Keypair } from '@solana/web3.js';
@@ -150,7 +150,18 @@ function fakeKv() {
       counters.set(key, next);
       return next;
     }),
-    get: vi.fn(async (key: string) => values.get(key) ?? null),
+    /**
+     * ⛔ ONE KEYSPACE, because the real stores have one.
+     *
+     * This fake kept counters and values in two maps and read only `values`
+     * here, so a key written by `incr` read back as `null` through `get`. A
+     * route asking "has this payment already been claimed?" the way Upstash
+     * answers it — `get` on the counter, which is what `counterValue` in
+     * `paymentBinding.ts` exists to parse — was told no however many times it
+     * had been claimed. The split was invisible while nothing read a counter
+     * that way; it made KV-1's redeemed-payment refusal untestable.
+     */
+    get: vi.fn(async (key: string) => values.get(key) ?? counters.get(key) ?? null),
     set: vi.fn(async (key: string, v: string) => {
       values.set(key, v);
     }),
@@ -337,10 +348,16 @@ describe('confirm pays only for a contribution that actually landed', () => {
 
     // ⛔ Non-empty: issue-note tests `if (!minted)`, so an empty value would
     // burn a paying buyer's claim without releasing it.
+    //
+    // ⛔ AND IT NAMES THE PAYMENT ONLY. It used to carry the funded leaf as
+    // well (`contrib:<pool>:<leaf>:payment:<sig>`), which put the code, the
+    // leaf and the buyer's wallet in one row of any dump (KV-1). `issue-note`
+    // parses the signature back out of this value to sweep the trail at
+    // redemption, so the shape is load-bearing.
     const minted = values.get(`p01:note:claim-minted:${body.claimCode}`);
     expect(minted, 'the claim was not marked minted').toBeTruthy();
-    expect(minted).toContain(String(6));
-    expect(minted).toContain(`payment:${PAYSIG}`);
+    expect(minted).toBe(`payment:${PAYSIG}`);
+    expect(minted, 'the minted row still names the funded leaf').not.toContain(String(6));
 
     // The same code under the payment, so the fallback route replays it.
     expect(values.get(`p01:note:paid:${PAYSIG}:code`)).toBe(body.claimCode);
@@ -515,5 +532,321 @@ describe('the gates in front of it', () => {
     mockGetStore.mockReturnValue(null);
     const res = await POST(req({ action: 'reserve' }));
     expect(res.status).toBe(503);
+  });
+});
+
+// ── KV-1 · what a copy of the store holds after a confirm ───────────────────
+//
+// Adversary: whoever holds a dump of this deployment's KV (an Upstash backup,
+// a leaked token, an operator). They hold this repository too, which is public,
+// so any keyless function of a leaf names it.
+//
+// ⚠️ WHAT THIS SCAN IS, AND WHERE THE REAL MEASUREMENT LIVES. This reads the
+// rows THIS route writes, by token, for one cycle. The measured version — the
+// same purchase run in eight worlds, where a row is read by what MOVES it
+// rather than by a spelling it was told to look for — is
+// `__tests__/lib/kvRowsAtRest.test.ts`, which KV-1 unpins. This is the
+// route-level pin: it goes red the day a confirm writes a leaf beside a
+// payment again, without the whole differential having to run.
+
+/**
+ * A leaf whose decimal form collides with nothing else in this fixture.
+ *
+ * ⛔ NOT leaf 6. A scan for "6" matches the digit 6 anywhere inside the claim
+ * code, so the case would pass or fail on the luck of a UUID draw. The
+ * fixture's separation is asserted in the positive control below, not assumed.
+ */
+const LEAF_AT_REST = 211;
+
+/** The claim code, pinned and DIGIT-FREE, so the leaf scan cannot misread it. */
+const FIXED_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' as const;
+const FIXED_CODE = FIXED_UUID.replace(/-/g, '');
+
+/** The tree once the treasury's commitment for LEAF_AT_REST has landed. */
+async function leafAtRestLanded() {
+  const { fetchPoolCommitments } = await import('@/lib/privacy/pool/denominatedPool');
+  vi.mocked(fetchPoolCommitments).mockResolvedValue(
+    tree([
+      { leafIndex: LEAF_AT_REST - 1, commitment: 888n },
+      { leafIndex: LEAF_AT_REST, commitment: treasuryCommitmentAt(LEAF_AT_REST) },
+    ]) as never,
+  );
+}
+
+/** Every row a dump holds: counters, values and set members alike. */
+function rowsAtRest(): string[] {
+  return [
+    ...[...counters].map(([key, v]) => `${key} = ${v}`),
+    ...[...values].map(([key, v]) => `${key} = ${v}`),
+    ...[...sets].map(([key, s]) => `${key} = ${[...s].join(' ')}`),
+  ];
+}
+
+/**
+ * Rows that name `leaf` AND something only this buyer holds.
+ *
+ * A leaf is read as a maximal run of digits, which is how a reader finds an
+ * index in a key or a value whatever punctuation surrounds it.
+ *
+ * ⛔ THE RELAY BINDING IS EXEMPT, DELIBERATELY. `p01:relay:payment:<sig>:
+ * contribution` pairs a payment with the leaf it funded BY CONSTRUCTION, and
+ * KV-1 (3) keeps it: it is the only thing stopping a payer confirming somebody
+ * else's reservation, it carries no expiry (pinned in `relay-to-buyer.test.ts`)
+ * and ISSUE-1 deletes it at redemption. Whether it is still at rest after a
+ * redemption is read by `__tests__/lib/kvRowsAtRest.test.ts`, not here.
+ */
+function leafJoinsBuyer(leaf: number, buyerTokens: string[]): string[] {
+  const exempt = `p01:relay:payment:${PAYSIG}:contribution`;
+  return rowsAtRest().filter((row) => {
+    if (row.startsWith(`${exempt} =`)) return false;
+    const digitRuns: string[] = row.match(/\d+/g) ?? [];
+    const namesLeaf = digitRuns.includes(String(leaf));
+    return namesLeaf && buyerTokens.some((t) => t.length > 0 && row.includes(t));
+  });
+}
+
+/** What ISSUE-1's `after()` sweep deletes once the code has been redeemed. */
+function redeemAndSweep(claimCode: string) {
+  values.delete(`p01:note:claim-minted:${claimCode}`);
+  values.delete(`p01:note:paid:${PAYSIG}:code`);
+  values.delete(`p01:relay:payment:${PAYSIG}:contribution`);
+}
+
+describe('🚨 KV-1 · a confirm leaves no row naming the leaf beside the buyer', () => {
+  let restoreUuid: (() => void) | null = null;
+
+  beforeEach(async () => {
+    const spy = vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue(FIXED_UUID);
+    restoreUuid = () => spy.mockRestore();
+    relayBound(LEAF_AT_REST);
+    await leafAtRestLanded();
+  });
+
+  afterEach(() => {
+    restoreUuid?.();
+    restoreUuid = null;
+  });
+
+  it('the scan flags a planted join and not a lone leaf (positive control)', () => {
+    // Without this, a scan that reads nothing at all would pass every case
+    // below by finding nothing — the only kind of green worth fearing.
+    expect(
+      POOL_KEY.match(/\d+/g) ?? [],
+      'the pool key itself holds the leaf, so the scan cannot attribute one',
+    ).not.toContain(String(LEAF_AT_REST));
+    expect(PAYSIG.match(/\d+/g) ?? []).not.toContain(String(LEAF_AT_REST));
+    expect(FIXED_CODE, 'the claim code holds digits, so a leaf could be read out of it').not.toMatch(
+      /\d/,
+    );
+
+    values.set(
+      `probe:minted:${FIXED_CODE}`,
+      `contrib:${POOL_KEY}:${LEAF_AT_REST}:payment:${PAYSIG}`,
+    );
+    values.set(`probe:contrib-claim:${POOL_KEY}:${LEAF_AT_REST}`, FIXED_CODE);
+    values.set('probe:a-lone-leaf', `${POOL_KEY}:${LEAF_AT_REST}`);
+    values.set(`probe:a-lone-payment:${PAYSIG}`, '1');
+
+    const found = leafJoinsBuyer(LEAF_AT_REST, [PAYSIG, FIXED_CODE]);
+    expect(found.join(' | ')).toContain('probe:minted');
+    expect(found.join(' | ')).toContain('probe:contrib-claim');
+    expect(found, 'a row naming only a leaf, or only a payment, is not a join').toHaveLength(2);
+  });
+
+  it('⛔ writes no leaf-to-code row and no leaf-to-payment row', async () => {
+    const res = await POST(req(confirmBody(LEAF_AT_REST)));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.claimCode).toBe(FIXED_CODE);
+
+    // `contrib-claim` was never read by anything — the fallback route replays
+    // off the PAYMENT, not the leaf — and `claim-minted` only has to prove the
+    // code was minted, which the payment alone says.
+    expect(
+      [...values.keys()].filter((k) => k.startsWith('p01:note:contrib-claim:')),
+      'the funded leaf still names its claim code',
+    ).toEqual([]);
+    expect(values.get(`p01:note:claim-minted:${body.claimCode}`)).toBe(`payment:${PAYSIG}`);
+
+    const joins = leafJoinsBuyer(LEAF_AT_REST, [PAYSIG, String(body.claimCode)]);
+    expect(joins, `rows joining the funded leaf to this buyer:\n  ${joins.join('\n  ')}`).toEqual([]);
+  });
+
+  it('🚨 replays the code when the binding is gone, instead of refusing the payer', async () => {
+    // ISSUE-1 deletes the relay binding at redemption, and a lost response can
+    // arrive after that. The payer proved who they are; the code they already
+    // bought is theirs.
+    const first = await (await POST(req(confirmBody(LEAF_AT_REST)))).json();
+    expect(first.claimCode).toBeTruthy();
+    values.delete(`p01:relay:payment:${PAYSIG}:contribution`);
+
+    const res = await POST(req(confirmBody(LEAF_AT_REST)));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.claimCode, 'the payer was refused the code they had already bought').toBe(
+      first.claimCode,
+    );
+    expect(body.replayed).toBe(true);
+    expect(mintedCodes(), 'a second code was minted for one payment').toHaveLength(1);
+  });
+
+  it('🚨 refuses a payment whose code has been redeemed, and mints nothing', async () => {
+    const first = await (await POST(req(confirmBody(LEAF_AT_REST)))).json();
+    redeemAndSweep(String(first.claimCode));
+
+    const res = await POST(req(confirmBody(LEAF_AT_REST)));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(409);
+    expect(body.error).toMatch(/already been redeemed/i);
+    expect(mintedCodes(), 'a redeemed payment minted a second code').toHaveLength(0);
+    expect(counters.get(`p01:note:paid:${PAYSIG}`), 'a refusal consumed the mint gate again').toBe(
+      1,
+    );
+  });
+
+  it('a first confirm reads the payment counter, never the code row, before it mints', async () => {
+    // LATENCY, KV-1 fix round 1. A code is written only after `incr(paid)`, so
+    // a counter reading 0 already says "no code": reading the code row too
+    // would be a second round trip to Upstash on every purchase for an answer
+    // the counter gave. Replays and refusals pay that read; a sale does not.
+    const kv = fakeKv();
+    mockGetStore.mockReturnValue(kv);
+    const res = await POST(req(confirmBody(LEAF_AT_REST)));
+    expect(res.status).toBe(200);
+    const readKeys = kv.get.mock.calls.map((c) => String(c[0]));
+    expect(readKeys, 'the counter was never read before minting').toContain(
+      `p01:note:paid:${PAYSIG}`,
+    );
+    expect(
+      readKeys.filter((k) => k === `p01:note:paid:${PAYSIG}:code`),
+      'a first purchase paid a GET for a code row that cannot exist yet',
+    ).toEqual([]);
+  });
+
+  it('⛔ still refuses a STRANGER replaying a public signature, with a code on file', async () => {
+    // KV-1 fix round 2. The early replay answers from the PAYMENT alone, and a
+    // payment signature is public, so the replay must sit BEHIND the payer
+    // proof: above it, whoever reads the till's history collects the code
+    // somebody else bought. The stranger case above never planted a code, so
+    // it could not see that. Mirrors claim-for-payment's case of the same
+    // name; mutants V1 and V1c are killed by it (wp-logs/KV-1-fix2/mutants.log).
+    const paidKey = `p01:note:paid:${PAYSIG}`;
+    counters.set(paidKey, 1);
+    values.set(`${paidKey}:code`, 'CONFIRMED-CODE');
+
+    const res = await POST(
+      req(confirmBody(LEAF_AT_REST, { proof: proofFor(PAYSIG, Keypair.generate()) })),
+    );
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(401);
+    expect(JSON.stringify(body), 'a stranger collected the code somebody else bought').not.toContain(
+      'CONFIRMED-CODE',
+    );
+    expect(mintedCodes()).toHaveLength(0);
+    expect(counters.get(paidKey)).toBe(1);
+
+    // Positive control: the same store answers the PAYER with that code, so
+    // the 401 above is the proof check and not a fixture that answers nobody.
+    const own = await POST(req(confirmBody(LEAF_AT_REST)));
+    expect(own.status).toBe(200);
+    expect((await own.json()).claimCode).toBe('CONFIRMED-CODE');
+  });
+
+  it('⛔ a replay naming a leaf that is not the treasury\'s on the tree adds nothing to inventory', async () => {
+    // KV-1 fix round 2. The early replay runs before the binding check, so the
+    // payer names any leaf index they like; `recordInventoryLeaf` there is
+    // guarded by the treasury's own commitment sitting at that index. Without
+    // the guard a payer holding a code could put somebody else's leaf into
+    // stock, and `issue-note` would then fail a paying buyer on a note it
+    // cannot open. Mutant V5 is killed by it (wp-logs/KV-1-fix2/mutants.log).
+    const inventory = () => [...(sets.get(`p01:note:inventory:${POOL_KEY}`) ?? [])];
+    const first = await (await POST(req(confirmBody(LEAF_AT_REST)))).json();
+    expect(inventory(), 'the confirm that minted did not record its own leaf').toEqual([
+      String(LEAF_AT_REST),
+    ]);
+
+    // LEAF_AT_REST - 1 is on the tree but holds somebody else's commitment;
+    // LEAF_AT_REST + 50 is past the tree's height.
+    for (const other of [LEAF_AT_REST - 1, LEAF_AT_REST + 50]) {
+      const res = await POST(req(confirmBody(other)));
+      const body = await res.json();
+      expect(res.status, JSON.stringify(body)).toBe(200);
+      expect(body.claimCode, 'the replay did not return the code this payment bought').toBe(
+        first.claimCode,
+      );
+      expect(inventory(), `leaf ${other} entered inventory on a replay`).toEqual([
+        String(LEAF_AT_REST),
+      ]);
+    }
+    expect(mintedCodes()).toHaveLength(1);
+  });
+
+  it('🚨 a confirm that loses the gate to a concurrent one before its code is written gets 409, and mints nothing', async () => {
+    // KV-1 deviation 3: the branch below `incr` said 503 "could not be read"
+    // and now says 409, the same refusal the early read gives for the same
+    // state. Reached only by a race: the counter read 0, then a concurrent
+    // confirm took the gate before this one's `incr`, and has not written its
+    // code yet. Mutant V9 (the old 503 put back) is killed by it
+    // (wp-logs/KV-1-fix2/mutants.log).
+    const paidKey = `p01:note:paid:${PAYSIG}`;
+    const base = fakeKv();
+    const kv = {
+      ...base,
+      // The read happened before the concurrent request's `incr` landed.
+      get: vi.fn(async (key: string) => (key === paidKey ? null : base.get(key))),
+    };
+    mockGetStore.mockReturnValue(kv);
+    counters.set(paidKey, 1); // the concurrent request's `incr`
+
+    const res = await POST(req(confirmBody(LEAF_AT_REST)));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(409);
+    expect(body.error).toMatch(/already been redeemed/i);
+    expect(kv.get.mock.calls.map((c) => String(c[0])), 'the race branch never looked for the code').toContain(
+      `${paidKey}:code`,
+    );
+    expect(mintedCodes(), 'a lost race minted a second code for one payment').toHaveLength(0);
+    expect(values.get(`${paidKey}:code`)).toBeUndefined();
+  });
+});
+
+/**
+ * WHAT THE REFUSAL SAYS WHEN THE LIMITER ITSELF FAILS.
+ *
+ * 🚨 Same class as `/api/fund-ephemeral`'s fixed-words refusal. The store words
+ * a failed request as `${error}, command was: ${JSON…}`
+ * (@upstash/redis/nodejs.js) and auto-pipelining batches other requests into
+ * that command list — another route's claim code, a payment signature, another
+ * caller's limiter bucket. Interpolating it into the 503 hands the batch to
+ * whoever called, on a route that runs on the buyer's paid path.
+ *
+ * Two worlds, same failure, different batch: the answer must not move.
+ */
+describe('a limiter that fails says so without passing on what the store carried', () => {
+  const batched =
+    'ERR max daily request limit exceeded, command was: ' +
+    '[["incr","p01:rate:OTHERBUCKET:2026-09-20T10"],' +
+    '["set","p01:note:claim-minted:CODE-SALE-123456","payment:5Qv9SigAAAA"]]';
+
+  it('names no claim code, no payment signature and no other bucket', async () => {
+    mockRateLimitExceeded.mockRejectedValue(new Error(batched));
+    const res = await POST(req({ action: 'reserve', token: 'SOL' }));
+    expect(res.status).toBe(503);
+    const text = JSON.stringify(await res.json());
+    expect(text, 'the refusal echoed the store command').not.toMatch(/command was/);
+    expect(text, "the refusal named another route's claim code").not.toMatch(/CODE-SALE-123456/);
+    expect(text, 'the refusal named a payment signature').not.toMatch(/5Qv9SigAAAA/);
+    expect(text, 'the refusal named a limiter bucket').not.toMatch(/OTHERBUCKET/);
+  });
+
+  it('gives the same answer whatever the store was carrying', async () => {
+    mockRateLimitExceeded.mockRejectedValue(new Error(batched));
+    const one = JSON.stringify(await (await POST(req({ action: 'reserve', token: 'SOL' }))).json());
+
+    mockRateLimitExceeded.mockRejectedValue(
+      new Error('ERR quota, command was: [["incr","p01:rate:MINE:2026-09-20T10"]]'),
+    );
+    const two = JSON.stringify(await (await POST(req({ action: 'reserve', token: 'SOL' }))).json());
+    expect(two, 'the refusal moved with what the store was carrying').toBe(one);
   });
 });

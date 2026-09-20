@@ -8,6 +8,7 @@ import {
   recordConfirmCounters,
   type WaitlistRecord,
 } from '@/lib/waitlist/store';
+import { logFailure } from '@/lib/server/logSafely';
 
 export const dynamic = 'force-dynamic';
 
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
 
     return confirmed();
   } catch (err) {
-    console.error('[waitlist] confirm error:', err);
+    logFailure('[waitlist] confirm', err);
     return invalid();
   }
 }

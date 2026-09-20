@@ -41,6 +41,8 @@ import {
   SUBSCRIBE_FLOAT_LAMPORTS,
   SUBSCRIBE_FLOAT_SOL,
 } from '@/lib/privacy/pool/subscribeFloat';
+import enDict from '@/i18n/en';
+import frDict from '@/i18n/fr';
 
 const PAY_PAGE = join(__dirname, '../../app/(pay)/app/page.tsx');
 const SUBSCRIBE = join(__dirname, '../../components/pay/SubscribePanel.tsx');
@@ -160,9 +162,16 @@ describe('the subscribe cost disclosure, read before signing', () => {
   });
 
   it('names both shapes of WHO PAYS and says what decides, in both locales', () => {
+    // FUND-1 (web sweep prep, 2026-09-19): the second shape is no longer "your
+    // own wallet". A subscription whose funder cannot serve is refused before
+    // anything moves (`lib/privacy/pool/fundEphemeralForJob.test.ts`, "FUND-1: a
+    // value-0 job never asks the wallet when the funder refuses"), so the
+    // disclosure names that outcome and the wallet clause is gone. The rule
+    // over every string is the FUND-1 block at the end of this file.
     const en = read(DICT_EN);
     expect(en).toMatch(/funder if it is available/);
-    expect(en).toMatch(/your own wallet if it is not/);
+    expect(en).not.toMatch(/your own wallet if it is not/);
+    expect(en).toMatch(/if it is not, nothing is fronted and the subscription does not start/);
     // And it must point at where the answer actually appears.
     expect(en).toMatch(/screen after the purchase names which happened/);
 
@@ -171,7 +180,8 @@ describe('the subscribe cost disclosure, read before signing', () => {
     // unconditionally to every visitor in France, Canada and Switzerland.
     const fr = read(DICT_FR);
     expect(fr).toMatch(/financeur de ce déploiement s.il est disponible/);
-    expect(fr).toMatch(/votre propre portefeuille sinon/);
+    expect(fr).not.toMatch(/votre propre portefeuille sinon/);
+    expect(fr).toMatch(/sinon, rien n.est avancé et l.abonnement ne démarre pas/);
     expect(fr).toMatch(/L.écran qui suit l.achat dit lequel a agi/);
   });
 
@@ -316,5 +326,176 @@ describe('the withdrawal payout line', () => {
     const fr = read(DICT_FR);
     expect(fr).toMatch(/Seule votre clé peut la dépenser — tout le monde peut la voir/);
     expect(fr).toMatch(/atteint donc celui vers qui vous balayez/);
+  });
+});
+
+/**
+ * FUND-1 (web sweep prep, 2026-09-19): NO SCREEN PROMISES THE WALLET WILL PAY
+ * FOR A SPEND ITS FUNDER CANNOT COVER.
+ *
+ * Since FUND-1 a withdrawal or a subscription whose funder cannot serve is
+ * refused before anything moves, and the wallet never pays in its place
+ * (`lib/privacy/pool/fundEphemeralForJob.test.ts`, "FUND-1: a value-0 job never
+ * asks the wallet when the funder refuses" and "FUND-1: a value-0 job never asks
+ * the wallet when the funder cannot be reached"). Four strings in each locale
+ * kept promising the old fallback after it was gone: `pay.subscribe.funderBody`,
+ * `pay.subscribe.noFunderBody`, `pay.subscribe.costRentPart3` and
+ * `pay.page.limit1Body`.
+ *
+ * The rule reads EVERY string of both dictionaries, clause by clause, not those
+ * four keys, so a fifth copy of the promise under any key goes red too. A clause
+ * is flagged when "your wallet" is followed, with no negation in between, by a
+ * verb that has it pay, front or cover the job, or when it offers "your own
+ * wallet" as the answer to "who pays if the funder cannot". That is a list of
+ * phrasings, so the first case is its positive control: the sentences FUND-1
+ * made false must be flagged, and their replacements, the denials and what a
+ * deposit honestly costs must not be.
+ *
+ * NOT READ: "funds". "This deployment then funds the key" is the deposit's
+ * honest shape, and the window after "your wallet" cannot tell whose verb comes
+ * later in the clause. A promise spelled with "funds" alone passes this rule.
+ */
+type Locale = 'en' | 'fr';
+type Dict = Record<string, unknown>;
+
+/** Flatten a nested dictionary into [dotted key, string value] pairs. */
+function leafEntries(obj: Dict, prefix = ''): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  for (const [k, v] of Object.entries(obj)) {
+    const full = prefix ? `${prefix}.${k}` : k;
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) out.push(...leafEntries(v as Dict, full));
+    else if (typeof v === 'string') out.push([full, v]);
+  }
+  return out;
+}
+
+const CLAUSE = /[.;:!?](?:\s|$)|\s[—–]\s/;
+const NEGATION: Record<Locale, RegExp> = {
+  en: /(?<![\p{L}])(?:not|never|no|nothing|none|neither|nor)(?![\p{L}])|n['’]t(?![\p{L}])/iu,
+  fr: /(?<![\p{L}])(?:ne|pas|jamais|rien|aucun|aucune|ni)(?![\p{L}])|(?<![\p{L}])n['’]/iu,
+};
+const YOUR_WALLET: Record<Locale, RegExp> = {
+  en: /(?<![\p{L}])your (?:own )?wallet(?![\p{L}])/giu,
+  fr: /(?<![\p{L}])votre (?:propre )?portefeuille(?![\p{L}])/giu,
+};
+const PAYS_FOR_IT: Record<Locale, RegExp> = {
+  en: /(?<![\p{L}])(?:pays|will pay|can pay|could pay|fronts|will front|covers|will cover|stands in|will stand in|signs a public|will sign a public)(?![\p{L}])/iu,
+  fr: /(?<![\p{L}])(?:paie|paiera|peut payer|puisse payer|pourrait payer|avance|avancera|couvre|couvrira|signe un transfert public|signera un transfert public)(?![\p{L}])/iu,
+};
+const OFFERED_AS_FALLBACK: Record<Locale, RegExp> = {
+  en: /(?<![\p{L}])(?:your own wallet if|falls? back to your wallet|or your (?:own )?wallet)(?![\p{L}])/iu,
+  fr: /(?<![\p{L}])(?:votre propre portefeuille sinon|retombe sur votre portefeuille|ou votre (?:propre )?portefeuille)(?![\p{L}])/iu,
+};
+
+/** The clauses of `s` that have the wallet pay for the job, or offer it as the fallback. */
+function walletPaysClauses(s: string, loc: Locale): string[] {
+  const hits: string[] = [];
+  for (const clause of s.split(CLAUSE)) {
+    if (OFFERED_AS_FALLBACK[loc].test(clause)) {
+      hits.push(clause.trim());
+      continue;
+    }
+    for (const m of clause.matchAll(YOUR_WALLET[loc])) {
+      const after = clause.slice((m.index ?? 0) + m[0].length);
+      const verb = PAYS_FOR_IT[loc].exec(after);
+      if (verb && !NEGATION[loc].test(after.slice(0, verb.index))) {
+        hits.push(clause.trim());
+        break;
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * The keys a rule this wide has to leave alone, each with its reason (the
+ * convention of `__tests__/lib/claims-lexicon.test.ts`: no catch-all).
+ */
+const WALLET_REALLY_PAYS = new Map<string, string>([
+  [
+    'pay.shared.honestySolana',
+    'The Solana tab sends a plain public transfer the wallet signs and pays: no pool job, no funder, ' +
+      'nothing FUND-1 covers. The sentence IS the disclosure that the wallet pays.',
+  ],
+]);
+
+describe('FUND-1: no screen promises the wallet will pay for a spend its funder cannot cover', () => {
+  it('the rule flags the fallback promise in either locale, and leaves denials and deposit costs alone (positive control)', () => {
+    // The four sentences FUND-1 made false, verbatim as they stood on 2026-09-19.
+    const promised: Array<[Locale, string]> = [
+      ['en', ' Rent and fees covered; if it cannot serve, your wallet pays and the receipt says so.'],
+      ['en', ' Your wallet is the only thing that can pay for this subscription, so it will sign a public transfer and anyone reading the subscription reaches it in three steps. There is no setting that changes that here.'],
+      ['en', 'Who fronts it is decided when you click: this deployment’s funder if it is available, and then your wallet signs nothing and is repaid nothing; your own wallet if it is not. The screen after the purchase names which happened.'],
+      ['en', 'A withdrawal or a subscription asks the deployment to cover the whole job; when it does, your wallet is on no transaction at all, and when it cannot, your wallet pays and the screen tells you which of the two happened.'],
+      ['fr', ' Loyer et frais couverts ; s’il ne répond pas, votre portefeuille paie et le reçu le dit.'],
+      ['fr', ' Votre portefeuille est la seule chose qui puisse payer cet abonnement : il signera un transfert public et quiconque lit l’abonnement l’atteint en trois étapes. Aucun réglage ne change cela ici.'],
+      ['fr', 'Qui l’avance se décide au moment du clic : le financeur de ce déploiement s’il est disponible, et alors votre portefeuille ne signe rien et n’est remboursé de rien ; votre propre portefeuille sinon. L’écran qui suit l’achat dit lequel a agi.'],
+      ['fr', 'Un retrait ou un abonnement demande au déploiement de couvrir tout le travail ; quand il le fait, votre portefeuille n’est sur aucune transaction, et quand il ne le peut pas, votre portefeuille paie et l’écran vous dit laquelle des deux situations s’est produite.'],
+    ];
+    for (const [loc, s] of promised) {
+      expect(walletPaysClauses(s, loc), `${loc}, not flagged: ${s}`).toHaveLength(1);
+    }
+
+    const honest: Array<[Locale, string]> = [
+      // Their replacements.
+      ['en', ' Rent and fees covered; if it cannot serve, nothing moves and you can try again — your wallet never pays in its place.'],
+      ['en', ' Your wallet will not pay for this subscription in its place: that would take a public transfer from it, and anyone reading the subscription would reach it in three steps. So the subscription stops before anything moves.'],
+      ['en', 'this deployment’s funder if it is available, and then your wallet signs nothing and is repaid nothing; if it is not, nothing is fronted and the subscription does not start.'],
+      ['en', 'when it does, your wallet is on no transaction at all, and when it cannot, the job stops before anything moves and the screen says so — your wallet never pays in its place.'],
+      ['fr', ' Loyer et frais couverts ; s’il ne répond pas, rien ne bouge et vous pouvez réessayer — votre portefeuille ne paie jamais à sa place.'],
+      ['fr', ' Votre portefeuille ne paiera pas cet abonnement à sa place : il y faudrait un transfert public depuis celui-ci, et quiconque lit l’abonnement l’atteindrait en trois étapes.'],
+      ['fr', 'le financeur de ce déploiement s’il est disponible, et alors votre portefeuille ne signe rien et n’est remboursé de rien ; sinon, rien n’est avancé et l’abonnement ne démarre pas.'],
+      ['fr', 'quand il le fait, votre portefeuille n’est sur aucune transaction, et quand il ne le peut pas, le travail s’arrête avant que rien ne bouge et l’écran le dit — votre portefeuille ne paie jamais à sa place.'],
+      // What a deposit honestly costs the wallet, which FUND-1 does not change.
+      ['en', 'Depositing costs your wallet one public signature paying this deployment, which then funds the one-time key that touches the pool.'],
+      ['en', 'A deposit costs your wallet one signature: a single, fully visible transaction paying this deployment, plus a 1% operator fee in the same transaction.'],
+      ['fr', 'Déposer coûte à votre portefeuille une signature publique payant ce déploiement, qui finance ensuite la clé à usage unique qui touche le pool.'],
+      ['fr', 'Un dépôt coûte à votre portefeuille une signature : une transaction unique, entièrement visible, qui paie ce déploiement, plus 1 % de frais d’opérateur dans la même transaction.'],
+      // The relayed withdrawal's card.
+      ['en', 'The relayer paid for this, not your wallet.'],
+      ['fr', 'C’est le relais qui a payé ceci, pas votre portefeuille.'],
+    ];
+    for (const [loc, s] of honest) {
+      expect(walletPaysClauses(s, loc), `${loc}, flagged: ${s}`).toEqual([]);
+    }
+  });
+
+  it('no string in either dictionary promises the wallet pays when the funder cannot', () => {
+    const found: string[] = [];
+    for (const [loc, dict] of [
+      ['en', enDict],
+      ['fr', frDict],
+    ] as const) {
+      const entries = leafEntries(dict as unknown as Dict);
+      // A wrong import reads nothing and passes; each dictionary holds ~1,700 strings.
+      expect(entries.length, `${loc}: the dictionary was not read`).toBeGreaterThan(1000);
+      const byKey = new Map(entries);
+      for (const [key, why] of WALLET_REALLY_PAYS) {
+        // An exception that no longer needs to be one is removed, not kept.
+        const v = byKey.get(key);
+        expect(v, `${loc}: ${key} is gone, so its exception must go (${why})`).toBeDefined();
+        expect(walletPaysClauses(v ?? '', loc), `${loc}: ${key} no longer needs its exception`).not.toEqual([]);
+      }
+      for (const [key, value] of entries) {
+        if (WALLET_REALLY_PAYS.has(key)) continue;
+        for (const clause of walletPaysClauses(value, loc)) found.push(`${loc} ${key}: ${clause}`);
+      }
+    }
+    expect(found).toEqual([]);
+  });
+
+  it('the four strings that promised it say what happens instead, in both locales', () => {
+    type Pay = { pay: { subscribe: Record<string, string>; page: Record<string, string> } };
+    const en = (enDict as unknown as Pay).pay;
+    expect(en.subscribe.funderBody).toMatch(/nothing moves and you can try again/);
+    expect(en.subscribe.noFunderBody).toMatch(/the subscription stops before anything moves/);
+    expect(en.subscribe.costRentPart3).toMatch(/if it is not, nothing is fronted and the subscription does not start/);
+    expect(en.page.limit1Body).toMatch(/when it cannot, the job stops before anything moves/);
+
+    const fr = (frDict as unknown as Pay).pay;
+    expect(fr.subscribe.funderBody).toMatch(/rien ne bouge et vous pouvez réessayer/);
+    expect(fr.subscribe.noFunderBody).toMatch(/L’abonnement s’arrête donc avant que rien ne bouge/);
+    expect(fr.subscribe.costRentPart3).toMatch(/sinon, rien n’est avancé et l’abonnement ne démarre pas/);
+    expect(fr.page.limit1Body).toMatch(/quand il ne le peut pas, le travail s’arrête avant que rien ne bouge/);
   });
 });

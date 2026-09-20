@@ -130,3 +130,27 @@ describe('web i18n: the site does not promise cancellation it cannot deliver', (
     }
   });
 });
+
+describe('web i18n: no pay string names a note by its leaf', () => {
+  /**
+   * UI-1 (ledger row D14). The Shield tab's exchange and contribution cards
+   * printed the spent, the issued and the funded leaf side by side
+   * (`pay.pool.exchangedBody`, `pay.pool.contributedNote`): the funded-to-issued
+   * join, handed to anyone who sees a screenshot. A pay string may name a note
+   * by its role ("your note", "an older note"), never by a leaf number, in
+   * either locale. The positive control is the detector's own planted case.
+   */
+  it('no pay string prints a leaf number, in either locale', () => {
+    const LEAF_NUMBER = /leaf\s*#|leaf\s*n°|feuille\s*n°|#\s*\{\w+\}|n°\s*\{\w+\}|\{(leaf|spent|issued|funded)\}/i;
+    for (const planted of ['Your note at leaf #{spent}', 'la note à la feuille n°{issued}']) {
+      expect(LEAF_NUMBER.test(planted), `the detector misses: ${planted}`).toBe(true);
+    }
+    for (const [name, d] of DICTS) {
+      const offenders = leafKeys(d)
+        .filter((k) => k.startsWith('pay.'))
+        .filter((k) => LEAF_NUMBER.test(String(read(d, k))))
+        .map((k) => `${name}.${k}`);
+      expect(offenders, 'a pay string names a leaf').toEqual([]);
+    }
+  });
+});

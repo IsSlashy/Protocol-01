@@ -60,6 +60,7 @@ import {
 } from "@/lib/privacy/pool/denominatedPool";
 import { operatorFeeAtomic } from "@/lib/privacy/pool/ephemeralFunder";
 import { clearContribution } from "@/lib/privacy/pendingContribution";
+import { StaleWorkerError } from "@/lib/privacy/sealedStore";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
 import {
   requiresSweepHomeConfirmation,
@@ -74,6 +75,9 @@ import {
   recordHandoff,
 } from "@/lib/pay/handoffs";
 import StaleWorkerNotice from "./StaleWorkerNotice";
+import NoteTag from "./NoteTag";
+import ChainIdsReveal from "./ChainIdsReveal";
+import type { NoteTag as NoteTagValue } from "@/lib/privacy/pool/noteTag";
 import { truncate } from "./util";
 import { useT } from "@/i18n";
 
@@ -120,6 +124,26 @@ interface PayoutView extends PayoutRecord {
 /** Identifies a note across rescans. Same shape as `SendForm` and `SubscribePanel`. */
 function noteKey(n: PoolNoteView): string {
   return `${n.pool}:${n.leafIndex}`;
+}
+
+/** A base58 run long enough to be a signature or an address. 32 is the
+ *  shortest a Solana address prints as; a signature is longer still. */
+const CHAIN_ID_RUN = /[1-9A-HJ-NP-Za-km-z]{32,}/g;
+
+/**
+ * An error message with every on-chain identifier taken out of it.
+ *
+ * A message from web3.js is not written for this screen: the confirmation
+ * failure carries the transaction's signature word for word ("Signature <sig>
+ * has expired: block height exceeded"). Printed on the sweep's red line, that
+ * puts the sweep transaction on screen — the one thing UI-1 keeps behind the
+ * reveal, because the sweep leads back to the withdrawal. The sentence is
+ * still the library's, so the user still learns what went wrong; only the id
+ * goes (`PoolPanel.test.tsx`, "a sweep whose confirmation expired says so
+ * without printing the signature").
+ */
+function withoutChainIds(message: string): string {
+  return message.replace(CHAIN_ID_RUN, "(id hidden)");
 }
 
 /** Set once the disclosure has been shown expanded; after that it starts
@@ -206,20 +230,36 @@ export default function PoolPanel({
   const [shielding, setShielding] = useState(false);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * [READY-1] The question a Shield click stops on instead of paying: "notYet"
+   * when the deployment says no note can be handed over right now (Continue,
+   * or a labelled own deposit), "unknown" when it could not say (the labelled
+   * own deposit only). Pinned by `__tests__/components/PoolPanel.test.tsx`
+   * "READY-1".
+   */
+  const [readinessAsk, setReadinessAsk] = useState<"notYet" | "unknown" | null>(null);
+  /**
+   * The spend an exchange error is about, when it failed after its withdrawal
+   * landed: shown under the error line behind the reveal, and only while the
+   * line still shows that error's sentence (`PoolPanel.test.tsx`, "an exchange
+   * that spent but did not collect keeps the spend off the error line until
+   * asked").
+   */
+  const [errorSpend, setErrorSpend] = useState<{ message: string; sig: string } | null>(null);
   const [result, setResult] = useState<ShieldOutcome | null>(null);
   /**
    * Set when the deposit was a CONTRIBUTION rather than a deposit of the buyer's
    * own note.
    *
-   * \u26d4 THE SUCCESS SCREEN SAYS "Your N SOL note is in the pool" AND PRINTS A
-   * LEAF. On this path those are two different leaves: the one the buyer funded
-   * belongs to the treasury, and the note the buyer holds was deposited earlier
-   * for somebody else. Showing the funded leaf as theirs would be a lie, and
-   * showing the held leaf beside the funding transaction without a word would
-   * read as a mismatch to anyone who checked. So it is said.
+   * \u26d4 THE SUCCESS SCREEN SAYS "Your N SOL note is in the pool". On this path
+   * the note the buyer funded belongs to the treasury, and the note the buyer
+   * holds was deposited earlier for somebody else, so it is said. What is NOT
+   * shown since UI-1 is the funded leaf, nor the deposit that created it: the
+   * card used to print it beside the held note, which joined the buyer's
+   * payment to the note they hold for anyone who saw the screen
+   * (`__tests__/components/PoolPanel.test.tsx`, "a contribution").
    */
   const [contributed, setContributed] = useState<{
-    fundedLeafIndex: number;
     disclosure: string;
   } | null>(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
@@ -232,8 +272,10 @@ export default function PoolPanel({
   const [exchanged, setExchanged] = useState<{
     spendSig: string;
     denomination: number;
-    spentLeafIndex: number;
-    issuedLeafIndex: number;
+    /** The note received, by its tag: never the spent or the issued leaf,
+     *  which side by side are the join the exchange exists to break (UI-1,
+     *  `PoolPanel.test.tsx` "state 5: the exchange card"). */
+    issuedTag?: NoteTagValue;
     disclosure: string;
   } | null>(null);
   const [withdrawn, setWithdrawn] = useState<
@@ -241,13 +283,27 @@ export default function PoolPanel({
       txSig: string;
       denomination: number;
       payout: string;
-      /** Who paid the rent and fees — decides which of two very different
-       *  sentences the user is owed about this withdrawal. */
-      fundedBy: "wallet" | "funder";
+      /** Who paid the rent and fees — decides which sentence the user is owed
+       *  about this withdrawal. `unshieldFromPool` answers 'funder' or
+       *  'relayer' since FUND-1; 'wallet' stays as the pessimistic reading of
+       *  anything else. */
+      fundedBy: "wallet" | "funder" | "relayer";
       /** Why the funder did not serve, when one was configured. Rendered, not
        *  swallowed: a 429, a 409 and an operator switching it off all put the
        *  wallet back on chain and are otherwise indistinguishable. */
       funderFallbackReason?: string;
+      /**
+       * 🚨 WHICH CIRCUIT ACTUALLY CARRIED THIS WITHDRAWAL, AND THE CARD READS
+       * IT. `unshieldFromPool` reports it (`shieldClient.ts`, `version:
+       * prep.version`); this state used to drop it, so the card said "carries
+       * no commitment" after a C1 + C3 spend, which republishes the value the
+       * deposit published. A pre-blinding note reaches that pair on the second
+       * press, after `confirmPreBlindingSpend`'s disclosure (V3-1,
+       * `poolHandlers.ts`). Anything that is not exactly `'v4'` is rendered as
+       * the pessimistic case (`PoolPanel.test.tsx`, "the withdrawal card names
+       * the circuit that ran").
+       */
+      version?: "v3" | "v4";
     } | null
   >(null);
   const [recovering, setRecovering] = useState(false);
@@ -265,6 +321,21 @@ export default function PoolPanel({
   /** Operator setup surface, off unless `?treasury=1` is in the URL. Read once
    *  in an effect rather than during render, so server and client agree. */
   const [treasuryMode, setTreasuryMode] = useState(false);
+  /**
+   * [sweep 1, record 34] True once a Deposit click in treasury mode has been
+   * stopped and is waiting for the labelled confirmation below.
+   *
+   * ⛔ `?treasury=1` IS NOT A PERMISSION, IT IS A QUERY PARAMETER. It made the
+   * ordinary Deposit button a public wallet → ephemeral → leaf deposit with an
+   * ephemeral → wallet sweep, skipped the inventory swap and READY-1's stock
+   * question, and said nothing at the button — the only treasury copy on the
+   * page is about exporting the seed. Anyone who got a user to open a link
+   * carrying the parameter got that user's next deposit published and tied to
+   * their wallet. The operator act is still available; it now costs one
+   * labelled press (`PoolPanel.test.tsx`, "?treasury=1 and the Deposit
+   * button").
+   */
+  const [treasuryAsk, setTreasuryAsk] = useState(false);
   useEffect(() => {
     try {
       setTreasuryMode(new URLSearchParams(window.location.search).get("treasury") === "1");
@@ -272,6 +343,18 @@ export default function PoolPanel({
       // No window (SSR) or a locked-down environment: stay off, which is the
       // correct default for a control that reveals a spend key.
     }
+  }, []);
+  /**
+   * [READY-1] Ask the deployment on mount, and use nothing it says. Its
+   * readiness is one sample per 10-minute bucket, taken after the bucket's
+   * first GET, so a click that was the first to ask would always read "not
+   * known". The click still asks for itself ("asks the deployment on mount, so
+   * the bucket is sampled before the click, and the click asks again").
+   */
+  useEffect(() => {
+    void Promise.resolve()
+      .then(() => fetchIssuableNote())
+      .catch(() => undefined);
   }, []);
   const [seedHex, setSeedHex] = useState<string | null>(null);
   const [seedLegacy, setSeedLegacy] = useState(false);
@@ -322,7 +405,10 @@ export default function PoolPanel({
     return () => onBusyChange?.(false);
   }, [panelBusy, onBusyChange]);
 
-  const [swept, setSwept] = useState<string | null>(null);
+  /** The last sweep: what the line says, and its transaction, which renders
+   *  only behind the payout list's reveal (`ChainIdsReveal`; PoolPanel.test.tsx,
+   *  "the sweep line keeps the sweep transaction off the screen until asked"). */
+  const [swept, setSwept] = useState<{ text: string; txSig: string } | null>(null);
 
   // Drop the root whenever the wallet changes: a payout key belongs to exactly
   // one wallet, and keeping a stale root across a switch would show one wallet
@@ -575,17 +661,34 @@ export default function PoolPanel({
    * the other covers.
    */
   const refreshPayouts = useCallback(
-    async (root: Uint8Array) => {
+    async (root: Uint8Array, opts?: { everyNote?: boolean }) => {
       const byAddress = new Map<string, PayoutRecord>();
       const stored = await loadPayouts(meta, ownerKey);
       // A skewed or restarted worker hides the sealed records; the
       // re-derivation from scanned notes below still finds every address a
-      // live note names, so the list stays as complete as this tab can make
+      // spent note names, so the list stays as complete as this tab can make
       // it — and the notice says why it may still be short.
       setStaleWorker((prev) => prev || stored.staleWorker);
       setLostSession((prev) => prev || stored.lostSession);
       for (const rec of stored.records) byAddress.set(rec.address, rec);
       for (const n of notes) {
+        // 🚨 SPENT NOTES ONLY, UNLESS THE DEEP CHECK ASKED.
+        //
+        // A payout address is the cleartext recipient of the note's
+        // withdrawal (`handleUnshield` passes it as `recipient`), so for a
+        // note still sitting in the pool it is the payee of a withdrawal that
+        // has not happened. Deriving it here and asking the provider about it
+        // named that payee IN ADVANCE, from the session that also reads
+        // `getBalance(owner)` — the pre-query pattern `subscriptionRecovery.ts`
+        // and RECOVER-1 both refuse. Nothing is lost by skipping it either:
+        // only a spend puts lamports at that address, so the row would be
+        // filtered out anyway (`PoolPanel.test.tsx`, "names no payout address
+        // of a note that has not been spent").
+        //
+        // `everyNote` is the labelled deep check below, for the browser that
+        // lost BOTH its payout records and its spent marks and is waiting on a
+        // chain walk to say which notes are spent.
+        if (!opts?.everyNote && !n.spent && !spentLocally.has(noteKey(n))) continue;
         const address = derivePoolPayoutKeypair(root, n.pool, n.leafIndex).publicKey.toBase58();
         if (!byAddress.has(address)) {
           byAddress.set(address, {
@@ -594,6 +697,7 @@ export default function PoolPanel({
             address,
             txSig: "",
             denomination: n.denomination,
+            tag: n.tag,
           });
         }
       }
@@ -602,24 +706,43 @@ export default function PoolPanel({
         setPayouts([]);
         return;
       }
-      const infos = await connection.getMultipleAccountsInfo(
-        recs.map((r) => new PublicKey(r.address)),
-      );
-      setPayouts(
-        recs
-          .map((r, i) => ({ ...r, lamports: infos[i]?.lamports ?? 0 }))
-          .filter((r) => r.lamports > 0),
-      );
+      // 🚨 ONE REQUEST PER ADDRESS, NEVER ONE BATCH OVER ALL OF THEM.
+      //
+      // This was `getMultipleAccountsInfo(every address)`. A payout address is
+      // derived per note precisely so that two withdrawals of the same person
+      // look unrelated on chain; naming them together in a single request
+      // hands the provider the grouping the derivation exists to withhold.
+      // The comment above `handleUnshield` already said so about the automatic
+      // refresh — it is the same request here.
+      //
+      // ⚠️ THIS DOES NOT MAKE THE READ PRIVATE. The requests still leave one
+      // IP within a second of each other and the provider can still correlate
+      // them; what is gone is the single record that STATES the grouping.
+      // Measured cost: one round trip per address instead of one for all of
+      // them, in sequence (`PoolPanel.test.tsx`, "asks about each payout
+      // address in its own request"). The list is bounded by the notes this
+      // wallet has spent plus its stored payout records.
+      const found: PayoutView[] = [];
+      for (const r of recs) {
+        const info = await connection.getAccountInfo(new PublicKey(r.address));
+        const lamports = info?.lamports ?? 0;
+        if (lamports > 0) found.push({ ...r, lamports });
+      }
+      setPayouts(found);
     },
-    [connection, notes, meta, ownerKey],
+    [connection, notes, spentLocally, meta, ownerKey],
   );
 
-  async function handleShowPayouts() {
+  /** `everyNote` comes from the labelled deep-check button and from nothing
+   *  else. Called through an arrow, never `onClick={handleShowPayouts}`: the
+   *  click event would arrive as `everyNote` and be truthy, the same trap the
+   *  RECOVER-1 buttons carry a comment about. */
+  async function handleShowPayouts(everyNote: boolean) {
     setSweepError(null);
     try {
-      await refreshPayouts(await requirePayoutRoot());
+      await refreshPayouts(await requirePayoutRoot(), { everyNote });
     } catch (e) {
-      setSweepError((e as Error).message || t("pay.pool.errSweepRead"));
+      setSweepError(withoutChainIds((e as Error).message || t("pay.pool.errSweepRead")));
     }
   }
 
@@ -678,24 +801,56 @@ export default function PoolPanel({
         throw new Error(t("pay.pool.errPayoutMismatch"));
       }
       const { txSig, lamports } = await sweepPayout({ connection, payout, destination: to });
-      setSwept(`Swept ${(lamports / 1e9).toFixed(4)} SOL · ${truncate(txSig, 8, 6)}`);
-      await refreshPayouts(root);
+      setSwept({ text: `Swept ${(lamports / 1e9).toFixed(4)} SOL`, txSig });
+      // 🚨 THE DESTINATION DOES NOT STAY BESIDE THE AMOUNT.
+      //
+      // "Swept 0.9940 SOL" next to the address that received it, above the
+      // note-tagged payout rows, IS the sweep: the transaction that leads back
+      // to the withdrawal. UI-1 put the sweep transaction behind the reveal
+      // for exactly that reason, and leaving the destination in the field
+      // beside it gave the pair away to a screenshot anyway
+      // (`PoolPanel.test.tsx`, "clears the destination once the sweep has gone
+      // through").
+      setSweepTo("");
+      // No refresh: `sweepPayout` sends the balance minus the fee, so the
+      // address it emptied is the row that goes, and every OTHER payout
+      // address is unchanged. Re-reading them all after every sweep is the
+      // batch this lane removed in the first place.
+      setPayouts((prev) => prev.filter((row) => row.address !== p.address));
     } catch (e) {
-      setSweepError((e as Error).message || "Sweep failed.");
+      // web3.js puts the signature verbatim into the confirmation failure
+      // ("Signature <sig> has expired: block height exceeded"), and this line
+      // renders under the payout rows, where UI-1 keeps the sweep transaction
+      // behind the reveal (`PoolPanel.test.tsx`, "a sweep whose confirmation
+      // expired says so without printing the signature").
+      setSweepError(withoutChainIds((e as Error).message || t("pay.pool.errSweepFailed")));
     } finally {
       setSweeping(null);
     }
   }
 
-  async function handleShield() {
+  async function handleShield(chosen?: "continue" | "own" | "treasuryPublic") {
+    // Only these literals are a choice; anything else (an event) is none.
+    const choice = chosen === "continue" || chosen === "own" ? chosen : undefined;
+    /** Set by the labelled treasury button and by nothing else. */
+    const treasuryConfirmed = chosen === "treasuryPublic";
     if (!signOne) {
       setError(t("pay.pool.errCannotSignTx"));
       return;
     }
     setError(null);
     setResult(null);
+    setReadinessAsk(null);
+    setTreasuryAsk(false);
     setShielding(true);
     try {
+      // [sweep 1, record 34] Before the balance read, before the proof, before
+      // anything is signed: a treasury deposit is public and named, so it
+      // takes a press that says so. See `treasuryAsk`.
+      if (treasuryMode && !treasuryConfirmed) {
+        setTreasuryAsk(true);
+        return;
+      }
       // ── Can this wallet afford it, BEFORE the two-minute proof ────────────
       //
       // 🚨 THE WORST FEEDBACK LOOP IN THE APP, AND A FIRST-TIME TESTER HITS IT
@@ -781,7 +936,20 @@ export default function PoolPanel({
         onProgress: setStep,
       }).catch(
         (e) => {
-          console.warn('[pool] resume failed, continuing with a fresh contribution', e);
+          // ⛔ EXCEPT A WORKER THAT CANNOT READ THE RECORD. The record is sealed
+          // (DEV-1), so an older worker left open across a deploy cannot say
+          // whether a payment is owed, and "continue with a fresh contribution"
+          // could pay twice. Its message says reload; nothing is lost
+          // (`PoolPanel.test.tsx`, "a resume the worker cannot read stops the
+          // shield and pays nothing").
+          if (e instanceof StaleWorkerError) throw e;
+          // The error CLASS only: a resume's message can carry the payment
+          // signature and the leaf it was owed (`PoolPanel.test.tsx`, "a failed
+          // resume logs the error class, never its message").
+          console.warn(
+            '[pool] resume failed, continuing with a fresh contribution:',
+            e instanceof Error ? e.name : typeof e,
+          );
           return null;
         },
       );
@@ -791,6 +959,7 @@ export default function PoolPanel({
           txSig: '',
           commitment: resumed.note.commitment,
           leafIndex: resumed.leafIndex,
+          tag: resumed.note.tag,
           denomination,
           encryptedNote: '',
           fundedLamports: 0,
@@ -801,8 +970,25 @@ export default function PoolPanel({
         return;
       }
 
-      const stock = treasuryMode ? null : await fetchIssuableNote();
-      if (stock) {
+      /**
+       * [READY-1] NO OWN DEPOSIT, AND NO PAYMENT AGAINST STOCK THAT CANNOT BE
+       * HANDED OVER, WITHOUT THE BUYER CHOOSING.
+       *
+       * A null answer used to fall through to `shieldToPool` below: the note
+       * the buyer's own payment creates, which the amount and the timing tie to
+       * their wallet, delivered as if it were the older note. And `issuableNow`
+       * false (every note in stock too young, or sold) was paid for anyway.
+       * Both stop here on the question; Continue is the path below, unchanged.
+       * Pinned by `__tests__/components/PoolPanel.test.tsx` "READY-1"
+       * ("issuableNow false with no choice: nothing is paid", "no answer from
+       * the deployment: no own deposit without a choice").
+       */
+      const stock = treasuryMode || choice ? null : await fetchIssuableNote();
+      if (!treasuryMode && !choice && (!stock || stock.issuableNow === false)) {
+        setReadinessAsk(stock ? "notYet" : "unknown");
+        return;
+      }
+      if (!treasuryMode && choice !== "own") {
         // BEFORE the till is paid. Confirm now requires the wallet's signature
         // over the claim challenge, and so does the fallback for a deposit
         // that never lands; a session that cannot sign a message would pay
@@ -834,14 +1020,15 @@ export default function PoolPanel({
         // The note is in hand: the record that said one was owed has done its
         // job. Left in place, the next Shield click would present the spent
         // claim again through `resumeContribution` and be refused (409).
-        clearContribution(owner.toBase58(), gave.leafIndex);
-        setContributed({ fundedLeafIndex: gave.leafIndex, disclosure: got.disclosure });
+        clearContribution(gave.pendingId);
+        setContributed({ disclosure: got.disclosure });
         setResult({
           txSig: gave.txSig,
-          // The leaf and commitment the buyer HOLDS, which is the issued note —
-          // never the one they funded. See the note on `contributed`.
+          // The note the buyer HOLDS, which is the issued note — never the one
+          // they funded. See the note on `contributed`.
           commitment: got.note.commitment,
           leafIndex: got.leafIndex,
+          tag: got.note.tag,
           denomination,
           encryptedNote: '',
           fundedLamports: 0,
@@ -942,6 +1129,8 @@ export default function PoolPanel({
         address: payout.publicKey.toBase58(),
         txSig: out.txSig,
         denomination: out.denomination,
+        // What the payout row names this withdrawal by, instead of its leaf.
+        tag: note.tag,
       });
       setWithdrawn({ ...out, payout: payout.publicKey.toBase58() });
       // Persist it: this is the only record that survives the reload, and the
@@ -950,13 +1139,20 @@ export default function PoolPanel({
       setSpentLocally((prev) => new Set(prev).add(noteKey(note)));
       // \U0001f6a8 NO AUTOMATIC PAYOUT REFRESH, AND THAT USED TO BE HERE.
       //
-      // `refreshPayouts` issues ONE `getMultipleAccountsInfo` over every payout
-      // address this user holds. Firing it here meant that seconds after the
-      // relayer paid address R -- in a transaction that deliberately names no
-      // wallet -- this browser asked the RPC provider about R. That ties the IP
-      // to the payee of the withdrawal, and because the read is a BATCH it also
-      // tells the provider that these unrelated-looking addresses belong to one
-      // person.
+      // `refreshPayouts` asks the RPC about every payout address this user
+      // holds. Firing it here meant that seconds after the relayer paid address
+      // R -- in a transaction that deliberately names no wallet -- this browser
+      // asked the RPC provider about R. That ties the IP to the payee of the
+      // withdrawal.
+      //
+      // ⚠️ THIS PARAGRAPH USED TO SAY the read is ONE `getMultipleAccountsInfo`
+      // BATCH, and to give the batch as the second reason. It is not one any
+      // more: `refreshPayouts` now asks ONE REQUEST PER ADDRESS, precisely so
+      // that no single record states the grouping (see its own comment). The
+      // wording is corrected here rather than deleted, because this paragraph is
+      // the stated reason the automatic refresh does not come back, and leaving
+      // it wrong invites someone to restore the batch on its authority. The
+      // reason survives the correction: the timing alone ties the IP to R.
       //
       // Nothing is lost: `setWithdrawn` above already carries the address and
       // the amount, so the row renders from the outcome. The explicit
@@ -1011,25 +1207,40 @@ export default function PoolPanel({
       setExchanged({
         spendSig: out.spendSig,
         denomination: note.denomination,
-        spentLeafIndex: note.leafIndex,
-        issuedLeafIndex: out.issued.leafIndex,
+        issuedTag: out.issued.note.tag,
         disclosure: out.issued.disclosure,
       });
       void rescan();
     } catch (e) {
       // After the withdrawal landed the held note is spent whatever the
       // message says; the receipt is kept and the next Shield click resumes.
-      if ((e as { spendSig?: string }).spendSig) {
+      const spendSig = (e as { spendSig?: string }).spendSig;
+      if (spendSig) {
         setSpentLocally((prev) => new Set(prev).add(noteKey(note)));
       }
-      setError((e as Error).message || "Exchange failed.");
+      // The spend leads back to the note it spent, so it never sits in the
+      // sentence, whatever the lib wrote; it waits behind the reveal under the
+      // line (`PoolPanel.test.tsx`, "an exchange that spent but did not collect
+      // keeps the spend off the error line until asked").
+      const said = (e as Error).message || "Exchange failed.";
+      const message = spendSig ? said.split(spendSig).join("(signature hidden)") : said;
+      setError(message);
+      setErrorSpend(spendSig ? { message, sig: spendSig } : null);
     } finally {
       setBusyNote(null);
       setStep(null);
     }
   }
 
-  async function handleRecover() {
+  /**
+   * `everyNote` is set by the labelled "Check every note" button and by
+   * nothing else: it reads the spend key of every held note, which tells the
+   * RPC which keys are this user's. The default click leaves the choice to
+   * `recoverStuckFunds`, which reads only notes with a spend attempt or spent
+   * mark (RECOVER-1; `PoolPanel.test.tsx`, "the default click asks for no deep
+   * check; a labelled button asks for it on every pool").
+   */
+  async function handleRecover(everyNote: boolean) {
     setError(null);
     setRecovered(null);
     setRecovering(true);
@@ -1056,7 +1267,8 @@ export default function PoolPanel({
       // The leaf indices of every note this browser knows about, per pool. A
       // spend's ephemeral is keyed to the SPENT note's leaf, and a spend
       // advances no tree, so an old note's stranded float sits nowhere near the
-      // head — outside the window recovery would otherwise search.
+      // head — outside the window recovery would otherwise search. Which of
+      // them have their key read is `recoverStuckFunds`'s call (see above).
       const leavesByDenomination = new Map<number, number[]>();
       for (const n of notes) {
         const list = leavesByDenomination.get(n.denomination) ?? [];
@@ -1065,7 +1277,9 @@ export default function PoolPanel({
       }
       const all = await Promise.all(
         denominations.map((d) =>
-          recoverStuckFunds(meta, d, owner, setStep, leavesByDenomination.get(d) ?? []),
+          recoverStuckFunds(meta, d, owner, setStep, leavesByDenomination.get(d) ?? [], {
+            everyNote,
+          }),
         ),
       );
       const r = all.reduce(
@@ -1075,6 +1289,7 @@ export default function PoolPanel({
           repaidToFunder: acc.repaidToFunder + x.repaidToFunder,
           closedBuffers: acc.closedBuffers + x.closedBuffers,
           refused: [...acc.refused, ...x.refused],
+          skippedNotes: acc.skippedNotes + (x.skippedNotes ?? 0),
         }),
         {
           keys: 0,
@@ -1082,6 +1297,7 @@ export default function PoolPanel({
           repaidToFunder: 0,
           closedBuffers: 0,
           refused: [] as PoolRecoverResponse["refused"],
+          skippedNotes: 0,
         },
       );
       // Say all three things separately. A single "recovered X" line would
@@ -1090,7 +1306,10 @@ export default function PoolPanel({
       // that stops someone coming back for ~1 SOL that is still theirs.
       const parts: string[] = [];
       if (r.keys === 0 && r.refused.length === 0) {
-        parts.push(t("pay.pool.recoverNothing"));
+        // "Nothing stranded in any pool" only when no held note went unread
+        // (`PoolPanel.test.tsx`, "a default click that left notes unchecked
+        // says how many, and never says nothing is stranded anywhere").
+        parts.push(t(r.skippedNotes > 0 ? "pay.pool.recoverNothingSwept" : "pay.pool.recoverNothing"));
       } else {
         if (r.lamports > 0) {
           parts.push(
@@ -1117,10 +1336,17 @@ export default function PoolPanel({
           parts.push(t("pay.pool.recoverNothingSwept"));
         }
       }
+      // The amount and the reason, never which note: the key's leaf is the
+      // user's own (`PoolPanel.test.tsx`, "state 7").
       for (const ref of r.refused) {
         parts.push(
-          `⚠️ ${(ref.lamports / 1e9).toFixed(4)} SOL left on the key for note #${ref.leafIndex}: ${ref.sentence}`,
+          `⚠️ ${(ref.lamports / 1e9).toFixed(4)} SOL left on a one-time key: ${ref.sentence}`,
         );
+      }
+      // A count, never which notes (`PoolPanel.test.tsx`, "a default click
+      // that left notes unchecked says how many, …").
+      if (r.skippedNotes > 0) {
+        parts.push(t("pay.pool.recoverUnchecked").replace("{count}", String(r.skippedNotes)));
       }
       setRecovered(parts.join(" "));
     } catch (e) {
@@ -1518,6 +1744,20 @@ export default function PoolPanel({
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}
           </p>
         )}
+        {/* An exchange that spent and did not collect: its spend, for support,
+            behind a click (see `errorSpend`). */}
+        {error && errorSpend && errorSpend.message === error && (
+          <ChainIdsReveal key={errorSpend.sig}>
+            <a
+              href={`https://explorer.solana.com/tx/${errorSpend.sig}?cluster=devnet`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block font-mono text-xs text-p01-cyan hover:underline"
+            >
+              {truncate(errorSpend.sig, 10, 8)} ↗
+            </a>
+          </ChainIdsReveal>
+        )}
 
         {/* `selectedBlock` is the belt to the picker's braces: the chips for
             blocked denominations are already disabled, so it only bites when
@@ -1525,7 +1765,7 @@ export default function PoolPanel({
             is). The engine refuses either way — this just stops the click. */}
         <button
           type="button"
-          onClick={handleShield}
+          onClick={() => void handleShield()}
           disabled={shielding || !!busyNote || !signOne || poolIsSolOnly || !!selectedBlock}
           className="btn-primary flex w-full items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
@@ -1537,6 +1777,59 @@ export default function PoolPanel({
             <>{t("pay.pool.shieldButton").replace("{denomination}", String(denomination))}</>
           )}
         </button>
+        {/* [READY-1] The question the click stopped on. Continue, offered only
+            when the deployment answered, is today's path; the other button is
+            the only way to an own deposit and says what it is. No wait time:
+            the readiness answer carries none (`PoolPanel.test.tsx` "READY-1"). */}
+        {readinessAsk && !shielding && (
+          <div className="space-y-2 rounded-lg border border-p01-yellow/50 p-3">
+            <p className="text-xs text-p01-text-muted">
+              <strong className="text-p01-text">
+                {t(readinessAsk === "notYet" ? "pay.pool.readyNotYetLead" : "pay.pool.readyUnknownLead")}
+              </strong>
+              {t(readinessAsk === "notYet" ? "pay.pool.readyNotYetBody" : "pay.pool.readyUnknownBody")}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {readinessAsk === "notYet" && (
+                <button
+                  type="button"
+                  onClick={() => void handleShield("continue")}
+                  disabled={!!busyNote || !signOne || poolIsSolOnly || !!selectedBlock}
+                  className="btn-primary px-4 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("pay.pool.readyContinue")}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleShield("own")}
+                disabled={!!busyNote || !signOne || poolIsSolOnly || !!selectedBlock}
+                className="btn-secondary px-4 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t("pay.pool.readyOwnDeposit")}
+              </button>
+            </div>
+          </div>
+        )}
+        {/* [sweep 1, record 34] The stop a Deposit click lands on in treasury
+            mode. Red, because what it confirms is a deposit that names the
+            wallet on chain and skips the swap. See `treasuryAsk`. */}
+        {treasuryAsk && !shielding && (
+          <div className="space-y-2 rounded-lg border border-p01-red/50 p-3">
+            <p className="text-xs text-p01-text-muted">
+              <strong className="text-p01-red">{t("pay.pool.treasuryDepositLead")}</strong>
+              {t("pay.pool.treasuryDepositBody")}
+            </p>
+            <button
+              type="button"
+              onClick={() => void handleShield("treasuryPublic")}
+              disabled={!!busyNote || !signOne || poolIsSolOnly || !!selectedBlock}
+              className="btn-secondary px-4 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("pay.pool.treasuryDepositConfirm")}
+            </button>
+          </div>
+        )}
         {shieldReason && !shielding && (
           <p className="text-center text-xs text-p01-text-dim">{shieldReason}</p>
         )}
@@ -1559,15 +1852,14 @@ export default function PoolPanel({
               <p className="mt-1 text-xs text-p01-text-muted">
                 {t("pay.pool.inPoolBody")}
               </p>
-              <p className="mt-1 truncate font-mono text-xs text-p01-text-dim">
-                leaf #{result.leafIndex} · commitment {truncate(result.commitment, 8, 6)}
+              {/* The note by its tag. Its leaf and commitment were here, and the
+                  deposit published both (PoolPanel.test.tsx, "state 2-4"). */}
+              <p className="mt-1">
+                <NoteTag tag={result.tag} />
               </p>
               {contributed && (
                 <p className="mt-2 text-xs text-p01-text-muted">
-                  {t("pay.pool.contributedNote").replace(
-                    "{leaf}",
-                    String(contributed.fundedLeafIndex),
-                  )}
+                  {t("pay.pool.contributedNote")}
                 </p>
               )}
               {/* Unconditional, and it mirrors SubscribePanel's funding
@@ -1624,16 +1916,26 @@ export default function PoolPanel({
                 )}
               </p>
               {/* Empty on a resumed or fallback-claimed contribution: no
-                  deposit of the buyer's landed, so there is nothing to link. */}
-              {result.txSig ? (
-                <a
-                  href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
-                >
-                  {truncate(result.txSig, 10, 8)} ↗
-                </a>
+                  deposit of the buyer's landed, so there is nothing to link.
+                  Not linked on a contribution either: that deposit created the
+                  treasury's leaf, which becomes somebody else's note, and a
+                  screenshot of this card would tie the buyer to it (UI-1,
+                  PoolPanel.test.tsx "a contribution: … nor the funded deposit").
+                  On an own deposit the link is the buyer's own leaf and
+                  commitment, one lookup away, so it waits behind a click
+                  ("an own deposit: its transaction stays off the card until
+                  asked"). */}
+              {result.txSig && !contributed ? (
+                <ChainIdsReveal key={result.txSig} className="mt-2">
+                  <a
+                    href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-block font-mono text-xs text-p01-cyan hover:underline"
+                  >
+                    {truncate(result.txSig, 10, 8)} ↗
+                  </a>
+                </ChainIdsReveal>
               ) : null}
             </div>
           </div>
@@ -1646,11 +1948,14 @@ export default function PoolPanel({
               <p className="font-display text-sm text-p01-text">
                 Exchanged your {exchanged.denomination} SOL note for an older one
               </p>
+              {/* Role words only: the spent and the issued leaf side by side
+                  were the join the exchange exists to break (UI-1,
+                  PoolPanel.test.tsx "state 5"). The note now held, by its tag. */}
               <p className="mt-1 text-xs text-p01-text-muted">
-                Your note at leaf #{exchanged.spentLeafIndex} was withdrawn to the deployment's
-                {t("pay.pool.exchangedBody")
-                  .replace("{spent}", String(exchanged.spentLeafIndex))
-                  .replace("{issued}", String(exchanged.issuedLeafIndex))}
+                {t("pay.pool.exchangedBody")}
+              </p>
+              <p className="mt-1">
+                <NoteTag tag={exchanged.issuedTag} />
               </p>
               <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
                 <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
@@ -1660,14 +1965,19 @@ export default function PoolPanel({
                 </span>
               </p>
               <p className="mt-2 text-xs text-p01-text-dim">{exchanged.disclosure}</p>
-              <a
-                href={`https://explorer.solana.com/tx/${exchanged.spendSig}?cluster=devnet`}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
-              >
-                {truncate(exchanged.spendSig, 10, 8)} ↗
-              </a>
+              {/* The spend of the note given up, behind a click
+                  (PoolPanel.test.tsx, "keeps the exchange's withdrawal off the
+                  card until asked"). */}
+              <ChainIdsReveal key={exchanged.spendSig} className="mt-2">
+                <a
+                  href={`https://explorer.solana.com/tx/${exchanged.spendSig}?cluster=devnet`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block font-mono text-xs text-p01-cyan hover:underline"
+                >
+                  {truncate(exchanged.spendSig, 10, 8)} ↗
+                </a>
+              </ChainIdsReveal>
             </div>
           </div>
         )}
@@ -1694,10 +2004,23 @@ export default function PoolPanel({
                     it", which the next sentence then contradicts. Two readings,
                     one of them fatal, on a card whose whole job is to be
                     believed. Say the narrow thing narrowly. */}
-                {t("pay.pool.withdrawnPayout").replace(
-                  "{address}",
-                  truncate(withdrawn.payout, 6, 6),
-                )}
+                {/* The payout address is the withdrawal's recipient, in the
+                    clear in its instruction data, so it names the withdrawal:
+                    the sentence says what it is, and the address itself waits
+                    behind the reveal below (PoolPanel.test.tsx, "the withdrawal
+                    card keeps its transaction and payout address off the
+                    screen until asked"). */}
+                {/* The circuit that ran decides which of the two sentences is
+                    true. `'v4'` and only `'v4'` earns the one that says the
+                    withdrawal carries no commitment; the C1 + C3 pair
+                    republishes it, and so does an outcome that reports no
+                    version at all, which is why the test is positive rather
+                    than `!== 'v3'`. */}
+                {t(
+                  withdrawn.version === "v4"
+                    ? "pay.pool.withdrawnPayout"
+                    : "pay.pool.withdrawnPayoutV3",
+                ).replace("{address}", t("pay.pool.withdrawnPayoutHidden"))}
               </p>
               {/* Who paid. Two very different sentences, and the user is owed
                   whichever one is true — `fundedBy` is a RESULT, not a request:
@@ -1717,6 +2040,19 @@ export default function PoolPanel({
                     {t("pay.pool.withdrawFunderBody")}
                   </span>
                 </p>
+              ) : withdrawn.fundedBy === "relayer" ? (
+                /* FUND-1: the relayed path funds nothing; the relayer signs and
+                   pays. Any answer that was not 'funder' used to land in the
+                   wallet branch below and say the wallet had paid
+                   (PoolPanel.test.tsx, "a relayed withdrawal's card says the
+                   relayer paid, and never that the wallet did"). */
+                <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                  <span>
+                    <strong className="text-p01-text">{t("pay.pool.withdrawRelayerLead")}</strong>
+                    {t("pay.pool.withdrawRelayerBody")}
+                  </span>
+                </p>
               ) : (
                 <p className="mt-2 flex items-start gap-2 text-xs text-p01-text-muted">
                   <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
@@ -1734,28 +2070,45 @@ export default function PoolPanel({
                   </span>
                 </p>
               )}
-              <a
-                href={`https://explorer.solana.com/tx/${withdrawn.txSig}?cluster=devnet`}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-2 inline-block font-mono text-xs text-p01-cyan hover:underline"
-              >
-                {truncate(withdrawn.txSig, 10, 8)} ↗
-              </a>
+              <ChainIdsReveal key={withdrawn.txSig} className="mt-2">
+                <p className="font-mono text-xs text-p01-text-dim">
+                  payout {truncate(withdrawn.payout, 6, 6)}
+                </p>
+                <a
+                  href={`https://explorer.solana.com/tx/${withdrawn.txSig}?cluster=devnet`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block font-mono text-xs text-p01-cyan hover:underline"
+                >
+                  {truncate(withdrawn.txSig, 10, 8)} ↗
+                </a>
+              </ChainIdsReveal>
             </div>
           </div>
         )}
 
         <div className="flex items-center justify-between gap-3 text-xs">
-          <button
-            onClick={handleRecover}
-            disabled={recovering || shielding || !!busyNote}
-            className="text-p01-text-muted underline-offset-2 hover:text-p01-cyan hover:underline disabled:opacity-50"
-          >
-            {recovering
-              ? t("pay.pool.recoverChecking")
-              : t("pay.pool.recoverButton")}
-          </button>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {/* An arrow, never `onClick={handleRecover}`: the event would
+                arrive as `everyNote` (`PoolPanel.test.tsx`, "the default
+                click asks for no deep check; …"). */}
+            <button
+              onClick={() => void handleRecover(false)}
+              disabled={recovering || shielding || !!busyNote}
+              className="text-p01-text-muted underline-offset-2 hover:text-p01-cyan hover:underline disabled:opacity-50"
+            >
+              {recovering
+                ? t("pay.pool.recoverChecking")
+                : t("pay.pool.recoverButton")}
+            </button>
+            <button
+              onClick={() => void handleRecover(true)}
+              disabled={recovering || shielding || !!busyNote}
+              className="text-p01-text-dim underline-offset-2 hover:text-p01-cyan hover:underline disabled:opacity-50"
+            >
+              {t("pay.pool.recoverEveryNote")}
+            </button>
+          </div>
           {recovered ? (
             <span className="text-p01-cyan">{recovered}</span>
           ) : shielding || busyNote ? (
@@ -1966,8 +2319,8 @@ export default function PoolPanel({
                         {t("pay.pool.unmarkSent")}
                       </button>
                     )}
-                    <p className="truncate font-mono text-xs text-p01-text-dim">
-                      leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
+                    <p className="mt-1">
+                      <NoteTag tag={n.tag} />
                     </p>
                   </div>
                   <button
@@ -2074,8 +2427,11 @@ export default function PoolPanel({
             <p className="font-display text-sm text-p01-text">
               {t("pay.pool.withdrawnWaiting")}
             </p>
+            {/* Arrows, never `onClick={handleShowPayouts}`: the click event
+                would arrive as `everyNote` and be truthy, which is the trap
+                the RECOVER-1 buttons carry the same note about. */}
             <button
-              onClick={handleShowPayouts}
+              onClick={() => void handleShowPayouts(false)}
               disabled={!!sweeping || !!busyNote}
               title={
                 sweeping
@@ -2092,6 +2448,20 @@ export default function PoolPanel({
           </div>
           <p className="mb-2 text-xs text-p01-text-muted">
             {t("pay.pool.payoutLede")}
+          </p>
+          <p className="mb-2 text-xs text-p01-text-dim">
+            {t("pay.pool.payoutScope")}{" "}
+            {/* [sweep 1, records 25 + 31] The deep check, labelled with what
+                it sends, exactly as RECOVER-1's "Check every note" is. It is
+                the only path that re-derives the payout address of a note
+                still sitting in the pool. */}
+            <button
+              onClick={() => void handleShowPayouts(true)}
+              disabled={!!sweeping || !!busyNote}
+              className="text-p01-text-dim underline underline-offset-2 hover:text-p01-cyan disabled:opacity-50"
+            >
+              {t("pay.pool.checkPayoutsEveryNote")}
+            </button>
           </p>
 
           {payouts.length === 0 ? (
@@ -2143,8 +2513,12 @@ export default function PoolPanel({
                         {Number((p.lamports / 1e9).toFixed(6))} SOL
                       </p>
                       <p className="text-xs text-p01-text-muted">Waiting to be moved.</p>
-                      <p className="truncate font-mono text-xs text-p01-text-dim">
-                        leaf #{p.leafIndex} · {truncate(p.address, 6, 6)}
+                      {/* By its tag only: the address is the withdrawal's
+                          recipient in the clear, so it waits behind the reveal
+                          under the list (PoolPanel.test.tsx, "keeps each payout
+                          address off the rows until asked"). */}
+                      <p className="flex min-w-0 items-center gap-2 truncate font-mono text-xs text-p01-text-dim">
+                        <NoteTag tag={p.tag} />
                       </p>
                     </div>
                     <button
@@ -2165,7 +2539,26 @@ export default function PoolPanel({
               </ul>
             </>
           )}
-          {swept && <p className="mt-2 text-xs text-p01-cyan">{swept}</p>}
+          {swept && <p className="mt-2 text-xs text-p01-cyan">{swept.text}</p>}
+          {/* The payout addresses and the last sweep's transaction, one click
+              away. Keyed on what it lists, so a new list or a new sweep starts
+              closed. */}
+          {(payouts.length > 0 || swept) && (
+            <ChainIdsReveal
+              key={[...payouts.map((p) => p.address), swept?.txSig ?? ""].join(",")}
+              className="mt-2"
+            >
+              <ul className="space-y-1 font-mono text-xs text-p01-text-dim">
+                {payouts.map((p) => (
+                  <li key={p.address} className="flex min-w-0 items-center gap-2">
+                    <NoteTag tag={p.tag} />
+                    <span className="truncate">{truncate(p.address, 6, 6)}</span>
+                  </li>
+                ))}
+                {swept && <li>sweep {truncate(swept.txSig, 8, 6)}</li>}
+              </ul>
+            </ChainIdsReveal>
+          )}
           {sweepError && <p className="mt-2 text-xs text-p01-red">{sweepError}</p>}
         </div>
       </div>

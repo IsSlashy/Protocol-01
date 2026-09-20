@@ -6,11 +6,16 @@
  * Built against real event bytes (the V3 `LeafInserted` layout the walk
  * decodes) so the assertion is on the decoded map, not on a mocked decoder.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Keypair, PublicKey, type Connection } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { fetchPoolCommitments } from './denominatedPool';
-import { memoryPoolHistoryStore, poolHistoryKey, setPoolHistoryStore } from './poolHistoryCache';
+import {
+  memoryPoolHistoryStore,
+  poolHistoryKey,
+  setPoolHistoryStore,
+  type PoolHistoryStore,
+} from './poolHistoryCache';
 
 const POOL = Keypair.generate().publicKey;
 const PAYER = Keypair.generate().publicKey;
@@ -28,18 +33,28 @@ function leafInsertedEvent(leafIndex: number, commitment: bigint): string {
   return Buffer.from(data).toString('base64');
 }
 
-interface FakeTx { signature: string; slot: number; leafIndex: number; commitment: bigint }
+interface FakeTx { signature: string; slot: number; leafIndex: number | null; commitment: bigint }
 
 /** Newest-first history, the way `getSignaturesForAddress` pages it. */
 class FakeHistory {
   txs: FakeTx[] = [];
   getTransactionCalls = 0;
   signatureCalls: Array<{ before?: string; until?: string; limit?: number }> = [];
-  readonly rpcEndpoint = 'https://fake.rpc/';
+  rpcEndpoint = 'https://fake.rpc/';
 
   push(leafIndex: number, commitment: bigint) {
     const signature = `sig_${leafIndex}_${commitment.toString(16)}`;
     this.txs.unshift({ signature, slot: 1000 + leafIndex, leafIndex, commitment });
+  }
+
+  /**
+   * A pool transaction that inserts NO leaf — a v4 withdrawal, say, which
+   * lists the pool PDA as writable and so comes back from
+   * `getSignaturesForAddress` like any deposit. The walk reads it, finds no
+   * `LeafInserted` event, and files nothing.
+   */
+  pushLeafless(signature: string, slot = 9_000) {
+    this.txs.unshift({ signature, slot, leafIndex: null, commitment: 0n });
   }
 
   async getSignaturesForAddress(_pk: PublicKey, opts: { before?: string; until?: string; limit?: number } = {}) {
@@ -56,13 +71,26 @@ class FakeHistory {
     return list.slice(0, opts.limit ?? 1000).map((t) => ({ signature: t.signature }));
   }
 
+  /**
+   * Signatures the RPC LISTS but will not RETURN: a null answer, which is a
+   * read that did not happen rather than a transaction without leaves. An
+   * ordinary devnet event (a pruning node, a 429, an un-indexed slot).
+   */
+  unreadable = new Set<string>();
+
   async getTransaction(signature: string, _opts?: unknown) {
     this.getTransactionCalls++;
+    if (this.unreadable.has(signature)) return null;
     const t = this.txs.find((x) => x.signature === signature);
     if (!t) return null;
     return {
       slot: t.slot,
-      meta: { logMessages: [`Program data: ${leafInsertedEvent(t.leafIndex, t.commitment)}`] },
+      meta: {
+        logMessages:
+          t.leafIndex === null
+            ? ['Program log: Instruction: SpendV4', 'Program log: success']
+            : [`Program data: ${leafInsertedEvent(t.leafIndex, t.commitment)}`],
+      },
       transaction: { message: { accountKeys: [PAYER] } },
     };
   }
@@ -136,5 +164,345 @@ describe('[HISTORY-CACHE] fetchPoolCommitments fetches once and then only what i
     const map = await fetchPoolCommitments(h.asConnection(), POOL, { incremental: false });
     expect(h.getTransactionCalls).toBe(6);
     expect(map.size).toBe(6);
+  });
+});
+
+/**
+ * [HIST-1] The snapshot is keyed by the RPC HOST and the pool — never by the
+ * endpoint's path or query.
+ *
+ * Re-read 2026-09-16, at today's line numbers: `poolHistoryKey` is
+ * `${rpcEndpoint}|${poolPDA}` (`poolHistoryCache.ts:129-131`) and the same
+ * string is written INTO the snapshot as `key` (`denominatedPool.ts:2137`).
+ * The deployment's endpoint is a Helius URL whose query carries an API key, so
+ * every IndexedDB row on a user's device, and every JSON file the live harness
+ * writes, held that key in clear. Two such files are still on this machine;
+ * they are the founder action in `HIST-1-report.md`.
+ *
+ * `SECRET123` below is a fixture. The real key lives in `apps/web/.env.local`,
+ * is never read by a test, and is never written to a log.
+ */
+describe('[HIST-1] the snapshot key is a function of host and pool only', () => {
+  const SECRET = 'SECRET123';
+  const ENDPOINT = `https://devnet.helius-rpc.com/v0/rpc?api-key=${SECRET}`;
+
+  /**
+   * A store whose rows the test can read whole. `unknown` on purpose: the same
+   * literals must compile against the snapshot shape both before and after
+   * this work package changes it, so the test is identical in its red and in
+   * its green.
+   */
+  function recordingStore() {
+    const rows = new Map<string, unknown>();
+    const store = {
+      async load(key: string) {
+        return rows.get(key) ?? null;
+      },
+      async save(snapshot: { key: string }) {
+        rows.set(snapshot.key, snapshot);
+      },
+      async clear(key: string) {
+        rows.delete(key);
+      },
+    } as unknown as PoolHistoryStore;
+    return { rows, store };
+  }
+
+  it('no snapshot key or value holds the endpoint path or query', async () => {
+    const { rows, store } = recordingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    h.rpcEndpoint = ENDPOINT;
+    for (let i = 0; i < 4; i++) h.push(i, 3_000n + BigInt(i));
+
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    // Read the way a dump reads it: every key AND every value.
+    const dump = JSON.stringify([...rows.entries()]);
+    expect(rows.size).toBeGreaterThan(0);
+    expect(dump).not.toContain(SECRET);
+    expect(dump).not.toContain('api-key');
+    expect(dump).not.toContain('/v0/rpc');
+    // Still a per-host, per-pool cache: the host and the pool are the key.
+    expect([...rows.keys()]).toEqual([`devnet.helius-rpc.com|${POOL.toBase58()}`]);
+  });
+
+  it('a legacy row keyed by the whole endpoint is migrated and deleted', async () => {
+    const { rows, store } = recordingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    h.rpcEndpoint = ENDPOINT;
+    for (let i = 0; i < 4; i++) h.push(i, 4_000n + BigInt(i));
+
+    // The key the old code wrote, spelled out rather than imported: it is a
+    // constant of what shipped, not of what the module returns today.
+    const legacyKey = `${ENDPOINT}|${POOL.toBase58()}`;
+    rows.set(legacyKey, {
+      version: 1,
+      key: legacyKey,
+      newestSignature: h.txs[0]!.signature,
+      entries: h.txs.map((t) => ({
+        commitment: t.commitment.toString(),
+        leafIndex: t.leafIndex,
+        depositPayer: PAYER.toBase58(),
+        depositSlot: t.slot,
+        signature: t.signature,
+      })),
+      savedAt: 1_700_000_000_000,
+    });
+
+    h.getTransactionCalls = 0;
+    const map = await fetchPoolCommitments(h.asConnection(), POOL);
+
+    expect(rows.has(legacyKey)).toBe(false);
+    expect(rows.has(poolHistoryKey(ENDPOINT, POOL.toBase58()))).toBe(true);
+    expect(JSON.stringify([...rows.entries()])).not.toContain(SECRET);
+    // Migrated, not thrown away: the four decoded leaves are still there and
+    // none of them was fetched again.
+    expect(map.size).toBe(4);
+    expect(h.getTransactionCalls).toBe(0);
+  });
+
+  it('two endpoints that differ only by their credential share one snapshot, two hosts do not', async () => {
+    const other = `https://devnet.helius-rpc.com/v0/rpc?api-key=OTHERKEY`;
+    expect(poolHistoryKey(ENDPOINT, POOL.toBase58())).toBe(poolHistoryKey(other, POOL.toBase58()));
+    expect(poolHistoryKey(ENDPOINT, POOL.toBase58())).not.toBe(
+      poolHistoryKey('https://api.devnet.solana.com', POOL.toBase58()),
+    );
+    // A string that is not a URL must still never be stored whole.
+    expect(poolHistoryKey('not a url?api-key=SECRET123', POOL.toBase58())).not.toContain(SECRET);
+  });
+});
+
+/**
+ * [SWEEP4 round 1, storage lane] The device's row is a function of the CHAIN,
+ * not of this device's walks.
+ *
+ * The row lives in IndexedDB `p01-pool-history` on the user's own machine, so
+ * its reader is a storage dump (an extension with storage access, disk
+ * forensics, an XSS) holding the public chain beside it. Three of its fields
+ * moved with THIS device rather than with the pool:
+ *
+ *   - `newestSignature`. `PoolPanel` rescans the moment a withdrawal lands, so
+ *     the resume point became the user's OWN v4 withdrawal — a transaction
+ *     that names the payout address the pool paid. The pool PDA is writable in
+ *     it, which is why `getSignaturesForAddress` returns it at all.
+ *   - `savedAt`, the millisecond of the last walk.
+ *   - `entries`, kept in the order the walks happened to decode them, so their
+ *     order drew the walk boundaries: how many leaves the pool held at each
+ *     scan and each spend preparation this device ran.
+ *
+ * CACHE-1 removed exactly these three from the KV twin (`kvPoolHistory.ts`,
+ * "minus `savedAt` … the order the walks happened to decode the leaves in");
+ * the device row kept them. The cases below are the device side of the same
+ * rule, and they are MEASURED, not spelled: each runs the same chain twice and
+ * reads what MOVES the row.
+ */
+describe('[SWEEP4-STORAGE] the pool-history row is a function of the chain, not of this device', () => {
+  /** A store whose rows the test can read whole, as a dump reads them. */
+  function recordingStore() {
+    const rows = new Map<string, unknown>();
+    const store = {
+      async load(key: string) {
+        return rows.get(key) ?? null;
+      },
+      async save(snapshot: { key: string }) {
+        rows.set(snapshot.key, snapshot);
+      },
+      async clear(key: string) {
+        rows.delete(key);
+      },
+    } as unknown as PoolHistoryStore;
+    return { rows, store };
+  }
+
+  function row(rows: Map<string, unknown>) {
+    return [...rows.values()][0] as {
+      newestSignature: string | null;
+      savedAt: number;
+      entries: Array<{ leafIndex: number; signature: string }>;
+    };
+  }
+
+  it('names no transaction of this device: the walk that follows the user’s own withdrawal keeps a deposit as its resume point', async () => {
+    const { rows, store } = recordingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    for (let i = 0; i < 5; i++) h.push(i, 5_000n + BigInt(i));
+
+    // The device's ordinary walk...
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    const newestDeposit = h.txs[0]!.signature;
+
+    // ...then this user's own withdrawal lands and the panel rescans.
+    h.pushLeafless('WITHDRAWAL_OF_THIS_DEVICE_1');
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    expect(row(rows).newestSignature, 'the row names the device’s own withdrawal').not.toBe(
+      'WITHDRAWAL_OF_THIS_DEVICE_1',
+    );
+    // The resume point is a deposit — a leaf the row already carries, so it
+    // adds nothing to the dump that the entries do not already say.
+    expect(row(rows).newestSignature).toBe(newestDeposit);
+    expect(
+      row(rows).entries.some((e) => e.signature === row(rows).newestSignature),
+      'the resume point is not one of the leaves the row already holds',
+    ).toBe(true);
+  });
+
+  /**
+   * 🚨 THE SAME LEAK, THROUGH THE OTHER DOOR (gate r1, RED 6).
+   *
+   * `rememberLeafless` is only reached after a SUCCESSFUL read, so the rule
+   * above — "a transaction this walk read and found leafless is never the saved
+   * resume point" — says nothing about a transaction the walk could not read.
+   * A null, a 429 or a log-less answer is an ordinary devnet event, and on the
+   * very path the leak was measured on (PoolPanel rescanning the moment a
+   * withdrawal lands) the unreadable transaction IS the user's own withdrawal.
+   * The row then names it again.
+   *
+   * ⛔ AND THE GRIEFER RULE MUST SURVIVE. A transaction the CHAIN REJECTED is
+   * listed and never fetched, so it never enters the re-read list, and it stays
+   * eligible as the resume point — otherwise a griefer's failing padding above a
+   * real deposit is re-listed on every walk until it eats the signature budget
+   * (`poolHistoryBackfill.test.ts`). "Unread" here means "listed as successful
+   * and not returned", never "rejected".
+   */
+  it('names no transaction of this device when the read of it FAILED, not only when it succeeded', async () => {
+    const { rows, store } = recordingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    for (let i = 0; i < 5; i++) h.push(i, 8_100n + BigInt(i));
+
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    const newestDeposit = h.txs[0]!.signature;
+
+    // This user's own withdrawal lands, the panel rescans, and the RPC will not
+    // hand the transaction back.
+    h.pushLeafless('WITHDRAWAL_OF_THIS_DEVICE_2');
+    h.unreadable.add('WITHDRAWAL_OF_THIS_DEVICE_2');
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    expect(
+      row(rows).newestSignature,
+      'the row names the device\u2019s own withdrawal as its resume point',
+    ).not.toBe('WITHDRAWAL_OF_THIS_DEVICE_2');
+    expect(row(rows).newestSignature).toBe(newestDeposit);
+  });
+
+  /**
+   * ⚠️ A DISCLOSED RESIDUAL, MEASURED RATHER THAN HIDDEN (gate r1, RED 6).
+   *
+   * The re-read list holds RAW SIGNATURES of transactions the RPC listed and
+   * did not return, and on this same path that can be the user's own
+   * withdrawal. It cannot be removed today:
+   *   - hashing buys nothing, because the pool's signature list is public;
+   *   - leaving out the entries above the resume point stops the walk
+   *     converging (`spendRootIsCurrent.test.ts`, "signatures the walk gave up
+   *     on keep a short map from being proved" — `dropped` measured 0, not 2);
+   *   - moving the count into session memory loses the attempt cap across a
+   *     reload.
+   * What closes it is sealing this row, which the walk cannot do today: it has
+   * no identity to seal to. FOUNDER / next round.
+   *
+   * So what is pinned here is the BOUND. The signature is in the row only while
+   * the RPC is failing on it, and the FIRST successful read takes it out — the
+   * window is the outage, not the life of the store. A change that let it
+   * linger, or that wrote it into any other field, fails this case.
+   */
+  it('clears it from the row as soon as the read succeeds, so the window is the outage', async () => {
+    const { rows, store } = recordingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    for (let i = 0; i < 5; i++) h.push(i, 8_200n + BigInt(i));
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    h.pushLeafless('WITHDRAWAL_OF_THIS_DEVICE_3');
+    h.unreadable.add('WITHDRAWAL_OF_THIS_DEVICE_3');
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    // The residual, stated: while the read keeps failing it is in the re-read
+    // list — and in NO other field. This is the positive control for the
+    // assertion below, and the list of fields is what keeps a future one from
+    // carrying it quietly.
+    const during = row(rows) as unknown as Record<string, unknown>;
+    expect(
+      JSON.stringify(during.retry),
+      'the re-read list does not name it, so this case proves nothing',
+    ).toContain('WITHDRAWAL_OF_THIS_DEVICE_3');
+    for (const [field, value] of Object.entries(during)) {
+      if (field === 'retry') continue;
+      expect(JSON.stringify(value) ?? '', `the row names it in ${field}`).not.toContain(
+        'WITHDRAWAL_OF_THIS_DEVICE_3',
+      );
+    }
+
+    // The RPC recovers. One successful read and the row names it nowhere.
+    h.unreadable.clear();
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    const dump = JSON.stringify([...rows.entries()]);
+    expect(dump, 'nothing was stored at all').toContain('sig_4_');
+    expect(dump, 'the row still names this device’s own withdrawal after a good read').not.toContain(
+      'WITHDRAWAL_OF_THIS_DEVICE_3',
+    );
+  });
+
+  it('carries no clock: the same chain walked at two different moments stores the same row', async () => {
+    async function world(now: number): Promise<string> {
+      const { rows, store } = recordingStore();
+      setPoolHistoryStore(store);
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        const h = new FakeHistory();
+        for (let i = 0; i < 4; i++) h.push(i, 6_000n + BigInt(i));
+        await fetchPoolCommitments(h.asConnection(), POOL);
+        h.push(4, 6_004n);
+        await fetchPoolCommitments(h.asConnection(), POOL);
+      } finally {
+        clock.mockRestore();
+      }
+      return JSON.stringify([...rows.entries()]);
+    }
+    const base = await world(1_700_000_000_000);
+    expect(await world(1_700_000_000_000), 'the world does not replay').toBe(base);
+    expect(await world(1_800_000_000_000), 'the stored row moved with the clock').toBe(base);
+  });
+
+  it('files the leaves in leaf order, so the row does not draw this device’s walk boundaries', async () => {
+    const { rows, store } = recordingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    // Five leaves, a walk; two more, a walk; one more, a walk. The walk
+    // boundaries fall at 5 and 7 leaves.
+    for (let i = 0; i < 5; i++) h.push(i, 7_000n + BigInt(i));
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    h.push(5, 7_005n);
+    h.push(6, 7_006n);
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    h.push(7, 7_007n);
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    expect(row(rows).entries.map((e) => e.leafIndex)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it('costs no re-read: a leafless transaction above the newest deposit is fetched once, not once per walk', async () => {
+    const { store } = recordingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    for (let i = 0; i < 3; i++) h.push(i, 8_000n + BigInt(i));
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    h.pushLeafless('WITHDRAWAL_OF_THIS_DEVICE_2');
+    h.getTransactionCalls = 0;
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    expect(h.getTransactionCalls, 'the new transaction is read once').toBe(1);
+
+    // Two more walks with nothing new on chain: the resume point is a deposit,
+    // so the withdrawal is LISTED again — and must not be read again.
+    h.getTransactionCalls = 0;
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    expect(h.getTransactionCalls, 'a leafless transaction is re-read every walk').toBe(0);
   });
 });

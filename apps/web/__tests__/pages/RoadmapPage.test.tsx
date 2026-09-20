@@ -213,7 +213,7 @@ describe('RoadmapPage -- Styx Protocol development roadmap', () => {
     it('names the auditors and the scope of the pre-mainnet audit', () => {
       expect(
         screen.getByText(
-          'Comprehensive audit of all 12 programs, 6 STARK AIRs, custom on-chain FRI verifier, and 10 SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.',
+          'Comprehensive audit of the four programs on the product path, the eight STARK AIRs, the on-chain FRI verifier and the published SDKs by OtterSec, Neodyme, or Trail of Bits before mainnet deployment.',
         ),
       ).toBeInTheDocument();
     });

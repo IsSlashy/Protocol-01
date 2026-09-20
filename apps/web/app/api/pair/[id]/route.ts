@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pairRateLimitExceeded, pairSet, pairTake } from '@/lib/pairStore';
+import { clientIp } from '@/lib/net/clientIp';
 
 // Phone→extension pairing relay. The phone POSTs an encrypted `p01pair1:` blob
 // (its seed, sealed to a one-time code); the extension GETs it back once and
@@ -14,15 +15,6 @@ const MAX_BLOB = 4096;
 // every 2.5s (~24/min), so 60 leaves headroom for a retry or two devices.
 const POST_PER_MIN = 10;
 const GET_PER_MIN = 60;
-
-/** First hop of the forwarding chain; falls back to a stable sentinel. */
-function clientIp(req: NextRequest): string {
-  const real = req.headers.get('x-real-ip');
-  if (real) return real.trim();
-  const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return 'unknown';
-}
 
 // The extension calls this from a chrome-extension:// origin, and the mobile
 // app from a native fetch — both are cross-origin, so allow any origin. Safe:

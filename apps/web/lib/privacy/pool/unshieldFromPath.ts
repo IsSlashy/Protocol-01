@@ -12,10 +12,13 @@
  * But a shield already computes the exact witness a withdrawal needs: the
  * siblings folding its own leaf up to the root, and that root is the pool's
  * current root at that moment, which then enters the historical ring
- * (`DenominatedPoolV3::MAX_HISTORICAL_ROOTS = 100`, `pool_v3.rs:185`). The
- * on-chain handler accepts any root in that ring. So storing the path at shield
- * time lets a withdrawal prove membership with no history at all — until 100
- * further deposits push that root out of the ring, at which point we fall back.
+ * (`DenominatedPoolV3::MAX_HISTORICAL_ROOTS = 255`, `pool_v3.rs:217`; pools not
+ * yet migrated keep 100). The on-chain handler accepts any root in that ring.
+ * So storing the path at shield time lets a withdrawal prove membership with no
+ * history at all — until enough further deposits (255, or 100 on an unmigrated
+ * pool) push that root out of the ring, at which point we fall back. The bound
+ * is pinned by `spendRootIsCurrent.test.ts`, "the stored-path root check sees a
+ * 150-entry ring".
  *
  * This only replaces where the C3 witness comes from. The proofs, public
  * inputs, and the instruction are byte-identical to the history-based path.
@@ -75,7 +78,10 @@ export async function isRootAccepted(
   if (bytesEqual(target, data.slice(88, 120))) return true;
 
   const ringLen = data[178] | (data[179] << 8) | (data[180] << 16) | (data[181] << 24);
-  if (ringLen > 100 || data.length < 182 + ringLen * 32) return false;
+  // 255 = `DenominatedPoolV3::MAX_HISTORICAL_ROOTS` (pool_v3.rs), the same bound
+  // as `parsePoolV3Account` (`spendRootIsCurrent.test.ts`, "the stored-path root
+  // check sees a 150-entry ring").
+  if (ringLen > 255 || data.length < 182 + ringLen * 32) return false;
   for (let i = 0; i < ringLen; i++) {
     if (bytesEqual(target, data.slice(182 + i * 32, 182 + i * 32 + 32))) return true;
   }

@@ -52,7 +52,10 @@ const ROUTES = [
     name: 'issue-note',
     path: 'app/api/issue-note/route.ts',
     /** The release helper is defined after the `minted` check on purpose: an
-     *  unminted code must stay burned, so nothing above this may release. */
+     *  unminted code must stay burned, so nothing above this may release a
+     *  code the store has READ as unminted. The one release above it is for a
+     *  row the store could not read at all, which is no verdict
+     *  (`issue-note.node.test.ts` "a claim row the store could not read"). */
     claimedAfter: 'const release = async (res: NextResponse) => {',
   },
 ] as const;

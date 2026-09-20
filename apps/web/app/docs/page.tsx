@@ -470,18 +470,30 @@ await executeTool("privacy_shield", { amount: 0.1 });
 // AFTER: Winterfell STARKs over Goldilocks (current)
 const proof = await starkProver.generateProof(secret);
 // Hash-based (Blake3 + Poseidon), no trusted setup, custom on-chain
-// FRI verifier, 7 AIRs (one per accepted circuit id); proofs measured
-// 2026-09-02 at 79,405 bytes (spend) to 94,897 (pool spend)`,
+// FRI verifier, 8 AIRs (one per accepted circuit id); proofs measured
+// 2026-09-12 at 74,365 bytes (subscriber ownership) to 95,777 (balance
+// proof), docs/BENCHMARK-2026-09-13.md §6`,
   },
 ];
 
 /**
  * Circuit ids the deployed verifier accepts, counted from the source of truth:
  * `get_circuit_config` in programs/p01_stark_verifier/src/compact_proof.rs maps
- * 0..=6 and returns None above that, and `boundary_assertions_reject_unknown_circuit`
- * pins the rejection for 7, 8, 100 and 255. One AIR module each in stark/src/air/.
+ * 0..=7 (7 = spend, added 2026-08-25) and returns None above that;
+ * `boundary_assertions_reject_unknown_circuit` pins the rejection of unknown ids.
+ * One AIR module each in stark/src/air/.
  */
-const STARK_CIRCUIT_COUNT = 7;
+const STARK_CIRCUIT_COUNT = 8;
+
+/**
+ * Programs the product path calls, each checked executable on devnet on
+ * 2026-09-14 by getAccountInfo: p01_stark_verifier, zk_shielded, p01_registry,
+ * p01_relayer. Not the crate count (10 under programs/): four crates declare an
+ * id with no account behind it, one more is deployed but off the product
+ * path, and four programs were closed on devnet on 2026-09-13
+ * (docs/HANDOFF-2026-09-13.md §11).
+ */
+const LIVE_PROGRAM_COUNT = 4;
 
 /**
  * The stack, layer by layer.
@@ -772,14 +784,18 @@ function ArchitectureTopic({ t }: { t: (k: string) => string }) {
 
       {/* Every number here is counted from the tree, not carried over from an
           older revision:
-            7  = circuit ids the on-chain verifier accepts (0..6; 7+ returns
+            8  = circuit ids the on-chain verifier accepts (0..7; 8+ returns
                  UnsupportedCircuit), one AIR module each in stark/src/air/.
                  Was "10 ZK Circuits", a mixed count of STARKs plus the three
                  legacy Groth16 artifacts still sitting in the Android assets.
-            14 = Cargo workspace members under programs/ (p01_arcium excluded
-                 from the build, so 15 directories, 14 programs).
-            11 = @protocol-01 packages resolving on npm. The repo holds 16, of
-                 which pay-core is private and 4 are unpublished.
+            4  = programs live on devnet and on the product path (verifier,
+                 shielded pool, registry, relayer), checked by getAccountInfo
+                 on 2026-09-14. Was 14, the Cargo member count, which counted
+                 crates with no account behind them and four programs closed
+                 on 2026-09-13.
+            11 = @protocol-01 packages resolving on npm (npm view, 2026-09-14).
+                 The repo holds 16, of which pay-core is private and 4 are
+                 unpublished.
             21 = topics rendered by this page (the `technologies` array).
                  Was 14, i.e. the count before seven modules were added. */}
       <div className="styx-grid styx-grid-4" style={{ marginTop: "2.5rem" }}>
@@ -789,7 +805,7 @@ function ArchitectureTopic({ t }: { t: (k: string) => string }) {
         </Reveal>
         <Reveal className="styx-card styx-reveal" delay={80}>
           <p className="styx-card-label">{t("docs.statPrograms")}</p>
-          <p className="styx-card-value">14</p>
+          <p className="styx-card-value">{LIVE_PROGRAM_COUNT}</p>
         </Reveal>
         <Reveal className="styx-card styx-reveal" delay={160}>
           <p className="styx-card-label">{t("docs.statSdks")}</p>

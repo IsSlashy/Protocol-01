@@ -46,7 +46,9 @@ vi.mock('./ephemeralFunder', () => ({
 
 // The pool table, reduced to the one lookup the exchange makes: the note's
 // pool, so the spend is recorded under the key the pickers filter on.
-vi.mock('./denominatedPool', () => ({
+// Partial since DEV-1: the real store handlers below load the real module.
+vi.mock('./denominatedPool', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./denominatedPool')>()),
   findPoolV3: () => ({
     poolPDA: new PublicKey(POOL),
     token: 'SOL',
@@ -61,7 +63,17 @@ import {
   resumeContribution,
   ExchangeAfterSpendError,
 } from '../shieldClient';
-import type { PoolNoteView } from '../worker/poolHandlers';
+import { handlePoolRequest, setPoolSeed, type PoolNoteView } from '../worker/poolHandlers';
+import { pendingRecords as openPending } from '../pendingContribution';
+
+/**
+ * The store kinds go to the real handlers under a real identity: the receipt
+ * is sealed on disk since DEV-1, and the issuance address is derived per code.
+ */
+const STORE_KINDS = new Set(['poolNoteAddress', 'poolStoreLabel', 'poolOpenRecords', 'poolIssueAddress']);
+function storeKind(req: Record<string, unknown>) {
+  return STORE_KINDS.has(String(req.kind)) ? handlePoolRequest(req as never) : null;
+}
 
 const OWNER = new PublicKey('7gWpzSZAqUiN6uZ9NkfB1gZ5gYtvUvQyFAUhZTjJ6Trh');
 /** R, the till: where the deployment collects. */
@@ -157,10 +169,14 @@ function stubDeployment(
       });
     }
     if (url === '/api/issue-note' && method === 'POST') {
+      // No leafIndex: the route stopped sending one, so a stub that kept it
+      // could not detect the field coming back (`__tests__/api/
+      // issue-note.node.test.ts` "are not left expecting a field the reply no
+      // longer carries"). The leaf the assertions below read is the one the
+      // client takes from the note it opened.
       return json(200, {
         ok: true,
         sealedNote: 'p01enc1:SEALED',
-        leafIndex: ISSUED_NOTE.leafIndex,
         disclosure: 'DISCLOSURE',
       });
     }
@@ -191,9 +207,10 @@ function stubWorker(version: 'v3' | 'v4' = 'v4') {
           ...(req.signClaim ? { claimProof: 'PROOF' } : {}),
         };
       case 'poolNoteAddress':
-        return { kind: 'poolNoteAddress', address: 'p01pq:ADDR' };
       case 'poolStoreLabel':
-        return { kind: 'poolStoreLabel', label: 'L', legacyAddress: 'p01pq:ADDR' };
+      case 'poolOpenRecords':
+      case 'poolIssueAddress':
+        return storeKind(req);
       case 'poolImportNote':
         return {
           kind: 'poolImportNote',
@@ -221,9 +238,11 @@ function installStorage(): Map<string, string> {
   return backing;
 }
 
+/** The store a build before DEV-1 wrote, in clear: what the last case plants. */
 const PENDING_KEY = 'p01:pending-contribution:v1';
-function pendingRecords(storage: Map<string, string>): Array<Record<string, unknown>> {
-  return JSON.parse(storage.get(PENDING_KEY) ?? '[]');
+/** The receipts, as the store opens them (sealed on disk since DEV-1). */
+async function pendingRecords(_storage: Map<string, string>): Promise<Array<Record<string, unknown>>> {
+  return (await openPending('meta', OWNER.toBase58())) as unknown as Array<Record<string, unknown>>;
 }
 
 function exchange(over: Partial<Parameters<typeof exchangeNoteForIssued>[0]> = {}) {
@@ -248,6 +267,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   calls = [];
   storage = installStorage();
+  setPoolSeed('meta', new Uint8Array(64).fill(13));
   vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', 'test-ticket');
   fundEphemeralForJob.mockResolvedValue({
     fundedBy: 'funder',
@@ -302,9 +322,14 @@ describe('what the exchange puts on the wire', () => {
 
     const issues = posts('/api/issue-note');
     expect(issues).toHaveLength(1);
+    // The one-time address of THIS code, never the published one (DEV-1,
+    // `worker/issueAddress.test.ts`).
+    const oneTime = await handlePoolRequest({ kind: 'poolIssueAddress', meta: 'meta', claimCode: 'CLAIM' });
+    const published = await handlePoolRequest({ kind: 'poolNoteAddress', meta: 'meta' });
+    expect(oneTime.address).not.toBe(published.address);
     expect(issues[0]!.body).toMatchObject({
       claimCode: 'CLAIM',
-      recipientAddress: 'p01pq:ADDR',
+      recipientAddress: oneTime.address,
       token: 'SOL',
       denomination: 1,
     });
@@ -312,6 +337,7 @@ describe('what the exchange puts on the wire', () => {
     // note takes, so a wrong or corrupted issuance cannot enter as money.
     const [imported] = requestsOfKind('poolImportNote');
     expect(imported!.sealedNote).toBe('p01enc1:SEALED');
+    expect(imported!.claimCode).toBe('CLAIM');
 
     // Order: spend, claim, redeem. A redeem before the claim has no code; a
     // claim before the spend has no payment.
@@ -341,7 +367,7 @@ describe('what the exchange puts on the wire', () => {
 
   it('clears the receipt once the note is in hand', async () => {
     await exchange();
-    expect(pendingRecords(storage)).toEqual([]);
+    expect(await pendingRecords(storage)).toEqual([]);
   });
 });
 
@@ -378,6 +404,19 @@ describe('the refusals that cost nobody anything', () => {
     expect(requestsOfKind('poolUnshieldExecute')).toEqual([]);
     expect(posts('/api/claim-for-payment')).toEqual([]);
   });
+
+  it('refuses before the spend when the receipt could not be sealed', async () => {
+    // DEV-1: the receipt written the moment the withdrawal lands is sealed,
+    // which needs this identity's store session. Without one, the only
+    // receipt would be lost AFTER the note was spent; so it refuses first.
+    await expect(exchange({ meta: 'meta-that-never-signed' })).rejects.toThrow(/No pool keys/);
+
+    // Positive control: the session was asked for, and nothing after it ran.
+    expect(requestsOfKind('poolStoreLabel').length).toBeGreaterThan(0);
+    expect(requestsOfKind('poolUnshieldPrepare')).toEqual([]);
+    expect(fundEphemeralForJob).not.toHaveBeenCalled();
+    expect(posts('/api/claim-for-payment')).toEqual([]);
+  });
 });
 
 describe('after the spend, the receipt survives whatever happens next', () => {
@@ -388,8 +427,11 @@ describe('after the spend, the receipt survives whatever happens next', () => {
     expect(err).toBeInstanceOf(ExchangeAfterSpendError);
     expect((err as ExchangeAfterSpendError).spendSig).toBe('TXSIG');
     expect(String((err as Error).message)).toMatch(/receipt is kept/);
+    // Named on the error object, never in the sentence the page shows: the
+    // spend leads back to the note it spent (UI-1 fix round 1).
+    expect(String((err as Error).message)).not.toContain('TXSIG');
 
-    const [record] = pendingRecords(storage);
+    const [record] = await pendingRecords(storage);
     expect(record).toMatchObject({
       kind: 'exchange',
       owner: OWNER.toBase58(),
@@ -420,11 +462,13 @@ describe('after the spend, the receipt survives whatever happens next', () => {
     expect(requestsOfKind('poolUnshieldPrepare')).toEqual([]);
     expect(requestsOfKind('poolUnshieldExecute')).toEqual([]);
     expect(fundEphemeralForJob).not.toHaveBeenCalled();
-    expect(pendingRecords(storage)).toEqual([]);
+    expect(await pendingRecords(storage)).toEqual([]);
   });
 
   it('says so when the worker returned no proof, rather than posting a claim nobody signed', async () => {
     poolRequest.mockImplementation(async (req: Req) => {
+      const store = storeKind(req);
+      if (store) return store;
       if (req.kind === 'poolUnshieldPrepare') {
         return {
           kind: 'poolUnshieldPrepare',
@@ -444,7 +488,62 @@ describe('after the spend, the receipt survives whatever happens next', () => {
     });
     const err = await exchange().catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ExchangeAfterSpendError);
+    // On the error object for code, never in the sentence the page shows
+    // (UI-1 fix round 2; the page side is PoolPanel.test.tsx, "an exchange that
+    // spent but did not collect keeps the spend off the error line until asked").
+    expect(String((err as Error).message)).not.toContain('TXSIG');
+    expect((err as ExchangeAfterSpendError).spendSig).toBe('TXSIG');
     expect(String((err as Error).message)).toMatch(/no proof of payment/);
     expect(posts('/api/claim-for-payment')).toEqual([]);
+  });
+
+  it('names no withdrawal when the claim retries run out, and keeps it on the error and the receipt', async () => {
+    // Every attempt answers 404: the deployment's node never sees the payment
+    // inside the retry budget (5 here, see `exchange()`).
+    stubDeployment({ claim404s: 5 });
+    const err = await exchange().catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(ExchangeAfterSpendError);
+    expect(String((err as Error).message)).not.toContain('TXSIG');
+    expect((err as ExchangeAfterSpendError).spendSig).toBe('TXSIG');
+    // Positive controls: this is the 404 path with its five attempts, and the
+    // receipt that resumes it is on the device.
+    expect(posts('/api/claim-for-payment')).toHaveLength(5);
+    expect(String((err as Error).message)).toMatch(/after 5 attempts/);
+    expect(String((err as Error).message)).toMatch(/receipt is kept/);
+    expect((await pendingRecords(storage))[0]).toMatchObject({
+      kind: 'exchange',
+      paymentSignature: 'TXSIG',
+      claimProof: 'PROOF',
+    });
+  });
+
+  it('a receipt with no proof refuses to resume without quoting the withdrawal', async () => {
+    // A record an older client wrote: the withdrawal, and no proof. Its only
+    // caller logs the error class (PoolPanel.test.tsx, "a failed resume logs
+    // the error class, never its message"); the sentence names no spend either.
+    storage.set(
+      PENDING_KEY,
+      JSON.stringify([
+        {
+          kind: 'exchange',
+          leafIndex: LEAF,
+          owner: OWNER.toBase58(),
+          token: 'SOL',
+          denomination: 1,
+          txSig: 'TXSIG',
+          paymentSignature: 'TXSIG',
+          at: Date.now(),
+        },
+      ]),
+    );
+    const err = await resumeContribution({ meta: 'meta', owner: OWNER }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(String((err as Error).message)).not.toContain('TXSIG');
+    expect(String((err as Error).message)).toMatch(/no proof of payment/);
+    expect(posts('/api/claim-for-payment')).toEqual([]);
+    // Kept: the record is what support finds the withdrawal by.
+    expect(await pendingRecords(storage)).toHaveLength(1);
   });
 });

@@ -696,3 +696,199 @@ describe('a payment that funded a relayed deposit is a contribution, and this ro
     ).toHaveLength(0);
   });
 });
+
+/**
+ * KV-1 · A REDEEMED PAYMENT IS ANSWERED BEFORE THE BINDING IS CONSULTED.
+ *
+ * ISSUE-1 deletes `p01:note:paid:<sig>:code` and the relay's binding once the
+ * code has been redeemed, and keeps `p01:note:paid:<sig>` — the gate that stops
+ * one payment buying two notes. Everything below is what a caller meets AFTER
+ * that sweep, and the order is the whole point: the binding check used to run
+ * first, so a payer replaying their own confirm was told "that payment did not
+ * fund this leaf" (400) about a payment that plainly had.
+ *
+ * The rule: the code if it is still there, 409 "already redeemed" if it is not,
+ * and never a second mint.
+ */
+describe('KV-1 · a payment that has already been redeemed', () => {
+  const minted = (kv: ReturnType<typeof store>) =>
+    [...kv.data.keys()].filter((k) => k.startsWith('p01:note:claim-minted:'));
+
+  const claim = (over: Record<string, unknown> = {}) =>
+    post({
+      signature: SIG,
+      proof: proofFor(SIG),
+      contribution: { token: 'SOL', leafIndex: LEAF },
+      ...over,
+    });
+
+  beforeEach(() => {
+    mockGetTransaction.mockResolvedValue(paidTx(1_003_000_000));
+  });
+
+  it('🚨 replays the code this payment bought, even though the binding is gone', async () => {
+    const kv = relayedStore();
+    kv.data.set(`p01:note:paid:${SIG}`, 1);
+    kv.data.set(`p01:note:paid:${SIG}:code`, 'CONFIRMED-CODE');
+    // Swept at redemption. The payment still funded that leaf; the row that
+    // said so is simply no longer at rest.
+    kv.data.delete(`p01:relay:payment:${SIG}:contribution`);
+    mockGetStore.mockReturnValue(kv);
+
+    const { POST } = await route();
+    const res = await POST(claim());
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.claimCode, 'the payer was refused a code they had already bought').toBe(
+      'CONFIRMED-CODE',
+    );
+    expect(minted(kv), 'a replay minted a second code').toHaveLength(0);
+  });
+
+  it('🚨 refuses a redeemed relayed payment with 409, and mints nothing', async () => {
+    const kv = relayedStore();
+    kv.data.set(`p01:note:paid:${SIG}`, 1);
+    kv.data.delete(`p01:relay:payment:${SIG}:contribution`);
+    mockGetStore.mockReturnValue(kv);
+
+    const { POST } = await route();
+    const res = await POST(claim());
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(409);
+    expect(body.error).toMatch(/already been redeemed/i);
+    expect(minted(kv)).toHaveLength(0);
+    expect(kv.data.get(`p01:note:paid:${SIG}`), 'a refusal consumed the gate again').toBe(1);
+  });
+
+  it('🚨 refuses a redeemed PLAIN SALE the same way, without consuming the gate', async () => {
+    // The plain-sale path has no relay claim and no binding, so it used to fall
+    // through to the gate and answer 503 "claimed but its code could not be
+    // read" — a store error for a payment that was simply spent.
+    const kv = store();
+    kv.data.set(`p01:note:paid:${SIG}`, 1);
+    mockGetStore.mockReturnValue(kv);
+
+    const { POST } = await route();
+    const res = await POST(post({ signature: SIG, proof: proofFor(SIG) }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(409);
+    expect(body.error).toMatch(/already been redeemed/i);
+    expect(kv.data.get(`p01:note:paid:${SIG}`), 'a refusal consumed the gate again').toBe(1);
+    expect(minted(kv)).toHaveLength(0);
+  });
+
+  it('a first sale reads the payment counter, never the code row, before it mints', async () => {
+    // LATENCY, KV-1 fix round 1. A code is written only after `incr(paid)`, so
+    // a counter reading 0 already says "no code": reading the code row too
+    // would be a second round trip on every purchase. Plain sale and relayed
+    // fallback alike.
+    for (const [kv, body] of [
+      [store(), post({ signature: SIG, proof: proofFor(SIG) })],
+      [relayedStore(), claim()],
+    ] as const) {
+      mockGetStore.mockReturnValue(kv);
+      const { POST } = await route();
+      const res = await POST(body);
+      expect(res.status, JSON.stringify(await res.clone().json())).toBe(200);
+      const readKeys = kv.get.mock.calls.map((c) => String(c[0]));
+      expect(readKeys, 'the counter was never read before minting').toContain(
+        `p01:note:paid:${SIG}`,
+      );
+      expect(
+        readKeys.filter((k) => k === `p01:note:paid:${SIG}:code`),
+        'a first purchase paid a GET for a code row that cannot exist yet',
+      ).toEqual([]);
+    }
+  });
+
+  it('⛔ still refuses a STRANGER replaying a public signature', async () => {
+    // The whole early answer sits behind the payer proof, or the first passer-by
+    // to read the till's history collects the code somebody else bought.
+    const kv = store();
+    kv.data.set(`p01:note:paid:${SIG}`, 1);
+    kv.data.set(`p01:note:paid:${SIG}:code`, 'CONFIRMED-CODE');
+    mockGetStore.mockReturnValue(kv);
+
+    const { POST } = await route();
+    const res = await POST(post({ signature: SIG, proof: proofFor(SIG, Keypair.generate()) }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(401);
+    expect(JSON.stringify(body)).not.toContain('CONFIRMED-CODE');
+  });
+
+  it('🚨 a sale that loses the gate to a concurrent one before its code is written gets 409, and mints nothing', async () => {
+    // KV-1 deviation 3: the branch below `incr` said 503 "claimed but its code
+    // could not be read" and now says 409, the same refusal the early read
+    // gives for the same state. Reached only by a race: the counter read 0,
+    // then a concurrent request took the gate before this one's `incr`, and
+    // has not written its code yet. Mutant V9cf (the old 503 put back) is
+    // killed by it (wp-logs/KV-1-fix2/mutants.log).
+    const paidKey = `p01:note:paid:${SIG}`;
+    const base = store();
+    const kv = {
+      ...base,
+      // The read happened before the concurrent request's `incr` landed.
+      get: vi.fn(async (k: string) => (k === paidKey ? null : base.get(k))),
+    };
+    base.data.set(paidKey, 1); // the concurrent request's `incr`
+    mockGetStore.mockReturnValue(kv);
+
+    const { POST } = await route();
+    const res = await POST(post({ signature: SIG, proof: proofFor(SIG) }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(409);
+    expect(body.error).toMatch(/already been redeemed/i);
+    expect(kv.get.mock.calls.map((c) => String(c[0])), 'the race branch never looked for the code').toContain(
+      `${paidKey}:code`,
+    );
+    expect(minted(base), 'a lost race minted a second code for one payment').toHaveLength(0);
+    expect(base.data.get(`${paidKey}:code`)).toBeUndefined();
+  });
+});
+
+/**
+ * WHAT THE REFUSAL SAYS WHEN THE LIMITER ITSELF FAILS.
+ *
+ * 🚨 The store words a failed request as `${error}, command was: ${JSON…}`
+ * (@upstash/redis/nodejs.js), and auto-pipelining batches other requests into
+ * the same command list: another route's claim code, a payment signature,
+ * another caller's limiter bucket. Interpolating that message into the 503
+ * hands the whole batch to the caller — and this body is printed to the buyer
+ * verbatim (`lib/privacy/shieldClient.ts`, the claim-for-payment branch).
+ *
+ * `/api/fund-ephemeral` already answers with fixed words; this route is the
+ * same class and was left behind. Two worlds, same failure, different batch:
+ * the answer must not move.
+ */
+describe('a limiter that fails says so without passing on what the store carried', () => {
+  const batched =
+    'ERR max daily request limit exceeded, command was: ' +
+    '[["incr","p01:rate:OTHERBUCKET:2026-09-20T10"],' +
+    '["set","p01:note:claim-minted:CODE-SALE-123456","payment:5Qv9SigAAAA"]]';
+
+  it('names no claim code, no payment signature and no other bucket', async () => {
+    mockGetStore.mockReturnValue(store());
+    mockRateLimitExceeded.mockRejectedValue(new Error(batched));
+    const { POST } = await route();
+    const one = await POST(post({ signature: SIG, proof: proofFor(SIG) }));
+    expect(one.status).toBe(503);
+    const text = JSON.stringify(await one.json());
+    expect(text, 'the refusal echoed the store command').not.toMatch(/command was/);
+    expect(text, "the refusal named another route's claim code").not.toMatch(/CODE-SALE-123456/);
+    expect(text, 'the refusal named a payment signature').not.toMatch(/5Qv9SigAAAA/);
+    expect(text, 'the refusal named a limiter bucket').not.toMatch(/OTHERBUCKET/);
+  });
+
+  it('gives the same answer whatever the store was carrying', async () => {
+    mockGetStore.mockReturnValue(store());
+    mockRateLimitExceeded.mockRejectedValue(new Error(batched));
+    const { POST } = await route();
+    const one = JSON.stringify(await (await POST(post({ signature: SIG, proof: proofFor(SIG) }))).json());
+
+    mockRateLimitExceeded.mockRejectedValue(
+      new Error('ERR quota, command was: [["incr","p01:rate:MINE:2026-09-20T10"]]'),
+    );
+    const two = JSON.stringify(await (await POST(post({ signature: SIG, proof: proofFor(SIG) }))).json());
+    expect(two, 'the refusal moved with what the store was carrying').toBe(one);
+  });
+});

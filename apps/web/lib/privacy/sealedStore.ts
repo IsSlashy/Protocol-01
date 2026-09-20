@@ -84,15 +84,49 @@ export function writeMap<T>(key: string, all: Record<string, T[]>): void {
   else localStorage.setItem(key, JSON.stringify(all));
 }
 
+/**
+ * [SWEEP4 round 1, storage lane] Every record sealed here is padded to a
+ * multiple of this many bytes, so a blob's LENGTH — which a storage dump reads
+ * without opening anything — is the same for every record of a store.
+ *
+ * Unpadded it was the plaintext's length plus a fixed overhead, and that told:
+ * a spend mark from an attempt mark (`attempt:` is 8 bytes longer); a
+ * merchant's `serviceTag`, `serviceName`, `rate` and `intervalSlots` lengths,
+ * which name a merchant inside a small public registry; a payout's tag text;
+ * and the digit count of a leaf index. Measured by `storeEncryption.test.ts`,
+ * "[SWEEP4-STORAGE] … one length per store, whatever the record holds", with
+ * the unpadded form beside it as the positive control.
+ *
+ * 1,024, the same bucket `pendingContribution.ts` already uses, because the
+ * longest record any of these stores writes — a subscription carrying a long
+ * registry slug, a long display name, an 88-character opening signature, a
+ * pool and a six-digit leaf — measures 554 bytes
+ * (`storeEncryption.test.ts`'s `SUB_LONG`), so every record of every store
+ * lands in ONE bucket. A record past it pads to the next multiple rather than
+ * standing out by not being padded at all. The cost is about 900 more
+ * characters per stored blob, on top of the 1,088-byte ML-KEM ciphertext each
+ * one already carries.
+ */
+const SEALED_RECORD_BYTES = 1_024;
+
 /** Seal one record to this identity's own address. The `p01store: 1` envelope
  *  is load-bearing: `poolOpenRecords` refuses to return anything without it,
  *  which is what keeps that handler from being a decryption oracle over the
  *  note store.
+ *  The padding is TRAILING JSON WHITESPACE, not a field: `JSON.parse` ignores
+ *  it, so every reader — including a worker older than this change — sees
+ *  exactly the record that was sealed, and a blob written before the padding
+ *  still opens ("a blob sealed before the padding still opens, and reading it
+ *  changes nothing").
  *  `utf8ToBytes`, not `new TextEncoder()`: under jsdom the DOM encoder returns
  *  a foreign-realm Uint8Array that tweetnacl's `instanceof` check rejects;
  *  noble's helper re-wraps into this realm's constructor. */
 export function sealRecord(address: string, record: Record<string, unknown>): string {
-  return encryptNote(address, utf8ToBytes(JSON.stringify(record)));
+  const json = utf8ToBytes(JSON.stringify(record));
+  const size = Math.max(1, Math.ceil(json.length / SEALED_RECORD_BYTES)) * SEALED_RECORD_BYTES;
+  const padded = new Uint8Array(size).fill(0x20);
+  padded.set(json);
+  return encryptNote(address, padded);
 }
 
 /**

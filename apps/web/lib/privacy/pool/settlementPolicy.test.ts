@@ -421,3 +421,67 @@ describe('configuration from the environment', () => {
     expect(DEFAULT_SETTLEMENT_CONFIG.minQuietSeconds).toBeGreaterThan(0);
   });
 });
+
+/**
+ * An environment literal as the real type. This app's ambient `ProcessEnv`
+ * declares `NODE_ENV` required, so a plain literal cannot be assigned to it —
+ * the same helper `restockTopUp.test.ts:40` uses, and unlike the three direct
+ * casts above it adds no `tsc` error.
+ */
+const asEnv = (o: Record<string, string>): NodeJS.ProcessEnv => o as unknown as NodeJS.ProcessEnv;
+
+/**
+ * 🚨 THE ONE BOUND AN OPERATOR MAY NOT LOWER, BECAUSE IT IS NOT THEIRS TO LOWER.
+ *
+ * `envInt` refuses 0 and every malformed value, so this floor could not be
+ * switched OFF — but it could be set to 1, either in the deployment's
+ * environment or in the GitHub repository variable
+ * `.github/workflows/restock-inventory.yml:108` hands to the top-up. A floor of
+ * 1 is a settlement carrying one purchase, and that transfer is the buyer's
+ * name on a public edge for good. LEAK-LEDGER row E2.
+ *
+ * The third case is the one that carries the weight: it does not ask the reader
+ * what it returns, it runs `decideSettlement` over a till holding exactly one
+ * purchase and checks the settlement does not leave.
+ */
+describe('the batch floor an environment variable cannot lower (SETTLE-1)', () => {
+  it('turns a configured floor of 1 into 2, and leaves 2, 5 and a malformed value alone', () => {
+    expect(settlementConfigFromEnv(asEnv({ P01_SETTLE_MIN_PURCHASES: '1' })).minPurchases).toBe(2);
+    expect(settlementConfigFromEnv(asEnv({ P01_SETTLE_MIN_PURCHASES: '2' })).minPurchases).toBe(2);
+    expect(settlementConfigFromEnv(asEnv({ P01_SETTLE_MIN_PURCHASES: '5' })).minPurchases).toBe(5);
+    // 0 already fell back, and the fallback is the policy that was chosen: 3.
+    // The clamp bounds how far an environment can lower that; it does not
+    // become the new default.
+    expect(settlementConfigFromEnv(asEnv({ P01_SETTLE_MIN_PURCHASES: '0' })).minPurchases).toBe(3);
+    expect(DEFAULT_SETTLEMENT_CONFIG.minPurchases).toBe(3);
+  });
+
+  it('reports the clamp, and reports nothing when it did not clamp', () => {
+    // A bound raised behind the operator's back is a second surprise on top of
+    // the one they configured. The flag is what lets a caller say so out loud.
+    expect(
+      settlementConfigFromEnv(asEnv({ P01_SETTLE_MIN_PURCHASES: '1' })).minPurchasesClamped,
+    ).toBe(true);
+    for (const v of ['2', '5', '0', 'abc', '']) {
+      expect(
+        settlementConfigFromEnv(asEnv({ P01_SETTLE_MIN_PURCHASES: v })).minPurchasesClamped,
+        `"${v}" must not be reported as clamped`,
+      ).toBeUndefined();
+    }
+    expect(settlementConfigFromEnv(asEnv({})).minPurchasesClamped).toBeUndefined();
+  });
+
+  it('refuses to settle a till holding one purchase when the environment asked for a floor of 1', () => {
+    const fromEnv = settlementConfigFromEnv(asEnv({ P01_SETTLE_MIN_PURCHASES: '1' }));
+    const one = decideSettlement(inputs({ tillLamports: ONE_PURCHASE_LAMPORTS, config: fromEnv }));
+    expect(one.verdict).toBe('below-batch-floor');
+    expect(one.amountLamports).toBe(0);
+    // And it does not over-block. The batch the clamp does allow still settles,
+    // so the money keeps moving: the thing being withheld is a name, not SOL.
+    const two = decideSettlement(
+      inputs({ tillLamports: 2 * ONE_PURCHASE_LAMPORTS, config: fromEnv }),
+    );
+    expect(two.verdict).toBe('settle');
+    expect(two.amountLamports).toBe(2 * ONE_PURCHASE_LAMPORTS);
+  });
+});

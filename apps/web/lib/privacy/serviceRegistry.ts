@@ -138,6 +138,23 @@ export class ServiceRegistryError extends Error {
 // Fetch
 // ---------------------------------------------------------------------------
 
+/** An endpoint's host: its path and query can carry the provider's key. */
+function rpcHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return 'the RPC endpoint';
+  }
+}
+
+/** A library message with every URL cut to its host (node-fetch quotes the
+ *  request URL whole) and any stray `api-key=` value masked. */
+function withoutUrls(message: string): string {
+  return String(message)
+    .replace(/\b(?:https?|wss?):\/\/[^\s'"<>]+/gi, (url) => rpcHost(url))
+    .replace(/\b(api[-_]?key|apikey|token)=[^\s&'"<>]+/gi, '$1=***');
+}
+
 function toEntry(decoded: ServiceRegistryAccount, pda: PublicKey): ServiceEntry {
   return {
     slug: decoded.slug,
@@ -202,8 +219,12 @@ export async function fetchServiceRegistry(
       filters: [discriminatorFilter()],
     });
   } catch (err) {
+    // The host only, never the URL: SubscribePanel prints this message, and the
+    // browser's endpoint carries the provider key in its query
+    // (serviceRegistry.test.ts, "names no RPC key when the read fails: the
+    // Subscribe tab prints this message").
     throw new ServiceRegistryError(
-      `Could not read the service registry from ${connection.rpcEndpoint}: ${(err as Error).message}`,
+      `Could not read the service registry from ${rpcHost(connection.rpcEndpoint)}: ${withoutUrls((err as Error).message)}`,
       err,
     );
   }

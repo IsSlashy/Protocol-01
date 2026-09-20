@@ -35,10 +35,24 @@ const SPEND_FUNDER = Keypair.generate().publicKey;
 /** Whatever the worker last answered for `poolSubscribePrepare`. */
 let prepareAnswer: Record<string, unknown>;
 let executeCalled = false;
+/** When set, the prepare answers only once this settles: lets a case look at
+ *  what the client does WHILE the worker is still preparing. */
+let prepareGate: Promise<void> | null = null;
+/** When set, the spend-funder lookup answers only once this settles: lets a
+ *  case look at whether the prepare was sent WHILE that check is still open. */
+let funderGate: Promise<void> | null = null;
+/** When set, the prepare REFUSES with this error. A refused prepare is the
+ *  common case on this path (an incomplete history, a note already spent, the
+ *  v3 "nothing was proved" answer), and no spend follows it. */
+let prepareError: Error | null = null;
 
 vi.mock('../workerClient', () => ({
   poolRequest: vi.fn(async (req: { kind: string }) => {
-    if (req.kind === 'poolSubscribePrepare') return prepareAnswer;
+    if (req.kind === 'poolSubscribePrepare') {
+      if (prepareGate) await prepareGate;
+      if (prepareError) throw prepareError;
+      return prepareAnswer;
+    }
     if (req.kind === 'poolSubscribeExecute') {
       executeCalled = true;
       return {
@@ -71,10 +85,14 @@ vi.mock('./ephemeralFunder', async (importOriginal) => ({
   // "unknown", which the spend-leg guard refuses — every case in this file would
   // go red for a reason that has nothing to do with what it is testing. Stubbing
   // it makes each case DECLARE who pays, which is the point of the new guard.
-  fetchFunderLookup: vi.fn(async () => funderLookup),
+  fetchFunderLookup: vi.fn(async () => {
+    if (funderGate) await funderGate;
+    return funderLookup;
+  }),
 }));
 
-import { fundEphemeralForJob } from './ephemeralFunder';
+import { fetchFunderLookup, fundEphemeralForJob } from './ephemeralFunder';
+import { poolRequest } from '../workerClient';
 import {
   SelfDepositedNoteError,
   SpendFunderNamesWalletError,
@@ -87,15 +105,29 @@ import {
  * for both — so a stub that serves nothing else is enough to drive every branch.
  */
 let histories: Record<string, (string | { signature: string; slot: number })[]>;
-const connection = {
-  // Newest-first, exactly like the RPC: the guard's slot-coverage rule reads the
-  // LAST element as the oldest one it managed to see, and getting that backwards
-  // would turn "I read far enough" into "I did not".
-  getSignaturesForAddress: async (key: PublicKey, o?: { limit?: number }) =>
-    (histories[key.toBase58()] ?? [])
-      .slice(0, o?.limit ?? 1000)
-      .map((e) => (typeof e === 'string' ? { signature: e } : e)),
-} as never;
+/** Every connection method the client called, by name, in order. */
+let rpcCalls: string[] = [];
+const connection = new Proxy(
+  {
+    // Newest-first, exactly like the RPC: the guard's slot-coverage rule reads the
+    // LAST element as the oldest one it managed to see, and getting that backwards
+    // would turn "I read far enough" into "I did not".
+    getSignaturesForAddress: async (key: PublicKey, o?: { limit?: number }) =>
+      (histories[key.toBase58()] ?? [])
+        .slice(0, o?.limit ?? 1000)
+        .map((e) => (typeof e === 'string' ? { signature: e } : e)),
+  } as Record<string, unknown>,
+  {
+    get(target, prop) {
+      const v = target[prop as string];
+      if (typeof v !== 'function') return v;
+      return (...args: unknown[]) => {
+        rpcCalls.push(String(prop));
+        return (v as (...a: unknown[]) => unknown)(...args);
+      };
+    },
+  },
+) as never;
 
 const params = (over: Record<string, unknown> = {}) =>
   ({
@@ -115,6 +147,10 @@ const params = (over: Record<string, unknown> = {}) =>
 beforeEach(() => {
   vi.clearAllMocks();
   executeCalled = false;
+  prepareGate = null;
+  funderGate = null;
+  prepareError = null;
+  rpcCalls = [];
   // Disjoint by default: the funder and the buyer share no transaction, which
   // is what a note bought without an on-chain payment to the funder looks like.
   histories = {
@@ -132,12 +168,9 @@ beforeEach(() => {
     requiredLamports: 1_035_725_040,
     denomination: 1,
     derivation: 'v1',
-    // A deposit is ALWAYS signed by a fresh ephemeral, so the payer is a key
-    // nobody has heard of. The address that decides anything is the one that
-    // funded it — see `depositFunder`.
-    depositPayer: 'EPHEMERAL1111111111111111111111111111111111',
-    depositFunder: TREASURY.toBase58(),
-    depositSignature: 'DEPOSITSIG',
+    // Where the note came from, as the worker decides it from this device's
+    // store (RPC-1). Received by default: the clean case.
+    noteProvenance: 'received',
   };
 });
 
@@ -145,79 +178,22 @@ describe('a note somebody else deposited', () => {
   it('proceeds, and reports that the buyer is not reachable through it', async () => {
     const out = await subscribeFromPool(params({ neverExposeWallet: true }));
     expect(out.reachableViaDeposit).toBe(false);
-    expect(out.depositPayer).toBe(TREASURY.toBase58());
+    expect(out.noteProvenance).toBe('received');
     expect(executeCalled).toBe(true);
   });
 });
 
-describe('a note deposited by a funder the wallet PAID', () => {
-  // 🚨 THE SHAPE THAT PASSED THIS GUARD AND WAS STILL FINDABLE.
-  //
-  // MEASURED 2026-08-18, spend `4zWERbE1NPaR…`. The funder is not the wallet, so
-  // every equality above is false and the guard passed. The result screen then
-  // said the wallet was not reachable. It was, in two hops: the funder's own
-  // history holds `21PjRyhLLg…`, SIGNED BY THE WALLET, paying it 1.003 SOL one
-  // second before it financed the depositing ephemeral.
-  //
-  // Equality was never the question. The question is whether any transaction
-  // names both — and the answer costs two `getSignaturesForAddress` calls,
-  // which is precisely why an auditor runs it first.
-  beforeEach(() => {
-    histories = {
-      [TREASURY.toBase58()]: ['TREASURY_TX_1', 'THE_PURCHASE'],
-      [OWNER.toBase58()]: ['WALLET_TX_1', 'THE_PURCHASE'],
-    };
-  });
-
-  it('refuses, though the funder is not the wallet', async () => {
-    expect(prepareAnswer.depositFunder).not.toBe(OWNER.toBase58());
-    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
-      SelfDepositedNoteError,
-    );
-    expect(executeCalled).toBe(false);
-  });
-
-  it('reports it as reachable when the caller proceeds anyway', async () => {
-    const out = await subscribeFromPool(params());
-    expect(out.reachableViaDeposit).toBe(true);
-  });
-});
-
-describe('a funder history too long to argue absence from', () => {
-  // An absence read off a truncated page is not an absence, it is a shorter
-  // look. Same asymmetry as everywhere else on this path: a hit is proof, an
-  // absence has to be paid for in full, and an unknown is refused.
-  beforeEach(() => {
-    histories = {
-      [TREASURY.toBase58()]: Array.from({ length: 1000 }, (_, i) => `T${i}`),
-      [OWNER.toBase58()]: ['WALLET_TX_1'],
-    };
-  });
-
-  it('refuses rather than call a full page clean', async () => {
-    await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
-      SelfDepositedNoteError,
-    );
-    expect(executeCalled).toBe(false);
-  });
-});
+// RPC-1 removed the deposit-funder walk these two blocks pinned ("a note
+// deposited by a funder the wallet PAID", "a funder history too long to argue
+// absence from"). Both shapes are notes the buyer's own identity deposited, so
+// the local verdict calls them own deposits with no RPC: see "deposit verdict
+// local and pessimistic" below.
 
 describe('a note THIS wallet deposited', () => {
   beforeEach(() => {
-    // 🚨 THE SHAPE THE FIRST VERSION OF THIS GUARD COULD NOT SEE. The payer
-    // stays an ephemeral — it always is — and the WALLET is one hop behind it.
-    // Measured on a real devnet shield: wallet BRop…TjNN, deposit payer
-    // 8Eq1jsbB…. Comparing the wallet to the payer never matches, so the guard
-    // passed, the screen said "your wallet did not sign or pay for this", and
-    // that true sentence read as "nobody can reach me" while
-    // deposit → ephemeral → funder → wallet was one RPC call away.
-    prepareAnswer.depositFunder = OWNER.toBase58();
-  });
-
-  it('is not fooled by the deposit being signed by an ephemeral', () => {
-    // Stated as its own case because it is the whole bug: the payer here is
-    // NOT the wallet, and the note is still the wallet's.
-    expect(prepareAnswer.depositPayer).not.toBe(OWNER.toBase58());
+    // The worker found the note by this identity's own seed, or in a blob this
+    // identity wrote at shield time (RPC-1).
+    prepareAnswer.noteProvenance = 'own-deposit';
   });
 
   it('refuses before spending anything', async () => {
@@ -267,17 +243,15 @@ describe('a note THIS wallet deposited', () => {
   });
 });
 
-describe('a deposit that could not be found', () => {
+describe('a worker that names no provenance', () => {
   beforeEach(() => {
-    prepareAnswer.depositPayer = null;
-    prepareAnswer.depositFunder = null;
-    prepareAnswer.depositSignature = null;
+    delete prepareAnswer.noteProvenance;
   });
 
   it('is treated as UNKNOWN, not as safe', async () => {
     // The whole file's posture in one case: an unread channel reported clean is
-    // the failure this effort exists to refuse. A leaf outside the scanned
-    // window might have been deposited by anyone — including this wallet.
+    // the failure this effort exists to refuse. A worker older than RPC-1 says
+    // nothing about where the note came from, and it may be this wallet's.
     await expect(
       subscribeFromPool(params({ neverExposeWallet: true })),
     ).rejects.toBeInstanceOf(SelfDepositedNoteError);
@@ -293,7 +267,7 @@ describe('a deposit that could not be found', () => {
   it('reports it as reachable when the caller proceeds anyway', async () => {
     const out = await subscribeFromPool(params({ neverExposeWallet: false }));
     expect(out.reachableViaDeposit).toBe(true);
-    expect(out.depositPayer).toBeNull();
+    expect(out.noteProvenance).toBe('unknown');
   });
 });
 
@@ -453,5 +427,152 @@ describe('a busy funder, which is what a working deployment looks like', () => {
     await expect(subscribeFromPool(params({ neverExposeWallet: true }))).rejects.toBeInstanceOf(
       SpendFunderNamesWalletError,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RPC-1: the deposit verdict is decided on the device, and pessimistically
+// ---------------------------------------------------------------------------
+
+/** The float that pays for relayed deposits: never co-named with the buyer. */
+const FLOAT = Keypair.generate().publicKey;
+
+describe('deposit verdict local and pessimistic', () => {
+  // 🚨 THE SHAPE THE RPC WALK CALLED CLEAN. A buyer's own note deposited through
+  // the relayer: the deposit's payer is an ephemeral the FLOAT funded, and the
+  // float shares no transaction with the wallet. The walk answered "not
+  // reachable", while the float funding follows the buyer's exact payment
+  // (scratchpad probes/logs/05-analyze.log: "float fundings of deposit
+  // ephemerals preceded by an exact payment within 10 s: 22/22"). The worker now says
+  // where the note came from, from what this device holds, and the client
+  // decides with no RPC at all.
+  beforeEach(() => {
+    // What a pre-RPC-1 worker also sent. Present on purpose: the verdict must
+    // ignore it, and the float shares no transaction with the wallet, which is
+    // exactly the answer the old walk called clean.
+    prepareAnswer.depositPayer = 'EPHEMERAL1111111111111111111111111111111111';
+    prepareAnswer.depositFunder = FLOAT.toBase58();
+    histories[FLOAT.toBase58()] = ['FLOAT_TX_1'];
+    // No spend funder, so the spend-leg check makes no RPC call either and the
+    // count below is the deposit verdict's alone.
+    funderLookup = { state: 'none' };
+  });
+
+  it('own deposit: reachable, with 0 RPC, even when the float funded the deposit', async () => {
+    prepareAnswer.noteProvenance = 'own-deposit';
+    const out = await subscribeFromPool(params({ neverExposeWallet: false }));
+    expect(out.reachableViaDeposit).toBe(true);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it('received: not reachable through the deposit, with 0 RPC', async () => {
+    prepareAnswer.noteProvenance = 'received';
+    const out = await subscribeFromPool(params({ neverExposeWallet: false }));
+    expect(out.reachableViaDeposit).toBe(false);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it('neverExposeWallet plus own deposit throws, before anything is funded', async () => {
+    prepareAnswer.noteProvenance = 'own-deposit';
+    // Settled into a value, so a run that went through is an assertion about
+    // that value rather than a rejected-expectation error.
+    const outcome = await subscribeFromPool(params({ neverExposeWallet: true })).then(
+      () => 'went through',
+      (e: unknown) => e,
+    );
+    expect(outcome).toBeInstanceOf(SelfDepositedNoteError);
+    expect(fundEphemeralForJob).not.toHaveBeenCalled();
+    expect(executeCalled).toBe(false);
+  });
+
+  it('a prepare answer that names no provenance (an older worker) reads as own deposit', async () => {
+    delete prepareAnswer.noteProvenance;
+    const out = await subscribeFromPool(params({ neverExposeWallet: false }));
+    expect(out.reachableViaDeposit).toBe(true);
+  });
+});
+
+describe('the spend-funder check starts in the click, concurrent with prepare', () => {
+  it('is already asked while the worker is still preparing', async () => {
+    // BOTH legs are held open, so the window below only sees what the client
+    // started without waiting for either answer. Holding only the prepare
+    // would let a check awaited BEFORE the prepare pass (its lookup resolves at
+    // once); holding only the lookup would let a check started AFTER the
+    // prepare pass. Concurrent means both are in flight at the same time.
+    let releasePrepare!: () => void;
+    let releaseFunder!: () => void;
+    prepareGate = new Promise<void>((r) => {
+      releasePrepare = r;
+    });
+    funderGate = new Promise<void>((r) => {
+      releaseFunder = r;
+    });
+    prepareAnswer.noteProvenance = 'received';
+    const run = subscribeFromPool(params({ neverExposeWallet: false }));
+    // Let every microtask the client can queue before either answer run.
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    const askedDuringPrepare = vi.mocked(fetchFunderLookup).mock.calls.length;
+    const preparesSentWhileCheckOpen = vi
+      .mocked(poolRequest)
+      .mock.calls.filter(([req]) => (req as { kind: string }).kind === 'poolSubscribePrepare').length;
+    releaseFunder();
+    releasePrepare();
+    const outcome = await run;
+    expect(askedDuringPrepare).toBe(1);
+    expect(preparesSentWhileCheckOpen).toBe(1);
+    expect(vi.mocked(fetchFunderLookup).mock.calls.length).toBe(1);
+    // The run still completes once both answers are in.
+    expect(executeCalled).toBe(true);
+    expect(outcome.noteProvenance).toBe('received');
+  });
+});
+
+/**
+ * What the RPC provider is told, and when (web sweep 4, round 1, item 27).
+ *
+ * The spend-funder question is answered by intersecting two signature pages:
+ * the deployment's float and the buyer's wallet, asked together. To the provider
+ * serving both, that pair reads as "this wallet is about to spend in this pool,
+ * funded by that float" — and it was asked in the click, before the worker had
+ * answered, so it was also sent on every attempt that ends in a refusal and
+ * moves no money: an incomplete history, a note this wallet deposited, a note
+ * already spent, the v3 "nothing was proved, retry" answer. Every retry repeats
+ * the pair.
+ *
+ * The lookup itself (`fetchFunderLookup`, a call to the deployment, not to the
+ * provider) still starts in the click and still runs beside the prepare — the
+ * case above pins that. What moves is the two signature pages: they are read
+ * once there is something to spend for.
+ */
+describe('the wallet is named to the RPC only once a spend is actually reachable', () => {
+  it('a prepare that refuses reads no signature page at all', async () => {
+    prepareError = new Error('history incomplete');
+    const outcome = await subscribeFromPool(params({ neverExposeWallet: true })).then(
+      () => 'went through',
+      (e: unknown) => (e as Error).message,
+    );
+    expect(outcome).toBe('history incomplete');
+    // The pair is what names the wallet beside the float. Nothing was spent, so
+    // nothing should have been asked.
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it('a note this wallet deposited is refused without reading a signature page', async () => {
+    // A configured funder, unlike the "0 RPC" cases above: this is the branch
+    // that did ask, and whose answer was thrown away with the refusal.
+    prepareAnswer.noteProvenance = 'own-deposit';
+    const outcome = await subscribeFromPool(params({ neverExposeWallet: true })).then(
+      () => 'went through',
+      (e: unknown) => e,
+    );
+    expect(outcome).toBeInstanceOf(SelfDepositedNoteError);
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it('a spend that proceeds still reads both pages, so the guard is unchanged', async () => {
+    const out = await subscribeFromPool(params({ neverExposeWallet: true }));
+    expect(out.reachableViaSpendFunder).toBe(false);
+    expect(rpcCalls).toEqual(['getSignaturesForAddress', 'getSignaturesForAddress']);
+    expect(executeCalled).toBe(true);
   });
 });

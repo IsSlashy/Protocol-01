@@ -77,6 +77,7 @@ import {
   relayUnshieldV4,
   type PoolConfig,
   type PrepareUnshieldResult,
+  type PrepareUnshieldV4Options,
   type PrepareUnshieldV4Result,
   type ShieldReceipt,
   type WalletSigner,
@@ -421,11 +422,15 @@ export interface PreparedUnshieldV4 {
  *                              float is their sum. C7 is a single proof, so the
  *                              pre-fund is materially smaller — priced here
  *                              rather than assumed.
- *   no stored-path shortcut    `prepareUnshieldV4` rebuilds from history and
- *                              has no `storedPath` fast path. A note whose root
- *                              aged out of the ring cannot take the shortcut the
- *                              v3 job takes, so this is slower and needs an RPC
- *                              that still serves the history.
+ *   the root is the pool's     `prepareUnshieldV4` builds from the leaves the
+ *                              caller already walked (`opts.leaves`) and uses
+ *                              the note's saved path only when its root IS the
+ *                              current root: a saved root names the moment of
+ *                              the note's own insertion, which dates the deposit
+ *                              (`spendRootIsCurrent.test.ts`). A history hole
+ *                              with an older saved root, or a note no map it
+ *                              read places, raises `HistoryIncompleteError`
+ *                              and never reaches v3.
  *
  * The payee refusal moved EARLIER on purpose. In v3 it lives inside `execute`,
  * because that is the first moment the recipient is known. Here it is known
@@ -440,7 +445,7 @@ export async function prepareUnshieldJobV4(
   connection: Connection,
   walletSeed: Uint8Array,
   onProgress?: (step: string) => void,
-  storedPath?: StoredMerklePath,
+  opts: PrepareUnshieldV4Options = {},
 ): Promise<PreparedUnshieldV4> {
   // Same refusal as `executeUnshield`, same reason, moved to the first moment it
   // can be made. See the long note at that call site: paying the withdrawal back
@@ -489,7 +494,9 @@ export async function prepareUnshieldJobV4(
   if (receipt.noteBlinding < LEGACY_BLINDING_CEILING) {
     throw new Error(
       'circuit 7 needs at least a randomised blinding, and this note carries its deposit ' +
-        `epoch (${receipt.noteBlinding}) instead — it predates commitment blinding. Proving ` +
+        // No value here: an epoch dates the deposit, and poolHandlers prints
+        // this message (`noteIdentifierTripwire.test.ts`, UI-1).
+        'epoch instead — it predates commitment blinding. Proving ' +
         'it on circuit 7 would hide the commitment while leaving the leaf recoverable from ' +
         'the published nullifier by trying a few thousand epochs, which is worse than the ' +
         'C1 + C3 pair only in that it looks private. Falling back to the pair.',
@@ -525,7 +532,7 @@ export async function prepareUnshieldJobV4(
     throw new Error('This note has already been withdrawn.');
   }
 
-  const prepared = await prepareUnshieldV4(receipt, recipient, poolConfig, connection, onProgress, storedPath);
+  const prepared = await prepareUnshieldV4(receipt, recipient, poolConfig, connection, onProgress, opts);
 
   onProgress?.('Pricing the withdrawal...');
   // ONE buffer. The v3 job adds two rent figures here because the handler reads

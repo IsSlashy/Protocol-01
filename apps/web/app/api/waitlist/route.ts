@@ -21,18 +21,11 @@ import {
   type WaitlistRecord,
 } from '@/lib/waitlist/store';
 import { sendConfirmationEmail } from '@/lib/waitlist/email';
+import { clientIp } from '@/lib/net/clientIp';
+import { logFailure } from '@/lib/server/logSafely';
 
 const RESEND_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_RESENDS = 5;
-
-/** First hop of the forwarding chain; falls back to a stable sentinel. */
-function clientIp(req: NextRequest): string {
-  const real = req.headers.get('x-real-ip');
-  if (real) return real.trim();
-  const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return 'unknown';
-}
 
 export async function POST(req: NextRequest) {
   try {
@@ -127,7 +120,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error('[waitlist] POST error:', err);
+    logFailure('[waitlist] POST', err);
     return NextResponse.json({ ok: false, error: 'server_error' }, { status: 500 });
   }
 }

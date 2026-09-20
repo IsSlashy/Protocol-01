@@ -35,6 +35,7 @@ import {
   loadSubscriptions,
 } from "@/lib/pay/subscriptions";
 import { loadServiceRegistry, type ServiceEntry } from "@/lib/privacy/serviceRegistry";
+import { BEARER_CLIPBOARD_CLEAR_MS } from "@/lib/pay/bearerClipboard";
 
 // ---------------------------------------------------------------------------
 // Stub: the vendor roster (network) and its formatter.
@@ -156,6 +157,15 @@ function fakeConnection(opts: {
   slot?: number | null;
   accounts?: Record<string, Uint8Array>;
   ownerOverride?: string;
+  /**
+   * Every account read this panel makes, in order, by what it named:
+   * a vault address for a per-PDA `getAccountInfo`, the literal
+   * "getProgramAccounts" for the program-wide enumeration. The list side must
+   * never name a vault PDA (sweep round 1, record 33): a vault PDA is seeded
+   * on the note secret that opened it, so naming one hands the provider a
+   * secret-derived identifier.
+   */
+  reads?: string[];
 }): Connection {
   return {
     rpcEndpoint: "https://fake.test",
@@ -163,7 +173,19 @@ function fakeConnection(opts: {
       if (opts.slot == null) throw new Error("no slot");
       return opts.slot;
     },
+    // The discriminator-filtered enumeration: one question, the same for every
+    // user. Scoped to the program, so an account another program owns is not
+    // in the answer at all.
+    getProgramAccounts: async () => {
+      opts.reads?.push("getProgramAccounts");
+      if (opts.ownerOverride) return [];
+      return Object.entries(opts.accounts ?? {}).map(([address, data]) => ({
+        pubkey: { toBase58: () => address },
+        account: { owner: { toBase58: () => ZK_SHIELDED_PROGRAM_ID_BASE58 }, data },
+      }));
+    },
     getAccountInfo: async (pk: { toBase58(): string }) => {
+      opts.reads?.push(pk.toBase58());
       const data = opts.accounts?.[pk.toBase58()];
       if (!data) return null;
       return {
@@ -282,12 +304,85 @@ describe("detail page", () => {
 
   it("links the vault and the opening transaction to the explorer", async () => {
     await openDetail();
+    // Behind one click since UI-1: see "keeps the vault address and opening
+    // transaction off the screen until asked" below.
+    await userEvent.click(await screen.findByRole("button", { name: /Show the on-chain addresses/i }));
     const links = (await screen.findAllByRole("link")) as HTMLAnchorElement[];
     const hrefs = links.map((l) => l.href);
     expect(hrefs).toContain(`https://explorer.solana.com/address/${VAULT_ADDR}?cluster=devnet`);
     expect(hrefs).toContain(
       "https://explorer.solana.com/tx/4PfrkFakeSignatureForTests?cluster=devnet",
     );
+  });
+
+  /**
+   * UI-1 (ledger row D14). The technical block printed the vault's
+   * `subscriber_commitment`, the value the vault PDA is seeded on, and the
+   * links card put the vault address and the opening transaction on screen by
+   * default. All three point a screenshot straight at this subscription on
+   * chain. The commitment is gone; the addresses wait behind a click.
+   */
+  const SUBSCRIBER_HEX = bytesToHex(
+    decodeSubscriptionVault(hexToBytes(DEVNET_VAULT_HEX)).subscriberCommitment!,
+  );
+  /** Any `size`-character window of `hex` found in `html` (8 unless given). */
+  function windowsOf(hex: string, html: string, size = 8): string[] {
+    const found: string[] = [];
+    for (let i = 0; i + size <= hex.length; i++) if (html.includes(hex.slice(i, i + size))) found.push(hex.slice(i, i + size));
+    return found;
+  }
+
+  it("renders no subscriber commitment, in any state of the detail page", async () => {
+    // Anti-vacuity: the fixture really carries one, and the detector finds it.
+    expect(SUBSCRIBER_HEX).toMatch(/^[0-9a-f]{64}$/);
+    expect(windowsOf(SUBSCRIBER_HEX, `x${SUBSCRIBER_HEX.slice(10, 20)}x`).length).toBeGreaterThan(0);
+    await openDetail();
+    await screen.findByText("No cancel, no refund");
+    expect(windowsOf(SUBSCRIBER_HEX, document.body.innerHTML)).toEqual([]);
+    const reveal = screen.queryByRole("button", { name: /Show the on-chain addresses/i });
+    if (reveal) {
+      await userEvent.click(reveal);
+      expect(windowsOf(SUBSCRIBER_HEX, document.body.innerHTML)).toEqual([]);
+    }
+  });
+
+  it("keeps the vault address and opening transaction off the screen until asked", async () => {
+    await openDetail();
+    await screen.findByText("No cancel, no refund");
+    const html = document.body.innerHTML;
+    expect(html.includes(VAULT_ADDR.slice(0, 8)), "the vault address is on screen").toBe(false);
+    expect(html.includes("4PfrkFake"), "the opening transaction is on screen").toBe(false);
+
+    const reveal = screen.queryByRole("button", { name: /Show the on-chain addresses/i });
+    expect(reveal, "no way to ask for the addresses").not.toBeNull();
+    await userEvent.click(reveal!);
+    const hrefs = ((await screen.findAllByRole("link")) as HTMLAnchorElement[]).map((l) => l.href);
+    expect(hrefs).toContain(`https://explorer.solana.com/address/${VAULT_ADDR}?cluster=devnet`);
+  });
+
+  /**
+   * UI-1 fix round 2. The technical block's start slot and license fingerprint
+   * are read off the vault account and single it out as surely as its address:
+   * the start slot is the slot the opening transaction landed in, and the
+   * fingerprint is stored in the vault. Both wait behind the same click.
+   */
+  it("keeps the start slot and the license fingerprint off the screen until asked", async () => {
+    // Anti-vacuity: the fixture carries a fingerprint, and the detector finds
+    // the truncation the page would print.
+    expect(FIXTURE_LICENSE_HEX).toMatch(/^[0-9a-f]{64}$/);
+    const truncated = `x${FIXTURE_LICENSE_HEX.slice(0, 10)}…${FIXTURE_LICENSE_HEX.slice(-6)}x`;
+    expect(windowsOf(FIXTURE_LICENSE_HEX, truncated, 6).length).toBeGreaterThan(0);
+    await openDetail();
+    await screen.findByText("No cancel, no refund");
+    let html = document.body.innerHTML;
+    expect(html.includes(String(START_SLOT)), "the start slot is on screen").toBe(false);
+    expect(windowsOf(FIXTURE_LICENSE_HEX, html, 6)).toEqual([]);
+
+    await userEvent.click(screen.getByRole("button", { name: /Show the on-chain addresses/i }));
+    html = document.body.innerHTML;
+    // Positive control: both are one click away.
+    expect(html).toContain(String(START_SLOT));
+    expect(html).toContain(FIXTURE_LICENSE_HEX.slice(0, 10));
   });
 
   it("does not suggest the subscription is unlinkable", async () => {
@@ -435,6 +530,82 @@ describe("license key reveal", () => {
     // Hide takes it back off the screen.
     await userEvent.click(screen.getByRole("button", { name: /^Hide$/ }));
     expect(screen.queryByText("P01-000G-40R4-0M30-E209-185G-R38E-1W")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The clipboard, web sweep 4 round 1, item 24 (ledger row D8) — THE THIRD
+   * SINK.
+   *
+   * `SendForm` and `SubscribePanel` were closed in round 1; this screen's
+   * `CopyButton` still did a bare `navigator.clipboard.writeText(text)` and it
+   * is handed `revealedKey` — the SAME license key. A license key is a bearer
+   * credential AND it locates the vault: the vault's on-chain
+   * `license_commitment` is a hash of the key's secret, which is how the
+   * merchant SDK finds the vault from the key alone, and from the vault its
+   * opening transaction is the spend of the note that paid. Windows keeps a
+   * clipboard history on disk and phones sync it between devices, so a key
+   * copied and never taken back outlives the tab.
+   *
+   * The page takes it back only after reading the clipboard and finding its own
+   * string still there (`lib/pay/bearerClipboard.ts`): a blind overwrite would
+   * delete whatever the person copied from another application in between.
+   */
+  it("takes the license key back off the clipboard", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      mockDeriveKey.mockResolvedValue({
+        licenseKey: "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+        serviceTag: "bitwarden-test",
+      });
+      await openDetailWithNote();
+      await user.click(await screen.findByRole("button", { name: /Reveal key/ }));
+      await user.click(await screen.findByRole("button", { name: /Copy key/ }));
+
+      // Positive control: the key really did reach the clipboard, so the
+      // absence below is the clear and not a copy that never happened.
+      await expect(navigator.clipboard.readText()).resolves.toBe(
+        "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+      );
+
+      await vi.advanceTimersByTimeAsync(BEARER_CLIPBOARD_CLEAR_MS + 1_000);
+      // An emptied clipboard reads back as "" in a browser; userEvent's stub
+      // rejects instead, because writing "" leaves its item with no text
+      // flavour. Both mean the key is gone.
+      const after = await navigator.clipboard.readText().then(
+        (t) => t,
+        () => "",
+      );
+      expect(after, "the license key is still on the clipboard").toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The version that needs no permission. Firefox never grants `clipboard-read`
+   * to a page and Chrome grants it only on a gesture, so the scheduled clear
+   * above reports `unreadable` and does nothing. The button is the person
+   * asking, and a click is also what makes the write permitted everywhere.
+   */
+  it("offers a Clear the clipboard button beside Copy key", async () => {
+    mockDeriveKey.mockResolvedValue({
+      licenseKey: "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+      serviceTag: "bitwarden-test",
+    });
+    await openDetailWithNote();
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Copy key/ }));
+    await expect(navigator.clipboard.readText()).resolves.toBe(
+      "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /Clear the clipboard/ }));
+    const after = await navigator.clipboard.readText().then(
+      (t) => t,
+      () => "",
+    );
+    expect(after, "Clear the clipboard left the key on it").toBe("");
   });
 
   it("two registry slugs on one (retailer, mint): every slug is a candidate, and the tag the chain confirmed replaces a wrong stored one", async () => {
@@ -750,5 +921,99 @@ describe("restarted worker — lost session, task #16", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/sign to derive your keys again/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reload this tab/i)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Sweep round 1 (2026-09-20), record 33.
+ *
+ * The list used to read every recorded vault PDA one by one, on mount, on
+ * every `storage` event in any tab, and again right after the recovery that
+ * exists to avoid exactly that. A private vault's PDA is seeded on
+ * `subscriber_commitment`, the circuit-0 commitment over the paying note's
+ * secret, so the set of PDAs is this identity's subscriptions — merchant, rate
+ * and interval — named together from one IP. `subscriptionRecovery.ts` says it
+ * in its own header: "derive each note's vault PDA and probe it ... is leak L4
+ * in a new costume", and it answers ONE question whose answer is identical for
+ * every user, a discriminator-filtered `getProgramAccounts`. The list now asks
+ * that same question.
+ */
+describe("sweep 1, record 33: how the list reads vault state", () => {
+  it("names no vault PDA to the RPC: it takes the state from the program-wide enumeration", async () => {
+    await seedRecord();
+    const reads: string[] = [];
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+      reads,
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    // The row is standing, so the read that feeds it has happened.
+    expect(await screen.findByText("19 of 20 periods left, about 3 hours")).toBeInTheDocument();
+    expect(reads.filter((r) => r !== "getProgramAccounts"), "the list named a vault PDA").toEqual([]);
+    expect(reads).toContain("getProgramAccounts");
+  });
+
+  /**
+   * 🚨 GATE r1, RED 7d. A FIRST-TIME USER MUST ASK THE RPC NOTHING.
+   *
+   * The list read moved from one `getAccountInfo(vaultPDA)` per row to one
+   * program-wide `getProgramAccounts` — right, and the reason is in the panel.
+   * But the old shape made ZERO requests when there were zero rows, and the new
+   * one fires the enumeration unconditionally: on mount, and again on every
+   * coalesced storage burst. This tab is the one a first-time user opens.
+   *
+   * It is not a private read — the enumeration is identical for every user — but
+   * it is a REQUEST FROM THIS IP, to this deployment's provider, for the
+   * subscription program, made by somebody who has no subscriptions. It says
+   * this browser opened the subscriptions tab, and it costs a round trip on
+   * every burst for an answer that cannot change what is rendered.
+   */
+  it("asks the RPC nothing at all when this browser tracks no subscription", async () => {
+    const reads: string[] = [];
+    const conn = fakeConnection({ slot: START_SLOT + 1_500, accounts: {}, reads });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+
+    // The empty state is on screen, so the panel really did finish its work.
+    expect(await screen.findByText(/Track a vault/i)).toBeInTheDocument();
+    await waitFor(() => expect(reads).toEqual([]));
+
+    // And a burst of storage events changes nothing: still no rows, still no
+    // requests.
+    for (let i = 0; i < 5; i++) window.dispatchEvent(new Event("storage"));
+    await waitFor(() => expect(reads).toEqual([]));
+  });
+
+  it("still asks once as soon as there IS a row, so the empty case is not a dead panel", async () => {
+    // The anti-vacuity sibling: the case above must be about the EMPTY list and
+    // not about a harness that never reaches the read.
+    await seedRecord();
+    const reads: string[] = [];
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+      reads,
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    expect(await screen.findByText("19 of 20 periods left, about 3 hours")).toBeInTheDocument();
+    expect(reads).toEqual(["getProgramAccounts"]);
+  });
+
+  it("a burst of storage events does not become a burst of reads", async () => {
+    await seedRecord();
+    const reads: string[] = [];
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+      reads,
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    expect(await screen.findByText("19 of 20 periods left, about 3 hours")).toBeInTheDocument();
+    const afterMount = reads.length;
+    for (let i = 0; i < 5; i++) window.dispatchEvent(new Event("storage"));
+    await waitFor(() => expect(reads.length).toBeGreaterThan(afterMount));
+    // One catch-up for the burst, not one per event.
+    await waitFor(() => expect(reads.length - afterMount).toBeLessThanOrEqual(1));
+    expect(reads.filter((r) => r !== "getProgramAccounts")).toEqual([]);
   });
 });

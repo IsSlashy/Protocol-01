@@ -83,6 +83,16 @@ const NOTE: RecoveredNote = {
 } as unknown as RecoveredNote;
 
 /**
+ * The note the seed search finds. NOTE by default; the pre-blinding case swaps
+ * in the same note carrying a deposit epoch as its blinding (V3-1).
+ */
+let noteAtLeaf: RecoveredNote = NOTE;
+const PRE_BLINDING_NOTE = {
+  ...NOTE,
+  receipt: { ...NOTE.receipt, noteBlinding: 67_838n },
+} as unknown as RecoveredNote;
+
+/**
  * The COMPLETE terms object the worker handed the circuit-7 prepare, kept
  * verbatim beside the summarised `prepareV4` row.
  *
@@ -129,9 +139,9 @@ let v4PrepareFailure: Error | null = null;
 // ---------------------------------------------------------------------------
 
 vi.mock('../pool/poolNotes', () => ({
-  scanPoolForSeed: async () => ({ notes: [NOTE] }),
+  scanPoolForSeed: async () => ({ notes: [noteAtLeaf] }),
   recoverNotes: async (_c: unknown, _p: unknown, _s: unknown, opts?: { onlyLeaf?: number }) =>
-    opts?.onlyLeaf === LEAF ? [NOTE] : [],
+    opts?.onlyLeaf === LEAF ? [noteAtLeaf] : [],
 }));
 
 vi.mock('../pool/recoverFloat', () => ({ recoverStuckFloat: async () => [] }));
@@ -254,9 +264,9 @@ vi.mock('../pool/denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../pool/denominatedPool')>();
   return {
     ...actual,
-    // Deliberately EMPTY, so `origin` is null and the deposit-funder walk is
-    // skipped. Who deposited the note is `shieldClient`'s question and has its
-    // own tests; this file is about the terms.
+    // Deliberately EMPTY: this file is about the terms. Where the note came
+    // from is decided locally (RPC-1) and pinned in noPointedNullifierRead.test.ts
+    // and selfDepositedNote.test.ts.
     fetchPoolCommitments: async () => new Map(),
     fetchSpentNullifierSet: async () => new Set<string>(),
     readPoolUnspentCount: async () => 7,
@@ -311,6 +321,7 @@ beforeEach(() => {
   seen.executeV3 = [];
   seen.executeV4 = [];
   v4PrepareFailure = null;
+  noteAtLeaf = NOTE;
   configurePoolHandlers('http://localhost:8899');
   setPoolSeed(META, SIGNATURE);
 });
@@ -405,30 +416,43 @@ describe('a subscribe prepare carrying its terms is the circuit-7 path', () => {
 
 describe('a note circuit 7 cannot prove still reaches the C1 + C3 pair', () => {
   /**
-   * ⛔ WITHOUT THIS FALLBACK THE NOTE BECOMES UNSUBSCRIBABLE FROM THE WEB APP.
+   * ⛔ V3-1: ONLY A PRE-BLINDING NOTE, AND ONLY AFTER ITS DISCLOSURE.
    * `subscribeFromPool` types the three terms as required and sends them on
    * every subscription, so this branch is the ONLY route apps/web has left to
-   * the pair. `prepareSubscribeV4` has no stored-path shortcut and always
-   * rebuilds from history; `prepareSubscribeJob` inherits `prepareUnshieldJob`'s
-   * stored path. The asymmetry is real and runs one way.
+   * the pair, and the pair publishes the note's commitment. A blinded note that
+   * circuit 7 could not place is refused with a retry message; a note whose
+   * blinding is its deposit epoch has no other spend, and reaches the pair on
+   * the same request asked again after the disclosure
+   * (`poolHandlersUnshieldV4.test.ts`, "a pre-blinding subscription gets the
+   * same disclosure, and a withdrawal disclosure does not confirm it").
    */
-  it('falls back on a root the rebuild could not place, and says v3', async () => {
+  it('refuses a root the rebuild could not place on a blinded note, and never reaches the pair', async () => {
     v4PrepareFailure = new Error(
       "PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots.",
     );
-    const res = await handlePoolRequest(v4PrepareReq());
-    // Circuit 7 was genuinely ATTEMPTED — a fallback that skipped it would be a
-    // silent downgrade rather than a recovery.
+    const outcome = await handlePoolRequest(v4PrepareReq()).then(
+      (r) => `prepared on ${r.version}`,
+      (e: unknown) => `refused: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    // Circuit 7 was genuinely ATTEMPTED, and the pair was not.
     expect(seen.prepareV4).toHaveLength(1);
-    expect(seen.prepareV3).toEqual([LEAF]);
-    expect(res.version).toBe('v3');
-    expect(res.jobId).toBe(V3_JOB_ID);
+    expect(outcome).toMatch(/^refused: .*not retried on the older C1 \+ C3 pair/);
+    expect(seen.prepareV3).toEqual([]);
   });
 
   it('falls back on a note that predates commitment blinding', async () => {
+    noteAtLeaf = PRE_BLINDING_NOTE;
     v4PrepareFailure = new Error(
       'circuit 7 needs at least a randomised blinding, and this note carries its deposit epoch.',
     );
+    const first = await handlePoolRequest(v4PrepareReq()).then(
+      (r) => `prepared on ${r.version}`,
+      (e: unknown) => `refused: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    expect(first, 'the pair was reached before the disclosure').toMatch(
+      /^refused: .*press the same button again/,
+    );
+    expect(seen.prepareV3).toEqual([]);
     const res = await handlePoolRequest(v4PrepareReq());
     expect(res.version).toBe('v3');
     expect(seen.prepareV3).toEqual([LEAF]);

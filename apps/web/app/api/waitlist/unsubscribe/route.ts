@@ -8,6 +8,7 @@ import {
   removeEmailFromSet,
   incrUnsubscribed,
 } from '@/lib/waitlist/store';
+import { logFailure } from '@/lib/server/logSafely';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
 
     return removed();
   } catch (err) {
-    console.error('[waitlist] unsubscribe error:', err);
+    logFailure('[waitlist] unsubscribe', err);
     return invalid();
   }
 }

@@ -250,8 +250,9 @@ export async function prepareShield(
   // exclude. Refuse rather than shield into an ambiguous slot.
   if (prepared.insertParams.leafIndex !== counter) {
     throw new Error(
-      `The pool advanced while preparing (leaf ${counter} → ${prepared.insertParams.leafIndex}). ` +
-        'Nothing was spent — try again.',
+      // No positions: the first one is the leaf this deposit was about to
+      // take (`noteIdentifierTripwire.test.ts`).
+      'The pool advanced while preparing your deposit. Nothing was spent — try again.',
     );
   }
 
@@ -357,16 +358,14 @@ export async function prepareContribution(
   // note nobody can ever sell. Cheaper to re-reserve than to discover that.
   if (counter !== expectedLeafIndex) {
     throw new Error(
-      `The pool advanced past this reservation (reserved leaf ${expectedLeafIndex}, tree is at ` +
-        `${counter}). Nothing was spent \u2014 reserve again.`,
+      'The pool advanced past this reservation. Nothing was spent \u2014 reserve again.',
     );
   }
 
   const prepared = await prepareInsertForCommitment(poolConfig, connection, commitment, onProgress);
   if (prepared.insertParams.leafIndex !== expectedLeafIndex) {
     throw new Error(
-      `The pool advanced while proving (leaf ${expectedLeafIndex} \u2192 ` +
-        `${prepared.insertParams.leafIndex}). Nothing was spent \u2014 reserve again.`,
+      'The pool advanced while proving. Nothing was spent \u2014 reserve again.',
     );
   }
 

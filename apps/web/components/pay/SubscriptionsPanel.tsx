@@ -40,7 +40,8 @@
  * instead of pretending.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Buffer } from "buffer";
 import { PublicKey, type Connection } from "@solana/web3.js";
 import clsx from "clsx";
 import {
@@ -75,6 +76,7 @@ import {
   SUBSCRIPTIONS_CHANGED_EVENT,
   recordSubscription,
   recoverSubscriptions,
+  SUBSCRIPTION_VAULT_DISCRIMINATOR,
   summarizeSubscription,
   symbolForVaultMint,
   toPeriodState,
@@ -93,11 +95,44 @@ import {
   type ServiceEntry,
 } from "@/lib/privacy/serviceRegistry";
 import StaleWorkerNotice from "./StaleWorkerNotice";
+import { clearBearerNow, copyBearerAndScheduleClear } from "@/lib/pay/bearerClipboard";
 import { truncate } from "./util";
 import { useT } from "@/i18n";
 import { translateInterval } from "@/lib/pay/intervalLabel";
 
 // ---------------------------------------------------------------------------
+
+/**
+ * How long a burst of `storage` / `SUBSCRIPTIONS_CHANGED_EVENT` events is
+ * collected before one catch-up read runs. Short enough that a change made in
+ * another tab still lands while the user is looking at the list.
+ */
+const CATCH_UP_MS = 50;
+
+/**
+ * The discriminator-filtered account selector for SubscriptionVault, the same
+ * one `lib/privacy/pool/subscriptionRecovery.ts` builds in
+ * `subscriptionVaultFilter()`. It is rebuilt here rather than imported because
+ * that module is the Worker's and pulls the whole pool table with it; the
+ * value it filters on is the re-exported discriminator constant, so the two
+ * cannot drift on anything but the shape.
+ *
+ * Offset 0 and the discriminator only — never a memcmp on
+ * `subscriber_commitment`, which would put a secret-derived value in the
+ * request and be the very leak this read replaced. base64 because web3.js
+ * accepts it and it needs no base58 dependency.
+ */
+function subscriptionVaultFilter(): {
+  memcmp: { offset: number; bytes: string; encoding: "base64" };
+} {
+  return {
+    memcmp: {
+      offset: 0,
+      bytes: Buffer.from(SUBSCRIPTION_VAULT_DISCRIMINATOR).toString("base64"),
+      encoding: "base64",
+    },
+  };
+}
 
 type VaultLive =
   | { kind: "loading" }
@@ -141,24 +176,93 @@ function ClosedBadge() {
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+/**
+ * Copy one string, and — when it is a CREDENTIAL — take it back off the
+ * clipboard.
+ *
+ * Web sweep 4 round 1, item 24 (ledger row D8), the third sink. `SendForm` and
+ * `SubscribePanel` were closed in round 1; this button still did a bare
+ * `navigator.clipboard.writeText` and line 767 hands it the license key. That
+ * key is a bearer credential AND it locates the vault — the vault's on-chain
+ * `license_commitment` is a hash of the key's secret, which is how the merchant
+ * SDK finds the vault from the key alone, and the vault's opening transaction is
+ * the spend of the note that paid. Windows keeps a clipboard history on disk and
+ * phones sync it between devices, so a key copied and never taken back outlives
+ * the tab.
+ *
+ * ⚠️ `bearer` IS OPT-IN, AND THE VAULT ADDRESS DOES NOT SET IT. That address is
+ * public, and a user copies it to paste into an explorer; emptying the clipboard
+ * under them there would be a bug, not a fix. Only material that is money or a
+ * password is taken back.
+ *
+ * The clear happens only after reading the clipboard and finding this exact
+ * string still on it (`lib/pay/bearerClipboard.ts`): a blind overwrite would
+ * delete whatever the person copied from another application in between. The
+ * button beside Copy does it from a click, which is what a browser that refuses
+ * the read accepts. Pinned by `__tests__/components/SubscriptionsPanel.test.tsx`,
+ * "takes the license key back off the clipboard" and "offers a Clear the
+ * clipboard button beside Copy key".
+ */
+function CopyButton({
+  text,
+  label,
+  bearer = false,
+}: {
+  text: string;
+  label: string;
+  bearer?: boolean;
+}) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
+  const cancelClipboardClear = useRef<(() => void) | null>(null);
+
+  // A stale timer must not erase a newer copy, and an unmounted screen must not
+  // keep one running.
+  useEffect(() => () => cancelClipboardClear.current?.(), []);
+
+  function copy() {
+    if (bearer) {
+      cancelClipboardClear.current?.();
+      cancelClipboardClear.current = copyBearerAndScheduleClear(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      return;
+    }
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      })
+      .catch(() => setCopied(false));
+  }
+
+  function clearNow() {
+    cancelClipboardClear.current?.();
+    cancelClipboardClear.current = null;
+    void clearBearerNow();
+    setCopied(false);
+  }
+
   return (
-    <button
-      onClick={() => {
-        void navigator.clipboard
-          .writeText(text)
-          .then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          })
-          .catch(() => setCopied(false));
-      }}
-      className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
-    >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-      {copied ? "Copied" : label}
-    </button>
+    <>
+      <button
+        onClick={copy}
+        className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? "Copied" : label}
+      </button>
+      {bearer ? (
+        <button
+          type="button"
+          onClick={clearNow}
+          className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
+        >
+          {t("pay.shared.clipboardClear")}
+        </button>
+      ) : null}
+    </>
   );
 }
 
@@ -310,6 +414,24 @@ export default function SubscriptionsPanel({
       for (const r of recs) next[r.vaultPDA] = prev[r.vaultPDA] ?? { kind: "loading" };
       return next;
     });
+    // ⛔ NO ROWS, NO REQUESTS (gate r1, RED 7d).
+    //
+    // The read below moved from one `getAccountInfo` per row to one
+    // program-wide enumeration, which is right — but the per-row shape made
+    // ZERO requests when there were zero rows, and the enumeration fired
+    // unconditionally: on mount, and again on every coalesced storage burst.
+    // This is the tab a first-time user opens, so that was a request from their
+    // IP, to this deployment's provider, about the subscription program, made
+    // by somebody who has no subscriptions — for an answer that cannot change
+    // what is rendered. The slot read goes with it: nothing needs a clock when
+    // there is nothing to date. Pinned by `SubscriptionsPanel.test.tsx`, "asks
+    // the RPC nothing at all when this browser tracks no subscription", with
+    // "still asks once as soon as there IS a row" beside it.
+    if (recs.length === 0) {
+      setLive({});
+      setRefreshing(false);
+      return;
+    }
     try {
       const slot = await connection.getSlot("confirmed");
       setCurrentSlot(BigInt(slot));
@@ -317,25 +439,68 @@ export default function SubscriptionsPanel({
       // A null slot renders "Checking", never an optimistic "Active".
       setCurrentSlot(null);
     }
-    await Promise.all(
-      recs.map(async (r) => {
-        let state: VaultLive;
-        try {
-          const info = await connection.getAccountInfo(new PublicKey(r.vaultPDA));
-          if (!info) {
-            state = { kind: "closed" };
-          } else if (info.owner.toBase58() !== ZK_SHIELDED_PROGRAM_ID_BASE58) {
-            state = { kind: "error", message: t("pay.subs.errNotProgram") };
-          } else {
-            state = { kind: "open", decoded: decodeSubscriptionVault(info.data) };
-          }
-        } catch (e) {
-          state = { kind: "error", message: (e as Error).message || "Read failed." };
-        }
-        setLive((prev) => ({ ...prev, [r.vaultPDA]: state }));
-      }),
-    );
+    // 🚨 ONE QUESTION, AND IT IS THE SAME QUESTION FOR EVERY USER.
+    //
+    // This used to be `getAccountInfo(vaultPDA)` per record, on mount, on
+    // every `storage` event in any tab, and again right after the recovery
+    // that exists to avoid exactly this. A private vault's PDA is seeded on
+    // `subscriber_commitment`, the circuit-0 commitment over the paying note's
+    // secret, so that list of addresses IS this identity's subscriptions —
+    // merchant, rate and interval — named together from one IP, including
+    // vaults opened on another device and another network.
+    //
+    // `subscriptionRecovery.ts` names the pattern in its own header: "derive
+    // each note's vault PDA and probe it ... is leak L4 in a new costume", and
+    // it answers with a discriminator-filtered `getProgramAccounts` over every
+    // SubscriptionVault of the program instead — an answer identical for every
+    // user, bounded by the program's live vault count (14 on devnet), with the
+    // membership decided here. The list takes the same route now
+    // (`SubscriptionsPanel.test.tsx`, "names no vault PDA to the RPC").
+    //
+    // Cost: one request for the whole list instead of one per row, so a list of
+    // two or more rows got FASTER, not slower. At one row it is a wash, and at
+    // ZERO rows this function has already returned above without asking
+    // anything — which the sentence here used to get wrong.
+    const byPda = new Map<string, Uint8Array>();
+    let enumerationError: string | null = null;
+    try {
+      const accounts = await connection.getProgramAccounts(
+        new PublicKey(ZK_SHIELDED_PROGRAM_ID_BASE58),
+        { filters: [subscriptionVaultFilter()] },
+      );
+      for (const acc of accounts) byPda.set(acc.pubkey.toBase58(), acc.account.data);
+    } catch (e) {
+      enumerationError = (e as Error).message || "Read failed.";
+    }
+    const next: Record<string, VaultLive> = {};
+    for (const r of recs) {
+      if (enumerationError) {
+        next[r.vaultPDA] = { kind: "error", message: enumerationError };
+        continue;
+      }
+      const data = byPda.get(r.vaultPDA);
+      if (!data) {
+        // Not among the program's live vaults: the merchant's final claim
+        // closed it. The old per-PDA read reached the same verdict through a
+        // null account.
+        next[r.vaultPDA] = { kind: "closed" };
+        continue;
+      }
+      try {
+        next[r.vaultPDA] = { kind: "open", decoded: decodeSubscriptionVault(data) };
+      } catch (e) {
+        // The discriminator matched and the body did not decode: a layout the
+        // sequential decoder does not know. Said, not swallowed — a silent
+        // "closed" here would read as money gone.
+        next[r.vaultPDA] = { kind: "error", message: (e as Error).message || t("pay.subs.errNotProgram") };
+      }
+    }
+    setLive(next);
     setRefreshing(false);
+    // `t` is read above and deliberately absent here, as it was before this
+    // change: the dictionary is picked once per session and a new identity for
+    // it on every render would re-run the mount effect forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection, meta, walletKey]);
 
   useEffect(() => {
@@ -351,11 +516,28 @@ export default function SubscriptionsPanel({
   // opened on the Subscribe tab never appeared here. `storage` alone would not
   // fix it: the browser fires that in OTHER documents, never the one that
   // wrote. Both listeners, so a second tab is covered too.
+  //
+  // ⚠️ AND ONE CATCH-UP PER BURST, NOT ONE PER EVENT. `storage` fires for
+  // every localStorage write in every other tab, and the app writes several in
+  // a row (a subscribe records the vault, then the note, then the spent mark).
+  // Each one used to become its own chain read from this IP. They are
+  // collapsed into a single refresh on a short trailing timer, which is the
+  // only latency this adds: at most `CATCH_UP_MS` before the list catches up
+  // with a change made in another tab, and nothing at all on mount, on the
+  // Refresh button, or after a recovery, which call `refresh` directly.
   useEffect(() => {
-    const catchUp = () => void refresh();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const catchUp = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        void refresh();
+      }, CATCH_UP_MS);
+    };
     window.addEventListener(SUBSCRIPTIONS_CHANGED_EVENT, catchUp);
     window.addEventListener('storage', catchUp);
     return () => {
+      if (timer !== null) clearTimeout(timer);
       window.removeEventListener(SUBSCRIPTIONS_CHANGED_EVENT, catchUp);
       window.removeEventListener('storage', catchUp);
     };
@@ -366,11 +548,23 @@ export default function SubscriptionsPanel({
   const [revealBusy, setRevealBusy] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
 
+  /**
+   * The vault address, the opening transaction and the vault's own fields
+   * (start slot, license fingerprint) point straight at this subscription on
+   * chain, so they stay off the screen until the user asks: a screenshot of the
+   * detail page carries none of them (UI-1, `SubscriptionsPanel.test.tsx`,
+   * "keeps the vault address and opening transaction off the screen until
+   * asked"). The subscriber commitment the vault is seeded on is not shown at
+   * all ("renders no subscriber commitment").
+   */
+  const [showIds, setShowIds] = useState(false);
+
   // The key belongs to ONE subscription; switching selection drops it.
   useEffect(() => {
     setRevealedKey(null);
     setRevealBusy(false);
     setRevealError(null);
+    setShowIds(false);
   }, [selected]);
 
   async function handleReveal(rec: StoredSubscription) {
@@ -660,7 +854,7 @@ export default function SubscriptionsPanel({
                   {revealedKey}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <CopyButton text={revealedKey} label={t("pay.subs.keyCopy")} />
+                  <CopyButton text={revealedKey} label={t("pay.subs.keyCopy")} bearer />
                   <button
                     onClick={() => setRevealedKey(null)}
                     className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
@@ -711,28 +905,48 @@ export default function SubscriptionsPanel({
 
         <p className="text-xs text-p01-text-muted">{t("pay.subs.poolCaveat")}</p>
 
-        {/* Links out */}
+        {/* Links out, behind a click: see `showIds`. */}
         <div className="card space-y-2 p-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={explorerAddressUrl(rec.vaultPDA)}
-              target="_blank"
-              rel="noreferrer"
-              className="font-mono text-xs text-p01-cyan hover:underline"
-            >
-              vault {truncate(rec.vaultPDA, 8, 6)} ↗
-            </a>
-            <CopyButton text={rec.vaultPDA} label="Copy address" />
-          </div>
-          {rec.openTxSig && (
-            <a
-              href={explorerTxUrl(rec.openTxSig)}
-              target="_blank"
-              rel="noreferrer"
-              className="block font-mono text-xs text-p01-cyan hover:underline"
-            >
-              opening tx {truncate(rec.openTxSig, 8, 6)} ↗
-            </a>
+          {showIds ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={explorerAddressUrl(rec.vaultPDA)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-xs text-p01-cyan hover:underline"
+                >
+                  vault {truncate(rec.vaultPDA, 8, 6)} ↗
+                </a>
+                <CopyButton text={rec.vaultPDA} label="Copy address" />
+              </div>
+              {rec.openTxSig && (
+                <a
+                  href={explorerTxUrl(rec.openTxSig)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block font-mono text-xs text-p01-cyan hover:underline"
+                >
+                  opening tx {truncate(rec.openTxSig, 8, 6)} ↗
+                </a>
+              )}
+              <button
+                onClick={() => setShowIds(false)}
+                className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
+              >
+                {t("pay.subs.idsHide")}
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-p01-text-muted">{t("pay.subs.idsHidden")}</p>
+              <button
+                onClick={() => setShowIds(true)}
+                className="text-xs text-p01-cyan underline hover:text-p01-text"
+              >
+                {t("pay.subs.idsShow")}
+              </button>
+            </>
           )}
         </div>
 
@@ -742,10 +956,12 @@ export default function SubscriptionsPanel({
             {t("pay.subs.technical")}
           </summary>
           <dl className="mt-3 space-y-1.5 font-mono">
-            <div className="flex justify-between gap-3">
-              <dt>vault PDA</dt>
-              <dd className="break-all text-right">{rec.vaultPDA}</dd>
-            </div>
+            {showIds && (
+              <div className="flex justify-between gap-3">
+                <dt>vault PDA</dt>
+                <dd className="break-all text-right">{rec.vaultPDA}</dd>
+              </div>
+            )}
             <div className="flex justify-between gap-3">
               <dt>merchant</dt>
               <dd className="break-all text-right">{rec.retailer}</dd>
@@ -760,10 +976,12 @@ export default function SubscriptionsPanel({
                   <dt>interval_slots</dt>
                   <dd>{decoded.intervalSlots.toString()}</dd>
                 </div>
-                <div className="flex justify-between gap-3">
-                  <dt>start_slot</dt>
-                  <dd>{decoded.startSlot.toString()}</dd>
-                </div>
+                {showIds && (
+                  <div className="flex justify-between gap-3">
+                    <dt>start_slot</dt>
+                    <dd>{decoded.startSlot.toString()}</dd>
+                  </div>
+                )}
                 <div className="flex justify-between gap-3">
                   <dt>claimed_periods</dt>
                   <dd>
@@ -774,13 +992,7 @@ export default function SubscriptionsPanel({
                   <dt>claimable by merchant now</dt>
                   <dd>{summary.merchantClaimableNow.toString()}</dd>
                 </div>
-                {decoded.subscriberCommitment && (
-                  <div className="flex justify-between gap-3">
-                    <dt>subscriber commitment</dt>
-                    <dd>{truncate(bytesToHex(decoded.subscriberCommitment), 10, 6)}</dd>
-                  </div>
-                )}
-                {decoded.licenseCommitment && (
+                {showIds && decoded.licenseCommitment && (
                   <div className="flex justify-between gap-3">
                     <dt>license fingerprint</dt>
                     <dd>{truncate(bytesToHex(decoded.licenseCommitment), 10, 6)}</dd>

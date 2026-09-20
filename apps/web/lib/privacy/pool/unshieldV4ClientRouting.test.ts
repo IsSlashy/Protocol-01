@@ -86,6 +86,8 @@ const OWNER = new PublicKey('7gWpzSZAqUiN6uZ9NkfB1gZ5gYtvUvQyFAUhZTjJ6Trh');
 const PAYOUT = new PublicKey('SysvarC1ock11111111111111111111111111111111');
 const RETAILER = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB');
 const EPHEMERAL = '11111111111111111111111111111112';
+/** The address the funder's residue is swept back to (not the wallet's). */
+const FUNDER = 'FundrSweep1111111111111111111111111111111111';
 
 type Req = Record<string, unknown>;
 
@@ -132,7 +134,7 @@ function arrangeUnshield(version: 'v3' | 'v4') {
   });
 }
 
-function withdraw() {
+function withdraw(over: Partial<Parameters<typeof unshieldFromPool>[0]> = {}) {
   return unshieldFromPool({
     meta: 'meta',
     token: 'SOL',
@@ -142,15 +144,21 @@ function withdraw() {
     owner: OWNER,
     connection: {} as Connection,
     signOne: async (t) => t,
+    ...over,
   });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The funder's answer, which since FUND-1 is the only answer a withdrawal can
+  // get short of a refusal (`fundEphemeralForJob.test.ts`, "FUND-1: a value-0
+  // job never asks the wallet when the funder refuses"). This used to answer
+  // 'wallet', a world FUND-1 removed; the one case that still hands back
+  // 'wallet' is in the FUND-1 block below, and the client must stop on it.
   fundEphemeralForJob.mockResolvedValue({
-    fundedBy: 'wallet',
-    sweepTo: OWNER.toBase58(),
-    funderSignature: undefined,
+    fundedBy: 'funder',
+    sweepTo: FUNDER,
+    funderSignature: 'GRANTSIG',
     funderFallbackReason: undefined,
     operatorFeeLamports: undefined,
   });
@@ -207,9 +215,11 @@ describe('what EXECUTE carries depends on what prepare answered', () => {
       'a v4 execute with no payee cannot be checked against the payee the proof bound',
     ).toBe(PAYOUT.toBase58());
     // The wallet is still sent, and it is NOT the same field. It is identity —
-    // it arms the payee refusal — while `sweepTo` is the one that moves money.
+    // it arms the payee refusal — while `sweepTo` is the one that moves money,
+    // and it is whatever the funding decided: the funder's address here, so a
+    // swap of the two fields cannot pass unseen.
     expect(exec.ownerPubkey).toBe(OWNER.toBase58());
-    expect(exec.sweepTo).toBe(OWNER.toBase58());
+    expect(exec.sweepTo).toBe(FUNDER);
   });
 
   it('still carries the payee on a v3 job, which has it nowhere else', async () => {
@@ -359,5 +369,70 @@ describe('⛔ the subscription must not follow the withdrawal onto circuit 7', (
       'poolSubscribePrepare',
       'poolSubscribeExecute',
     ]);
+  });
+});
+
+/**
+ * FUND-1, THE CLIENT HALF: a withdrawal never reports the wallet as its payer,
+ * and never lets it pay (web sweep prep, 2026-09-19).
+ *
+ * `fundEphemeralForJob` refuses the wallet for every value-0 job since FUND-1.
+ * Two things around it in `unshieldFromPool` still said otherwise:
+ *   - the relayed path funds nothing, and answered `fundedBy: 'wallet'`, so the
+ *     withdrawal card read "Your wallet paid for this, in public" about a
+ *     withdrawal the relayer paid for (`PoolPanel.test.tsx`, "a relayed
+ *     withdrawal's card says the relayer paid, and never that the wallet did");
+ *   - the direct path passed the caller's `neverExposeWallet` through, so the
+ *     one guard between a withdrawal and a wallet pre-fund was a rule keyed on
+ *     `valueLamports` in another module, and an answer naming the wallet was
+ *     carried to execute and reported as it came.
+ */
+describe('FUND-1: a withdrawal never reports or takes the wallet as its payer', () => {
+  it('a relayed withdrawal reports the relayer as its payer, and asks nobody to fund it', async () => {
+    arrangeUnshield('v4');
+    const out = await withdraw({ relayerUrl: 'https://relayer.test' });
+
+    expect(fundEphemeralForJob, 'the relayed path pre-funds nothing').not.toHaveBeenCalled();
+    expect(
+      out.fundedBy as string,
+      'the relayer paid for this withdrawal; an answer of "wallet" puts the opposite on screen',
+    ).toBe('relayer');
+    const exec = requestOfKind('poolUnshieldExecute');
+    expect(exec.relayerUrl).toBe('https://relayer.test');
+    expect(exec.sweepTo, 'nothing was pre-funded, so nothing is swept').toBeUndefined();
+  });
+
+  it('a direct withdrawal asks the funder with neverExposeWallet set, whatever the caller passed', async () => {
+    arrangeUnshield('v4');
+    for (const neverExposeWallet of [undefined, false, true]) {
+      fundEphemeralForJob.mockClear();
+      await withdraw({ neverExposeWallet });
+      expect(fundEphemeralForJob).toHaveBeenCalledTimes(1);
+      const req = fundEphemeralForJob.mock.calls[0]![0] as Req;
+      expect({ caller: neverExposeWallet, sent: req.neverExposeWallet }).toEqual({
+        caller: neverExposeWallet,
+        sent: true,
+      });
+      expect(req.valueLamports).toBe(0);
+      expect(req.allowWalletFundedSpend).not.toBe(true);
+    }
+  });
+
+  it('a funding answer that names the wallet stops the withdrawal before execute', async () => {
+    arrangeUnshield('v4');
+    fundEphemeralForJob.mockResolvedValue({ fundedBy: 'wallet', sweepTo: OWNER.toBase58() });
+    const settled = await withdraw().then(
+      (o) => ({ outcome: 'resolved', fundedBy: o.fundedBy as string, says: '' }),
+      (e: Error) => ({
+        outcome: 'rejected',
+        fundedBy: '',
+        says: /not sent/.test(e.message) && /Recover funds/.test(e.message) ? 'not sent; Recover' : e.message,
+      }),
+    );
+    expect(settled).toEqual({ outcome: 'rejected', fundedBy: '', says: 'not sent; Recover' });
+    expect(
+      requests().map((r) => r.kind),
+      'a withdrawal whose funding named the wallet must not be sent',
+    ).toEqual(['poolUnshieldPrepare']);
   });
 });

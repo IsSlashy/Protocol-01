@@ -27,7 +27,19 @@ import {
   TransactionInstruction,
   SystemProgram,
 } from '@solana/web3.js';
-import { getPoolHistoryStore, poolHistoryKey, type CachedCommitmentEntry } from './poolHistoryCache';
+import {
+  getPoolHistoryStore,
+  hasGivenUpOnSignature,
+  loadPoolHistory,
+  poolHistoryKey,
+  rememberGivenUpSignature,
+  MAX_HISTORY_GAPS,
+  MAX_HISTORY_READ_ATTEMPTS,
+  MAX_HISTORY_RETRY_ENTRIES,
+  POOL_HISTORY_VERSION,
+  type CachedCommitmentEntry,
+  type PoolHistoryGap,
+} from './poolHistoryCache';
 import {
   getAssociatedTokenAddress,
   createAssociatedTokenAccountIdempotentInstruction,
@@ -1224,27 +1236,9 @@ export function isNullifierSpentInSet(
   return spentSet.has(nullifierPDA.toBase58());
 }
 
-/**
- * Single-note spent check. ⚠️ LEAKS THE NULLIFIER PDA TO THE RPC.
- *
- * Kept for the one place the leak is already moot: the pre-flight immediately
- * before a spend, where the nullifier is about to be published on chain anyway
- * and a stale read costs a ~2-minute STARK proof plus buffer rent. Everywhere
- * else — and in particular anything that runs on page load or over a list of
- * unspent notes — use `fetchSpentNullifierSet` + `isNullifierSpentInSet`.
- */
-export async function isNullifierSpent(
-  connection: Connection,
-  poolPDA: PublicKey,
-  nullifierPreimage: bigint,
-  secret: bigint,
-): Promise<boolean> {
-  const nullifier = createNullifierV3(nullifierPreimage, secret);
-  const nullifierBytes = goldilocksU64To32(nullifier);
-  const [nullifierPDA] = deriveNullifierPDA(poolPDA, nullifierBytes);
-  const info = await connection.getAccountInfo(nullifierPDA);
-  return info !== null;
-}
+// The single-note `isNullifierSpent` (a `getAccountInfo` on the note's own
+// nullifier PDA) is gone: every web caller asks the pool-wide set instead
+// (`noPointedNullifierRead.test.ts`, "the web app source has none").
 
 // ---------------------------------------------------------------------------
 // goldilocksU64To32 (mirrors mobile/subscriptionVault line 44 + extension)
@@ -1666,9 +1660,10 @@ export async function prepareShieldInsert(
     chosen = sliced;
   } else {
     throw new Error(
+      // No root and no position in the message: it is rendered, and the leaf
+      // is the one this deposit was about to take (`noteIdentifierTripwire.test.ts`).
       `Shield pre-flight failed: cannot reconstruct the on-chain Merkle root ` +
-      `(${onChainRoot}) from the pool's filled_subtrees for leaf #${leafCount}. ` +
-      `Neither layout matched (direct=${oldRootDirect}, shifted=${oldRootSliced}). ` +
+      `from the pool's filled_subtrees; neither layout matched. ` +
       `The tree state has diverged from this client — refusing to burn proof rent ` +
       `on a guaranteed InvalidProof. Retry shortly; if it persists the pool tree ` +
       `was advanced by an incompatible client.`,
@@ -1997,7 +1992,11 @@ export function parsePoolV3Account(data: Uint8Array): ParsedPoolV3 | null {
   const noteCount = readU64LE(data, 169);
   const isActive = data[177] === 1;
   const histLen = (data[178]) | (data[179] << 8) | (data[180] << 16) | (data[181] << 24);
-  if (histLen > 100) return null;
+  // 255 is `DenominatedPoolV3::MAX_HISTORICAL_ROOTS` (pool_v3.rs); a migrated
+  // pool holds more than 100, and a parser that gave up there saw no ring at
+  // all, which is the state that used to select a note's saved root
+  // (`spendRootIsCurrent.test.ts`, "255-root ring parses").
+  if (histLen > 255) return null;
   const histEnd = 182 + histLen * 32;
   if (data.length < histEnd) return null;
 
@@ -2017,6 +2016,83 @@ export function parsePoolV3Account(data: Uint8Array): ParsedPoolV3 | null {
 // Extension adaptation: uses DataView/Uint8Array (not Buffer.readBigUInt64LE).
 // ---------------------------------------------------------------------------
 
+/**
+ * `next_leaf_index` from the pool account, or null when the account cannot be
+ * read or parsed. It never rejects: the walk starts it beside its first
+ * signature page and awaits it at the end, so it must not be able to fail the
+ * walk. A caller whose connection has no `getAccountInfo` (every fake in the
+ * pool tests except `poolHistoryBackfill.test.ts`) simply learns nothing.
+ */
+/** How many of leaves 0..count-1 are absent, counting only those below `below`. */
+function countMissingLeaves(have: ReadonlySet<number>, count: number, below = count): number {
+  let missing = 0;
+  for (let i = 0; i < Math.min(count, below); i += 1) if (!have.has(i)) missing += 1;
+  return missing;
+}
+
+async function readNextLeafIndex(connection: Connection, poolPDA: PublicKey): Promise<number | null> {
+  const conn = connection as Partial<Pick<Connection, 'getAccountInfo'>>;
+  if (typeof conn.getAccountInfo !== 'function') return null;
+  try {
+    const info = await conn.getAccountInfo(poolPDA, 'confirmed');
+    if (!info?.data) return null;
+    const parsed = parsePoolV3Account(new Uint8Array(info.data));
+    if (!parsed) return null;
+    const n = Number(parsed.nextLeafIndex);
+    return Number.isSafeInteger(n) && n >= 0 && n <= (1 << MERKLE_DEPTH) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What one history walk could not read, reported through
+ * `fetchPoolCommitments`' `onWalked` once the walk ends.
+ *
+ * `unread` counts signatures the RPC listed as successful whose transactions
+ * this client holds no read of: the ones still waiting to be re-read, plus,
+ * while the map holds fewer leaves than the pool account's `next_leaf_index`,
+ * every signature a walk has given up on. It is 0 when the map holds every leaf
+ * the account reports, or when nothing listed was left unread and nothing was
+ * ever given up on. A map with unread signatures can end where this client
+ * last read, often right after its own deposit or purchase, so its root would
+ * date a note: `prepareUnshieldV4` never proves such a root unless it is the
+ * current one (`spendRootIsCurrent.test.ts`, "a history cache left short by
+ * its last walk, with newer inserts listed but not served, is never proved";
+ * "signatures the walk gave up on keep a short map from being proved").
+ */
+export interface PoolWalkReport {
+  unread: number;
+}
+
+/**
+ * [SWEEP4 round 1, storage lane] Signatures this RUN read and found to carry no
+ * leaf — a withdrawal, a subscribe, a griefer's padding. IN MEMORY ONLY: it
+ * dies with the worker and is never persisted, because a stored list of
+ * leafless signatures would name the user's own withdrawal, which is the row
+ * field this same change removed (`poolHistoryCache.test.ts`, "[SWEEP4-STORAGE]
+ * … names no transaction of this device").
+ *
+ * Why it exists: the saved resume point is now the newest signature that
+ * INSERTED A LEAF, so every pool transaction above it is listed again on every
+ * warm walk. Reading one twice is wasted work — a confirmed transaction's logs
+ * do not change — so each is read once per session and skipped afterwards
+ * ("costs no re-read: a leafless transaction above the newest deposit is
+ * fetched once, not once per walk"). Only a transaction that was actually READ,
+ * succeeded on chain and carried no leaf event enters the set: a null or
+ * rejected read is a read that did not happen and stays in the re-read list.
+ */
+const leaflessSignatures = new Set<string>();
+/** A long session must not grow this without bound; the cost of forgetting is one re-read. */
+const MAX_LEAFLESS_REMEMBERED = 4096;
+
+function rememberLeafless(signature: string): void {
+  if (leaflessSignatures.size >= MAX_LEAFLESS_REMEMBERED) leaflessSignatures.clear();
+  leaflessSignatures.add(signature);
+}
+
+
+
 export async function fetchPoolCommitments(
   connection: Connection,
   poolPDA: PublicKey,
@@ -2026,6 +2102,8 @@ export async function fetchPoolCommitments(
     onProgress?: (scanned: number, total: number) => void;
     /** [HISTORY-CACHE] Reuse the cached walk and fetch only newer signatures. Default true. */
     incremental?: boolean;
+    /** Told what the walk could not read, once it ends; see `PoolWalkReport`. */
+    onWalked?: (report: PoolWalkReport) => void;
   } = {},
 ): Promise<Map<string, OnChainCommitment>> {
   const maxSignatures = options.maxSignatures ?? 1000;
@@ -2036,26 +2114,236 @@ export async function fetchPoolCommitments(
   // [HISTORY-CACHE 2026-09-13] Start from what an earlier walk decoded and ask
   // the RPC only for signatures newer than the newest one it saw. See
   // `poolHistoryCache.ts` for the measurement that motivates this.
+  //
+  // [HIST-1 2026-09-16] The walk is now COMPLETED rather than frozen. Each
+  // part is pinned by a case in `poolHistoryBackfill.test.ts`:
+  //   - a walk stopped by `maxSignatures` resumes at `oldestSignature` ("a
+  //     truncated walk is backfilled"). It used to ask only for signatures
+  //     newer than the point where it stopped, so the tail was never read
+  //     again;
+  //   - a transaction the RPC did not serve is re-read, then dropped and
+  //     counted after MAX_HISTORY_READ_ATTEMPTS ("a rejected or null
+  //     getTransaction is retried"; "a signature that never reads is dropped
+  //     after 5 attempts, and counted"). It used to be skipped for ever;
+  //   - the pool account is read beside the page below rather than after it,
+  //     so knowing whether the history is whole costs no round trip ("the
+  //     upgrade path: a snapshot saved by the old walk is completed, then goes
+  //     quiet").
+  //   - [fix round 1] a DELTA stopped by the budget leaves a gap in the
+  //     middle of the history; it is saved and paged on the next call ("growth
+  //     past maxSignatures between two warm calls is completed, in a bounded
+  //     number of pages"; "a griefer's failing padding above a real deposit
+  //     does not hide the deposit"; "a truncated cold walk and a later delta
+  //     past the budget are both completed");
+  //   - [fix round 1] a hole nothing accounts for schedules one re-walk, and
+  //     then waits until the pool has doubled ("a hole nothing accounts for is
+  //     re-walked once, then goes quiet"; "a hole no walk can fill is re-walked
+  //     once, not on every call").
+  // The key is host + pool, so no stored row spells the RPC credential
+  // (`poolHistoryCache.test.ts`, "[HIST-1] the snapshot key is a function of
+  // host and pool only").
   const incremental = options.incremental ?? true;
   const store = getPoolHistoryStore();
-  const cacheKey = poolHistoryKey(connection.rpcEndpoint, poolPDA.toBase58());
-  const snapshot = incremental ? await store.load(cacheKey) : null;
-  const until = snapshot?.newestSignature ?? undefined;
+  const { key: cacheKey, snapshot } = incremental
+    ? await loadPoolHistory(store, connection.rpcEndpoint, poolPDA.toBase58())
+    : { key: poolHistoryKey(connection.rpcEndpoint, poolPDA.toBase58()), snapshot: null };
+  // Started here and awaited only after the delta page (before paging older
+  // history, or before the save), so the pool read overlaps that page instead
+  // of adding a round trip after it.
+  const nextLeafIndexPromise = incremental ? readNextLeafIndex(connection, poolPDA) : Promise.resolve(null);
+
+  // A v1 row left no resume point. When no deposit slot in it yields one, the
+  // walk pays for a single cold pass instead of keeping the hole for ever.
+  const resumable = !snapshot || snapshot.complete || snapshot.oldestSignature !== null;
+  const until = resumable ? snapshot?.newestSignature ?? undefined : undefined;
+  const coldWalk = until === undefined;
+
+  /** Signatures the RPC listed as successful: only these are worth re-reading. */
+  const succeeded = new Set<string>();
+  /** signature -> attempts so far, carried between calls by the snapshot. */
+  const retry = new Map<string, number>();
+  for (const r of snapshot?.retry ?? []) retry.set(r.signature, r.attempts);
+  let dropped = snapshot?.dropped ?? 0;
+  /**
+   * [SWEEP4 repair r1, gate RED 6] Signatures this walk listed as SUCCESSFUL
+   * and did not get back: a null, a 429, a log-less answer. A read that did not
+   * happen, so nothing is known about what the transaction holds — including
+   * whether it holds a leaf.
+   *
+   * ⛔ WHY IT IS KEPT SEPARATELY FROM `retry`. Two different questions are asked
+   * of it below and only this set answers both: `retry` loses a signature the
+   * moment the walk gives up on it (`dropped`), and a given-up signature is
+   * still one the walk never read. The resume point must skip both.
+   *
+   * ⚠️ NOT "rejected". A transaction the CHAIN rejected is listed and never
+   * fetched (`take`), so it never enters here and stays eligible as the resume
+   * point — the griefer rule `poolHistoryBackfill.test.ts` holds
+   * ("a griefer's failing padding above a real deposit does not hide the
+   * deposit").
+   */
+  const unreadThisWalk = new Set<string>();
+  const noteUnread = (signature: string): void => {
+    unreadThisWalk.add(signature);
+    const attempts = (retry.get(signature) ?? 0) + 1;
+    if (attempts >= MAX_HISTORY_READ_ATTEMPTS) {
+      retry.delete(signature);
+      rememberGivenUpSignature(signature);
+      dropped += 1;
+      return;
+    }
+    retry.set(signature, attempts);
+  };
 
   const sigs: Array<{ signature: string }> = [];
+  /** Queued or already decoded: a signature listed twice (a merged gap, a re-walk) is fetched once. */
+  const seen = new Set<string>();
+  for (const e of snapshot?.entries ?? []) seen.add(e.signature);
+  // The unread signatures go in ahead of the new pages, so a leaf that a
+  // failed read hid comes back on the very next call.
+  for (const signature of retry.keys()) {
+    sigs.push({ signature });
+    succeeded.add(signature);
+    seen.add(signature);
+  }
+
+  const take = (page: Array<{ signature: string; err?: unknown }>): void => {
+    for (const s of page) {
+      // A transaction the chain rejected rolled its insert back, so it holds
+      // no leaf even when its logs still carry a LeafInserted event. It is
+      // listed and never fetched, and so never enters the re-read list: a
+      // griefer's padding costs signature pages, not transaction reads
+      // (`poolHistoryBackfill.test.ts`, "a griefer's failing padding above a
+      // real deposit does not hide the deposit"; "a transaction the chain
+      // rejected is not retried, an identical one that succeeded is").
+      if (s.err !== null && s.err !== undefined) continue;
+      if (seen.has(s.signature)) continue;
+      // Read once this session, carried no leaf, and never will: listing it
+      // again costs nothing, reading it again costs a round trip. See
+      // `leaflessSignatures`.
+      // Given up on this session: counted once into `dropped` and never asked
+      // for again. See `gaveUpSignatures` — the resume point no longer moves
+      // past a signature the RPC will not serve, so this is what keeps it from
+      // being re-read on every walk.
+      if (hasGivenUpOnSignature(s.signature)) {
+        seen.add(s.signature);
+        continue;
+      }
+      if (leaflessSignatures.has(s.signature)) {
+        seen.add(s.signature);
+        continue;
+      }
+      seen.add(s.signature);
+      sigs.push({ signature: s.signature });
+      succeeded.add(s.signature);
+    }
+  };
+
+  let listed = 0;
+  let deltaNewest: string | null = null;
+  /**
+   * [SWEEP4 round 1, storage lane] Every signature the DELTA pages listed,
+   * newest first — including the ones the chain rejected, which are listed and
+   * never fetched. The saved resume point is chosen from this list below.
+   */
+  const deltaSignatures: string[] = [];
+  let walkedOldest: string | null = null;
+  let deltaFinished = false;
+  let reachedOldest = snapshot?.reachedOldest ?? false;
   let before: string | undefined;
-  while (sigs.length < maxSignatures) {
-    const remaining = maxSignatures - sigs.length;
-    const page = await connection.getSignaturesForAddress(poolPDA, {
-      limit: Math.min(PAGE, remaining),
-      before,
-      until,
-    });
-    if (page.length === 0) break;
-    sigs.push(...page);
-    if (page.length < PAGE) break;
+  while (listed < maxSignatures) {
+    const limit = Math.min(PAGE, maxSignatures - listed);
+    const page = await connection.getSignaturesForAddress(poolPDA, { limit, before, until });
+    if (page.length === 0) {
+      if (coldWalk) reachedOldest = true;
+      deltaFinished = true;
+      break;
+    }
+    take(page);
+    for (const s of page) deltaSignatures.push(s.signature);
+    listed += page.length;
+    if (deltaNewest === null) deltaNewest = page[0].signature;
+    walkedOldest = page[page.length - 1].signature;
+    // Fewer signatures than asked for: on a cold walk that is the start of
+    // the pool's history, and there is nothing older to come back for.
+    if (page.length < limit) {
+      if (coldWalk) reachedOldest = true;
+      deltaFinished = true;
+      break;
+    }
     before = page[page.length - 1].signature;
   }
+
+  // [HIST-1 fix round 1] A warm delta the budget stopped before it reached
+  // `until` leaves a stretch in the MIDDLE of the history unlisted. The saved
+  // newest signature moves past it all the same, so it is recorded here and
+  // paged on the next call; without this, more than `maxSignatures` new
+  // signatures between two calls (a griefer's padding is enough) hid every
+  // leaf in that stretch for good (`poolHistoryBackfill.test.ts`, "growth past
+  // maxSignatures between two warm calls is completed, in a bounded number of
+  // pages"). Newest first.
+  const gaps: PoolHistoryGap[] = (snapshot?.gaps ?? []).map((g) => ({ ...g }));
+  if (!coldWalk && !deltaFinished && walkedOldest !== null && until !== undefined) {
+    gaps.unshift({ before: walkedOldest, until });
+  }
+
+  // The tail a capped walk could not reach. Only a warm walk has one, and
+  // only until the walk has seen the start of history.
+  let backfillFrom = coldWalk ? null : snapshot?.oldestSignature ?? null;
+  let wantsBackfill = backfillFrom !== null && !reachedOldest && !snapshot?.complete;
+  // Only when there is older history to page is the pool read awaited here; it
+  // started beside the delta page, so this adds no round trip of its own. If
+  // the cached leaves already cover 0..next_leaf_index-1, nothing older can
+  // hold a leaf and no page is spent ("a contiguous legacy row costs one
+  // signature page and no transaction on the upgrade call").
+  if (gaps.length > 0 || wantsBackfill) {
+    const leafCount = await nextLeafIndexPromise;
+    if (leafCount !== null && retry.size === 0) {
+      const cached = new Set<number>();
+      for (const e of snapshot?.entries ?? []) cached.add(e.leafIndex);
+      if (countMissingLeaves(cached, leafCount) === 0) {
+        gaps.length = 0;
+        wantsBackfill = false;
+      }
+    }
+  }
+  const openGaps: PoolHistoryGap[] = [];
+  for (const gap of gaps) {
+    let closed = false;
+    while (!closed && listed < maxSignatures) {
+      const limit = Math.min(PAGE, maxSignatures - listed);
+      const page = await connection.getSignaturesForAddress(poolPDA, { limit, before: gap.before, until: gap.until });
+      take(page);
+      listed += page.length;
+      if (page.length > 0) gap.before = page[page.length - 1].signature;
+      closed = page.length < limit;
+    }
+    if (!closed) openGaps.push(gap);
+  }
+  // Past the cap, merge the two oldest stretches into one that also spans the
+  // signatures between them: those are re-listed (and skipped by `seen`), never lost.
+  while (openGaps.length > MAX_HISTORY_GAPS) {
+    const older = openGaps.pop()!;
+    const newer = openGaps.pop()!;
+    openGaps.push({ before: newer.before, until: older.until });
+  }
+  if (wantsBackfill && backfillFrom) {
+    while (listed < maxSignatures) {
+      const limit = Math.min(PAGE, maxSignatures - listed);
+      const page = await connection.getSignaturesForAddress(poolPDA, { limit, before: backfillFrom });
+      if (page.length === 0) {
+        reachedOldest = true;
+        break;
+      }
+      take(page);
+      listed += page.length;
+      backfillFrom = page[page.length - 1].signature;
+      if (page.length < limit) {
+        reachedOldest = true;
+        break;
+      }
+    }
+  }
+  const oldestSignature = backfillFrom ?? (coldWalk ? walkedOldest : snapshot?.oldestSignature ?? null);
 
   const out = new Map<string, OnChainCommitment>();
   for (const e of snapshot?.entries ?? []) {
@@ -2079,8 +2367,23 @@ export async function fetchPoolCommitments(
 
     for (let t = 0; t < txs.length; t++) {
       const tx = txs[t];
+      const signature = batch[t]!.signature;
       const logs = tx?.meta?.logMessages;
-      if (!logs) continue;
+      if (!logs) {
+        // [HIST-1] A rejected, null or log-less answer for a signature the RPC
+        // listed as successful is a READ THAT DID NOT HAPPEN, not a
+        // transaction without leaves. It is kept for the next call instead of
+        // being skipped for ever, which is how a leaf used to be lost for good
+        // (`poolHistoryBackfill.test.ts`, "a rejected or null getTransaction
+        // is retried").
+        if (succeeded.has(signature)) noteUnread(signature);
+        continue;
+      }
+      retry.delete(signature);
+      // A rolled-back transaction inserted nothing, whatever its logs say
+      // (`poolHistoryBackfill.test.ts`, "a failed transaction that emitted a
+      // leaf event is not a leaf").
+      if (tx?.meta?.err) continue;
       // Who paid for this insert. Read once per transaction, outside the log
       // loop, because one transaction can emit several leaves and they all
       // share a payer.
@@ -2089,7 +2392,7 @@ export async function fetchPoolCommitments(
       // is what stops a note being minted to a buyer's order — see
       // `OnChainCommitment.depositSlot`.
       const depositSlot = typeof tx?.slot === 'number' ? tx.slot : null;
-      const signature = batch[t]!.signature;
+      let leafHere = false;
       for (const log of logs) {
         const m = log.match(/^Program data: (.+)$/);
         if (!m) continue;
@@ -2116,30 +2419,198 @@ export async function fetchPoolCommitments(
           break;
         }
         if (!decoded) continue;
+        leafHere = true;
         out.set(decoded.commitment.toString(), { ...decoded, depositPayer, depositSlot, signature });
       }
+      // Read, succeeded, no leaf: never worth a second read this session.
+      if (!leafHere) rememberLeafless(signature);
     }
 
     options.onProgress?.(Math.min(i + batchSize, sigs.length), sigs.length);
   }
+  let walkComplete = false;
   if (incremental) {
-    // The newest signature of THIS walk (pages are newest-first), else the
-    // cached one; the map is public on-chain data, safe to keep.
-    const entries: CachedCommitmentEntry[] = [...out.values()].map((c) => ({
-      commitment: c.commitment.toString(),
-      leafIndex: c.leafIndex,
-      depositPayer: c.depositPayer,
-      depositSlot: c.depositSlot,
-      signature: c.signature,
-    }));
+    // The newest signature of the DELTA (pages are newest-first), else the
+    // cached one — never the older signature a backfill page just returned.
+    // The map is public on-chain data, safe to keep; the key is not, which is
+    // why it names the RPC host and not its query (`poolHistoryCache.ts`).
+    // [SWEEP4 round 1, storage lane] IN LEAF ORDER, never in the order the
+    // walks happened to decode them. The insertion order drew this device's
+    // walk boundaries — how many leaves the pool held at each scan and each
+    // spend preparation it ran — in a row a storage dump reads in clear. Leaf
+    // order is the chain's own order, so it says nothing about who walked
+    // when. Same rule the KV twin already follows (`kvPoolHistory.ts`);
+    // measured by `poolHistoryCache.test.ts`, "[SWEEP4-STORAGE] … files the
+    // leaves in leaf order".
+    const entries: CachedCommitmentEntry[] = [...out.values()]
+      .map((c) => ({
+        commitment: c.commitment.toString(),
+        leafIndex: c.leafIndex,
+        depositPayer: c.depositPayer,
+        depositSlot: c.depositSlot,
+        signature: c.signature,
+      }))
+      .sort((a, b) => a.leafIndex - b.leafIndex || (a.commitment < b.commitment ? -1 : a.commitment > b.commitment ? 1 : 0));
+    // Whole = every leaf the pool says exists is in hand, with nothing left
+    // to re-read. `next_leaf_index` comes from the account read started at the
+    // top of this function, so a snapshot that is already contiguous is never
+    // re-walked ("the upgrade path…" in `poolHistoryBackfill.test.ts`).
+    const nextLeafIndex = await nextLeafIndexPromise;
+    const haveIndex = new Set<number>();
+    let topIndex = -1;
+    for (const c of out.values()) {
+      haveIndex.add(c.leafIndex);
+      if (c.leafIndex > topIndex) topIndex = c.leafIndex;
+    }
+    const complete =
+      nextLeafIndex !== null && retry.size === 0 && countMissingLeaves(haveIndex, nextLeafIndex) === 0;
+    walkComplete = complete;
+    // A long outage must not leave a re-read list that grows without bound.
+    // What is given up here is counted, never silently forgotten.
+    if (retry.size > MAX_HISTORY_RETRY_ENTRIES) {
+      const extra = [...retry.keys()].slice(0, retry.size - MAX_HISTORY_RETRY_ENTRIES);
+      for (const s of extra) retry.delete(s);
+      dropped += extra.length;
+    }
+
+    // [HIST-1 fix round 1] `complete === false` must never be a resting state.
+    // When nothing pending explains a hole (no re-read, no gap, start of
+    // history seen) and more leaves are missing BELOW the highest one held
+    // than signatures were ever dropped, the next call re-walks the whole
+    // history from the newest signature, fetching only signatures it has not
+    // decoded. A hole only at the top is left alone: an account read one slot
+    // ahead of the signature list looks exactly like that. One re-walk, then
+    // none until next_leaf_index has doubled, so a hole no walk can fill costs
+    // O(history) pages in total, not per call (`poolHistoryBackfill.test.ts`,
+    // "a hole nothing accounts for is re-walked once, then goes quiet"; "a hole
+    // no walk can fill is re-walked once, not on every call").
+    // [SWEEP4 round 1, storage lane] A TRANSACTION THIS WALK READ AND FOUND
+    // LEAFLESS IS NEVER THE SAVED RESUME POINT.
+    //
+    // `PoolPanel` rescans the moment a withdrawal lands, so the newest listed
+    // signature was routinely the user's OWN v4 withdrawal — the pool PDA is
+    // writable in it, which is why `getSignaturesForAddress` returns it at all
+    // — and a storage dump read the row as "this device withdrew, there". A
+    // leafless transaction adds nothing to the walk either way: skipping it
+    // here costs one re-listing per walk and nothing else, since the read
+    // itself happens once a session (`leaflessSignatures`). Measured by
+    // `poolHistoryCache.test.ts`, "[SWEEP4-STORAGE] … names no transaction of
+    // this device" and "… costs no re-read".
+    //
+    // ⛔ NOT "the newest leaf's signature", which was the first shape of this
+    // fix: a griefer's 1,000 failing transactions above a real deposit are
+    // listed but never read, so an anchor that only ever moved to a leaf left
+    // them to be re-listed on every walk until they ate the whole signature
+    // budget, and the deposit underneath was never reached
+    // (`poolHistoryBackfill.test.ts`, "a griefer's failing padding above a
+    // real deposit does not hide the deposit"). A rejected transaction is not
+    // one this device's own activity produced, so it stays eligible.
+    //
+    // Nothing eligible in the delta (every new signature read leafless) leaves
+    // the resume point where it was: the walk re-lists those few signatures
+    // next time and reads none of them.
+    //
+    // [SWEEP4 repair r1, gate RED 6] AND NEVER ONE THIS WALK COULD NOT READ.
+    // `rememberLeafless` is reached only after a SUCCESSFUL read, so the rule
+    // above said nothing about a null / 429 / log-less answer — and on the very
+    // path the leak was measured on, the panel rescanning the moment a
+    // withdrawal lands, the unreadable transaction IS the user's own
+    // withdrawal. It went straight back into the row as the resume point.
+    // `unreadThisWalk` closes it; a REJECTED transaction is never in that set,
+    // so the griefer rule is untouched. Measured by `poolHistoryCache.test.ts`,
+    // "names no transaction of this device when the read of it FAILED".
+    const newestSignature =
+      deltaSignatures.find((s) => !leaflessSignatures.has(s) && !unreadThisWalk.has(s)) ??
+      snapshot?.newestSignature ??
+      deltaNewest ??
+      null;
+    let savedOldest = oldestSignature;
+    let savedReachedOldest = reachedOldest;
+    let rewalkAt = snapshot?.rewalkAt ?? null;
+    if (
+      !complete &&
+      nextLeafIndex !== null &&
+      newestSignature !== null &&
+      reachedOldest &&
+      retry.size === 0 &&
+      openGaps.length === 0 &&
+      countMissingLeaves(haveIndex, nextLeafIndex, topIndex) > dropped &&
+      (rewalkAt === null || nextLeafIndex >= 2 * rewalkAt)
+    ) {
+      savedOldest = newestSignature;
+      savedReachedOldest = false;
+      rewalkAt = nextLeafIndex;
+    }
+
     await store.save({
-      version: 1,
+      version: POOL_HISTORY_VERSION,
       key: cacheKey,
-      newestSignature: sigs[0]?.signature ?? snapshot?.newestSignature ?? null,
+      newestSignature,
+      oldestSignature: savedOldest,
+      reachedOldest: savedReachedOldest,
+      complete,
+      // [SWEEP4 repair r1, gate RED 6] THE RE-READ LIST KEEPS ONLY WHAT
+      // LISTING WILL NOT BRING BACK.
+      //
+      // A raw signature in this row is a signature in a storage dump, and the
+      // ones that land here newest-first are exactly this device's own recent
+      // pool activity — the withdrawal whose read just failed. Every signature
+      // ABOVE the saved resume point is re-listed by the next walk (`until` is
+      // the resume point) and re-read then, because nothing persists the
+      // leafless set; so keeping it here buys one saved re-read and costs the
+      // whole join. What listing will NOT return is a signature at or below the
+      // resume point — a backfill page's — and those are old history, not this
+      // session's activity, so they stay.
+      //
+      // The `attempts` count of a dropped signature is not lost with it: the
+      // walk that re-lists it finds it unread again, and `dropped` — a count,
+      // not a name — is persisted. Measured by `poolHistoryCache.test.ts`,
+      // "names it in NO field of the row"; the re-read behaviour itself stays
+      // pinned by `poolHistoryBackfill.test.ts`.
+      // ⚠️ RAW SIGNATURES, AND A DISCLOSED RESIDUAL (gate r1, RED 6).
+      //
+      // These are transactions the RPC LISTED as successful and did not return.
+      // On the path the resume-point leak was measured on — the panel rescanning
+      // the moment a withdrawal lands — the unread transaction can be the user's
+      // own withdrawal, and then this field names it in clear while the RPC keeps
+      // failing on it. It leaves the row on the first successful read
+      // (`poolHistoryCache.test.ts`, "clears it from the row as soon as the read
+      // succeeds"), so the window is the outage, not the life of the store.
+      //
+      // ⛔ THE THREE CHEAP FIXES WERE TRIED AND EACH BREAKS SOMETHING MEASURED:
+      //   - hashing buys nothing, because the pool's signature list is PUBLIC:
+      //     a dump holder hashes every pool signature and matches
+      //     (`wp-logs/PROTOCOL.md`);
+      //   - leaving out the entries above the resume point stops the walk
+      //     converging — their attempt count restarts on every walk, so nothing
+      //     is ever given up on and a short map can never be proved
+      //     (`spendRootIsCurrent.test.ts`, "signatures the walk gave up on keep
+      //     a short map from being proved": `dropped` measured 0, expected 2);
+      //   - moving the count into this session's memory loses the attempt cap
+      //     across a reload, and a permanently unreadable signature is then read
+      //     once per walk for ever.
+      //
+      // What closes it is sealing this row the way the other stores are sealed
+      // (`lib/privacy/sealedStore.ts`), which this walk cannot do today: it has
+      // no identity — `fetchPoolCommitments` takes a connection and a pool, no
+      // `meta` — so it is a design change, not a patch. FOUNDER / next round.
+      retry: [...retry.entries()].map(([signature, attempts]) => ({ signature, attempts })),
+      dropped,
+      gaps: openGaps,
+      rewalkAt,
       entries,
-      savedAt: Date.now(),
+      // [SWEEP4 round 1, storage lane] Not `Date.now()`: the clock of the last
+      // walk dated every scan and every spend preparation this device ran, in
+      // a row a storage dump reads in clear. Nothing reads the field — the KV
+      // twin already writes 0 for the same reason (`kvPoolHistory.ts`) — and
+      // it stays in the shape so an older build still parses the row.
+      // `poolHistoryCache.test.ts`, "[SWEEP4-STORAGE] … carries no clock".
+      savedAt: 0,
     });
   }
+  // Read once the re-read list and the given-up count are final, so a
+  // signature given up on during this walk counts too (`PoolWalkReport`).
+  options.onWalked?.({ unread: walkComplete ? 0 : retry.size + dropped });
   return out;
 }
 
@@ -2157,10 +2628,20 @@ export async function fetchPoolLeavesByIndex(
     maxSignatures?: number;
     onProgress?: (scanned: number, total: number) => void;
   } = {},
-): Promise<{ leavesByIndex: bigint[]; scannedLeafCount: number; missing: number[] }> {
+): Promise<{
+  leavesByIndex: bigint[];
+  scannedLeafCount: number;
+  missing: number[];
+  /** The walk's `PoolWalkReport.unread`; undefined only if the walk made no report. */
+  unread: number | undefined;
+}> {
+  const report: { unread?: number } = {};
   const onChain = await fetchPoolCommitments(connection, poolPDA, {
     maxSignatures: opts.maxSignatures ?? 1000,
     onProgress: opts.onProgress,
+    onWalked: (w) => {
+      report.unread = w.unread;
+    },
   });
   const MAX_LEAVES = 1 << MERKLE_DEPTH;
 
@@ -2185,7 +2666,7 @@ export async function fetchPoolLeavesByIndex(
   for (const e of valid) leavesByIndex[e.leafIndex] = e.commitment;
   const missing: number[] = [];
   for (let i = 0; i <= maxIdx; i++) if (leavesByIndex[i] === ZERO_VALUE_V3) missing.push(i);
-  return { leavesByIndex, scannedLeafCount: maxIdx + 1, missing };
+  return { leavesByIndex, scannedLeafCount: maxIdx + 1, missing, unread: report.unread };
 }
 
 // ---------------------------------------------------------------------------
@@ -2224,10 +2705,13 @@ export function buildMerkleProofFromLeavesV3(params: {
     leavesByIndex[targetLeafIndex] === undefined ||
     leavesByIndex[targetLeafIndex] === ZERO_VALUE_V3
   ) {
+    // No leaf index and no leaf count: the v3 prepare, `prepareSubscribeV4` and
+    // `prepareUnshieldV4` let this error through, and PoolPanel.tsx puts an
+    // error's message on screen (`spendRootIsCurrent.test.ts`, "the refusal the
+    // screen shows names no leaf: no index, no count").
     throw new Error(
-      `buildMerkleProofFromLeavesV3: target leafIndex ${targetLeafIndex} not found ` +
-      `among ${leavesByIndex.filter((l) => l !== undefined && l !== ZERO_VALUE_V3).length} non-empty leaves. ` +
-      `Try increasing maxSignatures or check that the note's leafIndex is correct.`,
+      'buildMerkleProofFromLeavesV3: this note is not among the pool leaves read so far. ' +
+      'The RPC may not have indexed its deposit yet. Nothing was proved; wait a few seconds, then retry.',
     );
   }
 
@@ -2428,7 +2912,9 @@ export async function prepareUnshield(
   );
 
   if (missing.length > 0) {
-    console.warn(`[DenomPool/ext] prepareUnshield: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+    // A count only, no leaf index (`spendRootIsCurrent.test.ts`, "the v3
+    // prepare's missing-leaf warning prints a count, never which leaf").
+    console.warn(`[DenomPool/ext] prepareUnshield: ${missing.length} missing leaf gap(s)`);
   }
 
   onProgress?.('Building Merkle proof from leaf history...');
@@ -2461,9 +2947,11 @@ export async function prepareUnshield(
         const retryInCurrent = bytesEqual(retryRootBytes, parsed.currentRoot);
         const retryInHist = parsed.historicalRoots.some((r) => bytesEqual(retryRootBytes, r));
         if (!retryInCurrent && !retryInHist) {
-          const hex = (u: Uint8Array) => Array.from(u).map((b) => b.toString(16).padStart(2, '0')).join('');
+          // The `PRE-FLIGHT FAIL` needle stays (poolHandlers V4_REBUILD_FAILURES);
+          // the rebuilt root does not: the message is rendered
+          // (`noteIdentifierTripwire.test.ts`).
           throw new Error(
-            `PRE-FLIGHT FAIL: Rebuilt Merkle root 0x${hex(retryRootBytes).slice(0, 24)}… ` +
+            `PRE-FLIGHT FAIL: the rebuilt Merkle root ` +
             `is not in pool's known roots (current + ${parsed.historicalRoots.length} historical). ` +
             `This would burn STARK proof rent (~2 SOL). Aborting. ` +
             `Wait ~10s for RPC to index recent transactions, then retry.`,
@@ -2940,11 +3428,107 @@ export interface PrepareUnshieldV4Result {
 }
 
 /**
- * Fetch leaves, build the Merkle path, pre-flight the root, and generate ONE
- * circuit-7 proof.
+ * Raised by `prepareUnshieldV4` when the pool history this client can read does
+ * not rebuild to a root the pool knows, and the note's saved path would name an
+ * OLDER root than the current one; or when the only root it rebuilds to is an
+ * older one tied to the note (a walk that left listed signatures unread, a map
+ * that ends at the note's own leaf or where its saved root was taken); or when
+ * no map it read places the note at all (its insert listed and not served, or
+ * not listed yet: `spendRootIsCurrent.test.ts`, "a note that no leaf map read
+ * places is refused with HistoryIncompleteError, never with a v3 needle").
+ * Nothing has been proved or spent.
+ *
+ * The message carries neither needle of `V4_REBUILD_FAILURES` (poolHandlers.ts),
+ * so the withdrawal handler rethrows it instead of falling back to the C1 + C3
+ * pair, which would publish the commitment (`spendRootIsCurrent.test.ts`, "hole
+ * plus older saved root: refuse, never name it, no v3";
+ * `poolHandlersUnshieldV4.test.ts`, "does NOT fall back to the C1 + C3 pair when
+ * the history is incomplete"). It names no note and no root.
+ *
+ * `prepareSubscribeV4` (subscribePrivateStarkV4.ts) raises it too, for the same
+ * tie rule, with `spend` = 'subscription' so the screen names the right action;
+ * `handlePoolSubscribePrepare` rethrows it the same way
+ * (`spendRootIsCurrent.test.ts`, "the circuit-7 SUBSCRIPTION prepare never
+ * proves a root tied to the note either"; `poolHandlersUnshieldV4.test.ts`, "a
+ * circuit-7 subscription refused for an incomplete history does NOT fall back to
+ * the C1 + C3 pair").
+ */
+export class HistoryIncompleteError extends Error {
+  constructor(spend: 'withdrawal' | 'subscription' = 'withdrawal') {
+    super(
+      `The pool history this client can read is incomplete, so the ${spend} could not ` +
+        'be built against the pool\'s current Merkle root. Nothing was spent. Wait a few ' +
+        'seconds for the RPC to catch up, then retry.',
+    );
+    this.name = 'HistoryIncompleteError';
+  }
+}
+
+export interface PrepareUnshieldV4Options {
+  /**
+   * The pool commitments the caller has ALREADY walked (`locateOwnedNote` in
+   * poolHandlers.ts). Given, the prepare builds from them and does not walk the
+   * history a second time (`spendRootIsCurrent.test.ts`, "one walk per prepare").
+   */
+  leaves?: Map<string, OnChainCommitment>;
+  /**
+   * What the walk that produced `leaves` could not read (`PoolWalkReport.unread`).
+   * Absent, those leaves are not shown to be read in full, and a root they fold
+   * to that the pool is not on now gets the refetch (`spendRootIsCurrent.test.ts`,
+   * "a map handed down with no walk report is not shown clean: a lagging root
+   * gets the refetch").
+   */
+  unread?: number;
+  /**
+   * The Merkle path saved with the note. Used ONLY when its root is the pool's
+   * current root; see `prepareUnshieldV4`.
+   */
+  savedPath?: StoredMerklePath;
+}
+
+/** A commitment map as the dense leaf array `buildMerkleProofFromLeavesV3` takes. */
+function leavesByIndexFromCommitments(commitments: Map<string, OnChainCommitment>): bigint[] {
+  const MAX_LEAVES = 1 << MERKLE_DEPTH;
+  let maxIdx = -1;
+  for (const e of commitments.values()) {
+    if (Number.isInteger(e.leafIndex) && e.leafIndex >= 0 && e.leafIndex < MAX_LEAVES && e.leafIndex > maxIdx) {
+      maxIdx = e.leafIndex;
+    }
+  }
+  const leaves: bigint[] = maxIdx >= 0 ? new Array<bigint>(maxIdx + 1).fill(ZERO_VALUE_V3) : [];
+  for (const e of commitments.values()) {
+    if (Number.isInteger(e.leafIndex) && e.leafIndex >= 0 && e.leafIndex <= maxIdx) leaves[e.leafIndex] = e.commitment;
+  }
+  return leaves;
+}
+
+/**
+ * Build the Merkle path from the pool leaves, pre-flight its root, and generate
+ * ONE circuit-7 proof.
  *
  * ⛔ `recipient` is a parameter HERE, unlike `prepareUnshield`. C7 binds
  * sha256(recipient) into its transcript; the proof does not exist without it.
+ *
+ * 🚨 WHICH ROOT IS NAMED (SPEND-1, 2026-09-16). `merkle_root` travels in the
+ * clear and the chain accepts any root still in the ring. A path saved when the
+ * note was shielded or issued folds to the root right after that note's own
+ * insertion, so naming it dates the deposit (devnet: 1 v4 spend of 34 named a
+ * root 4 insertions old, `scratchpad/probe-stale-root-2026-09-15.log`). So the
+ * root is a function of POOL STATE, never of the note:
+ *   1. build from `opts.leaves` (or one walk when absent); the current root is
+ *      accepted, and so is a ring root nothing ties to the note: the walk left
+ *      nothing it listed unread, the map does not end at the note's own leaf,
+ *      and the root is not the saved one (a map can end exactly where the
+ *      saved root was taken, and its root is then the saved root);
+ *   2. otherwise one incremental history fetch and a rebuild, same rule;
+ *   3. otherwise `opts.savedPath`, ONLY if its root equals the current root;
+ *   4. otherwise, if the saved root is in the ring, or a ring root was held
+ *      back in 1 or 2, or neither map places the note, `HistoryIncompleteError`;
+ *   5. otherwise (the refetched map places the note, at a root the pool does
+ *      not know) PRE-FLIGHT FAIL, as before.
+ * With no readable pool account there is no pre-flight and no refetch: the
+ * rebuilt root is proved only when nothing ties it to the note.
+ * Pinned by `spendRootIsCurrent.test.ts`.
  */
 export async function prepareUnshieldV4(
   receipt: ShieldReceipt,
@@ -2952,88 +3536,142 @@ export async function prepareUnshieldV4(
   poolConfig: PoolConfig,
   connection: Connection,
   onProgress?: (step: string) => void,
-  storedPath?: StoredMerklePath,
+  opts: PrepareUnshieldV4Options = {},
 ): Promise<PrepareUnshieldV4Result> {
   const { starkProver: prover } = await import('./starkProver');
 
-  // ── The stored-path fast path. ADDED 2026-08-29. ──────────────────────────
-  //
-  // 🚨 THIS FUNCTION'S ABSENCE OF A STORED-PATH ARM WAS THE REASON HALF THE
-  // FALLBACKS TO v3 HAPPENED, and it was a missing feature, not a privacy
-  // decision. `poolHandlers.ts` said so in as many words: "prepareUnshieldV4
-  // has no storedPath fast path, so a note whose root has aged out of the
-  // pool's 100-root ring still needs the v3 rebuild", and, two lines earlier,
-  // "a Merkle path the rebuild could not place in the pool's root ring is a
-  // note the STORED PATH MAY STILL SPEND".
-  //
-  // So a note carrying its own witness was routed to the pair that REPUBLISHES
-  // ITS COMMITMENT, purely because this function never looked at the witness.
-  // Every note the pre-deposited inventory hands a buyer carries
-  // `merklePath: 'stored'` (measured 2026-08-29 on leaf 86), so this was the
-  // common case and not the corner one.
-  //
-  // The stored path is the FIRST CANDIDATE, not a bypass: it flows into the
-  // same pre-flight below, which checks the root against the pool's current
-  // and historical ring. If it is stale the function falls through to the
-  // rebuild exactly as before, so a corrupt or aged stored path costs one
-  // account read and changes nothing else.
-  //
-  // ⛔ It is NOT trusted. `prepareUnshieldFromPath` (the v3 twin) takes the same
-  // shape and states the same reason: "if the path were stale or corrupted the
-  // on-chain root check would fail after we had already paid for the upload".
-  let merkleResult: ReturnType<typeof buildMerkleProofFromLeavesV3> | null = null;
+  type MerkleResult = ReturnType<typeof buildMerkleProofFromLeavesV3>;
+  // A leaf map that does not hold this note yet (an RPC behind the deposit) is
+  // a path that cannot be built: it is treated like a root the pool does not
+  // know, and so gets the refetch below (`spendRootIsCurrent.test.ts`, "a walked
+  // map that does not hold the note yet gets the refetch too"). The builder's
+  // error names no leaf ("the refusal the screen shows names no leaf: no index,
+  // no count") and is kept only to be rethrown when no pre-flight can run.
+  let buildError: unknown = null;
+  /** The newest leaf index of the map `build` last read. */
+  let builtTop = -1;
+  const build = (leavesByIndex: bigint[]): MerkleResult | null => {
+    builtTop = leavesByIndex.length - 1;
+    try {
+      return buildMerkleProofFromLeavesV3({ leavesByIndex, targetLeafIndex: receipt.leafIndex });
+    } catch (err) {
+      buildError = err;
+      return null;
+    }
+  };
 
-  if (storedPath && storedPath.pathElements.length >= C7_SUBTREE_DEPTH) {
-    onProgress?.('Using the note\'s own Merkle path...');
-    merkleResult = {
-      pathElements: storedPath.pathElements.map((e) => BigInt(e)),
-      pathIndices: storedPath.pathIndices,
-      root: BigInt(storedPath.root),
-    } as ReturnType<typeof buildMerkleProofFromLeavesV3>;
-  }
+  // What ties a root the pool is not on NOW to this note (SPEND-1, continued
+  // run). A walk that left listed signatures unread may stop where this client
+  // last read, often right after the note's own deposit or purchase; a map that
+  // ends at the note's own leaf folds to its deposit root; and a map can end
+  // exactly where the saved root was taken, so its root IS the saved one. Such
+  // a root is never proved unless it is current (`spendRootIsCurrent.test.ts`,
+  // "a map that ends where the note's saved root was taken is never proved
+  // (m == k)"; "a history cache left short by its last walk, with newer inserts
+  // listed but not served, is never proved").
+  const savedRootValue = ((): bigint | null => {
+    try {
+      return opts.savedPath ? BigInt(opts.savedPath.root) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const tiedToNote = (root: bigint, top: number, unread: number | undefined): boolean =>
+    unread !== 0 || top === receipt.leafIndex || root === savedRootValue;
 
-  if (!merkleResult) {
+  let merkleResult: MerkleResult | null;
+  /** What the walk behind the first map could not read; undefined when nobody said. */
+  let firstUnread: number | undefined;
+  if (opts.leaves) {
+    onProgress?.('Building Merkle proof from leaf history...');
+    merkleResult = build(leavesByIndexFromCommitments(opts.leaves));
+    firstUnread = opts.unread;
+  } else {
     onProgress?.('Fetching pool leaves from on-chain events...');
-    const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
+    const { leavesByIndex, missing, unread } = await fetchPoolLeavesByIndex(
       connection,
       poolConfig.poolPDA,
       { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
     );
     if (missing.length > 0) {
-      console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`);
+      // A count only, no leaf index (`spendRootIsCurrent.test.ts`, "the
+      // missing-leaf warning prints a count, never which leaf").
+      console.warn(`[DenomPool/v4] prepareUnshieldV4: ${missing.length} missing leaf gap(s)`);
     }
-
     onProgress?.('Building Merkle proof from leaf history...');
-    merkleResult = buildMerkleProofFromLeavesV3({
-      leavesByIndex,
-      targetLeafIndex: receipt.leafIndex,
-    });
+    merkleResult = build(leavesByIndex);
+    firstUnread = unread;
   }
+  const firstTop = builtTop;
 
-  // Root pre-flight. A rebuilt root the pool has never published means the
-  // proof would be refused at the END of a ~78-chunk upload, so this check
-  // is worth its two RPC calls.
+  // Root pre-flight. A root the pool has never published means the proof would
+  // be refused at the END of the upload, so this check is worth its account read.
   onProgress?.('Pre-flight root verification...');
   const poolAcct = await connection.getAccountInfo(poolConfig.poolPDA, 'confirmed');
-  if (poolAcct) {
-    const parsed = parsePoolV3Account(new Uint8Array(poolAcct.data));
-    if (parsed) {
-      const known = (root: bigint): boolean => {
-        const b = new Uint8Array(goldilocksToLeBytes32(root));
-        return bytesEqual(b, parsed.currentRoot) || parsed.historicalRoots.some((r) => bytesEqual(b, r));
-      };
-      if (!known(merkleResult.root)) {
-        // Reached either because the leaf scan was short, or because a STORED
-        // path has aged out of the ring. Both want the same answer: rebuild
-        // from a wider scan. The stored candidate is discarded here rather than
-        // patched, because a path whose root the pool never had is not a path.
-        onProgress?.('Root not in ring — retrying event scan with extended limit...');
-        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
-        merkleResult = buildMerkleProofFromLeavesV3({
-          leavesByIndex: retry.leavesByIndex,
-          targetLeafIndex: receipt.leafIndex,
-        });
-        if (!known(merkleResult.root)) {
+  const parsed = poolAcct ? parsePoolV3Account(new Uint8Array(poolAcct.data)) : null;
+  if (parsed) {
+    const isCurrent = (root: bigint): boolean =>
+      bytesEqual(new Uint8Array(goldilocksToLeBytes32(root)), parsed.currentRoot);
+    const known = (root: bigint): boolean => {
+      const b = new Uint8Array(goldilocksToLeBytes32(root));
+      return bytesEqual(b, parsed.currentRoot) || parsed.historicalRoots.some((r) => bytesEqual(b, r));
+    };
+    // A ring root that is not current and is tied to the note is held back
+    // like an unknown root: it gets the refetch below, then a refusal if the
+    // refetched one is held back too (`tiedToNote` above).
+    let heldBack = false;
+    const unlessTiedToNote = (
+      result: MerkleResult | null,
+      top: number,
+      unread: number | undefined,
+    ): MerkleResult | null => {
+      if (!result || isCurrent(result.root) || !known(result.root) || !tiedToNote(result.root, top, unread)) {
+        return result;
+      }
+      heldBack = true;
+      return null;
+    };
+    merkleResult = unlessTiedToNote(merkleResult, firstTop, firstUnread);
+    if (!merkleResult || !known(merkleResult.root)) {
+      // Step 2: ONE refetch and rebuild before any saved path is looked at
+      // (`spendRootIsCurrent.test.ts`, "a short walked map gets ONE refetch, and
+      // the refetched root is proved (not refused, not v3)").
+      // A refetched root the ring holds is proved as read, even when it lags:
+      // the note's older saved root never replaces it (same file, "a lagging
+      // map is proved as read on every route to it: the note's older saved
+      // root is never named").
+      onProgress?.('Root not in ring — refreshing the pool history...');
+      const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
+      merkleResult = build(retry.leavesByIndex);
+      merkleResult = unlessTiedToNote(merkleResult, builtTop, retry.unread);
+      if (!merkleResult || !known(merkleResult.root)) {
+        const saved = opts.savedPath;
+        const savedRoot = saved && saved.pathElements.length >= C7_SUBTREE_DEPTH ? BigInt(saved.root) : null;
+        if (saved && savedRoot !== null && isCurrent(savedRoot)) {
+          // The saved witness folds to the root the pool is on NOW, so it says
+          // nothing about when the note was deposited (`spendRootIsCurrent.test.ts`,
+          // "a saved root equal to the current root is used").
+          onProgress?.('Using the note\'s own Merkle path...');
+          merkleResult = {
+            pathElements: saved.pathElements.map((e) => BigInt(e)),
+            pathIndices: saved.pathIndices,
+            root: savedRoot,
+          };
+        } else if (savedRoot !== null && known(savedRoot)) {
+          throw new HistoryIncompleteError();
+        } else {
+          // A root the pool knows was held back above: the history this client
+          // read is short, the note is not unplaceable, so this is no case for
+          // the C1 + C3 pair (`spendRootIsCurrent.test.ts`, "a history cache
+          // left short by its last walk, with newer inserts listed but not
+          // served, is never proved").
+          // Nor is a note that neither map places (its insert listed and not
+          // served, or not listed yet): the history read is short and there is
+          // no rebuilt root to refuse, so the refusal carries no needle (same
+          // file, "a note that no leaf map read places is refused with
+          // HistoryIncompleteError, never with a v3 needle"). HEAD rethrew the
+          // builder's error here, which carries none either.
+          if (heldBack || !merkleResult) throw new HistoryIncompleteError();
           throw new Error(
             `PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots ` +
             `(current + ${parsed.historicalRoots.length} historical). Aborting before proof rent is spent. ` +
@@ -3043,6 +3681,15 @@ export async function prepareUnshieldV4(
       }
     }
   }
+  // No readable pool account: nothing to pre-flight against, and a saved path
+  // cannot be shown to be current, so it is not used (`spendRootIsCurrent.test.ts`,
+  // "an unreadable pool account never makes the saved path the answer").
+  if (!merkleResult) throw buildError;
+  // Nor can the rebuilt root be shown current, so it is proved only when
+  // nothing ties it to the note, with no refetch (same file, "a history cache
+  // left short by its last walk, with newer inserts listed but not served, is
+  // never proved", its unreadable-account worlds).
+  if (!parsed && tiedToNote(merkleResult.root, firstTop, firstUnread)) throw new HistoryIncompleteError();
 
   // 12 / 3 split. `buildMerkleProofFromLeavesV3` returns the full depth-15 path
   // and the two halves go to different verifiers: the first twelve levels are

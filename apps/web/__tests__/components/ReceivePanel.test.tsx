@@ -65,6 +65,27 @@ const ADAPTER = {
 
 const OWNER = { toBase58: () => "7gWpzSZALYz3Um8G7yUxaT6Av2tvw1Cn6VAhSZSB6QmU" } as PublicKey;
 
+/** The note's display name (TAG-0 vector: `fixtures/noteTagVector.json`). */
+const TAG = { text: "9PHT-NDYJ", color: "#b8960f" };
+/** A second, different tag: the positive control of the invariance case. */
+const OTHER_TAG = { text: "3TZZ-VRGX", color: "#4f9d4f" };
+
+/** UI-1 canaries: a leaf and a commitment no other fixture uses. */
+const CANARY_LEAF = 987654;
+const CANARY_COMMITMENT = "1357913579135791357";
+
+/** Every canary visible in `html`: the leaf, and any 6-character window of the
+ *  commitment (the old row showed `truncate(commitment, 6, 4)`). */
+function canariesIn(html: string): string[] {
+  const found: string[] = [];
+  if (html.includes(String(CANARY_LEAF))) found.push(String(CANARY_LEAF));
+  for (let i = 0; i + 6 <= CANARY_COMMITMENT.length; i++) {
+    const w = CANARY_COMMITMENT.slice(i, i + 6);
+    if (html.includes(w)) found.push(w);
+  }
+  return [...new Set(found)];
+}
+
 function outcome(over: Partial<ImportNoteOutcome["note"]> = {}): ImportNoteOutcome {
   return {
     note: {
@@ -77,6 +98,7 @@ function outcome(over: Partial<ImportNoteOutcome["note"]> = {}): ImportNoteOutco
       spent: false,
       spentKnown: true,
       derivation: 1,
+      tag: TAG,
       ...over,
     },
     merklePath: "stored",
@@ -196,8 +218,10 @@ describe("importing", () => {
   it("announces the received note by its denomination, in plain words", async () => {
     await importSealed();
     expect(await screen.findByText("Received a 0.1 SOL note")).toBeInTheDocument();
-    // Second plane: the protocol's name for it.
-    expect(screen.getByText(/leaf #47/)).toBeInTheDocument();
+    // Second plane: the note's own name, its tag (UI-1). The leaf number the
+    // row used to show names the deposit on chain to anyone who sees the screen.
+    expect(document.body.textContent).toContain(TAG.text);
+    expect(document.body.textContent).not.toMatch(/leaf #/);
   });
 
   it("tells both truths on the success screen itself", async () => {
@@ -241,6 +265,39 @@ describe("importing", () => {
       await screen.findByText(/commitment does not match its secrets/i),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Received a/)).not.toBeInTheDocument();
+  });
+});
+
+describe("the received note is named by its tag, never by its leaf (UI-1)", () => {
+  async function importAndRead(note: Partial<ImportNoteOutcome["note"]>): Promise<string> {
+    importReceivedNote.mockResolvedValue(outcome(note));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await screen.findByRole("button", { name: /Copy my address/i });
+    await pasteBlob(user, SEALED);
+    await user.click(screen.getByRole("button", { name: /Add it to my notes/i }));
+    await screen.findByText("Received a 0.1 SOL note");
+    const html = view.container.innerHTML;
+    view.unmount();
+    return html;
+  }
+
+  it("renders no leaf and no commitment of the received note, and shows its tag", async () => {
+    const html = await importAndRead({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT });
+    expect(canariesIn(html)).toEqual([]);
+    expect(html).toContain(TAG.text);
+  });
+
+  it("renders the same page for two notes that differ only in leaf and commitment", async () => {
+    // The property, not a list of spellings: whatever the screen shows is a
+    // function of the note's tag and amount, so moving the leaf or the
+    // commitment moves nothing. A leaf rendered in any form fails here.
+    const a = await importAndRead({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT });
+    const b = await importAndRead({ leafIndex: 12, commitment: "24680246802468024680" });
+    expect(b).toBe(a);
+    // Positive control: the comparison can see a difference in the name.
+    const c = await importAndRead({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT, tag: OTHER_TAG });
+    expect(c).not.toBe(a);
   });
 });
 

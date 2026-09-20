@@ -23,11 +23,12 @@
  */
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PublicKey } from "@solana/web3.js";
 
 import SendForm from "@/components/pay/SendForm";
+import { BEARER_CLIPBOARD_CLEAR_MS } from "@/lib/pay/bearerClipboard";
 import { createNoteEncryptionAddress } from "@/lib/privacy/pool/noteCrypto";
 import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
 import type { Asset, ChainStealthAdapter } from "@/lib/privacy/chains/types";
@@ -125,6 +126,26 @@ function noteView(over: Partial<PoolNoteView> = {}): PoolNoteView {
   };
 }
 
+/** The note's display name (TAG-0 vector: `fixtures/noteTagVector.json`). */
+const TAG = { text: "9PHT-NDYJ", color: "#b8960f" };
+const OTHER_TAG = { text: "3TZZ-VRGX", color: "#4f9d4f" };
+
+/** UI-1 canaries: a leaf and a commitment no other fixture uses. */
+const CANARY_LEAF = 987654;
+const CANARY_COMMITMENT = "1357913579135791357";
+
+/** Every canary visible in `html`: the leaf, and any 6-character window of the
+ *  commitment (the old rows showed `truncate(commitment, 6, 4)`). */
+function canariesIn(html: string): string[] {
+  const found: string[] = [];
+  if (html.includes(String(CANARY_LEAF))) found.push(String(CANARY_LEAF));
+  for (let i = 0; i + 6 <= CANARY_COMMITMENT.length; i++) {
+    const w = CANARY_COMMITMENT.slice(i, i + 6);
+    if (html.includes(w)) found.push(w);
+  }
+  return [...new Set(found)];
+}
+
 /**
  * A p01pq address is ~1,600 characters (an ML-KEM-768 public key). Nobody types
  * one and `user.type` would spend the whole test budget doing it a keystroke at
@@ -148,6 +169,10 @@ function renderForm(props: { meta?: string | null; owner?: PublicKey | null } = 
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A case that installs a fake clock and then times out never reaches its own
+  // restore, and every case after it would wait forever on a timer nothing
+  // advances. Restoring here contains that to the one case.
+  vi.useRealTimers();
   // Sealing now records a handoff in localStorage, and an in-transit note is
   // withheld from this picker. Without this line the first test to seal would
   // hide the fixture note from every test after it, which would be a property
@@ -282,6 +307,101 @@ describe("sealing", () => {
     expect(await screen.findByRole("button", { name: /Copied/i })).toBeInTheDocument();
   });
 
+  /**
+   * The length of the handoff, web sweep 4 round 1, item 4.
+   *
+   * The sealed string is not padded, so its length is a function of what is in
+   * it: a pre-blinding note differs from a blinded one, a note this browser was
+   * given differs from one it scanned for itself, a rebuilt Merkle path adds
+   * some 600 characters, and the leaf index's digit count moves it by one.
+   * Measured on the app's own encryptNote over the export's JSON shape, 400
+   * draws each (`scratchpad/web-run/logs4/sweep1-screen/export-length-probe.log`).
+   * Printing the exact count hands that classifier to anyone who sees the
+   * screen. The page now states a bucket, so two handoffs that differ by less
+   * than the bucket read identically.
+   */
+  it("does not print the exact length of the sealed string", async () => {
+    const odd = `p01enc1:${"A".repeat(1801)}`;
+    sealNoteFor.mockResolvedValue({
+      sealedNote: odd,
+      denomination: 0.1,
+      leafIndex: 11,
+      commitment: "8901821612542787864",
+      merklePath: "stored",
+    });
+    await seal();
+    await screen.findByTestId("sealed-note");
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain(odd.length.toLocaleString());
+    expect(text).not.toContain(String(odd.length));
+  });
+
+  it("reads the same for two handoffs whose lengths differ by less than a bucket", async () => {
+    /** The sentence under the QR code, for a sealed string of this length. */
+    async function densityLine(length: number): Promise<string> {
+      cleanup();
+      // Sealing files a handoff, and an in-transit note is withheld from the
+      // picker: without this the second round would find nothing to seal.
+      localStorage.clear();
+      sealNoteFor.mockResolvedValue({
+        sealedNote: `p01enc1:${"A".repeat(length - 8)}`,
+        denomination: 0.1,
+        leafIndex: 11,
+        commitment: "8901821612542787864",
+        merklePath: "stored",
+      });
+      await seal();
+      await screen.findByTestId("sealed-note");
+      return screen.getByText(/dense code/i).textContent ?? "";
+    }
+    // The two shapes the probe separated: a blinded note this browser owns and
+    // one it was given, 20 characters apart.
+    const own = await densityLine(1948);
+    const received = await densityLine(1968);
+    expect(received).toBe(own);
+    // Positive control: a handoff that carries a rebuilt path IS a different
+    // sentence, so the bucket did not simply erase the information.
+    const withPath = await densityLine(2544);
+    expect(withPath).not.toBe(own);
+  });
+
+  /**
+   * The clipboard, web sweep 4 round 1, item 24 (ledger row D8).
+   *
+   * The sealed string is the money. Windows keeps a clipboard history on disk
+   * and phones sync it between devices, so a copy that is never taken back
+   * outlives the tab that made it, and whoever reads that history can spend the
+   * note. The page takes it back once it has read the clipboard and found its
+   * own string still there (`lib/pay/bearerClipboard.ts`).
+   */
+  it("takes the sealed note back off the clipboard", async () => {
+    await seal();
+    await screen.findByTestId("sealed-note");
+    // `shouldAdvanceTime` keeps real time running under the fake clock, so the
+    // library's own waits still settle while the 90 s timer can be jumped.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole("button", { name: /Copy the note/i }));
+      await expect(navigator.clipboard.readText()).resolves.toBe(SEALED);
+      await vi.advanceTimersByTimeAsync(BEARER_CLIPBOARD_CLEAR_MS + 1_000);
+      // An emptied clipboard reads back as "" in a browser; userEvent's stub
+      // rejects with "text/plain is not one of the available types" instead,
+      // because writing "" leaves its item with no text flavour. Both mean the
+      // same thing here — the sealed string is gone — and the assertion is on
+      // the string, which is what the red run printed ("expected
+      // 'p01enc1:AAA…' to be ''").
+      const after = await navigator.clipboard.readText().then(
+        (t) => t,
+        () => "",
+      );
+      expect(after).not.toBe(SEALED);
+      expect(after).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("states that nothing was sent, and that the string is now the money", async () => {
     await seal();
     await screen.findByTestId("sealed-note");
@@ -296,6 +416,74 @@ describe("sealing", () => {
     await seal();
     expect(await screen.findByText(/No note of yours found at leaf #11/)).toBeInTheDocument();
     expect(screen.queryByTestId("sealed-note")).not.toBeInTheDocument();
+  });
+});
+
+describe("a note is named by its tag, never by its leaf or commitment (UI-1)", () => {
+  function scanReturns(notes: PoolNoteView[]) {
+    scanPool.mockResolvedValue({ notes, shieldedBalance: 1, poolSizes: [] });
+  }
+
+  async function pickerHtml(notes: PoolNoteView[]): Promise<string> {
+    scanReturns(notes);
+    const view = renderForm();
+    // One picker button per note, and only then read the page.
+    await waitFor(() =>
+      expect(view.container.querySelectorAll("button[aria-pressed]").length).toBe(notes.length),
+    );
+    const html = view.container.innerHTML;
+    view.unmount();
+    return html;
+  }
+
+  it("the picker rows show the tag and no leaf or commitment", async () => {
+    const html = await pickerHtml([
+      noteView({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT, denomination: 1, tag: TAG }),
+    ]);
+    expect(canariesIn(html)).toEqual([]);
+    expect(html).toContain(TAG.text);
+  });
+
+  it("the picker renders the same rows when only the leaves and commitments differ", async () => {
+    // Two notes, then the same two notes with their leaves swapped and new
+    // commitments. A row naming a leaf differs, and so does a list ORDERED by
+    // leaf: the order must come from the tags (shieldClient.mergeScanWithLocal).
+    const a = await pickerHtml([
+      noteView({ leafIndex: 5, commitment: CANARY_COMMITMENT, denomination: 1, tag: TAG }),
+      noteView({ leafIndex: 9, commitment: "42", denomination: 1, tag: OTHER_TAG }),
+    ]);
+    const b = await pickerHtml([
+      noteView({ leafIndex: 9, commitment: "777777", denomination: 1, tag: TAG }),
+      noteView({ leafIndex: 5, commitment: "888888", denomination: 1, tag: OTHER_TAG }),
+    ]);
+    expect(b).toBe(a);
+    // Positive control: a different name IS a different page.
+    const c = await pickerHtml([
+      noteView({ leafIndex: 5, commitment: CANARY_COMMITMENT, denomination: 1, tag: TAG }),
+      noteView({ leafIndex: 9, commitment: "42", denomination: 1, tag: { text: "09RX-WVVH", color: "#d4553f" } }),
+    ]);
+    expect(c).not.toBe(a);
+  });
+
+  it("the sealed result names the note by its tag, not by its leaf or commitment", async () => {
+    scanReturns([noteView({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT, tag: TAG })]);
+    // Whatever the worker might still hand back, the page must not print it.
+    sealNoteFor.mockResolvedValue({
+      sealedNote: SEALED,
+      denomination: 0.1,
+      leafIndex: CANARY_LEAF,
+      commitment: CANARY_COMMITMENT,
+      tag: TAG,
+      merklePath: "stored",
+    });
+    const user = userEvent.setup();
+    const view = renderForm();
+    await user.click(await screen.findByText("0.1 SOL"));
+    await pasteAddress(user, RECIPIENT_ADDRESS);
+    await user.click(screen.getByRole("button", { name: /Prepare the note/i }));
+    await screen.findByTestId("sealed-note");
+    expect(canariesIn(view.container.innerHTML)).toEqual([]);
+    expect(within(view.container).getAllByText(TAG.text).length).toBeGreaterThan(0);
   });
 });
 

@@ -1117,7 +1117,11 @@ function DevnetSection() {
 // Check whitelist via API (admin-managed)
 async function checkWhitelistAPI(walletAddress: string): Promise<boolean> {
   try {
-    const res = await fetch(`/api/whitelist?wallet=${walletAddress}`);
+    // The wallet travels in a HEADER, never in the URL: a request line is
+    // written down by Vercel's log, an edge cache key, a proxy and a referrer,
+    // and the whitelist is a small set, so one line names a developer
+    // (SWEEP4 round 1, item 15; `app/api/whitelist/route.ts`).
+    const res = await fetch(`/api/whitelist`, { headers: { "x-p01-wallet": walletAddress } });
     const data = await res.json();
     return data.approved === true;
   } catch (error) {

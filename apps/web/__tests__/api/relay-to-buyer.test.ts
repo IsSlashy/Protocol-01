@@ -865,3 +865,128 @@ describe('a contribution binding costs a contribution', () => {
     expect(res.status).toBe(200);
   });
 });
+
+/**
+ * KV-1 (3) · THE BINDING IS KEPT, AND KEPT WITHOUT A DEADLINE.
+ *
+ * `p01:relay:payment:<sig>:contribution` is the only thing that says whose
+ * payment funded a reserved leaf. `/api/contribute-note` confirm and the
+ * `/api/claim-for-payment` fallback both read it, and ISSUE-1 deletes it at
+ * redemption — deliberately, once it has done its job.
+ *
+ * ⚠️ AN EXPIRY HERE IS THE SAME BUG AS THE ONE `claim-does-not-expire.test.ts`
+ * pins on the claim itself. A buyer who pays, deposits, and comes back after
+ * the TTL would be told "that payment did not fund this leaf" about a payment
+ * that funded exactly that leaf — money spent, no note, nothing in any log.
+ * The lifetime is the redemption, never a clock.
+ *
+ * WHY BEHAVIOURAL, NOT A SOURCE SCAN (KV-1 fix round 1): the r1 scan only
+ * caught the literal `ex:` spelling, and the verifier showed `{ px: 3600000 }`
+ * and an options variable both passed it
+ * (`wp-logs/verify/KV-1-r1-v2-binding-matcher-probe.log`). A TTL has many
+ * spellings (ex, px, exat, pxat, an options object, expire, pexpire, expireat,
+ * getex) and every one of them has to REACH the store. So the relay is driven
+ * through a store that records every method called on it, including methods
+ * the fake does not implement, and every call naming the binding key is read.
+ * The only acceptable one is `set(key, value)`: two arguments, nothing after.
+ * Mutants that this case kills: `wp-logs/KV-1-fix1/mutants.log`.
+ */
+describe('KV-1 · the contribution binding carries no expiry', () => {
+  const BINDING_KEY = 'p01:relay:payment:PAYSIG:contribution';
+  const CONTRIBUTION = { token: 'SOL', leafIndex: 6 };
+  type Call = { method: string; args: unknown[] };
+
+  /**
+   * Every method call on the store, by name and arguments. A method the base
+   * fake lacks (`pexpire`, `getex`, `expireat`) is recorded and resolves, so
+   * a TTL written through one is SEEN rather than crashing the relay into a
+   * status this case would also refuse, for the wrong reason.
+   */
+  function recordingStore(): Call[] {
+    const calls: Call[] = [];
+    const base = mockGetStore() as Record<string, unknown>;
+    const proxy = new Proxy(base, {
+      get(target, prop) {
+        if (typeof prop !== 'string' || prop === 'then') return undefined;
+        const real = target[prop];
+        return (...args: unknown[]) => {
+          calls.push({ method: prop, args });
+          return typeof real === 'function'
+            ? (real as (...a: unknown[]) => unknown)(...args)
+            : Promise.resolve(undefined);
+        };
+      },
+    });
+    mockGetStore.mockReturnValue(proxy);
+    return calls;
+  }
+
+  async function expectBareSet(expectedStatus: number) {
+    const calls = recordingStore();
+    const res = await route.POST(payment({ contribution: CONTRIBUTION }));
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(expectedStatus);
+    const onKey = calls.filter((c) => c.args.includes(BINDING_KEY));
+    // Positive control: the binding WAS written through this recorder, so the
+    // list below cannot pass by the recorder having seen nothing.
+    expect(
+      onKey.map((c) => c.method),
+      'the binding was not written through the store',
+    ).toContain('set');
+    expect(
+      onKey.map((c) => `${c.method}(${c.args.length} args)`),
+      'A TTL on the binding makes a paying buyer’s own confirm answer "that payment did not ' +
+        'fund this leaf". They paid, they deposited, and they are told they did neither.',
+    ).toEqual(['set(2 args)']);
+  }
+
+  it('writes the binding as a bare set(key, value), with no lifetime in any spelling', async () => {
+    await expectBareSet(200);
+  });
+
+  it('does the same when the send left and only the confirmation timed out', async () => {
+    sendBehaviour = 'confirm-throws';
+    await expectBareSet(202);
+  });
+});
+
+/**
+ * WHAT THE REFUSAL SAYS WHEN THE LIMITER ITSELF FAILS.
+ *
+ * 🚨 Same class as `/api/fund-ephemeral`'s fixed-words refusal. The store words
+ * a failed request as `${error}, command was: ${JSON…}`
+ * (@upstash/redis/nodejs.js); auto-pipelining puts other requests' commands in
+ * that list — another route's claim code, a payment signature, another caller's
+ * limiter bucket. This route runs after the buyer's lamports have moved, so its
+ * 503 reaches a paying caller.
+ *
+ * Two worlds, same failure, different batch: the answer must not move.
+ */
+describe('a limiter that fails says so without passing on what the store carried', () => {
+  const batched =
+    'ERR max daily request limit exceeded, command was: ' +
+    '[["incr","p01:rate:OTHERBUCKET:2026-09-20T10"],' +
+    '["set","p01:note:claim-minted:CODE-SALE-123456","payment:5Qv9SigAAAA"]]';
+
+  it('names no claim code, no payment signature and no other bucket', async () => {
+    mockRateLimitExceeded.mockRejectedValue(new Error(batched));
+    const res = await route.POST(payment());
+    expect(res.status).toBe(503);
+    const text = JSON.stringify(await res.json());
+    expect(text, 'the refusal echoed the store command').not.toMatch(/command was/);
+    expect(text, "the refusal named another route's claim code").not.toMatch(/CODE-SALE-123456/);
+    expect(text, 'the refusal named a payment signature').not.toMatch(/5Qv9SigAAAA/);
+    expect(text, 'the refusal named a limiter bucket').not.toMatch(/OTHERBUCKET/);
+  });
+
+  it('gives the same answer whatever the store was carrying', async () => {
+    mockRateLimitExceeded.mockRejectedValue(new Error(batched));
+    const one = JSON.stringify(await (await route.POST(payment())).json());
+
+    mockRateLimitExceeded.mockRejectedValue(
+      new Error('ERR quota, command was: [["incr","p01:rate:MINE:2026-09-20T10"]]'),
+    );
+    const two = JSON.stringify(await (await route.POST(payment())).json());
+    expect(two, 'the refusal moved with what the store was carrying').toBe(one);
+  });
+});

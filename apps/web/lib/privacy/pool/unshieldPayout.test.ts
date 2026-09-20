@@ -38,7 +38,6 @@ import {
 // is under test here. Only the three functions unshieldEphemeral actually calls.
 const unshieldDenominatedStarkV3 = vi.fn();
 vi.mock('./denominatedPool', () => ({
-  isNullifierSpent: vi.fn(),
   prepareUnshield: vi.fn(),
   unshieldDenominatedStarkV3: (...args: unknown[]) => unshieldDenominatedStarkV3(...args),
 }));

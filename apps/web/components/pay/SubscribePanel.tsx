@@ -21,7 +21,7 @@
  * Simplifying the vocabulary never means softening either sentence.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import {
   Check,
@@ -50,10 +50,13 @@ import {
 } from '@/lib/privacy/serviceRegistry';
 import { SUBSCRIBE_PHASES } from '@/lib/pay/flowProgress';
 import { HANDOFFS_CHANGED_EVENT, handoffKeys } from '@/lib/pay/handoffs';
+import { clearBearerNow, copyBearerAndScheduleClear } from '@/lib/pay/bearerClipboard';
 import { recordSubscription } from '@/lib/pay/subscriptions';
 import FlowProgress from './FlowProgress';
 import StaleWorkerNotice from './StaleWorkerNotice';
 import SuccessBurst from './SuccessBurst';
+import NoteTag from './NoteTag';
+import ChainIdsReveal from './ChainIdsReveal';
 import { truncate } from './util';
 import { useT } from '@/i18n';
 import { translateInterval } from "@/lib/pay/intervalLabel";
@@ -121,9 +124,11 @@ export interface SubscribeFromPoolResult {
    */
   fundedBy?: 'wallet' | 'funder';
   /**
-   * True when the note spent was deposited by THIS wallet, or when its deposit
-   * could not be found. Either way the subscription is reachable from the buyer
-   * in one hop through the deposit, whoever paid for the subscription itself.
+   * True unless the note spent is known to be RECEIVED (filed by an import on
+   * this device). An own deposit, or a note of unknown origin, keeps the
+   * subscription reachable from the buyer through the deposit, whoever paid for
+   * the subscription itself. Decided with no RPC (`selfDepositedNote.test.ts`,
+   * "deposit verdict local and pessimistic").
    *
    * Optional, and absent is treated as TRUE — the pessimistic reading. Assuming
    * the good case from a missing field is how a page ends up telling someone
@@ -142,8 +147,8 @@ export interface SubscribeFromPoolResult {
    * Optional, and absent is treated as TRUE, for the same reason as above.
    */
   reachableViaSpendFunder?: boolean;
-  /** Who paid for that deposit, base58; `null` = not found in the scanned window. */
-  depositPayer?: string | null;
+  /** Where the spent note came from, decided on this device; see `reachableViaDeposit`. */
+  noteProvenance?: 'own-deposit' | 'received' | 'unknown';
 }
 
 interface SubscribeModule {
@@ -293,6 +298,57 @@ function CostDisclosure() {
         <li>{t('pay.subscribe.costCommitment')}</li>
       </ul>
     </details>
+  );
+}
+
+/**
+ * The license key of a just-opened subscription, behind one click.
+ *
+ * Web sweep 4, round 1, item 1. Two things travel with this string, and only
+ * one of them is obvious:
+ *
+ *   1. it is a bearer credential — whoever holds it presents it as you;
+ *   2. it NAMES the vault. The vault's on-chain `license_commitment` is a hash
+ *      of the key's secret, so the vault is found from the key alone (a memcmp,
+ *      `packages/merchant-sdk/src/merchant-license.ts`), and the vault's opening
+ *      transaction is the spend of the note that paid: the nullifier, the fee
+ *      payer, and on the C1 + C3 path the note's commitment.
+ *
+ * Printed by default, a screenshot, a screen share or a support ticket carried
+ * that whole walk — the same one `ChainIdsReveal` hides two blocks below, on the
+ * same card. So it is rendered the way `SubscriptionsPanel` already renders a
+ * re-derived key: after a click. Closed means NOT IN THE DOM, so a copy of the
+ * page has no window of it (`__tests__/components/SubscribePanel.test.tsx`,
+ * "keeps the license key off the card until asked", "copies the key without ever
+ * printing it").
+ */
+function LicenseKeyReveal({ licenseKey }: { licenseKey: string }) {
+  const t = useT();
+  const [shown, setShown] = useState(false);
+  return shown ? (
+    <>
+      <p className="mt-2 break-all font-mono text-xl leading-relaxed text-p01-cyan">
+        {licenseKey}
+      </p>
+      <button
+        type="button"
+        onClick={() => setShown(false)}
+        className="mt-2 text-xs text-p01-text-muted underline hover:text-p01-cyan"
+      >
+        {t('pay.subs.keyHide')}
+      </button>
+    </>
+  ) : (
+    <>
+      <p className="mt-2 text-xs text-p01-text-dim">{t('pay.subscribe.keyHidden')}</p>
+      <button
+        type="button"
+        onClick={() => setShown(true)}
+        className="mt-1 text-xs text-p01-cyan underline hover:text-p01-text"
+      >
+        {t('pay.subs.keyReveal')}
+      </button>
+    </>
   );
 }
 
@@ -460,6 +516,13 @@ export default function SubscribePanel({
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
+   * The swap's spend when it failed after its withdrawal landed: under the
+   * error line behind the reveal, and only while the line still shows that
+   * error (SubscribePanel.test.tsx, "the swap that spent but did not collect
+   * says so without quoting the spend").
+   */
+  const [errorSpend, setErrorSpend] = useState<{ message: string; sig: string } | null>(null);
+  /**
    * Whether a reachable buyer REFUSES the purchase, or completes it and says so.
    *
    * `false` since 2026-08-19, founder's call, and the reasoning is not the one
@@ -476,17 +539,19 @@ export default function SubscribePanel({
    * 🚨 WHY REFUSING TURNED OUT TO BE THE WORSE ANSWER, MEASURED.
    *
    * Refusing bought no privacy. The walk it refuses on — deposit → ephemeral
-   * → funder → wallet — is two `getSignaturesForAddress` calls, and it stays
-   * two calls whether or not this screen sells anything. What refusing actually
+   * → funder → wallet — is a few chain reads for anyone, and it stays that
+   * whether or not this screen sells anything. What refusing actually
    * did was close the product: the one flow the connect screen documents
    * (connect, shield a note, subscribe) makes the buyer the depositor, so the
    * guard fires on it every time, and `ISSUANCE_UI` had closed the only other
    * door. Both paths shut, and the disclosure that would have told the truth
    * never rendered because nothing ever completed.
    *
-   * ✅ SO THE GUARD STAYS AND ONLY ITS VERDICT CHANGES. Every hop is still
-   * walked, on both legs, and both answers ride back on the result as
-   * `reachableViaDeposit` and `reachableViaSpendFunder`. The panel renders them
+   * ✅ SO THE GUARD STAYS AND ONLY ITS VERDICT CHANGES. Both legs are still
+   * answered and ride back on the result as `reachableViaDeposit` and
+   * `reachableViaSpendFunder`: the deposit leg from where this device says the
+   * note came from, with no RPC, and the spend leg by a check that starts in
+   * the click beside the prepare (`selfDepositedNote.test.ts`). The panel renders them
    * with an absent field reading as REACHABLE — pessimistic — so a run that
    * could not establish an origin says the buyer is reachable rather than
    * staying quiet. That is the shape a false green would need to defeat, and it
@@ -585,6 +650,9 @@ const ISSUANCE_UI = true;
   // blocked, rather than quietly serving the public kind under the same name.
   const [result, setResult] = useState<SubscribeFromPoolResult | null>(null);
   const [copied, setCopied] = useState(false);
+  /** Cancels the pending clipboard clear (see `copyKey`). */
+  const cancelClipboardClear = useRef<null | (() => void)>(null);
+  useEffect(() => () => cancelClipboardClear.current?.(), []);
 
   // `spent` on a locally-painted note is a default, not a reading, so also drop
   // what this browser has already withdrawn: locking a spent note into a
@@ -909,10 +977,10 @@ const ISSUANCE_UI = true;
         // actually happened instead of burning the code to rediscover it.
         if (issuedThisClick) {
           throw new Error(
-            'The deployment issued you a note, and then refused it — it could not establish who ' +
-              'deposited it, and an unknown depositor is treated as you. Your note is safe and is ' +
-              'in your notes list; your claim code is spent and was not wasted on a second copy. ' +
-              'This is a fault in the deposit lookup, not in your note.',
+            'The deployment issued you a note, and then refused it — this device did not file it ' +
+              'as received, and a note not filed as received is treated as your own deposit. Your ' +
+              'note is safe and is in your notes list; your claim code is spent and was not wasted ' +
+              'on a second copy. This is a fault in how the note was filed, not in your note.',
           );
         }
         setStep(t('pay.subscribe.stepSwapping'));
@@ -935,16 +1003,24 @@ const ISSUANCE_UI = true;
           // The deployment's reason is kept verbatim at the end because a 3am
           // debugger needs it, attributed to the deployment rather than
           // phrased as the buyer's next step.
+          // The spend's signature is not quoted, even where the deployment's
+          // reason quotes it: it leads back to the note it spent, and a support
+          // ticket is where this sentence goes. It rides on the error to the
+          // reveal under the error line (SubscribePanel.test.tsx, "the swap that
+          // spent but did not collect says so without quoting the spend").
           const spendSig = (swapErr as { spendSig?: string }).spendSig;
           if (spendSig) {
             setSpentHere((prev) => new Set(prev).add(noteKey(heldNote)));
-            throw new Error(
-              'The only note you hold was deposited by your own wallet, so it was exchanged: ' +
-                `withdrawal ${spendSig} paid the deployment and the note it bought has not been ` +
-                'collected yet. No subscription was opened. The receipt is kept on this device; ' +
-                'open the Shield tab and click Shield to finish collecting the note, then ' +
-                'subscribe with it. The deployment said: ' +
-                ((swapErr as Error).message || 'nothing.'),
+            throw Object.assign(
+              new Error(
+                'The only note you hold was deposited by your own wallet, so it was exchanged: ' +
+                  'the withdrawal paid the deployment and the note it bought has not been ' +
+                  'collected yet. No subscription was opened. The receipt is kept on this device; ' +
+                  'open the Shield tab and click Shield to finish collecting the note, then ' +
+                  'subscribe with it. The deployment said: ' +
+                  ((swapErr as Error).message || 'nothing.').split(spendSig).join('(signature hidden)'),
+              ),
+              { spendSig },
             );
           }
           throw new Error(
@@ -1029,21 +1105,40 @@ const ISSUANCE_UI = true;
       });
       void rescan();
     } catch (e) {
-      setError((e as Error).message || 'Subscription failed.');
+      const message = (e as Error).message || 'Subscription failed.';
+      setError(message);
+      // Only the swap's after-spend error carries one (see `errorSpend`).
+      const spendSig = (e as { spendSig?: string }).spendSig;
+      setErrorSpend(spendSig ? { message, sig: spendSig } : null);
     } finally {
       setSubmitting(false);
       setStep(null);
     }
   }
 
-  async function copyKey(key: string) {
-    try {
-      await navigator.clipboard.writeText(key);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopied(false);
-    }
+  /**
+   * The clipboard holds a credential, so it does not hold it for long.
+   *
+   * Web sweep 4 round 1, item 24 (ledger row D8). Windows keeps a clipboard
+   * history on disk and phones sync it between devices, so a license key copied
+   * and never taken back outlives the tab — and this key both works as the
+   * buyer and names the vault. `copyBearerAndScheduleClear` empties it after
+   * BEARER_CLIPBOARD_CLEAR_MS, and only after reading the clipboard and finding
+   * this exact string still on it, never blindly. The button beside Copy does it
+   * from a click, which is what a browser that refuses the read accepts.
+   */
+  function copyKey(key: string) {
+    cancelClipboardClear.current?.();
+    cancelClipboardClear.current = copyBearerAndScheduleClear(key);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  function clearClipboardNow() {
+    cancelClipboardClear.current?.();
+    cancelClipboardClear.current = null;
+    void clearBearerNow();
+    setCopied(false);
   }
 
   // NOT `|| scanning`. The chain walk enumerates candidate epochs per note per
@@ -1261,9 +1356,13 @@ const ISSUANCE_UI = true;
                         >
                           {n.denomination} {n.token} note
                         </p>
-                        {/* Protocol detail stays available, in the second plane. */}
-                        <p className="truncate font-mono text-[11px] text-p01-text-dim">
-                          leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
+                        {/* Second plane: the note's own name, its tag. Not its
+                            leaf and commitment, which the deposit published
+                            (UI-1, noteIdentifierTripwire.test.ts; SubscribePanel.test.tsx,
+                            "the picker renders the same rows when only the leaves
+                            and commitments differ"). */}
+                        <p className="mt-0.5">
+                          <NoteTag tag={n.tag} />
                         </p>
                       </div>
                     </button>
@@ -1460,6 +1559,19 @@ const ISSUANCE_UI = true;
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}
           </p>
         )}
+        {/* The swap's spend, for support, behind a click (see `errorSpend`). */}
+        {error && errorSpend && errorSpend.message === error && (
+          <ChainIdsReveal key={errorSpend.sig}>
+            <a
+              href={`https://explorer.solana.com/tx/${errorSpend.sig}?cluster=devnet`}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-block font-mono text-xs text-p01-cyan hover:underline"
+            >
+              {truncate(errorSpend.sig, 10, 8)} ↗
+            </a>
+          </ChainIdsReveal>
+        )}
 
         {/* A disabled button always says why, right next to itself. */}
         {blockedReason && !result && (
@@ -1523,16 +1635,33 @@ const ISSUANCE_UI = true;
                   {t('pay.subscribe.keyLabel')}
                 </p>
                 <button
-                  onClick={() => void copyKey(result.licenseKey)}
+                  onClick={() => copyKey(result.licenseKey)}
                   className="btn-secondary inline-flex items-center gap-1.5 px-3 py-1.5 text-xs"
                 >
                   {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                   {copied ? t('pay.subscribe.copied') : t('pay.subscribe.copy')}
                 </button>
+                {/* The clipboard is a place this key should not stay: see
+                  `copyKey`. This is the version that needs no permission. */}
+                <button
+                  type="button"
+                  onClick={clearClipboardNow}
+                  className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
+                >
+                  {t('pay.shared.clipboardClear')}
+                </button>
               </div>
-              <p className="mt-2 break-all font-mono text-xl leading-relaxed text-p01-cyan">
-                {result.licenseKey}
-              </p>
+              {/* The key itself, behind one click (web sweep 4 round 1, item 1;
+                SubscribePanel.test.tsx, "keeps the license key off the card
+                until asked"). It is a bearer credential, and it also LOCATES
+                the vault: the vault's on-chain license_commitment is a hash of
+                the key's secret, which is how the merchant SDK finds the vault
+                from the key alone. From the vault, its opening transaction is
+                the spend of the note that paid — the very walk the reveal below
+                exists to keep off a screenshot. Keyed on the result so a second
+                subscription starts hidden again, and Copy works from state
+                without ever rendering it. */}
+              <LicenseKeyReveal key={result.txSig} licenseKey={result.licenseKey} />
             </div>
 
             {/* The two facts about this key, each on its own line so neither
@@ -1575,26 +1704,32 @@ const ISSUANCE_UI = true;
               )}
             </div>
 
-            {/* Protocol detail, second plane. */}
+            {/* Protocol detail, second plane, and behind a click: the vault and
+              the opening transaction are the spend of the note that paid, so a
+              screenshot of this card must not carry them
+              (SubscribePanel.test.tsx, "keeps the vault and the opening
+              transaction off the card until asked"). */}
             <div className="mt-3 border-t border-p01-border pt-3">
-              <p className="font-mono text-xs text-p01-text-dim">
-                vault{' '}
-                {truncate(
-                  typeof result.vaultPDA === 'string'
-                    ? result.vaultPDA
-                    : result.vaultPDA.toBase58(),
-                  6,
-                  4
-                )}
-              </p>
-              <a
-                href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-1 inline-block font-mono text-xs text-p01-cyan hover:underline"
-              >
-                {truncate(result.txSig, 10, 8)} ↗
-              </a>
+              <ChainIdsReveal key={result.txSig}>
+                <p className="font-mono text-xs text-p01-text-dim">
+                  vault{' '}
+                  {truncate(
+                    typeof result.vaultPDA === 'string'
+                      ? result.vaultPDA
+                      : result.vaultPDA.toBase58(),
+                    6,
+                    4
+                  )}
+                </p>
+                <a
+                  href={`https://explorer.solana.com/tx/${result.txSig}?cluster=devnet`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-block font-mono text-xs text-p01-cyan hover:underline"
+                >
+                  {truncate(result.txSig, 10, 8)} ↗
+                </a>
+              </ChainIdsReveal>
             </div>
           </div>
         )}

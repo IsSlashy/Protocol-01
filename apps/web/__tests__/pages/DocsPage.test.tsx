@@ -309,13 +309,16 @@ describe('DocsPage -- Privacy technologies documentation', () => {
 
     // Same trap as the pin in the STARK topic above: this assertion pinned the
     // 2026-08-04 figure verbatim and kept passing after the verifier was
-    // redeployed on 2026-09-02, which is exactly how the stale number survived
-    // in public copy. Source for the replacement: docs/BENCHMARK-2026-09-02.md.
+    // redeployed on 2026-09-02, and then the 2026-09-02 figure after the
+    // 2026-09-12 redeploy, which is exactly how stale numbers survive in public
+    // copy. The pin now requires the date of the deployment the figure was
+    // measured against, so a redeploy without a re-measure fails here.
+    // Source: docs/BENCHMARK-2026-09-13.md §6 (C7, both phases in one tx).
     it('states the measured on-chain verification cost in compute units', () => {
       openTopic('Solana On-Chain Verification');
       expect(
         screen.getByText(
-          'Custom FRI verifier for STARK proofs. Goldilocks field; an accepted proof measured 878,756 CU in phase 1 and 193,200 CU in phase 2 on devnet, 2026-09-02',
+          'Custom FRI verifier for STARK proofs. Goldilocks field; an accepted spend proof measured 890,643 CU with both phases in one transaction on devnet, 2026-09-12 (docs/BENCHMARK-2026-09-13.md §6)',
         ),
       ).toBeInTheDocument();
     });
@@ -329,21 +332,20 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       expect(screen.queryAllByText(/under 200K compute units/)).toHaveLength(0);
     });
 
-    // The old list named 13 programs, one of which ("trustless") does not exist
-    // in programs/, while three that do were missing. The count now matches the
-    // Cargo workspace members.
-    it('lists the thirteen Anchor programs that are in the workspace', () => {
+    // The line used to enumerate 13 Cargo members as if all were deployed. Since
+    // 2026-09-14 it states four groups: live on devnet (checked by getAccountInfo
+    // on 2026-09-14), deployed off the product path, in the repo but not
+    // deployed, and closed on devnet on 2026-09-13. The live group is the one a
+    // reader can verify on the explorer, so that is the one counted here.
+    it('lists the four programs live on devnet and names the closed ones as closed', () => {
       openTopic('Solana On-Chain Verification');
-      const line = screen.getByText(/^13 Anchor programs:/);
+      const line = screen.getByText(/^4 programs live on devnet:/);
       expect(line).toBeInTheDocument();
       expect(line.textContent).not.toMatch(/trustless/);
-      expect(line.textContent).toMatch(/p01_liquidity/);
-      // Counts the list instead of naming what is absent: the P2P escrow program
-      // left the workspace on 2026-08-19 with the product it served, and an
-      // assertion that names a removed thing goes stale the moment it is removed
-      // again. 13 is the Cargo members less `stark`, which is a library.
-      const listed = line.textContent!.replace(/^13 Anchor programs:\s*/, '').split(',');
-      expect(listed).toHaveLength(13);
+      const live = line.textContent!.replace(/^4 programs live on devnet:\s*/, '').split('.')[0].split(',');
+      expect(live).toHaveLength(4);
+      expect(live.map((s) => s.trim())).toEqual(['p01_stark_verifier', 'zk_shielded', 'p01_registry', 'p01_relayer']);
+      expect(line.textContent).toMatch(/Closed on devnet 2026-09-13: specter/);
     });
   });
 

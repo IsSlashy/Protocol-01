@@ -1,0 +1,134 @@
+{
+  "$comment": "TAG-0 vector for noteTag v1. Synthetic secrets, never a real note. Read by apps/web/lib/privacy/pool/noteTag.test.ts, apps/extension/src/shared/services/noteTag.test.ts and apps/mobile/services/privacy/noteTag.test.ts. The tag is computed by a second implementation (node:crypto) in scratchpad TAG-0-make-fixture.mjs, not recorded from the module under test.",
+  "domain": "p01:note-tag:v1",
+  "pool": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+  "secret": "3141592653589793238462643383279502884197169399375105820974944592",
+  "nullifierPreimage": "2718281828459045235360287471352662497757247093699959574966967627",
+  "tag": "9PHT-NDYJ",
+  "color": "#b8960f",
+  "digest": "4da3aab7d2a25d3d721980bf55c29dc2901a54bcf8ab7ff209fbefdbf86f2751",
+  "sameTagComment": "Every note below carries the same secrets and differs only in leaf index, commitment (through the blinding) or shield time. All of them must give the tag above.",
+  "sameTag": [
+    {
+      "label": "base",
+      "note": {
+        "version": 1,
+        "pool": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944592",
+        "nullifier_preimage": "2718281828459045235360287471352662497757247093699959574966967627",
+        "deposit_epoch": "5772156649015328606065120900824024310421",
+        "token_mint": "0",
+        "commitment": "15172894697579388633",
+        "leafIndex": 211,
+        "token": "SOL",
+        "denominationHuman": 1,
+        "shieldedAt": 1700000000000
+      },
+      "blob": "eyJ2ZXJzaW9uIjoxLCJwb29sIjoiNk5VUzRFNVBoUUx4blljYTZtQ1ZHczNIY3dYY2dGMXFFWnR6bTM5MmpyQlMiLCJzZWNyZXQiOiIzMTQxNTkyNjUzNTg5NzkzMjM4NDYyNjQzMzgzMjc5NTAyODg0MTk3MTY5Mzk5Mzc1MTA1ODIwOTc0OTQ0NTkyIiwibnVsbGlmaWVyX3ByZWltYWdlIjoiMjcxODI4MTgyODQ1OTA0NTIzNTM2MDI4NzQ3MTM1MjY2MjQ5Nzc1NzI0NzA5MzY5OTk1OTU3NDk2Njk2NzYyNyIsImRlcG9zaXRfZXBvY2giOiI1NzcyMTU2NjQ5MDE1MzI4NjA2MDY1MTIwOTAwODI0MDI0MzEwNDIxIiwidG9rZW5fbWludCI6IjAiLCJjb21taXRtZW50IjoiMTUxNzI4OTQ2OTc1NzkzODg2MzMiLCJsZWFmSW5kZXgiOjIxMSwidG9rZW4iOiJTT0wiLCJkZW5vbWluYXRpb25IdW1hbiI6MSwic2hpZWxkZWRBdCI6MTcwMDAwMDAwMDAwMH0="
+    },
+    {
+      "label": "otherLeaf",
+      "note": {
+        "version": 1,
+        "pool": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944592",
+        "nullifier_preimage": "2718281828459045235360287471352662497757247093699959574966967627",
+        "deposit_epoch": "5772156649015328606065120900824024310421",
+        "token_mint": "0",
+        "commitment": "15172894697579388633",
+        "leafIndex": 58,
+        "token": "SOL",
+        "denominationHuman": 1,
+        "shieldedAt": 1700000000000
+      },
+      "blob": "eyJ2ZXJzaW9uIjoxLCJwb29sIjoiNk5VUzRFNVBoUUx4blljYTZtQ1ZHczNIY3dYY2dGMXFFWnR6bTM5MmpyQlMiLCJzZWNyZXQiOiIzMTQxNTkyNjUzNTg5NzkzMjM4NDYyNjQzMzgzMjc5NTAyODg0MTk3MTY5Mzk5Mzc1MTA1ODIwOTc0OTQ0NTkyIiwibnVsbGlmaWVyX3ByZWltYWdlIjoiMjcxODI4MTgyODQ1OTA0NTIzNTM2MDI4NzQ3MTM1MjY2MjQ5Nzc1NzI0NzA5MzY5OTk1OTU3NDk2Njk2NzYyNyIsImRlcG9zaXRfZXBvY2giOiI1NzcyMTU2NjQ5MDE1MzI4NjA2MDY1MTIwOTAwODI0MDI0MzEwNDIxIiwidG9rZW5fbWludCI6IjAiLCJjb21taXRtZW50IjoiMTUxNzI4OTQ2OTc1NzkzODg2MzMiLCJsZWFmSW5kZXgiOjU4LCJ0b2tlbiI6IlNPTCIsImRlbm9taW5hdGlvbkh1bWFuIjoxLCJzaGllbGRlZEF0IjoxNzAwMDAwMDAwMDAwfQ=="
+    },
+    {
+      "label": "otherBlinding",
+      "note": {
+        "version": 1,
+        "pool": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944592",
+        "nullifier_preimage": "2718281828459045235360287471352662497757247093699959574966967627",
+        "deposit_epoch": "1618033988749894848204586834365638117720",
+        "token_mint": "0",
+        "commitment": "10743605027982166358",
+        "leafIndex": 211,
+        "token": "SOL",
+        "denominationHuman": 1,
+        "shieldedAt": 1700000000000
+      },
+      "blob": "eyJ2ZXJzaW9uIjoxLCJwb29sIjoiNk5VUzRFNVBoUUx4blljYTZtQ1ZHczNIY3dYY2dGMXFFWnR6bTM5MmpyQlMiLCJzZWNyZXQiOiIzMTQxNTkyNjUzNTg5NzkzMjM4NDYyNjQzMzgzMjc5NTAyODg0MTk3MTY5Mzk5Mzc1MTA1ODIwOTc0OTQ0NTkyIiwibnVsbGlmaWVyX3ByZWltYWdlIjoiMjcxODI4MTgyODQ1OTA0NTIzNTM2MDI4NzQ3MTM1MjY2MjQ5Nzc1NzI0NzA5MzY5OTk1OTU3NDk2Njk2NzYyNyIsImRlcG9zaXRfZXBvY2giOiIxNjE4MDMzOTg4NzQ5ODk0ODQ4MjA0NTg2ODM0MzY1NjM4MTE3NzIwIiwidG9rZW5fbWludCI6IjAiLCJjb21taXRtZW50IjoiMTA3NDM2MDUwMjc5ODIxNjYzNTgiLCJsZWFmSW5kZXgiOjIxMSwidG9rZW4iOiJTT0wiLCJkZW5vbWluYXRpb25IdW1hbiI6MSwic2hpZWxkZWRBdCI6MTcwMDAwMDAwMDAwMH0="
+    },
+    {
+      "label": "otherTime",
+      "note": {
+        "version": 1,
+        "pool": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944592",
+        "nullifier_preimage": "2718281828459045235360287471352662497757247093699959574966967627",
+        "deposit_epoch": "5772156649015328606065120900824024310421",
+        "token_mint": "0",
+        "commitment": "15172894697579388633",
+        "leafIndex": 211,
+        "token": "SOL",
+        "denominationHuman": 1,
+        "shieldedAt": 1800000000123
+      },
+      "blob": "eyJ2ZXJzaW9uIjoxLCJwb29sIjoiNk5VUzRFNVBoUUx4blljYTZtQ1ZHczNIY3dYY2dGMXFFWnR6bTM5MmpyQlMiLCJzZWNyZXQiOiIzMTQxNTkyNjUzNTg5NzkzMjM4NDYyNjQzMzgzMjc5NTAyODg0MTk3MTY5Mzk5Mzc1MTA1ODIwOTc0OTQ0NTkyIiwibnVsbGlmaWVyX3ByZWltYWdlIjoiMjcxODI4MTgyODQ1OTA0NTIzNTM2MDI4NzQ3MTM1MjY2MjQ5Nzc1NzI0NzA5MzY5OTk1OTU3NDk2Njk2NzYyNyIsImRlcG9zaXRfZXBvY2giOiI1NzcyMTU2NjQ5MDE1MzI4NjA2MDY1MTIwOTAwODI0MDI0MzEwNDIxIiwidG9rZW5fbWludCI6IjAiLCJjb21taXRtZW50IjoiMTUxNzI4OTQ2OTc1NzkzODg2MzMiLCJsZWFmSW5kZXgiOjIxMSwidG9rZW4iOiJTT0wiLCJkZW5vbWluYXRpb25IdW1hbiI6MSwic2hpZWxkZWRBdCI6MTgwMDAwMDAwMDEyM30="
+    }
+  ],
+  "otherTagComment": "A different pool or a different secret is a different note.",
+  "otherTag": [
+    {
+      "label": "otherPool",
+      "input": {
+        "pool": "HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944592",
+        "nullifierPreimage": "2718281828459045235360287471352662497757247093699959574966967627"
+      },
+      "note": {
+        "version": 1,
+        "pool": "HfSsGRgVFJGBiiEtRXrHocNPw5dyTQ78hEZH8GWpXaAG",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944592",
+        "nullifier_preimage": "2718281828459045235360287471352662497757247093699959574966967627",
+        "deposit_epoch": "5772156649015328606065120900824024310421",
+        "token_mint": "0",
+        "commitment": "15172894697579388633",
+        "leafIndex": 211,
+        "token": "SOL",
+        "denominationHuman": 0.1,
+        "shieldedAt": 1700000000000
+      },
+      "tag": "3TZZ-VRGX",
+      "color": "#c44f9b",
+      "digest": "1ebffde21de7e66dfa380b42232fb7229c5eae75fb137105291e5e79425d40a7",
+      "blob": "eyJ2ZXJzaW9uIjoxLCJwb29sIjoiSGZTc0dSZ1ZGSkdCaWlFdFJYckhvY05QdzVkeVRRNzhoRVpIOEdXcFhhQUciLCJzZWNyZXQiOiIzMTQxNTkyNjUzNTg5NzkzMjM4NDYyNjQzMzgzMjc5NTAyODg0MTk3MTY5Mzk5Mzc1MTA1ODIwOTc0OTQ0NTkyIiwibnVsbGlmaWVyX3ByZWltYWdlIjoiMjcxODI4MTgyODQ1OTA0NTIzNTM2MDI4NzQ3MTM1MjY2MjQ5Nzc1NzI0NzA5MzY5OTk1OTU3NDk2Njk2NzYyNyIsImRlcG9zaXRfZXBvY2giOiI1NzcyMTU2NjQ5MDE1MzI4NjA2MDY1MTIwOTAwODI0MDI0MzEwNDIxIiwidG9rZW5fbWludCI6IjAiLCJjb21taXRtZW50IjoiMTUxNzI4OTQ2OTc1NzkzODg2MzMiLCJsZWFmSW5kZXgiOjIxMSwidG9rZW4iOiJTT0wiLCJkZW5vbWluYXRpb25IdW1hbiI6MC4xLCJzaGllbGRlZEF0IjoxNzAwMDAwMDAwMDAwfQ=="
+    },
+    {
+      "label": "otherSecret",
+      "input": {
+        "pool": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944593",
+        "nullifierPreimage": "2718281828459045235360287471352662497757247093699959574966967627"
+      },
+      "note": {
+        "version": 1,
+        "pool": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+        "secret": "3141592653589793238462643383279502884197169399375105820974944593",
+        "nullifier_preimage": "2718281828459045235360287471352662497757247093699959574966967627",
+        "deposit_epoch": "5772156649015328606065120900824024310421",
+        "token_mint": "0",
+        "commitment": "16449598424483461183",
+        "leafIndex": 211,
+        "token": "SOL",
+        "denominationHuman": 1,
+        "shieldedAt": 1700000000000
+      },
+      "tag": "09RX-WVVH",
+      "color": "#7a5cd6",
+      "digest": "0271de6f716e2615f09a63253ff2d8e3bb678acf6ceed5ce04515f711c417235",
+      "blob": "eyJ2ZXJzaW9uIjoxLCJwb29sIjoiNk5VUzRFNVBoUUx4blljYTZtQ1ZHczNIY3dYY2dGMXFFWnR6bTM5MmpyQlMiLCJzZWNyZXQiOiIzMTQxNTkyNjUzNTg5NzkzMjM4NDYyNjQzMzgzMjc5NTAyODg0MTk3MTY5Mzk5Mzc1MTA1ODIwOTc0OTQ0NTkzIiwibnVsbGlmaWVyX3ByZWltYWdlIjoiMjcxODI4MTgyODQ1OTA0NTIzNTM2MDI4NzQ3MTM1MjY2MjQ5Nzc1NzI0NzA5MzY5OTk1OTU3NDk2Njk2NzYyNyIsImRlcG9zaXRfZXBvY2giOiI1NzcyMTU2NjQ5MDE1MzI4NjA2MDY1MTIwOTAwODI0MDI0MzEwNDIxIiwidG9rZW5fbWludCI6IjAiLCJjb21taXRtZW50IjoiMTY0NDk1OTg0MjQ0ODM0NjExODMiLCJsZWFmSW5kZXgiOjIxMSwidG9rZW4iOiJTT0wiLCJkZW5vbWluYXRpb25IdW1hbiI6MSwic2hpZWxkZWRBdCI6MTcwMDAwMDAwMDAwMH0="
+    }
+  ]
+}

@@ -28,6 +28,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { derivePoolSeedLegacy, derivePoolSeedSalted } from './seedDerivation';
 import {
   MERKLE_DEPTH,
+  buildMerkleProofFromLeavesV3,
   createCommitmentV3,
   findPoolV3,
   pubkeyToField,
@@ -102,6 +103,21 @@ const LEGACY_NOTE = note(LEGACY_LEAF);
 const SALTED_NOTE = note(SALTED_LEAF);
 const SPENT_NOTE = note(SPENT_LEAF, true);
 
+/**
+ * A note this wallet RECEIVED (issued to it, or handed over and imported). Its
+ * secrets are the sender's, so no seed search finds it: only the blob
+ * `handlePoolImportNote` filed resolves it. It sits below SPENT_LEAF, so the
+ * tree the walk reads still ends past it.
+ */
+const RECEIVED_LEAF = 27;
+const RECEIVED = { secret: 27_000_001n, nullifierPreimage: 27_000_002n, noteBlinding: 7_284_991_002_338_477_113n };
+const RECEIVED_COMMITMENT = createCommitmentV3(
+  RECEIVED.nullifierPreimage,
+  RECEIVED.secret,
+  RECEIVED.noteBlinding,
+  TOKEN_MINT_FIELD,
+);
+
 function notesForSeed(seed: Uint8Array): RecoveredNote[] {
   const hex = bytesToHex(seed);
   if (hex === LEGACY_HEX) return [LEGACY_NOTE];
@@ -109,7 +125,35 @@ function notesForSeed(seed: Uint8Array): RecoveredNote[] {
   return [];
 }
 
+/**
+ * The path the export must ship: the pool leaves as this RPC serves them,
+ * folded by the production builder. Computed here rather than written down so
+ * it cannot drift from `leavesFromCommitments` + `buildMerkleProofFromLeavesV3`,
+ * which is what the handler runs.
+ */
+function rebuiltRootOfSaltedNote(): string {
+  const dense: bigint[] = new Array(SPENT_LEAF + 1).fill(0n);
+  for (const n of [LEGACY_NOTE, SALTED_NOTE, SPENT_NOTE]) {
+    dense[n.receipt.leafIndex] = n.receipt.commitment;
+  }
+  return buildMerkleProofFromLeavesV3({
+    leavesByIndex: dense,
+    targetLeafIndex: SALTED_LEAF,
+  }).root.toString();
+}
+
 const seen = { recoverNotes: [] as string[], commitmentFetches: 0 };
+/**
+ * Which leaves the stubbed RPC serves. Below `servedBelow` only: an RPC behind
+ * a deposit. `withReceived` adds the received note's leaf to the walk.
+ * `report` is what the walk says it could not read (`PoolWalkReport.unread`),
+ * or 'none' for a walk that makes no report.
+ */
+const rpc = {
+  servedBelow: Number.POSITIVE_INFINITY,
+  withReceived: false,
+  report: 0 as number | 'none',
+};
 
 // ---------------------------------------------------------------------------
 // Chain stubs
@@ -156,14 +200,24 @@ vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
     ...actual,
-    fetchPoolCommitments: async () => {
+    fetchPoolCommitments: async (
+      _conn: unknown,
+      _pda: unknown,
+      options?: { onWalked?: (report: { unread: number }) => void },
+    ) => {
       seen.commitmentFetches += 1;
+      // The real walk reports what it could not read once it ends; so does this one.
+      if (rpc.report !== 'none') options?.onWalked?.({ unread: rpc.report });
       const map = new Map<string, { commitment: bigint; leafIndex: number }>();
       for (const n of [LEGACY_NOTE, SALTED_NOTE, SPENT_NOTE]) {
+        if (n.receipt.leafIndex >= rpc.servedBelow) continue;
         map.set(n.receipt.commitment.toString(), {
           commitment: n.receipt.commitment,
           leafIndex: n.receipt.leafIndex,
         });
+      }
+      if (rpc.withReceived) {
+        map.set(RECEIVED_COMMITMENT.toString(), { commitment: RECEIVED_COMMITMENT, leafIndex: RECEIVED_LEAF });
       }
       return map;
     },
@@ -201,6 +255,9 @@ beforeEach(() => {
   clearPoolState();
   seen.recoverNotes = [];
   seen.commitmentFetches = 0;
+  rpc.servedBelow = Number.POSITIVE_INFINITY;
+  rpc.withReceived = false;
+  rpc.report = 0;
   configurePoolHandlers('http://localhost:8899');
 });
 
@@ -263,8 +320,12 @@ describe('sealing a note to a recipient', () => {
     ]) {
       expect(wire).not.toContain(secret.toString());
     }
-    // The commitment IS in there, and that is correct: the deposit published it.
-    expect(res.commitment).toBe(SALTED_NOTE.receipt.commitment.toString());
+    // Since UI-1 neither is the leaf index nor the commitment: SendForm printed
+    // both beside the sealed note, and the deposit published both. The note is
+    // named by its tag (`poolNoteTag.test.ts`).
+    expect(res).not.toHaveProperty('commitment');
+    expect(res).not.toHaveProperty('leafIndex');
+    expect(wire).not.toContain(SALTED_NOTE.receipt.commitment.toString());
   });
 
   it('does not consume or mark the note — the sender can still export it again', async () => {
@@ -289,10 +350,18 @@ describe('sealing a note to a recipient', () => {
     expect(typeof opened.merkle_root).toBe('string');
   });
 
-  it('prefers the exact path stored at shield time over a rebuild', async () => {
-    // The stored witness was accepted on chain; a rebuild can only see the
-    // leaves this RPC still serves. A real blob is used, sealed to the sender's
-    // own derivation, so `extractStoredPath` runs its real decrypt-and-match.
+  it('ships a rebuilt path, never the root stored at shield time', async () => {
+    // 🚨 THE STORED ROOT DATES THE DEPOSIT. A path captured at shield time folds
+    // to the root that note's OWN insertion created, so shipping it hands the
+    // recipient — and the chain, the moment they spend — a value saying how many
+    // leaves existed when this note was deposited. The pool accepts it (it is
+    // still in the ring), so nothing fails and the link is simply published.
+    // Measured: 1 v4 spend of 34 named a root 4 insertions stale
+    // (`scratchpad/probe-stale-root-2026-09-15.log`).
+    //
+    // A REAL stored blob is used, sealed to the sender's own derivation, so
+    // `extractStoredPath` runs its real decrypt-and-match: if the handler still
+    // preferred the stored path, this case would see it.
     const stored = encryptNote(
       createNoteEncryptionAddress(SALTED_SEED),
       utf8ToBytes(
@@ -309,10 +378,299 @@ describe('sealing a note to a recipient', () => {
     );
 
     const res = await handlePoolRequest(exportReq({ encryptedNotes: [stored] }));
-    expect(res.merklePath).toBe('stored');
+    expect(res.merklePath).toBe('rebuilt');
+
     const opened = open(res.sealedNote, RECIPIENT_SEED);
-    expect(opened.merkle_root).toBe('123456789');
-    expect(opened.merkle_path_elements?.[0]).toBe('900');
+    expect(opened.merkle_root).not.toBe('123456789');
+    expect(opened.merkle_path_elements?.[0]).not.toBe('900');
+    // And it is the CURRENT tree, not merely a different one.
+    expect(opened.merkle_root).toBe(rebuiltRootOfSaltedNote());
+    expect(opened.merkle_path_elements).toHaveLength(MERKLE_DEPTH);
+  });
+
+  it('ships no path, never the stored one, when the rebuild cannot place the note', async () => {
+    // The case above only covers a rebuild that SUCCEEDS. When this RPC does
+    // not serve the note's leaf yet (it is behind the deposit, e.g. a received
+    // note handed over soon after issuance), the rebuild throws, and the stored
+    // path is the one witness left in hand. It still folds to the root of the
+    // note's own insertion, so the export ships no path at all and the
+    // recipient rebuilds later. Control: mutant N8 (stored path shipped from
+    // the catch branch), `scratchpad/web-run/logs/SPEND-1-web-fix1/`.
+    const stored = encryptNote(
+      createNoteEncryptionAddress(SALTED_SEED),
+      utf8ToBytes(
+        JSON.stringify({
+          version: 1,
+          commitment: SALTED_NOTE.receipt.commitment.toString(),
+          merklePath: {
+            pathElements: Array.from({ length: MERKLE_DEPTH }, (_, i) => String(900 + i)),
+            pathIndices: Array.from({ length: MERKLE_DEPTH }, () => 1),
+            root: '123456789',
+          },
+        }),
+      ),
+    );
+    // Anti-vacuity: the stored blob opens under the sender's seed and describes
+    // THIS note, so a handler that shipped it would ship exactly this root...
+    const storedPlain = JSON.parse(new TextDecoder().decode(decryptNote(SALTED_SEED, stored)));
+    expect(storedPlain.commitment).toBe(SALTED_NOTE.receipt.commitment.toString());
+    expect(storedPlain.merklePath.root).toBe('123456789');
+    // ...and from the leaves this RPC serves, the rebuild really throws.
+    rpc.servedBelow = SALTED_LEAF;
+    const served = new Array<bigint>(LEGACY_LEAF + 1).fill(0n);
+    served[LEGACY_LEAF] = LEGACY_NOTE.receipt.commitment;
+    expect(() =>
+      buildMerkleProofFromLeavesV3({ leavesByIndex: served, targetLeafIndex: SALTED_LEAF }),
+    ).toThrow();
+
+    const res = await handlePoolRequest(exportReq({ encryptedNotes: [stored] }));
+    expect(seen.commitmentFetches, 'the export did not read the pool leaves').toBeGreaterThan(0);
+    expect(res.merklePath).toBe('none');
+
+    const raw = new TextDecoder().decode(decryptNote(RECIPIENT_SEED, res.sealedNote));
+    const opened = JSON.parse(raw) as ShareableNote;
+    expect(opened.merkle_root).toBeUndefined();
+    expect(opened.merkle_path_elements).toBeUndefined();
+    expect(opened.merkle_path_indices).toBeUndefined();
+    expect(raw, 'the sealed note carries the stored root').not.toContain('"123456789"');
+    expect(raw, 'the sealed note carries a stored path element').not.toContain('"900"');
+    // The sealed blob is random bytes (read through `raw` above); the rest is not.
+    expect(JSON.stringify({ ...res, sealedNote: '' }), 'the response carries the stored root').not.toContain(
+      '123456789',
+    );
+    // Still a note the recipient can import: only the path is left off.
+    expect(shareableNoteToReceipt(opened).commitment).toBe(SALTED_NOTE.receipt.commitment);
+  });
+
+  it('ships a rebuilt path, never the issuance-time path, for a note it RECEIVED', async () => {
+    // Every case above exports a note the seed search found (source
+    // 'shielded'). A RECEIVED note is resolved from the blob
+    // `handlePoolImportNote` filed, and that blob carries the issuer's path: a
+    // root taken at issuance, right after the buyer's own deposit. Handing it
+    // on would give any client that prefers a carried path a root that dates
+    // the purchase. Control: mutant EXRCV (a received note's filed path shipped
+    // as 'stored'), `scratchpad/web-run/logs/verify-SPEND-1-r3b/mutants/`,
+    // re-run in `scratchpad/web-run/logs2/SPEND-1-cr1/`.
+    rpc.withReceived = true;
+    const issuedPath = {
+      pathElements: Array.from({ length: MERKLE_DEPTH }, (_, i) => String(700 + i)),
+      pathIndices: Array.from({ length: MERKLE_DEPTH }, () => 0),
+      root: '987654321',
+    };
+    // Sealed to the ACTIVE derivation, in the shape `handlePoolImportNote` files.
+    const filed = encryptNote(
+      createNoteEncryptionAddress(SALTED_SEED),
+      utf8ToBytes(
+        JSON.stringify({
+          version: 1,
+          pool: POOL_58,
+          secret: RECEIVED.secret.toString(),
+          nullifier_preimage: RECEIVED.nullifierPreimage.toString(),
+          deposit_epoch: RECEIVED.noteBlinding.toString(),
+          token_mint: TOKEN_MINT_FIELD.toString(),
+          commitment: RECEIVED_COMMITMENT.toString(),
+          leafIndex: RECEIVED_LEAF,
+          merklePath: issuedPath,
+          token: 'SOL',
+          denominationHuman: DENOM,
+          shieldedAt: 0,
+          source: 'received',
+        }),
+      ),
+    );
+
+    const res = await handlePoolRequest(exportReq({ leafIndex: RECEIVED_LEAF, encryptedNotes: [filed] }));
+    // Anti-vacuity: the note came from its filed blob (no seed search ran) and is the received one.
+    expect(seen.recoverNotes, 'the seed search ran, so the note was not resolved from its blob').toEqual([]);
+    // Which note was exported is read from the sealed note below (UI-1: the
+    // response no longer names the commitment).
+    expect(res).not.toHaveProperty('commitment');
+
+    expect(res.merklePath).toBe('rebuilt');
+    const raw = new TextDecoder().decode(decryptNote(RECIPIENT_SEED, res.sealedNote));
+    const opened = JSON.parse(raw) as ShareableNote;
+    expect(opened.merkle_root, 'the export shipped the issuance-time root').not.toBe('987654321');
+    expect(raw, 'the sealed note carries the issuance-time root').not.toContain('"987654321"');
+    expect(raw, 'the sealed note carries an issuance-time path element').not.toContain('"700"');
+    // And it is the tree the walk read, not merely a different one.
+    const dense: bigint[] = new Array(SPENT_LEAF + 1).fill(0n);
+    for (const n of [LEGACY_NOTE, SALTED_NOTE, SPENT_NOTE]) dense[n.receipt.leafIndex] = n.receipt.commitment;
+    dense[RECEIVED_LEAF] = RECEIVED_COMMITMENT;
+    expect(opened.merkle_root).toBe(
+      buildMerkleProofFromLeavesV3({ leavesByIndex: dense, targetLeafIndex: RECEIVED_LEAF }).root.toString(),
+    );
+    expect(shareableNoteToReceipt(opened).commitment).toBe(RECEIVED_COMMITMENT);
+  });
+
+  it('ships no path when the walk ends at the note or left listed inserts unread', async () => {
+    // A rebuilt path is only as good as the walk behind it. When the note is
+    // the newest leaf that walk read, the path folds to the note's own deposit
+    // root; when the walk left listed inserts unread, the map may end where
+    // this client last read, often its own purchase. A recipient that spends
+    // on the carried path names a root that dates the note, and the v3 route
+    // and the extension and mobile clients prefer a carried path. So the
+    // export ships no path there, and the recipient rebuilds from history
+    // (verifier r2 of the continued run, minor 3; controls in
+    // `scratchpad/web-run/logs2/SPEND-1-cr2/`). The control worlds ship the
+    // rebuilt path.
+    const filedReceived = encryptNote(
+      createNoteEncryptionAddress(SALTED_SEED),
+      utf8ToBytes(
+        JSON.stringify({
+          version: 1,
+          pool: POOL_58,
+          secret: RECEIVED.secret.toString(),
+          nullifier_preimage: RECEIVED.nullifierPreimage.toString(),
+          deposit_epoch: RECEIVED.noteBlinding.toString(),
+          token_mint: TOKEN_MINT_FIELD.toString(),
+          commitment: RECEIVED_COMMITMENT.toString(),
+          leafIndex: RECEIVED_LEAF,
+          merklePath: {
+            pathElements: Array.from({ length: MERKLE_DEPTH }, (_, i) => String(700 + i)),
+            pathIndices: Array.from({ length: MERKLE_DEPTH }, () => 0),
+            root: '987654321',
+          },
+          token: 'SOL',
+          denominationHuman: DENOM,
+          shieldedAt: 0,
+          source: 'received',
+        }),
+      ),
+    );
+    const worlds: Array<{ label: string; received: boolean; servedBelow: number; report: number | 'none'; want: string }> = [
+      { label: 'own note, the newest leaf the walk read, nothing unread', received: false, servedBelow: SPENT_LEAF, report: 0, want: 'none' },
+      { label: 'own note, walk left 2 listed inserts unread', received: false, servedBelow: Number.POSITIVE_INFINITY, report: 2, want: 'none' },
+      { label: 'own note, walk made no report', received: false, servedBelow: Number.POSITIVE_INFINITY, report: 'none', want: 'none' },
+      { label: 'received note, the newest leaf the walk read, nothing unread', received: true, servedBelow: SPENT_LEAF, report: 0, want: 'none' },
+      { label: 'received note, walk left 1 listed insert unread', received: true, servedBelow: Number.POSITIVE_INFINITY, report: 1, want: 'none' },
+      { label: 'control: own note, map past the note, nothing unread', received: false, servedBelow: Number.POSITIVE_INFINITY, report: 0, want: 'rebuilt' },
+      { label: 'control: received note, map past the note, nothing unread', received: true, servedBelow: Number.POSITIVE_INFINITY, report: 0, want: 'rebuilt' },
+    ];
+    const got: string[] = [];
+    const want: string[] = [];
+    for (const w of worlds) {
+      rpc.withReceived = w.received;
+      rpc.servedBelow = w.servedBelow;
+      rpc.report = w.report;
+      const res = await handlePoolRequest(
+        w.received ? exportReq({ leafIndex: RECEIVED_LEAF, encryptedNotes: [filedReceived] }) : exportReq(),
+      );
+      const raw = new TextDecoder().decode(decryptNote(RECIPIENT_SEED, res.sealedNote));
+      const opened = JSON.parse(raw) as ShareableNote;
+      // Anti-vacuity: the note exported is the one this world names.
+      expect(opened.commitment, w.label).toBe(
+        (w.received ? RECEIVED_COMMITMENT : SALTED_NOTE.receipt.commitment).toString(),
+      );
+      const carried = opened.merkle_root === undefined && opened.merkle_path_elements === undefined
+        ? 'no path in the sealed note'
+        : 'a path in the sealed note';
+      got.push(`${w.label} => ${res.merklePath}; ${carried}`);
+      want.push(`${w.label} => ${w.want}; ${w.want === 'none' ? 'no path in the sealed note' : 'a path in the sealed note'}`);
+      // Still a note the recipient can import: only the path is left off.
+      expect(shareableNoteToReceipt(opened).commitment, w.label).toBe(
+        w.received ? RECEIVED_COMMITMENT : SALTED_NOTE.receipt.commitment,
+      );
+    }
+    expect(got).toEqual(want);
+  });
+
+  it('ships no path whose root is the one filed with the note, when the walk ends where that root was taken', async () => {
+    // The walk can end exactly where the note's filed root was taken: a
+    // received note's issuance-time root, right after the buyer's own deposit,
+    // with nothing newer listed yet. That walk read all it listed and does not
+    // end at the note, so no rule above holds its path back, and its root IS
+    // the filed one, reached through the leaves. A recipient spending on the
+    // carried path names the moment of the purchase, and the v3 route and the
+    // extension and mobile clients prefer a carried path. So none ships,
+    // whatever the note's source (verifier r4 of the continued run, minor;
+    // `scratchpad/web-run/logs2/verify-SPEND-1-r4/probe/export-NONE.log`). The
+    // control worlds carry a root filed at another point and ship the rebuilt path.
+    const walkPath = (target: number, withReceived: boolean, upTo: number) => {
+      const dense: bigint[] = new Array(upTo + 1).fill(0n);
+      for (const n of [LEGACY_NOTE, SALTED_NOTE, SPENT_NOTE]) {
+        if (n.receipt.leafIndex <= upTo) dense[n.receipt.leafIndex] = n.receipt.commitment;
+      }
+      if (withReceived && RECEIVED_LEAF <= upTo) dense[RECEIVED_LEAF] = RECEIVED_COMMITMENT;
+      const p = buildMerkleProofFromLeavesV3({ leavesByIndex: dense, targetLeafIndex: target });
+      return { pathElements: p.pathElements.map(String), pathIndices: p.pathIndices, root: p.root.toString() };
+    };
+    const filedReceived = (merklePath: ReturnType<typeof walkPath>) =>
+      encryptNote(
+        createNoteEncryptionAddress(SALTED_SEED),
+        utf8ToBytes(
+          JSON.stringify({
+            version: 1,
+            pool: POOL_58,
+            secret: RECEIVED.secret.toString(),
+            nullifier_preimage: RECEIVED.nullifierPreimage.toString(),
+            deposit_epoch: RECEIVED.noteBlinding.toString(),
+            token_mint: TOKEN_MINT_FIELD.toString(),
+            commitment: RECEIVED_COMMITMENT.toString(),
+            leafIndex: RECEIVED_LEAF,
+            merklePath,
+            token: 'SOL',
+            denominationHuman: DENOM,
+            shieldedAt: 0,
+            source: 'received',
+          }),
+        ),
+      );
+    const storedOwn = (merklePath: ReturnType<typeof walkPath>) =>
+      encryptNote(
+        createNoteEncryptionAddress(SALTED_SEED),
+        utf8ToBytes(JSON.stringify({ version: 1, commitment: SALTED_NOTE.receipt.commitment.toString(), merklePath })),
+      );
+    // The export walks to SPENT_LEAF with nothing unread (the defaults).
+    const worlds = [
+      {
+        label: 'received note, filed root taken where the walk ends',
+        received: true, filed: walkPath(RECEIVED_LEAF, true, SPENT_LEAF), ships: false,
+      },
+      {
+        label: 'own note, stored root taken where the walk ends',
+        received: false, filed: walkPath(SALTED_LEAF, false, SPENT_LEAF), ships: false,
+      },
+      {
+        label: 'control: received note, filed root taken before the walk\'s end',
+        received: true, filed: walkPath(RECEIVED_LEAF, true, RECEIVED_LEAF), ships: true,
+      },
+      {
+        label: 'control: own note, stored root of its own insertion',
+        received: false, filed: walkPath(SALTED_LEAF, false, SALTED_LEAF), ships: true,
+      },
+    ];
+    const got: string[] = [];
+    const want: string[] = [];
+    for (const w of worlds) {
+      rpc.withReceived = w.received;
+      const walkRoot = walkPath(w.received ? RECEIVED_LEAF : SALTED_LEAF, w.received, SPENT_LEAF).root;
+      // Anti-vacuity: the tied worlds' filed root IS the root this walk folds to; the controls' is not.
+      expect(w.filed.root === walkRoot, w.label).toBe(!w.ships);
+      const res = await handlePoolRequest(
+        w.received
+          ? exportReq({ leafIndex: RECEIVED_LEAF, encryptedNotes: [filedReceived(w.filed)] })
+          : exportReq({ encryptedNotes: [storedOwn(w.filed)] }),
+      );
+      const raw = new TextDecoder().decode(decryptNote(RECIPIENT_SEED, res.sealedNote));
+      const opened = JSON.parse(raw) as ShareableNote;
+      // Anti-vacuity: the note exported is the one this world names.
+      expect(opened.commitment, w.label).toBe((w.received ? RECEIVED_COMMITMENT : SALTED_NOTE.receipt.commitment).toString());
+      const carried = opened.merkle_root === undefined && opened.merkle_path_elements === undefined
+        ? 'no path in the sealed note'
+        : opened.merkle_root === walkRoot ? 'the walk\'s path in the sealed note' : 'another path in the sealed note';
+      const filedShipped = raw.includes(`"${w.filed.root}"`) ? 'the filed root shipped' : 'the filed root not shipped';
+      got.push(`${w.label} => ${res.merklePath}; ${carried}; ${w.ships ? 'control' : filedShipped}`);
+      want.push(
+        w.ships
+          ? `${w.label} => rebuilt; the walk's path in the sealed note; control`
+          : `${w.label} => none; no path in the sealed note; the filed root not shipped`,
+      );
+      // Still a note the recipient can import: only the path is left off.
+      expect(shareableNoteToReceipt(opened).commitment, w.label).toBe(
+        w.received ? RECEIVED_COMMITMENT : SALTED_NOTE.receipt.commitment,
+      );
+    }
+    expect(got).toEqual(want);
   });
 
   it('ignores a stored blob belonging to a different note', async () => {
@@ -382,5 +740,137 @@ describe('what it refuses', () => {
   it('refuses when no pool keys are derived for this session', async () => {
     clearPoolState();
     await expect(handlePoolRequest(exportReq())).rejects.toThrow(/No pool keys/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Web sweep 4, round 1: what the sealed string tells whoever holds or sees it.
+// ---------------------------------------------------------------------------
+
+describe('the handoff carries no holder time and has one length', () => {
+  beforeEach(() => setPoolSeed(META, SIGNATURE, PASSPHRASE));
+
+  /** BN254: secrets, nullifier preimages and mint fields are reduced mod this. */
+  const BN254 = BigInt('21888242871839275222246405745257275088548364400416034343698204186575808495617');
+
+  /**
+   * A RECEIVED note in the shape `handlePoolImportNote` filed it before this
+   * round: `shieldedAt` was the moment this device imported it, seconds after
+   * the till payment that bought it, and the export sealed it on.
+   */
+  function filedReceived(
+    shieldedAt: number | undefined,
+    note: { secret: bigint; nullifierPreimage: bigint; noteBlinding: bigint } = RECEIVED,
+  ): string {
+    const commitment = createCommitmentV3(note.nullifierPreimage, note.secret, note.noteBlinding, TOKEN_MINT_FIELD);
+    return encryptNote(
+      createNoteEncryptionAddress(SALTED_SEED),
+      utf8ToBytes(
+        JSON.stringify({
+          version: 1,
+          pool: POOL_58,
+          secret: note.secret.toString(),
+          nullifier_preimage: note.nullifierPreimage.toString(),
+          deposit_epoch: note.noteBlinding.toString(),
+          token_mint: TOKEN_MINT_FIELD.toString(),
+          commitment: commitment.toString(),
+          leafIndex: RECEIVED_LEAF,
+          token: 'SOL',
+          denominationHuman: DENOM,
+          ...(shieldedAt === undefined ? {} : { shieldedAt }),
+          source: 'received',
+        }),
+      ),
+    );
+  }
+
+  const plaintextOf = (sealed: string) => new TextDecoder().decode(decryptNote(RECIPIENT_SEED, sealed));
+
+  it('hands the recipient no time: a note filed at two different moments seals the same plaintext', async () => {
+    rpc.withReceived = true;
+    const opened: string[] = [];
+    for (const importedAt of [1_758_300_123_456, 1_758_399_999_999]) {
+      const res = await handlePoolRequest(
+        exportReq({ leafIndex: RECEIVED_LEAF, encryptedNotes: [filedReceived(importedAt)] }),
+      );
+      opened.push(plaintextOf(res.sealedNote));
+    }
+    // Anti-vacuity: both came from the filed blob and seal the received note.
+    expect(seen.recoverNotes, 'the seed search ran, so the note was not resolved from its blob').toEqual([]);
+    expect(shareableNoteToReceipt(JSON.parse(opened[0]) as ShareableNote).commitment).toBe(RECEIVED_COMMITMENT);
+    expect(opened[1], 'the sealed plaintext moves with the moment the holder filed the note').toBe(opened[0]);
+
+    // An own note hands over no time either, although its receipt carries one.
+    const own = open((await handlePoolRequest(exportReq())).sealedNote, RECIPIENT_SEED);
+    expect(SALTED_NOTE.receipt.shieldedAt, 'anti-vacuity: the receipt has a time to leak').toBeGreaterThan(0);
+    expect(Object.keys(own)).not.toContain('shieldedAt');
+  });
+
+  it('seals every handoff to one length, whatever the note, its source, its path or its digits', async () => {
+    const lengths: Record<string, number> = {};
+    lengths['own, rebuilt path'] = (await handlePoolRequest(exportReq())).sealedNote.length;
+    lengths['own before the passphrase, rebuilt path'] = (
+      await handlePoolRequest(exportReq({ leafIndex: LEGACY_LEAF }))
+    ).sealedNote.length;
+
+    rpc.report = 1;
+    const noPath = await handlePoolRequest(exportReq());
+    expect(noPath.merklePath, 'anti-vacuity: this world ships no path').toBe('none');
+    lengths['own, no path'] = noPath.sealedNote.length;
+    rpc.report = 0;
+
+    rpc.withReceived = true;
+    lengths['received, filed with a time'] = (
+      await handlePoolRequest(exportReq({ leafIndex: RECEIVED_LEAF, encryptedNotes: [filedReceived(1_758_300_123_456)] }))
+    ).sealedNote.length;
+    // The longest values a web note holds: three BN254-reduced fields at 77
+    // digits and a 63-bit blinding.
+    const longest = { secret: BN254 - 1n, nullifierPreimage: BN254 - 2n, noteBlinding: 2n ** 63n - 1n };
+    const long = await handlePoolRequest(
+      exportReq({ leafIndex: RECEIVED_LEAF, encryptedNotes: [filedReceived(undefined, longest)] }),
+    );
+    expect(open(long.sealedNote, RECIPIENT_SEED).secret, 'anti-vacuity: the long note was sealed').toBe(
+      longest.secret.toString(),
+    );
+    expect(long.merklePath, 'anti-vacuity: the long note carries a path').toBe('rebuilt');
+    lengths['received, longest values, rebuilt path'] = long.sealedNote.length;
+
+    expect(new Set(Object.values(lengths)).size, JSON.stringify(lengths)).toBe(1);
+    /**
+     * ⛔ STILL ONE QR CODE, AND THE MARGIN IS PINNED WHERE THE CLIFF IS
+     * (gate r1, RED 7b).
+     *
+     * SendForm draws the code while the sealed string is at most
+     * `QR_BYTE_CAPACITY` and shows "Too long for a QR code" otherwise. This used
+     * to assert `<= 2_900` against that same literal — and every handoff now
+     * measures exactly 2,900, so the assertion had NO margin at all and read as
+     * a guarantee.
+     *
+     * ⚠️ AND THE MARGIN IS NOT AT THE QR CEILING, IT IS AT THE PADDING BUCKET.
+     * A sealed handoff is a fixed size because the plaintext is padded to
+     * `SEALED_HANDOFF_BYTES` (1,008, `worker/poolHandlers.ts`). One byte past
+     * that bucket pads to the NEXT one, 2,016, and the sealed string roughly
+     * doubles — far past any QR code. So 53 characters of slack under the ISO
+     * ceiling (2,953, version 40 / EC L / byte mode) would buy nothing: the
+     * number a new field actually eats is the room left inside the bucket, and
+     * that is what is asserted here.
+     */
+    const QR_BYTE_CAPACITY = 2_900;
+    const SEALED_HANDOFF_BYTES = 1_008;
+    /** One more field, generously sized, must still fit inside the bucket. */
+    const BUCKET_MARGIN = 128;
+
+    expect(
+      Object.values(lengths)[0],
+      'a sealed handoff no longer fits the QR code SendForm draws',
+    ).toBeLessThanOrEqual(QR_BYTE_CAPACITY);
+
+    const content = new TextEncoder().encode(
+      JSON.stringify(open(long.sealedNote, RECIPIENT_SEED)),
+    ).length;
+    expect(
+      content,
+      `the longest handoff is within ${BUCKET_MARGIN} bytes of SEALED_HANDOFF_BYTES: one more field pads it into the next bucket, the sealed string roughly doubles, and the QR code disappears for every user at once`,
+    ).toBeLessThanOrEqual(SEALED_HANDOFF_BYTES - BUCKET_MARGIN);
   });
 });

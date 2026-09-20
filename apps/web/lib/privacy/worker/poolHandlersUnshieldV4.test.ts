@@ -33,6 +33,10 @@ import { Keypair, PublicKey } from '@solana/web3.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import nacl from 'tweetnacl';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { derivePoolSeeds, seedsInSearchOrder } from '../pool/seedDerivation';
+import { createNoteEncryptionAddress, encryptNote } from '../pool/noteCrypto';
 
 import type { RecoveredNote } from '../pool/poolNotes';
 import { claimChallenge } from '../claimChallenge';
@@ -76,6 +80,14 @@ const V4_EPHEMERAL = Keypair.generate();
  * reproduce that cannot see the overwrite it causes, which is why the first
  * version of this file passed while the defect was live.
  */
+/**
+ * The opening of the refusal `prepareUnshieldV4` raises when the history it
+ * can read is incomplete AND the note's saved path would name an older root.
+ * Spelled out here and checked against the real source below, so this file
+ * cannot pass by injecting a message the prepare never produces.
+ */
+const HISTORY_REFUSAL = 'The pool history this client can read is incomplete';
+
 const V3_JOB_ID = `unshield:${POOL_58}:${LEAF}`;
 const V4_JOB_ID = `unshield-v4:${POOL_58}:${LEAF}`;
 
@@ -99,6 +111,56 @@ const NOTE: RecoveredNote = {
 };
 
 /**
+ * V3-1: the two kinds of note the C1 + C3 routing now tells apart. Both jobs
+ * refuse a note whose blinding is below 2**32 (`LEGACY_BLINDING_CEILING` in
+ * unshieldEphemeral.ts and subscribeEphemeral.ts): that value is a deposit
+ * epoch (67,838 measured 2026-08-26), not a PRF draw.
+ *   BLINDED_NOTE       2**60, the plan's figure for a PRF-blinded note. Every
+ *                      note deposited since blinding landed is one.
+ *   PRE_BLINDING_NOTE  a deposit epoch, as the legacy notes carry.
+ * Same leaf and commitment as NOTE, so the walk and the stubs are unchanged.
+ */
+const BLINDED_NOTE: RecoveredNote = { ...NOTE, receipt: { ...NOTE.receipt, noteBlinding: 2n ** 60n } };
+const PRE_BLINDING_NOTE: RecoveredNote = { ...NOTE, receipt: { ...NOTE.receipt, noteBlinding: 67_838n } };
+
+/** The refusal both circuit-7 jobs raise for a pre-blinding note, as unshieldEphemeral.ts words it. */
+const PRE_BLINDING = () =>
+  new Error(
+    'circuit 7 needs at least a randomised blinding, and this note carries its deposit ' +
+      'epoch instead — it predates commitment blinding. Proving it on circuit 7 would hide the ' +
+      'commitment while leaving the leaf recoverable from the published nullifier by trying a ' +
+      'few thousand epochs, which is worse than the C1 + C3 pair only in that it looks private. ' +
+      'Falling back to the pair.',
+  );
+/** The root pre-flight's refusal, as denominatedPool.ts words it. */
+const PREFLIGHT_FAIL = () =>
+  new Error(
+    "PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots " +
+      '(current + 100 historical). Aborting before proof rent is spent. Wait ~10s for the RPC ' +
+      'to index recent transactions, then retry.',
+  );
+/** The subtree-depth refusal, as denominatedPool.ts words it. */
+const DEPTH_FAIL = () => new Error('Merkle path is 9 deep; circuit 7 needs at least 12.');
+
+/**
+ * What a prepare answered, in words: which circuit it prepared on, or which of
+ * the V3-1 refusals it raised. Anything else is spelled out whole, so a harness
+ * that broke reads as itself and never as a refusal.
+ */
+function verdict(p: Promise<{ version: string }>): Promise<string> {
+  return p.then(
+    (r) => `prepared on ${r.version}`,
+    (e: unknown) => {
+      const m = e instanceof Error ? e.message : String(e);
+      if (m === 'SUBSCRIBE_REACHED_PREPARE_SUBSCRIBE_JOB') return 'reached the C1 + C3 subscribe prepare';
+      if (/press the same button again/i.test(m)) return 'disclosure';
+      if (/not retried on the older C1 \+ C3 pair/i.test(m) && /then retry/i.test(m)) return 'refused, retry';
+      return `other: ${m}`;
+    },
+  );
+}
+
+/**
  * Every call the handler made, in order, with the arguments that decide the
  * outcome. Recorded rather than spied so an assertion can pin ARGUMENT ORDER:
  * `prepareUnshieldJobV4(receipt, recipient, ownerPubkey, …)` puts two
@@ -119,7 +181,31 @@ const seen = {
   // stored context is bound to.
   executeRelayed: [] as Array<{ jobId: string; boundPayee: string; relayerUrl: string }>,
   prepareSubscribe: [] as number[],
+  /** The circuit-7 SUBSCRIPTION prepare: the leaf of every note it was asked to prove. */
+  prepareSubscribeV4: [] as number[],
+  /** The saved path the circuit-7 SUBSCRIPTION prepare was handed, per call (its 8th argument). */
+  prepareSubscribeV4Saved: [] as unknown[],
+  /**
+   * The circuit-7 prepare's OPTIONS object, recorded separately from
+   * `prepareV4` because those rows are asserted with `toEqual` and one
+   * extra field would fail the argument-order test for an unrelated
+   * reason. This is where the leaves the handler already walked show up.
+   */
+  prepareV4Opts: [] as unknown[],
+  /** The note the circuit-7 prepare was handed: where it came from, and which commitment. */
+  prepareV4Receipts: [] as Array<{ source: unknown; commitment: string; leafIndex: number }>,
+  /** The circuit levels handed to the prover, per proof; only a real prepare reaches it. */
+  proofLevels: [] as unknown[],
 };
+
+/**
+ * A fake RPC. When set, the handler's walk and the circuit-7 prepare run for
+ * REAL on it: the real `fetchPoolCommitments`, and the real
+ * `prepareUnshieldJobV4` and `prepareUnshieldV4` (the case "a note whose insert
+ * no walk read places is refused on circuit 7 and never reaches the C1 + C3
+ * pair: the real walk and the real prepare"). Otherwise the stubs answer.
+ */
+let realChain: unknown = null;
 
 /**
  * Injected failure for the circuit-7 prepare.
@@ -131,6 +217,23 @@ const seen = {
  * functions, and this variable is the only way to reach it without an RPC.
  */
 let v4PrepareFailure: Error | null = null;
+/** Injected failure for the circuit-7 SUBSCRIPTION prepare (`prepareSubscribeJobV4`). */
+let subscribeV4PrepareFailure: Error | null = null;
+
+/**
+ * What the seed search finds at LEAF, and which commitment the walk holds
+ * there. The received-note case sets both: the seed search finds nothing (a
+ * received note's secrets are the SENDER's) and the leaf holds the received
+ * commitment, so the handler can only resolve the note from its stored blob.
+ */
+let seedSearchNote: RecoveredNote | null = NOTE;
+let commitmentAtLeaf: bigint = NOTE.receipt.commitment;
+/**
+ * What the walk reports it could not read (`PoolWalkReport.unread`), handed
+ * to the walk's `onWalked` by the stub below. `undefined`: the walk makes no
+ * report at all.
+ */
+let walkUnread: number | undefined = 0;
 
 // ---------------------------------------------------------------------------
 // Chain stubs
@@ -141,7 +244,7 @@ vi.mock('../pool/poolNotes', () => ({
   // One seed, one note, at one leaf. Derivation search is `poolHandlersDerivation
   // .test.ts`'s subject and is deliberately not re-tested here.
   recoverNotes: async (_c: unknown, _p: unknown, _s: unknown, opts?: { onlyLeaf?: number }) =>
-    opts?.onlyLeaf === LEAF ? [NOTE] : [],
+    opts?.onlyLeaf === LEAF && seedSearchNote ? [seedSearchNote] : [],
 }));
 
 vi.mock('../pool/recoverFloat', () => ({ recoverStuckFloat: async () => [] }));
@@ -169,8 +272,31 @@ vi.mock('../pool/subscribeEphemeral', () => ({
     seen.prepareSubscribe.push(receipt.leafIndex);
     throw new Error('SUBSCRIBE_REACHED_PREPARE_SUBSCRIBE_JOB');
   },
+  // The circuit-7 subscription prepare: records the attempt and the saved path
+  // it was handed, then fails the way the case under test injects.
+  prepareSubscribeJobV4: async (receipt: { leafIndex: number }, ...rest: unknown[]) => {
+    seen.prepareSubscribeV4.push(receipt.leafIndex);
+    // (poolConfig, connection, walletSeed, terms, onProgress, spentSet, savedPath)
+    seen.prepareSubscribeV4Saved.push(rest[6]);
+    throw subscribeV4PrepareFailure ?? new Error('not exercised');
+  },
   executeSubscribe: async () => {
     throw new Error('not exercised');
+  },
+}));
+
+// `handlePoolSubscribePrepare` computes the subscriber commitment with the wasm
+// prover before the circuit-7 prepare; only the subscription case reaches it.
+vi.mock('../pool/starkProver', () => ({
+  starkProver: {
+    start: async () => undefined,
+    computeCommitment: async () => '987654321',
+    // Reached only by a REAL circuit-7 prepare (`realChain`). It publishes the
+    // recipient limbs it was handed, as circuit 7 does, so the prepare accepts it.
+    generateSpendProof: async (...a: unknown[]) => {
+      seen.proofLevels.push(a[4]);
+      return { circuitId: 7, publicInputs: ['99', '1234', ...(a[6] as string[])], proofHex: '00'.repeat(32), proofSize: 32, durationMs: 1 };
+    },
   },
 }));
 
@@ -201,16 +327,34 @@ vi.mock('../pool/unshieldEphemeral', () => ({
     return { txSig: 'V3_TX' };
   },
   prepareUnshieldJobV4: async (
-    receipt: { leafIndex: number },
+    receipt: { leafIndex: number; source?: unknown; commitment?: bigint },
     recipient: PublicKey,
     ownerPubkey: PublicKey,
     poolConfig: unknown,
+    _conn?: unknown,
+    _seed?: unknown,
+    _onProgress?: unknown,
+    opts?: { leaves?: Map<string, { leafIndex: number }>; savedPath?: unknown },
   ) => {
     seen.prepareV4.push({
       leafIndex: receipt.leafIndex,
       recipient: recipient.toBase58(),
       ownerPubkey: ownerPubkey.toBase58(),
     });
+    seen.prepareV4Opts.push(opts);
+    seen.prepareV4Receipts.push({
+      source: receipt.source,
+      commitment: String(receipt.commitment),
+      leafIndex: receipt.leafIndex,
+    });
+    if (realChain) {
+      // The REAL job, on the fake RPC instead of the handler's localhost connection.
+      const actual = await vi.importActual<typeof import('../pool/unshieldEphemeral')>('../pool/unshieldEphemeral');
+      return actual.prepareUnshieldJobV4(
+        receipt as never, recipient, ownerPubkey, poolConfig as never, realChain as never,
+        _seed as never, _onProgress as never, opts as never,
+      );
+    }
     // Recorded BEFORE the throw: a fallback test has to be able to see that
     // circuit 7 was genuinely attempted and not skipped.
     if (v4PrepareFailure) throw v4PrepareFailure;
@@ -261,17 +405,44 @@ vi.mock('../pool/unshieldEphemeral', () => ({
   },
 }));
 
+/**
+ * The pool history as `locateOwnedNote` walks it: the note's leaf, one leaf
+ * below it and three ABOVE it. The leaves after the note are what separate the
+ * pool's current root from the root the note's own insertion made, which the
+ * ring still holds. With the note's leaf alone, a handler that cut the map down
+ * at the note would hand on the same map as one that passed the whole walk, and
+ * the prepare would then name that older root (`spendRootIsCurrent.test.ts`,
+ * "a walked map one or more insertions behind is accepted from the ring, with
+ * no refetch"). A fresh map per call; the extra commitments match no receipt in
+ * this file. The note's leaf holds `commitmentAtLeaf`.
+ */
+function walkedCommitments(): Map<string, { commitment: bigint; leafIndex: number }> {
+  const rows: Array<[bigint, number]> = [
+    [90_010n, LEAF - 1],
+    [commitmentAtLeaf, LEAF],
+    [90_012n, LEAF + 1],
+    [90_013n, LEAF + 2],
+    [90_014n, LEAF + 3],
+  ];
+  return new Map(rows.map(([commitment, leafIndex]) => [commitment.toString(), { commitment, leafIndex }]));
+}
+
 vi.mock('../pool/denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../pool/denominatedPool')>();
   return {
     ...actual,
-    fetchPoolCommitments: async () =>
-      new Map([
-        [
-          NOTE.receipt.commitment.toString(),
-          { commitment: NOTE.receipt.commitment, leafIndex: LEAF },
-        ],
-      ]),
+    // The real walk reports what it could not read once it ends; so does this
+    // one, unless a case sets `walkUnread` to undefined.
+    fetchPoolCommitments: async (
+      _conn: unknown,
+      _pda: unknown,
+      options?: { onWalked?: (report: { unread: number }) => void },
+    ) => {
+      // The REAL walk, on the fake RPC, when a case sets one.
+      if (realChain) return actual.fetchPoolCommitments(realChain as never, _pda as never, options as never);
+      if (walkUnread !== undefined) options?.onWalked?.({ unread: walkUnread });
+      return walkedCommitments();
+    },
     fetchSpentNullifierSet: async () => new Set<string>(),
     readPoolUnspentCount: async () => 7,
   };
@@ -281,6 +452,16 @@ vi.mock('../pool/denominatedPool', async (importOriginal) => {
 const { clearPoolState, configurePoolHandlers, handlePoolRequest, setPoolSeed } = await import(
   './poolHandlers'
 );
+// The real ones: the mock above spreads the actual module.
+const {
+  C7_SUBTREE_DEPTH,
+  HistoryIncompleteError,
+  buildMerkleProofFromLeavesV3,
+  createCommitmentV3,
+  findPoolV3,
+  goldilocksToLeBytes32,
+} = await import('../pool/denominatedPool');
+const { memoryPoolHistoryStore, setPoolHistoryStore } = await import('../pool/poolHistoryCache');
 
 // ---------------------------------------------------------------------------
 
@@ -295,6 +476,35 @@ function prepareReq(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** A circuit-7 subscribe prepare: all three terms, as the pay app's subscribe sends them. */
+function subscribeReq() {
+  return {
+    kind: 'poolSubscribePrepare' as const,
+    meta: META,
+    token: 'SOL' as const,
+    denomination: DENOM,
+    leafIndex: LEAF,
+    retailer: RECIPIENT,
+    rate: '1000000',
+    intervalSlots: '6480000',
+  };
+}
+
+/**
+ * The C1 + C3 route for a pre-blinding note, the only way it opens since V3-1:
+ * the first prepare must come back as the disclosure, with nothing prepared,
+ * and only the SAME request again reaches the pair.
+ */
+async function preparePreBlindingAfterDisclosure(req: ReturnType<typeof prepareReq>) {
+  seedSearchNote = PRE_BLINDING_NOTE;
+  v4PrepareFailure = PRE_BLINDING();
+  expect(await verdict(handlePoolRequest(req)), 'the first prepare was not the disclosure').toBe(
+    'disclosure',
+  );
+  expect(seen.prepareV3, 'the disclosure prepared the C1 + C3 pair anyway').toEqual([]);
+  return handlePoolRequest(req);
+}
+
 beforeEach(() => {
   clearPoolState();
   seen.prepareV3 = [];
@@ -303,7 +513,17 @@ beforeEach(() => {
   seen.executeV4 = [];
   seen.executeRelayed = [];
   seen.prepareSubscribe = [];
+  seen.prepareSubscribeV4 = [];
+  seen.prepareSubscribeV4Saved = [];
+  seen.prepareV4Opts = [];
+  seen.prepareV4Receipts = [];
+  seen.proofLevels = [];
+  realChain = null;
   v4PrepareFailure = null;
+  subscribeV4PrepareFailure = null;
+  seedSearchNote = NOTE;
+  commitmentAtLeaf = NOTE.receipt.commitment;
+  walkUnread = 0;
   configurePoolHandlers('http://localhost:8899');
   setPoolSeed(META, SIGNATURE);
 });
@@ -611,59 +831,169 @@ describe('a v4 job refuses a payee it was not proved for', () => {
 // ===========================================================================
 
 /**
- * 🚨 THE WEB CLIENT NOW ASKS FOR CIRCUIT 7 ON EVERY WITHDRAWAL, so this handler
- * is the ONLY place left that can still reach the C1 + C3 pair from apps/web.
- * `unshieldFromPool` types `recipient` and `owner` as required and sends both
- * unconditionally; there is no caller that omits them. Without the fallback
- * below, the v3 branch is dead code in production and any note circuit 7 cannot
- * prove stops being withdrawable from the web app at all.
+ * 🚨 V3-1: A BLINDED NOTE IS NEVER PROVED ON THE PAIR THAT PUBLISHES ITS
+ * COMMITMENT. The C1 + C3 pair carries `stark_commitment` in the clear, and the
+ * deposit published that same value in its `LeafInserted` event, so a chain
+ * reader joins the spend to the deposit and its payer in one lookup. Until
+ * V3-1 a circuit-7 rebuild that failed its root pre-flight (`PRE-FLIGHT FAIL`)
+ * or its depth check was answered with that pair and nothing on screen said
+ * so. 30 of 64 devnet spends were v3 (plan V3-1, `probes/logs/05-analyze.log`);
+ * how many came through this fallback was not measured. Since V3-1 the handler
+ * refuses such a note with a retry message, before anything is proved, funded
+ * or sent. The subscription gets the same refusal from the same helper.
+ */
+describe('a blinded note is never proved on the commitment-publishing pair (V3-1)', () => {
+  it('blinded note refused, not proved on v3', async () => {
+    // Anti-vacuity: the note is past the ceiling both circuit-7 jobs apply, so
+    // nothing but the handler's routing decides this case.
+    expect(BLINDED_NOTE.receipt.noteBlinding >= 2n ** 32n).toBe(true);
+    seedSearchNote = BLINDED_NOTE;
+    const got: string[] = [];
+    for (const [label, failure] of [['PRE-FLIGHT FAIL', PREFLIGHT_FAIL], ['subtree depth', DEPTH_FAIL]] as const) {
+      seen.prepareV3 = [];
+      seen.prepareV4 = [];
+      v4PrepareFailure = failure();
+      const outcome = await verdict(handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER })));
+      got.push(`${label} => ${outcome}; circuit 7 attempted ${seen.prepareV4.length}; C1 + C3 prepares ${seen.prepareV3.length}`);
+    }
+    expect(got).toEqual([
+      'PRE-FLIGHT FAIL => refused, retry; circuit 7 attempted 1; C1 + C3 prepares 0',
+      'subtree depth => refused, retry; circuit 7 attempted 1; C1 + C3 prepares 0',
+    ]);
+  });
+
+  it('the refusal says nothing was sent and to retry, names no note value and carries no needle', async () => {
+    seedSearchNote = BLINDED_NOTE;
+    v4PrepareFailure = PREFLIGHT_FAIL();
+    const err = await handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER })).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err, 'the blinded note was prepared instead of refused').toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    // What happened, why, and what to do: the page shows this line as it is.
+    expect(message).toMatch(/nothing was proved, funded or sent/i);
+    expect(message).toMatch(/publishes the note.s commitment/i);
+    expect(message).toMatch(/then retry/i);
+    // No value that names the note: its leaf, its commitment, its blinding.
+    expect(message).not.toMatch(new RegExp(`\\b${LEAF}\\b`));
+    expect(message).not.toContain(String(NOTE.receipt.commitment));
+    expect(message).not.toContain(String(BLINDED_NOTE.receipt.noteBlinding));
+    // No allow-list needle either: nothing that routes on one may send this
+    // refusal to the pair it refuses.
+    expect(message).not.toContain('PRE-FLIGHT FAIL');
+    expect(message).not.toContain('circuit 7 needs at least');
+  });
+
+  it('a blinded subscription is refused, not proved on v3', async () => {
+    seedSearchNote = BLINDED_NOTE;
+    const got: string[] = [];
+    for (const [label, failure] of [['PRE-FLIGHT FAIL', PREFLIGHT_FAIL], ['subtree depth', DEPTH_FAIL]] as const) {
+      seen.prepareSubscribe = [];
+      seen.prepareSubscribeV4 = [];
+      subscribeV4PrepareFailure = failure();
+      const outcome = await verdict(handlePoolRequest(subscribeReq()));
+      got.push(
+        `${label} => ${outcome}; circuit 7 attempted ${seen.prepareSubscribeV4.length}; ` +
+          `C1 + C3 prepares ${seen.prepareSubscribe.length}`,
+      );
+    }
+    expect(got).toEqual([
+      'PRE-FLIGHT FAIL => refused, retry; circuit 7 attempted 1; C1 + C3 prepares 0',
+      'subtree depth => refused, retry; circuit 7 attempted 1; C1 + C3 prepares 0',
+    ]);
+  });
+
+  it('a pre-blinding refusal from a blinded note is refused too: the handler re-checks the ceiling', async () => {
+    // The needle alone would let a reworded or misplaced message open the pair
+    // for a blinded note; the handler reads the note's own blinding as well, so
+    // the two jobs and the handler must agree before the pair is reachable.
+    seedSearchNote = BLINDED_NOTE;
+    v4PrepareFailure = PRE_BLINDING();
+    subscribeV4PrepareFailure = PRE_BLINDING();
+    const got: string[] = [];
+    for (const kind of ['withdrawal', 'subscription'] as const) {
+      // Asked twice: a disclosure the second request could confirm must not exist.
+      for (const attempt of [1, 2]) {
+        const outcome =
+          kind === 'withdrawal'
+            ? await verdict(handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER })))
+            : await verdict(handlePoolRequest(subscribeReq()));
+        got.push(`${kind} ${attempt} => ${outcome}`);
+      }
+    }
+    expect(got).toEqual([
+      'withdrawal 1 => refused, retry',
+      'withdrawal 2 => refused, retry',
+      'subscription 1 => refused, retry',
+      'subscription 2 => refused, retry',
+    ]);
+    expect(seen.prepareV3).toEqual([]);
+    expect(seen.prepareSubscribe).toEqual([]);
+  });
+});
+
+/**
+ * ⛔ v3 STAYS REACHABLE FOR THE ONE NOTE THAT HAS NOTHING ELSE, AND ONLY AFTER
+ * THE USER HAS BEEN TOLD. The web client asks for circuit 7 on every withdrawal
+ * (`unshieldFromPool` sends `recipient` and `owner` unconditionally), so this
+ * handler is the only place apps/web can still reach the C1 + C3 pair. Since
+ * V3-1 the one note it reaches the pair for is a pre-blinding note: its
+ * commitment's third input is its deposit epoch, both circuit-7 jobs refuse it
+ * by construction, and the pair is the only spend left for it.
  *
- * The two prepares are NOT equivalent, and the asymmetry runs one way:
- *   `prepareUnshieldJob`  tries the Merkle path captured when the note was
- *                         shielded, and only rebuilds from history if that path
- *                         has aged out (unshieldEphemeral.ts:163-172).
- *   `prepareUnshieldV4`   has no stored-path route at all. It always rebuilds,
- *                         and refuses when the rebuilt root is outside the
- *                         pool's 100-root ring.
+ * It never gets there silently. The first prepare comes back as a disclosure
+ * the page shows as its error line: the pair publishes the note's commitment,
+ * so the spend matches its deposit, and nothing was proved, funded or sent.
+ * Only the same request again (same note, same payee, within ten minutes, once)
+ * proves on the pair.
  *
- * ⛔ AN ALLOW-LIST, NOT A DENY-LIST, and that is the safety property. Only
- * failures of the REBUILD are routed around. Anything unrecognised is rethrown,
- * so a new failure mode fails CLOSED — loudly on v4 — rather than silently
- * finding its way onto the path that republishes the commitment. A prover that
- * cannot produce a circuit-7 trace is a bug to surface, not to route around.
+ * ⛔ AN ALLOW-LIST, NOT A DENY-LIST, and that is still the safety property.
+ * Anything unrecognised is rethrown, so a new failure mode fails CLOSED rather
+ * than finding its way onto the path that republishes the commitment.
  */
 describe('a note circuit 7 cannot prove still reaches the C1 + C3 pair', () => {
-  const PREFLIGHT = () =>
-    new Error(
-      "PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots " +
-        '(current + 100 historical). Aborting before proof rent is spent.',
+  it('a pre-blinding note gets the disclosure first, and nothing is prepared', async () => {
+    seedSearchNote = PRE_BLINDING_NOTE;
+    v4PrepareFailure = PRE_BLINDING();
+    const err = await handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER })).then(
+      () => null,
+      (e: unknown) => e,
     );
-
-  it('falls back to the v3 prepare when the rebuild has no usable root', async () => {
-    v4PrepareFailure = PREFLIGHT();
-    const res = await handlePoolRequest(
-      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
-    );
-
-    // Circuit 7 was genuinely ATTEMPTED and then fell back — not skipped.
+    expect(err, 'the pre-blinding note was prepared on the pair with no disclosure').toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    // Circuit 7 was genuinely attempted, and neither circuit prepared anything.
     expect(seen.prepareV4).toHaveLength(1);
+    expect(seen.prepareV3).toEqual([]);
+    // What the pair publishes, what that lets a reader do, what happened, and
+    // the one way on.
+    expect(message).toMatch(/deposited before we randomised the blinding/);
+    expect(message).toMatch(/publishes the note.s commitment/i);
+    expect(message).toMatch(/can match this withdrawal to that deposit/);
+    expect(message).toMatch(/nothing was proved, funded or sent/i);
+    expect(message).toMatch(/press the same button again within 10 minutes/);
+    // No value that names the note: its leaf, its commitment, its epoch.
+    expect(message).not.toMatch(new RegExp(`\\b${LEAF}\\b`));
+    expect(message).not.toContain(String(NOTE.receipt.commitment));
+    expect(message).not.toMatch(/67[,.\s]?838/);
+  });
+
+  it('falls back to the v3 prepare on the same request once the disclosure was shown', async () => {
+    const res = await preparePreBlindingAfterDisclosure(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
+
+    // Circuit 7 was genuinely ATTEMPTED both times and then fell back — not skipped.
+    expect(seen.prepareV4).toHaveLength(2);
     expect(seen.prepareV3).toEqual([{ leafIndex: LEAF }]);
     expect(res.jobId).toBe(V3_JOB_ID);
   });
 
   it('reports v3, so no screen upgrades its disclosure on a spend that publishes the commitment', async () => {
-    v4PrepareFailure = PREFLIGHT();
-    const res = await handlePoolRequest(
-      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
-    );
+    const res = await preparePreBlindingAfterDisclosure(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
     expect(res.version).toBe('v3');
   });
 
   it('produces a job that executes as v3 — the payee is required, not stored', async () => {
-    v4PrepareFailure = PREFLIGHT();
-    const prep = await handlePoolRequest(
-      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
-    );
+    const prep = await preparePreBlindingAfterDisclosure(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
     const done = await handlePoolRequest({
       kind: 'poolUnshieldExecute',
       jobId: prep.jobId,
@@ -678,12 +1008,108 @@ describe('a note circuit 7 cannot prove still reaches the C1 + C3 pair', () => {
     expect(seen.executeV4).toEqual([]);
   });
 
-  it('also falls back when the rebuilt path is too shallow for the circuit', async () => {
-    v4PrepareFailure = new Error('Merkle path is 9 deep; circuit 7 needs at least 12.');
-    const res = await handlePoolRequest(
-      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }),
-    );
-    expect(res.version).toBe('v3');
+  it('the confirmation is one-shot, scoped to its payee, expires after ten minutes, and dies with the pool state', async () => {
+    seedSearchNote = PRE_BLINDING_NOTE;
+    v4PrepareFailure = PRE_BLINDING();
+    const T0 = 1_800_000_000_000;
+    const MIN = 60_000;
+    let now = T0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const got: string[] = [];
+    const ask = async (label: string, at: number, payee: string) => {
+      now = T0 + at;
+      got.push(`${label} => ${await verdict(handlePoolRequest(prepareReq({ recipient: payee, ownerPubkey: OWNER })))}`);
+    };
+    try {
+      await ask('shown for the payee', 0, RECIPIENT);
+      await ask('another payee', 1 * MIN, OTHER_PAYEE);
+      await ask('the payee again', 2 * MIN, RECIPIENT);
+      await ask('the payee a third time', 3 * MIN, RECIPIENT);
+      await ask('ten minutes and a moment later', 13 * MIN + 1, RECIPIENT);
+      await ask('again inside the window', 14 * MIN, RECIPIENT);
+      await ask('shown once more', 15 * MIN, RECIPIENT);
+      clearPoolState();
+      configurePoolHandlers('http://localhost:8899');
+      setPoolSeed(META, SIGNATURE);
+      await ask('after the pool state was cleared', 16 * MIN, RECIPIENT);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(got).toEqual([
+      'shown for the payee => disclosure',
+      // A disclosure shown for one payee does not confirm a spend to another.
+      'another payee => disclosure',
+      'the payee again => prepared on v3',
+      // One confirmation, one prepare.
+      'the payee a third time => disclosure',
+      'ten minutes and a moment later => disclosure',
+      'again inside the window => prepared on v3',
+      'shown once more => disclosure',
+      'after the pool state was cleared => disclosure',
+    ]);
+    expect(seen.prepareV3).toHaveLength(2);
+  });
+
+  it('a pre-blinding subscription gets the same disclosure, and a withdrawal disclosure does not confirm it', async () => {
+    seedSearchNote = PRE_BLINDING_NOTE;
+    v4PrepareFailure = PRE_BLINDING();
+    subscribeV4PrepareFailure = PRE_BLINDING();
+    const got: string[] = [];
+    got.push(`withdrawal => ${await verdict(handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER })))}`);
+    const first = await handlePoolRequest(subscribeReq()).then(() => null, (e: unknown) => e);
+    got.push(`subscription => ${await verdict(Promise.reject(first))}`);
+    got.push(`subscription again => ${await verdict(handlePoolRequest(subscribeReq()))}`);
+    expect(got).toEqual([
+      'withdrawal => disclosure',
+      'subscription => disclosure',
+      // The stubbed C1 + C3 subscribe prepare throws its marker once reached.
+      'subscription again => reached the C1 + C3 subscribe prepare',
+    ]);
+    expect(seen.prepareSubscribeV4).toHaveLength(2);
+    expect(seen.prepareSubscribe).toEqual([LEAF]);
+    expect(String((first as Error).message)).toMatch(/can match this subscription to that deposit/);
+  });
+
+  it('a pre-blinding note whose rebuild failed for another reason gets the retry refusal, not the disclosure', async () => {
+    // The disclosure answers ONE refusal, the jobs' pre-blinding one. Any other
+    // recognised failure is the retry refusal whatever the note's blinding, so
+    // the needle and the ceiling must both hold (mutant M3, "ceiling only",
+    // `scratchpad/web-run/logs2/V3-1/mutants.log`).
+    seedSearchNote = PRE_BLINDING_NOTE;
+    const got: string[] = [];
+    for (const [label, failure] of [['PRE-FLIGHT FAIL', PREFLIGHT_FAIL], ['subtree depth', DEPTH_FAIL]] as const) {
+      v4PrepareFailure = failure();
+      subscribeV4PrepareFailure = failure();
+      got.push(`withdrawal, ${label} => ${await verdict(handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER })))}`);
+      got.push(`subscription, ${label} => ${await verdict(handlePoolRequest(subscribeReq()))}`);
+    }
+    expect(got).toEqual([
+      'withdrawal, PRE-FLIGHT FAIL => refused, retry',
+      'subscription, PRE-FLIGHT FAIL => refused, retry',
+      'withdrawal, subtree depth => refused, retry',
+      'subscription, subtree depth => refused, retry',
+    ]);
+    expect(seen.prepareV3).toEqual([]);
+    expect(seen.prepareSubscribe).toEqual([]);
+  });
+
+  it('the pre-blinding needle and ceiling match both circuit-7 jobs', () => {
+    // ANTI-VACUITY. The cases above inject the job's message themselves, so a
+    // reword in either job, or a moved ceiling, would leave them green while the
+    // real note went nowhere. This reads all three sources.
+    const handlers = readFileSync(join(__dirname, 'poolHandlers.ts'), 'utf8');
+    expect(handlers).toContain("const PRE_BLINDING_REFUSAL = 'circuit 7 needs at least a randomised blinding';");
+    expect(handlers).toContain('const LEGACY_BLINDING_CEILING = 2n ** 32n;');
+    for (const job of ['../pool/unshieldEphemeral.ts', '../pool/subscribeEphemeral.ts']) {
+      const src = readFileSync(join(__dirname, job), 'utf8');
+      expect(src, `${job} reworded the pre-blinding refusal`).toContain(
+        "'circuit 7 needs at least a randomised blinding, and this note carries its deposit '",
+      );
+      expect(src, `${job} moved the ceiling`).toContain('const LEGACY_BLINDING_CEILING = 2n ** 32n;');
+      expect(src, `${job} no longer refuses below the ceiling`).toContain(
+        'if (receipt.noteBlinding < LEGACY_BLINDING_CEILING) {',
+      );
+    }
   });
 
   /**
@@ -740,6 +1166,417 @@ describe('a note circuit 7 cannot prove still reaches the C1 + C3 pair', () => {
     const eph = readFileSync(join(__dirname, '../pool/unshieldEphemeral.ts'), 'utf8');
     expect(eph).toContain('Refusing to withdraw to the wallet');
     expect(eph).toContain('already been withdrawn');
+  });
+});
+
+// ===========================================================================
+// 🚨 THE ROOT A SPEND NAMES, AND THE WALK THAT PRODUCES IT
+// ===========================================================================
+
+/**
+ * `unshield_denominated_stark_v4` carries `merkle_root` IN THE CLEAR, and the
+ * chain accepts any root still in the pool ring. So a spend that names the root
+ * its OWN deposit created publishes a one-hop link back to that deposit — and
+ * the transaction succeeds, so nothing anywhere complains. Measured on devnet:
+ * 1 v4 spend of 34 named a root 4 insertions stale, and in v3 all 4 stale roots
+ * were the spending note's own deposit root (`scratchpad/probe-stale-root-
+ * 2026-09-15.log`, map C headline).
+ *
+ * `spendRootIsCurrent.test.ts` pins the prepare itself. The two cases here are
+ * the HANDLER half, which that file cannot see:
+ *   1. the handler hands down the leaf map it ALREADY walked, so the root is a
+ *      function of pool state rather than of the note, and the second walk —
+ *      the cost that made a saved path attractive — is gone;
+ *   2. a refusal about incomplete history does NOT fall through to the C1 + C3
+ *      pair, which would republish this note's commitment and undo the refusal.
+ */
+describe('the root a circuit-7 withdrawal names comes from the freshest leaf map', () => {
+  /**
+   * The map handed to the prepare must be the WHOLE walk. Cut down at the note,
+   * it folds to the root the note's own insertion made, which the ring still
+   * holds, so the prepare accepts it with no refetch and the spend names its
+   * own deposit. Cut down to the note alone, or dropped whenever a saved path
+   * exists, it costs a second history walk on every withdrawal. Controls:
+   * mutants V13 (cut at the note), V13b (the note alone), V13d (everything
+   * below the note dropped) and V2 (dropped when a saved path exists),
+   * `scratchpad/web-run/logs/SPEND-1-web-fix2/`. The benign mutant HB (a copy
+   * of the same map) stays green, so this pins the content, not the identity.
+   */
+  function expectTheWholeWalk(leaves: Map<string, { leafIndex: number }> | undefined): void {
+    // Anti-vacuity: the fixture walk has leaves on both sides of the note, so
+    // a cut map cannot equal it.
+    const walk = walkedCommitments();
+    const indices = [...walk.values()].map((e) => e.leafIndex);
+    expect(indices.filter((i) => i > LEAF), 'the fixture walk has no leaf after the note').toHaveLength(3);
+    expect(indices.filter((i) => i < LEAF), 'the fixture walk has no leaf before the note').toHaveLength(1);
+
+    expect(leaves, 'the handler walked the history and then dropped it').toBeInstanceOf(Map);
+    const afterNote = [...(leaves?.values() ?? [])].filter((e) => e.leafIndex > LEAF).length;
+    expect(afterNote, 'the handler cut the walked map down at the note').toBe(3);
+    expect(leaves, 'the handler handed on something other than the walk it made').toEqual(walk);
+  }
+
+  it('hands the circuit-7 prepare the leaves it already walked', async () => {
+    await handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
+
+    const opts = seen.prepareV4Opts[0] as
+      | { leaves?: Map<string, { leafIndex: number }>; savedPath?: unknown }
+      | undefined;
+    // `locateOwnedNote` has already pulled the pool history — the heaviest call
+    // on this path. Dropping it made the prepare walk a second time, and that
+    // cost is exactly what a saved path used to be preferred over.
+    expect(opts?.leaves, 'the handler walked the history and then dropped it').toBeInstanceOf(
+      Map,
+    );
+    expect(opts?.leaves?.get(NOTE.receipt.commitment.toString())?.leafIndex).toBe(LEAF);
+    expectTheWholeWalk(opts?.leaves);
+  });
+
+  it('hands the circuit-7 prepare what its walk could not read', async () => {
+    // The prepare proves a ring root the pool is not on NOW only when the walk
+    // behind the map left nothing it listed unread: a map that stops at an
+    // unread insert may stop where this client last read, right after its own
+    // deposit, and its root would date the note (`spendRootIsCurrent.test.ts`,
+    // "a history cache left short by its last walk, with newer inserts listed
+    // but not served, is never proved"). A handler that reported 0 whatever
+    // the walk said would let that root through; one that dropped the count
+    // costs a refetch on every lagging map. Controls:
+    // `scratchpad/web-run/logs2/SPEND-1-cr1/`.
+    // A walk that made NO report is passed on as none (undefined), which the
+    // prepare reads as "not shown clean"; a handler that turned it into 0 would
+    // fail open (mutant H_UNDEF0, `scratchpad/web-run/logs2/verify-SPEND-1-r3/`;
+    // control in `scratchpad/web-run/logs2/SPEND-1-cr3/`).
+    for (const unread of [2, 0, 5, undefined]) {
+      clearPoolState();
+      configurePoolHandlers('http://localhost:8899');
+      setPoolSeed(META, SIGNATURE);
+      seen.prepareV4Opts = [];
+      walkUnread = unread;
+      await handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
+      const opts = seen.prepareV4Opts[0] as { unread?: unknown; leaves?: Map<string, { leafIndex: number }> } | undefined;
+      expect(opts?.unread, `the walk reported ${unread ?? 'nothing'} unread`).toBe(unread);
+      expectTheWholeWalk(opts?.leaves);
+    }
+  });
+
+  it('hands the circuit-7 prepare the saved witness it read from the stored blob', async () => {
+    // The prepare uses a saved path only when its root is the pool's CURRENT
+    // root (`spendRootIsCurrent.test.ts`, "a saved root equal to the current
+    // root is used"). If the handler dropped it, a holed history with a current
+    // saved witness would end in PRE-FLIGHT FAIL and go to the C1 + C3 pair,
+    // which publishes the commitment. A REAL stored blob is sealed to every seed
+    // this identity searches, so `extractStoredPath` runs its real decrypt and
+    // match. Control: mutant R2 (handler passes `{ leaves }` only),
+    // `scratchpad/wp-logs/SPEND-1-fix2-mutants/`.
+    const witness = {
+      pathElements: Array.from({ length: 15 }, (_, i) => String(4_000 + i)),
+      pathIndices: Array.from({ length: 15 }, (_, i) => i % 2),
+      root: '424242',
+    };
+    const blobs = seedsInSearchOrder(derivePoolSeeds(SIGNATURE, null)).map((c) =>
+      encryptNote(
+        createNoteEncryptionAddress(c.seed),
+        utf8ToBytes(
+          JSON.stringify({
+            version: 1,
+            commitment: NOTE.receipt.commitment.toString(),
+            merklePath: witness,
+          }),
+        ),
+      ),
+    );
+
+    await handlePoolRequest(
+      prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER, encryptedNotes: blobs }),
+    );
+
+    expect(seen.prepareV4).toHaveLength(1);
+    const opts = seen.prepareV4Opts[0] as
+      | { leaves?: Map<string, { leafIndex: number }>; savedPath?: unknown }
+      | undefined;
+    expect(opts?.savedPath, 'the handler read the saved witness and then dropped it').toEqual(
+      witness,
+    );
+    // The saved witness travels WITH the walked leaves, never instead of them.
+    // A stored path is the common case for inventory notes, so a handler that
+    // dropped the leaves whenever one exists would walk the history twice on
+    // most withdrawals (mutant V2).
+    expectTheWholeWalk(opts?.leaves);
+  });
+
+  /**
+   * ⛔ THE MESSAGE IS THE MECHANISM. `isV4RebuildFailure` is an ALLOW-LIST over
+   * message needles, so a refusal that happened to contain one of them would be
+   * routed to the pair that publishes the commitment — the exact outcome the
+   * refusal exists to prevent, reached by wording rather than by logic.
+   */
+  it('does NOT fall back to the C1 + C3 pair when the history is incomplete', async () => {
+    // ANTI-VACUITY FIRST. The sentence injected below has to be one the prepare
+    // can really produce, or this case measures a string agreeing with itself.
+    const src = readFileSync(join(__dirname, '../pool/denominatedPool.ts'), 'utf8');
+    expect(src, 'the incomplete-history refusal is not in denominatedPool.ts').toContain(
+      HISTORY_REFUSAL,
+    );
+    // ...and it must carry NEITHER needle of the allow-list.
+    expect(HISTORY_REFUSAL).not.toContain('PRE-FLIGHT FAIL');
+    expect(HISTORY_REFUSAL).not.toContain('circuit 7 needs at least');
+
+    v4PrepareFailure = Object.assign(new Error(`${HISTORY_REFUSAL}. Nothing was spent.`), {
+      name: 'HistoryIncompleteError',
+    });
+    await expect(
+      handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER })),
+    ).rejects.toThrow(/history this client can read is incomplete/);
+
+    // Circuit 7 was genuinely attempted, and the pair was NOT reached.
+    expect(seen.prepareV4).toHaveLength(1);
+    expect(
+      seen.prepareV3,
+      'an incomplete history reached the pair that republishes the commitment',
+    ).toEqual([]);
+  });
+
+  it('a RECEIVED note resolved from its real blob gets the whole walk and its issuance-time path, and its refusal stays off C1 + C3', async () => {
+    // Every case above resolves the note through the (mocked) seed search, so
+    // its source is 'shielded'. An issued or imported note is resolved by
+    // `receivedNoteFromBlobs` from the blob `handlePoolImportNote` files, and
+    // it carries the path the issuer saved: a root AFTER later deposits (the
+    // buyer's own among them), not the note's own. A handler that sent
+    // received notes to the C1 + C3 pair (mutant HRCV,
+    // `scratchpad/web-run/logs/verify-SPEND-1-r3/mutants/`), cut or dropped
+    // their walk or path, or let their HistoryIncompleteError fall back to that
+    // pair passed every case above. Controls:
+    // `scratchpad/web-run/logs/SPEND-1-web-fix3b/`.
+    const sender = {
+      secret: 5_550_001n,
+      nullifierPreimage: 5_550_002n,
+      // A PRF draw, well above the legacy-epoch ceiling, as an issued note carries.
+      noteBlinding: 7_284_991_002_338_477_113n,
+      tokenMint: 0n,
+    };
+    const commitment = createCommitmentV3(
+      sender.nullifierPreimage, sender.secret, sender.noteBlinding, sender.tokenMint,
+    );
+    // The seed search finds nothing at LEAF, and the walk holds the received commitment there.
+    seedSearchNote = null;
+    commitmentAtLeaf = commitment;
+    // ...and the walk left three listed signatures unread, which the prepare must be told.
+    walkUnread = 3;
+    const walk = walkedCommitments();
+    const denseUpTo = (upto: number) => {
+      const leaves = new Array<bigint>(upto + 1).fill(0n);
+      for (const e of walk.values()) if (e.leafIndex <= upto) leaves[e.leafIndex] = e.commitment;
+      return leaves;
+    };
+    // The issuer's saved path: the note in the tree as it stood two insertions later.
+    const issued = buildMerkleProofFromLeavesV3({ leavesByIndex: denseUpTo(LEAF + 2), targetLeafIndex: LEAF });
+    const own = buildMerkleProofFromLeavesV3({ leavesByIndex: denseUpTo(LEAF), targetLeafIndex: LEAF });
+    const whole = buildMerkleProofFromLeavesV3({ leavesByIndex: denseUpTo(LEAF + 3), targetLeafIndex: LEAF });
+    // Anti-vacuity: the saved root is a LATER root, neither the note's own nor the walk's.
+    expect(new Set([issued.root, own.root, whole.root].map(String)).size).toBe(3);
+    const issuedPath = {
+      pathElements: issued.pathElements.map(String),
+      pathIndices: issued.pathIndices,
+      root: issued.root.toString(),
+    };
+    // Sealed to the ACTIVE seed, in the shape `handlePoolImportNote` files.
+    const blob = encryptNote(
+      createNoteEncryptionAddress(derivePoolSeeds(SIGNATURE, null).active),
+      utf8ToBytes(
+        JSON.stringify({
+          version: 1,
+          pool: POOL_58,
+          secret: sender.secret.toString(),
+          nullifier_preimage: sender.nullifierPreimage.toString(),
+          deposit_epoch: sender.noteBlinding.toString(),
+          token_mint: sender.tokenMint.toString(),
+          commitment: commitment.toString(),
+          leafIndex: LEAF,
+          merklePath: issuedPath,
+          token: 'SOL',
+          denominationHuman: DENOM,
+          shieldedAt: 0,
+          source: 'received',
+        }),
+      ),
+    );
+    const req = prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER, encryptedNotes: [blob] });
+
+    // 1. Circuit 7, with the received note, the whole walk and the issuer's path.
+    const res = await handlePoolRequest(req);
+    expect(res.version, 'a received note was sent to the C1 + C3 pair').toBe('v4');
+    expect(seen.prepareV3).toEqual([]);
+    expect(seen.prepareV4Receipts, 'the note did not come from its blob').toEqual([
+      { source: 'received', commitment: commitment.toString(), leafIndex: LEAF },
+    ]);
+    const opts = seen.prepareV4Opts[0] as
+      | { leaves?: Map<string, { leafIndex: number }>; savedPath?: unknown }
+      | undefined;
+    expect(opts?.savedPath, 'the handler dropped the received note\'s saved path').toEqual(issuedPath);
+    expectTheWholeWalk(opts?.leaves);
+    expect((opts as { unread?: unknown } | undefined)?.unread, 'the handler did not pass on what its walk left unread').toBe(3);
+
+    // 2. The prepare's refusal is rethrown; the pair is never reached.
+    seen.prepareV4 = [];
+    seen.prepareV4Receipts = [];
+    v4PrepareFailure = new HistoryIncompleteError();
+    const refused = await handlePoolRequest(req).then(
+      (r) => `prepared on ${r.version}`,
+      (e: unknown) => `refused: ${e instanceof Error ? e.name : String(e)}`,
+    );
+    expect(refused).toBe('refused: HistoryIncompleteError');
+    expect(seen.prepareV4Receipts.map((r) => r.source), 'circuit 7 was not attempted').toEqual(['received']);
+    expect(
+      seen.prepareV3,
+      'a received note\'s refusal reached the pair that republishes its commitment',
+    ).toEqual([]);
+  });
+
+  it('a note whose insert no walk read places is refused on circuit 7 and never reaches the C1 + C3 pair: the real walk and the real prepare', async () => {
+    // Every case above injects the circuit-7 prepare's failure. Here nothing
+    // is injected: the handler's walk is the REAL `fetchPoolCommitments` and
+    // the prepare the REAL `prepareUnshieldJobV4` -> `prepareUnshieldV4`, on a
+    // fake RPC that lists the note's insert and does not serve its transaction
+    // (a 429 on that read), or has not listed it yet. The note is resolved from
+    // its stored blob, which `receivedNoteFromBlobs` accepts while the walk
+    // does not hold its commitment: a RECEIVED note filed with no path, as
+    // ISSUE-2 files issued notes, or an own note's shield-time blob, whose
+    // path folds to its deposit root, gone from the ring. The prepare ended in
+    // PRE-FLIGHT FAIL there, a needle the handler routed to the C1 + C3 pair
+    // until V3-1 (verifier r4 of the continued run,
+    // `scratchpad/web-run/logs2/verify-SPEND-1-r4/probe/handler-NONE.log`). It
+    // must end in HistoryIncompleteError with the pair never prepared. The
+    // control world serves the transaction and proves on circuit 7 at the
+    // pool's current root.
+    const pool = findPoolV3('SOL', DENOM)!;
+    expect(pool.poolPDA.toBase58()).toBe(POOL_58);
+    const disc = sha256(utf8ToBytes('event:LeafInserted')).slice(0, 8);
+    const leafLog = (i: number, c: bigint): string => {
+      const d = new Uint8Array(144);
+      d.set(disc, 0);
+      d.set(pool.poolPDA.toBytes(), 8);
+      for (let k = 0; k < 8; k++) d[40 + k] = Number((BigInt(i) >> BigInt(8 * k)) & 0xffn);
+      d.set(new Uint8Array(goldilocksToLeBytes32(c)), 48);
+      return `Program data: ${Buffer.from(d).toString('base64')}`;
+    };
+    /** The pool account as `parsePoolV3Account` reads it (see `spendRootIsCurrent.test.ts`). */
+    const account = (current: bigint, ring: bigint[], next: number): Uint8Array => {
+      const d = new Uint8Array(182 + ring.length * 32);
+      d.set(new Uint8Array(goldilocksToLeBytes32(current)), 88);
+      d[120] = 15;
+      d[121] = next;
+      d[177] = 1;
+      d[178] = ring.length;
+      ring.forEach((r, i) => d.set(new Uint8Array(goldilocksToLeBytes32(r)), 182 + i * 32));
+      return d;
+    };
+    const notes = {
+      received: { secret: 5_550_001n, nullifierPreimage: 5_550_002n, noteBlinding: 7_284_991_002_338_477_113n, tokenMint: 0n },
+      own: { secret: 6_660_001n, nullifierPreimage: 6_660_002n, noteBlinding: 8_111_222_333_444_555_666n, tokenMint: 0n },
+    };
+    const worlds = [
+      { label: 'received note filed with no path, its insert listed and never served', kind: 'received' as const, listedUpTo: 14, served: false },
+      { label: 'received note filed with no path, its insert not listed yet', kind: 'received' as const, listedUpTo: LEAF - 1, served: true },
+      { label: 'own note from its shield-time blob (deposit root gone from the ring), insert listed and never served', kind: 'own' as const, listedUpTo: 14, served: false },
+      { label: 'control: received note, its insert served', kind: 'received' as const, listedUpTo: 14, served: true },
+    ];
+    const got: string[] = [];
+    const want: string[] = [];
+    try {
+      for (const w of worlds) {
+        const n = notes[w.kind];
+        // Anti-vacuity: both notes are blinded, so no pre-blinding refusal decides instead.
+        expect(n.noteBlinding >= 2n ** 32n).toBe(true);
+        const commitment = createCommitmentV3(n.nullifierPreimage, n.secret, n.noteBlinding, n.tokenMint);
+        const leaves = Array.from({ length: 15 }, (_, i) => (i === LEAF ? commitment : 70_000n + BigInt(i)));
+        const rootAfter = (k: number) => buildMerkleProofFromLeavesV3({ leavesByIndex: leaves.slice(0, k + 1), targetLeafIndex: LEAF });
+        // The pool is at R14; its ring holds R12 and R13, so R11, the note's own deposit root, is gone.
+        const acct = account(rootAfter(14).root, [rootAfter(12).root, rootAfter(13).root], 15);
+        clearPoolState();
+        configurePoolHandlers('http://localhost:8899');
+        setPoolSeed(META, SIGNATURE);
+        seen.prepareV3 = [];
+        seen.prepareV4 = [];
+        seen.proofLevels = [];
+        seedSearchNote = null; // the seed search needs the leaf in the map
+        setPoolHistoryStore(memoryPoolHistoryStore());
+        realChain = {
+          rpcEndpoint: 'https://devnet.helius-rpc.com/?api-key=NOT-A-REAL-KEY',
+          getSignaturesForAddress: async (_pda: unknown, o?: { until?: string; before?: string }) => {
+            const until = o?.until ? Number(o.until.replace('SIG', '')) : -1;
+            const before = o?.before ? Number(o.before.replace('SIG', '')) : Number.POSITIVE_INFINITY;
+            return leaves.map((_, i) => i).filter((i) => i <= w.listedUpTo && i > until && i < before)
+              .reverse().map((i) => ({ signature: `SIG${i}`, err: null }));
+          },
+          getTransaction: async (sig: string) => {
+            const i = Number(sig.replace('SIG', ''));
+            if (i === LEAF && !w.served) return null;
+            return {
+              slot: 100 + i,
+              transaction: { message: { staticAccountKeys: [{ toBase58: () => `PAYER${i}` }] } },
+              meta: { logMessages: [leafLog(i, leaves[i])] },
+            };
+          },
+          getAccountInfo: async () => ({ data: acct }),
+          getMinimumBalanceForRentExemption: async () => 1_000_000,
+        };
+        // The blob, sealed to the ACTIVE seed: `handlePoolImportNote`'s shape with
+        // no path, or `poolShieldExecute`'s with the path of the note's own insertion.
+        const own = rootAfter(LEAF);
+        const blob = encryptNote(
+          createNoteEncryptionAddress(derivePoolSeeds(SIGNATURE, null).active),
+          utf8ToBytes(JSON.stringify({
+            version: 1,
+            pool: POOL_58,
+            secret: n.secret.toString(),
+            nullifier_preimage: n.nullifierPreimage.toString(),
+            deposit_epoch: n.noteBlinding.toString(),
+            token_mint: n.tokenMint.toString(),
+            commitment: commitment.toString(),
+            leafIndex: LEAF,
+            ...(w.kind === 'own'
+              ? { merklePath: { pathElements: own.pathElements.map(String), pathIndices: own.pathIndices, root: own.root.toString() } }
+              : {}),
+            token: 'SOL',
+            denominationHuman: DENOM,
+            shieldedAt: 0,
+            ...(w.kind === 'received' ? { source: 'received' } : {}),
+          })),
+        );
+        const outcome = await handlePoolRequest(
+          prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER, encryptedNotes: [blob] }),
+        ).then(
+          (r) => `prepared on ${r.version}`,
+          (e: unknown) => {
+            const name = e instanceof Error ? e.name : typeof e;
+            const m = e instanceof Error ? e.message : String(e);
+            if (name === 'HistoryIncompleteError') return 'refused: HistoryIncompleteError';
+            if (/not retried on the older C1 \+ C3 pair/.test(m)) return `refused: ${name}, the handler's V3-1 retry refusal of a PRE-FLIGHT FAIL`;
+            return `refused: ${name}: ${m.slice(0, 120)}`;
+          },
+        );
+        // The root proved, read off the levels the prover got: the pool's current root, R14.
+        const current = rootAfter(14);
+        const proved = seen.proofLevels.length === 0
+          ? 'no proof'
+          : JSON.stringify(seen.proofLevels[0]) === JSON.stringify(current.pathElements.slice(0, C7_SUBTREE_DEPTH).map(String))
+            ? 'proved at R14, the current root'
+            : 'proved at another root';
+        got.push(
+          `${w.label} => ${outcome}; ${proved}; circuit 7 attempted ${seen.prepareV4.length}; ` +
+            `C1 + C3 prepares ${seen.prepareV3.length}`,
+        );
+        want.push(
+          w.label.startsWith('control')
+            ? `${w.label} => prepared on v4; proved at R14, the current root; circuit 7 attempted 1; C1 + C3 prepares 0`
+            : `${w.label} => refused: HistoryIncompleteError; no proof; circuit 7 attempted 1; C1 + C3 prepares 0`,
+        );
+      }
+    } finally {
+      realChain = null;
+      setPoolHistoryStore(null);
+    }
+    expect(got).toEqual(want);
   });
 });
 
@@ -865,6 +1702,162 @@ describe('the subscribe path cannot reach the circuit-7 branch', () => {
     expect(bodyOf('handlePoolUnshieldPrepare')).toContain('prepareUnshieldJobV4');
     expect(bodyOf('handlePoolSubscribePrepare')).not.toContain('prepareUnshieldJobV4');
     expect(bodyOf('handlePoolSubscribePrepare')).toContain('prepareSubscribeJob');
+  });
+});
+
+describe('the circuit-7 subscription keeps its incomplete-history refusal off C1 + C3', () => {
+  it('a circuit-7 subscription refused for an incomplete history does NOT fall back to the C1 + C3 pair', async () => {
+    // `prepareSubscribeV4` raises HistoryIncompleteError when the only root it
+    // can build is tied to the note (`spendRootIsCurrent.test.ts`, "the
+    // circuit-7 SUBSCRIPTION prepare never proves a root tied to the note
+    // either"). The subscribe handler shares `isV4RebuildFailure` with the
+    // withdrawal, and must rethrow it: the pair publishes the commitment.
+    // The pre-blinding world, asked twice, is this harness's positive control:
+    // it shows the stub CAN reach the pair, so a 0 in the other worlds is the
+    // handler's choice, not a harness that never gets there. Since V3-1 a
+    // PRE-FLIGHT FAIL no longer reaches the pair either ("a blinded
+    // subscription is refused, not proved on v3").
+    const preflight = new Error(
+      "PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots " +
+        '(current + 4 historical). Aborting before proof rent is spent.',
+    );
+    const refusal = new HistoryIncompleteError('subscription');
+    // The screen names the action the user took.
+    expect(refusal.message).toContain('so the subscription could not be built');
+    const outcomes: string[] = [];
+    for (const [label, failure, note, asks] of [
+      ['PRE-FLIGHT FAIL', preflight, BLINDED_NOTE, 1],
+      ['HistoryIncompleteError', refusal, BLINDED_NOTE, 1],
+      ['pre-blinding, asked twice', PRE_BLINDING(), PRE_BLINDING_NOTE, 2],
+    ] as const) {
+      seen.prepareSubscribe = [];
+      seen.prepareSubscribeV4 = [];
+      seedSearchNote = note;
+      subscribeV4PrepareFailure = failure;
+      let outcome = '';
+      for (let i = 0; i < asks; i++) {
+        outcome = await handlePoolRequest(subscribeReq()).then(
+          (r) => `prepared on ${r.version}`,
+          (e: unknown) => `refused: ${e instanceof Error ? e.name : String(e)}`,
+        );
+      }
+      outcomes.push(
+        `${label} => ${outcome}; circuit 7 attempted ${seen.prepareSubscribeV4.length}; ` +
+          `C1 + C3 reached ${seen.prepareSubscribe.length}`,
+      );
+    }
+    expect(outcomes).toEqual([
+      'PRE-FLIGHT FAIL => refused: Error; circuit 7 attempted 1; C1 + C3 reached 0',
+      'HistoryIncompleteError => refused: HistoryIncompleteError; circuit 7 attempted 1; C1 + C3 reached 0',
+      // The stubbed v3 prepare throws its marker once reached.
+      'pre-blinding, asked twice => refused: Error; circuit 7 attempted 2; C1 + C3 reached 1',
+    ]);
+  });
+
+  it('hands the circuit-7 SUBSCRIPTION prepare the saved witness it read from the stored blob', async () => {
+    // `prepareSubscribeV4` reads the saved root as one more tie to the note,
+    // as the withdrawal does (`spendRootIsCurrent.test.ts`, "the circuit-7
+    // SUBSCRIPTION applies the saved-root tie as the withdrawal does (m == k)").
+    // The handler used to read the stored path for the C1 + C3 route only, so
+    // the subscription proved a map whose root WAS the saved one (verifier r3
+    // of the continued run, minor 3, probe world PC,
+    // `scratchpad/web-run/logs2/verify-SPEND-1-r3/probe/NONE.log`). Three
+    // worlds: an own note with a sealed witness, a RECEIVED note resolved from
+    // the blob `handlePoolImportNote` files (its issuance-time path), and no
+    // blob at all. Control: `scratchpad/web-run/logs2/SPEND-1-cr3/`.
+    const subscribeReq = (encryptedNotes: string[] | undefined) => ({
+      kind: 'poolSubscribePrepare' as const,
+      meta: META,
+      token: 'SOL' as const,
+      denomination: DENOM,
+      leafIndex: LEAF,
+      retailer: RECIPIENT,
+      rate: '1000000',
+      intervalSlots: '6480000',
+      ...(encryptedNotes ? { encryptedNotes } : {}),
+    });
+    const witness = {
+      pathElements: Array.from({ length: 15 }, (_, i) => String(4_000 + i)),
+      pathIndices: Array.from({ length: 15 }, (_, i) => i % 2),
+      root: '424242',
+    };
+    const ownBlobs = seedsInSearchOrder(derivePoolSeeds(SIGNATURE, null)).map((c) =>
+      encryptNote(
+        createNoteEncryptionAddress(c.seed),
+        utf8ToBytes(
+          JSON.stringify({ version: 1, commitment: NOTE.receipt.commitment.toString(), merklePath: witness }),
+        ),
+      ),
+    );
+    const sender = {
+      secret: 5_550_001n,
+      nullifierPreimage: 5_550_002n,
+      noteBlinding: 7_284_991_002_338_477_113n,
+      tokenMint: 0n,
+    };
+    const received = createCommitmentV3(
+      sender.nullifierPreimage, sender.secret, sender.noteBlinding, sender.tokenMint,
+    );
+    const issuedPath = {
+      pathElements: Array.from({ length: 15 }, (_, i) => String(6_000 + i)),
+      pathIndices: Array.from({ length: 15 }, (_, i) => (i + 1) % 2),
+      root: '535353',
+    };
+    const receivedBlob = encryptNote(
+      createNoteEncryptionAddress(derivePoolSeeds(SIGNATURE, null).active),
+      utf8ToBytes(
+        JSON.stringify({
+          version: 1,
+          pool: POOL_58,
+          secret: sender.secret.toString(),
+          nullifier_preimage: sender.nullifierPreimage.toString(),
+          deposit_epoch: sender.noteBlinding.toString(),
+          token_mint: sender.tokenMint.toString(),
+          commitment: received.toString(),
+          leafIndex: LEAF,
+          merklePath: issuedPath,
+          token: 'SOL',
+          denominationHuman: DENOM,
+          shieldedAt: 0,
+          source: 'received',
+        }),
+      ),
+    );
+    const worlds = [
+      { label: 'own note, sealed witness', blobs: ownBlobs, isReceived: false, saved: witness as unknown },
+      { label: 'received note, issuance-time path', blobs: [receivedBlob], isReceived: true, saved: issuedPath as unknown },
+      { label: 'no blob', blobs: undefined, isReceived: false, saved: undefined as unknown },
+    ];
+    const got: unknown[] = [];
+    for (const w of worlds) {
+      seen.prepareSubscribe = [];
+      seen.prepareSubscribeV4 = [];
+      seen.prepareSubscribeV4Saved = [];
+      seedSearchNote = w.isReceived ? null : NOTE;
+      commitmentAtLeaf = w.isReceived ? received : NOTE.receipt.commitment;
+      // The prepare refuses once it has recorded its arguments; the refusal stays off C1 + C3.
+      subscribeV4PrepareFailure = new HistoryIncompleteError('subscription');
+      const outcome = await handlePoolRequest(subscribeReq(w.blobs)).then(
+        (r) => `prepared on ${r.version}`,
+        (e: unknown) => `refused: ${e instanceof Error ? e.name : String(e)}`,
+      );
+      got.push({
+        world: w.label,
+        outcome,
+        attempts: seen.prepareSubscribeV4.length,
+        saved: seen.prepareSubscribeV4Saved[0],
+        pair: seen.prepareSubscribe.length,
+      });
+    }
+    expect(got).toEqual(
+      worlds.map((w) => ({
+        world: w.label,
+        outcome: 'refused: HistoryIncompleteError',
+        attempts: 1,
+        saved: w.saved,
+        pair: 0,
+      })),
+    );
   });
 });
 

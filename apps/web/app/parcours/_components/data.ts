@@ -196,13 +196,9 @@ export const PROGRAMS: ProgramRow[] = [
     role: "Registre des services marchands : la seule source publiée à laquelle un SDK peut comparer un coffre d'abonnement pour savoir s'il correspond à une vraie vente.",
     sourcePath: 'programs/p01_registry/src/lib.rs',
   },
-  {
-    name: 'p01-fee-splitter',
-    id: 'UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM',
-    role: 'Répartition des frais de protocole vers un portefeuille fixe.',
-    sourcePath: 'programs/p01-fee-splitter/src/lib.rs',
-  },
 ];
+// p01-fee-splitter (UdxXEvcA…) left this list on 2026-09-14: the program was
+// closed on devnet on 2026-09-13 and its crate removed (docs/HANDOFF-2026-09-13.md §11).
 
 /* --- la transaction qui prouve tout ----------------------------------------- */
 

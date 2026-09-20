@@ -330,6 +330,28 @@ describe('a failed read is a failure, not an empty roster', () => {
     await expect(fetchServiceRegistry(asConnection(conn))).rejects.toThrow('429');
   });
 
+  it('names no RPC key when the read fails: the Subscribe tab prints this message', async () => {
+    // Web sweep 4, round 1. SubscribePanel puts the message in its red box, and
+    // the browser's connection is Helius's key-bearing URL
+    // (`packages/rpc-config/src/endpoints.ts`), so a screenshot or a support
+    // ticket of a 429 carried the key. node-fetch quotes the URL too.
+    const KEY = 'CanaryRpcKey-7f3a9e1b-0d42-4c8e-9a6b';
+    const endpoint = `https://devnet.helius-rpc.com/?api-key=${KEY}`;
+    const conn = fakeConnection(async () => {
+      throw new Error(`request to ${endpoint} failed, reason: 429 Too Many Requests`);
+    }, endpoint);
+    const err = await fetchServiceRegistry(asConnection(conn)).then(
+      () => new Error('the read did not fail'),
+      (e: unknown) => e as Error,
+    );
+    expect(err).toBeInstanceOf(ServiceRegistryError);
+    expect(err.message).not.toContain(KEY);
+    // Anti-vacuity: the message still says what failed, where, and why.
+    expect(err.message).toMatch(/^Could not read the service registry/);
+    expect(err.message).toContain('devnet.helius-rpc.com');
+    expect(err.message).toContain('429 Too Many Requests');
+  });
+
   it('throws when accounts matched but none of them decode', async () => {
     // Right discriminator, truncated body — what a dataSlice or a layout change
     // looks like from here. Silently returning [] is the defect.

@@ -60,6 +60,7 @@ import {
 import { RECEIVE_NOTE_PHASES } from "@/lib/pay/flowProgress";
 import FlowProgress from "./FlowProgress";
 import SuccessBurst from "./SuccessBurst";
+import NoteTag from "./NoteTag";
 import { formatAmount, timeAgo, truncate } from "./util";
 import { useT } from "@/i18n";
 
@@ -238,9 +239,11 @@ export default function ReceivePanel({
               {t("pay.receive.checkedFail")}
             </p>
           )}
-          {/* Second-plane reference: the protocol's name for this note. */}
-          <p className="mt-2 font-mono text-xs text-p01-text-dim">
-            leaf #{r.note.leafIndex} · {truncate(r.note.commitment, 6, 4)}
+          {/* Second-plane reference: the note's own name, its tag. Its leaf and
+              commitment were here; the deposit published both (UI-1,
+              ReceivePanel.test.tsx "renders no leaf and no commitment"). */}
+          <p className="mt-2">
+            <NoteTag tag={r.note.tag} />
           </p>
         </div>
 

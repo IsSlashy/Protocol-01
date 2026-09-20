@@ -139,11 +139,13 @@ import {
 } from "@/lib/privacy/noteTransfer";
 import { SEAL_PHASES, STEALTH_SEND_PHASES } from "@/lib/pay/flowProgress";
 import { handoffKeys, recordHandoff } from "@/lib/pay/handoffs";
+import { clearBearerNow, copyBearerAndScheduleClear } from "@/lib/pay/bearerClipboard";
 import FeeRow from "./FeeRow";
 import FlowProgress from "./FlowProgress";
 import HonestyBadge from "./HonestyBadge";
 import StaleWorkerNotice from "./StaleWorkerNotice";
 import SuccessBurst from "./SuccessBurst";
+import NoteTag from "./NoteTag";
 import { formatAmount, truncate } from "./util";
 import { useT } from "@/i18n";
 
@@ -187,6 +189,41 @@ function noteKey(n: PoolNoteView): string {
  * degrading. Checking first turns a crashed panel into one honest sentence.
  */
 const QR_BYTE_CAPACITY = 2_900;
+
+/**
+ * The granularity the length of a sealed handoff is reported in.
+ *
+ * 🚨 THE EXACT COUNT WAS A CLASSIFIER (web sweep 4 round 1, item 4). The screen
+ * used to print the length to the character, and the sealed string was not
+ * padded then, so that number was a function of what went into it. Measured on
+ * this app's own encryptNote over the export's JSON shape, 400 draws each
+ * (`scratchpad/web-run/logs4/sweep1-screen/export-length-probe.log`): a
+ * pre-blinding note 1928-1936, a blinded note this browser owns 1948-1956 at
+ * leaf 7 and 1952-1960 at leaf 12345, a note it was given 1964-1976, and one
+ * carrying a rebuilt Merkle path 2544-2564. So the count separated an old note
+ * from a new one, an owned note from a received one, and moved with the leaf
+ * index's digit count — to anyone who saw the screen, the screenshot or the
+ * shoulder.
+ *
+ * 256 characters is wider than every one of those gaps but the path, which is
+ * ~600 and stays visible.
+ *
+ * ⚠️ THE OTHER HALF HAS SINCE LANDED, so the sentence "the string itself is
+ * still unpadded" that used to stand here is no longer true:
+ * `worker/poolHandlers.ts` pads every handoff to `SEALED_HANDOFF_BYTES`
+ * (1,008), and `poolExportNote.test.ts` measures one length. The bucket stays
+ * all the same — it is the screen's own guarantee, it costs nothing, and it is
+ * what keeps a future format change from re-opening the classifier on this
+ * screen before anyone notices
+ * (`__tests__/components/SendForm.test.tsx`, "reads the same for two handoffs
+ * whose lengths differ by less than a bucket").
+ */
+const SEALED_LENGTH_BUCKET = 256;
+
+/** `n` rounded down to a multiple of the bucket: what the screen may say. */
+function approxLength(n: number): number {
+  return Math.floor(n / SEALED_LENGTH_BUCKET) * SEALED_LENGTH_BUCKET;
+}
 
 export default function SendForm({
   adapter,
@@ -281,6 +318,9 @@ export default function SendForm({
   const [sealError, setSealError] = useState<string | null>(null);
   const [sealed, setSealed] = useState<SealedNoteHandoff | null>(null);
   const [copied, setCopied] = useState(false);
+  /** Cancels the pending clipboard clear (see `copySealed`). */
+  const cancelClipboardClear = useRef<null | (() => void)>(null);
+  useEffect(() => () => cancelClipboardClear.current?.(), []);
 
   // On a stacked (sub-lg) screen the result lands in the context block below
   // the form, i.e. possibly below the fold. A success the user has to find is
@@ -543,11 +583,31 @@ export default function SendForm({
     }
   }
 
+  /**
+   * The clipboard holds the money, so it does not hold it for long.
+   *
+   * Web sweep 4 round 1, item 24 (ledger row D8). Windows keeps a clipboard
+   * history on disk and phones sync it between devices, so a sealed note copied
+   * and never taken back outlives the tab: whoever reads that history can spend
+   * it. `copyBearerAndScheduleClear` puts it back to empty after
+   * BEARER_CLIPBOARD_CLEAR_MS, and only after reading the clipboard and finding
+   * this exact string still on it — never blindly, or it would delete whatever
+   * the user copied from another app in between. When the browser refuses that
+   * read, the button beside Copy does it from a click.
+   */
   function copySealed() {
     if (!sealed) return;
-    void navigator.clipboard.writeText(sealed.sealedNote);
+    cancelClipboardClear.current?.();
+    cancelClipboardClear.current = copyBearerAndScheduleClear(sealed.sealedNote);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+
+  function clearClipboardNow() {
+    cancelClipboardClear.current?.();
+    cancelClipboardClear.current = null;
+    void clearBearerNow();
+    setCopied(false);
   }
 
   // ── Context-column blocks ────────────────────────────────────────────────
@@ -584,10 +644,19 @@ export default function SendForm({
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? t("pay.send.copied") : t("pay.send.copyNote")}
             </button>
-            {/* Second-plane reference: lets the sender tell two handoffs apart. */}
-            <span className="font-mono text-xs text-p01-text-dim">
-              leaf #{s.leafIndex} · {truncate(s.commitment, 6, 4)}
-            </span>
+            {/* The clipboard is a place this string should not stay: see
+                `copySealed`. This is the version that needs no permission. */}
+            <button
+              type="button"
+              onClick={clearClipboardNow}
+              className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
+            >
+              {t("pay.shared.clipboardClear")}
+            </button>
+            {/* Second-plane reference: lets the sender tell two handoffs apart.
+                By tag, not by leaf and commitment, which the deposit published
+                (UI-1, SendForm.test.tsx "the sealed result names the note"). */}
+            <NoteTag tag={s.tag} />
           </div>
 
           {qrFits ? (
@@ -598,14 +667,14 @@ export default function SendForm({
               <p className="text-center text-xs text-p01-text-dim">
                 {t("pay.send.qrDense").replace(
                   "{count}",
-                  s.sealedNote.length.toLocaleString(),
+                  approxLength(s.sealedNote.length).toLocaleString(),
                 )}
               </p>
             </div>
           ) : (
             <p className="mt-4 text-xs text-p01-text-muted">
               {t("pay.send.qrTooLong")
-                .replace("{count}", s.sealedNote.length.toLocaleString())
+                .replace("{count}", approxLength(s.sealedNote.length).toLocaleString())
                 .replace("{max}", QR_BYTE_CAPACITY.toLocaleString())}
             </p>
           )}
@@ -807,9 +876,11 @@ export default function SendForm({
                               >
                                 {n.denomination} {n.token}
                               </p>
-                              {/* Second plane: the protocol's name for this note. */}
-                              <p className="truncate font-mono text-xs text-p01-text-dim">
-                                leaf #{n.leafIndex} · {truncate(n.commitment, 6, 4)}
+                              {/* Second plane: the note's own name, its tag (UI-1,
+                                  SendForm.test.tsx "the picker rows show the tag and
+                                  no leaf or commitment"). */}
+                              <p className="mt-0.5">
+                                <NoteTag tag={n.tag} />
                               </p>
                             </div>
                           </button>

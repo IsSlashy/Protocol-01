@@ -167,6 +167,38 @@ describe('the durable rate limiter', () => {
     expect((await res.json()).error).toMatch(/rate limiter could not be read/);
   });
 
+  it('says the limiter failed WITHOUT passing on what the store said', async () => {
+    // 🚨 The store words a failed request as `${error}, command was: ${JSON…}`
+    // (@upstash/redis/nodejs.js), and auto-pipelining batches other requests
+    // into the same command list: another route's claim code, a payment
+    // signature, another caller's limiter bucket. The funder's refusal used to
+    // interpolate that message, and the client shows it on screen
+    // (`The funder refused: ${body.error}`, lib/privacy/pool/ephemeralFunder.ts).
+    //
+    // Two worlds, same failure, different batch: the answer must not move.
+    const batched =
+      'ERR max daily request limit exceeded, command was: ' +
+      '[["incr","p01:rate:OTHERBUCKET:2026-09-20T10"],' +
+      '["set","p01:note:claim-minted:CODE-SALE-123456","payment:5Qv9Sig"]]';
+    mockRateLimitExceeded.mockRejectedValue(new Error(batched));
+    const one = await POST(req({ ephemeralPubkey: TARGET, lamports: 1_000_000 }));
+    const oneBody = await one.json();
+
+    mockRateLimitExceeded.mockRejectedValue(new Error('ERR quota, command was: [["incr","p01:rate:MINE:2026-09-20T10"]]'));
+    const two = await POST(req({ ephemeralPubkey: TARGET, lamports: 1_000_000 }));
+    const twoBody = await two.json();
+
+    const text = JSON.stringify(oneBody);
+    expect(text, 'the refusal echoed the store command').not.toMatch(/command was/);
+    expect(text, 'the refusal named another route\'s claim code').not.toMatch(/CODE-SALE-123456/);
+    expect(text, 'the refusal named a payment signature').not.toMatch(/5Qv9Sig/);
+    expect(text, 'the refusal named a limiter bucket').not.toMatch(/OTHERBUCKET/);
+    expect(
+      JSON.stringify(twoBody),
+      'the refusal moved with what the store was carrying',
+    ).toBe(text);
+  });
+
   it('refuses an IP over its hourly allowance, and says what the limit is', async () => {
     mockRateLimitExceeded.mockResolvedValue(true);
     const res = await POST(req({ ephemeralPubkey: TARGET, lamports: 1_000_000 }));

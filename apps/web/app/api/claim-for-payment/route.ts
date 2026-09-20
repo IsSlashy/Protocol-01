@@ -4,6 +4,7 @@ import { Connection, PublicKey, type MessageCompiledInstruction } from '@solana/
 import nacl from 'tweetnacl';
 
 import { getStore, rateLimitExceeded, type KvLike } from '@/lib/waitlist/store';
+import { clientIp } from '@/lib/net/clientIp';
 import { claimChallenge } from '@/lib/privacy/claimChallenge';
 import { activeTreasurySeed } from '@/lib/privacy/treasurySeeds';
 import {
@@ -25,6 +26,7 @@ import {
   relayPaymentContributionKey,
   resolveContributionPool,
 } from '@/lib/privacy/paymentBinding';
+import { installKvPoolHistory } from '@/lib/privacy/pool/kvPoolHistory';
 import { treasuryCommitmentFor } from '@/app/api/contribute-note/route';
 
 /**
@@ -68,6 +70,11 @@ import { treasuryCommitmentFor } from '@/app/api/contribute-note/route';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+// [CACHE-1] The pool history this route walks is shared by every isolate
+// through one KV row per pool that holds public chain data only
+// (`lib/privacy/pool/kvPoolHistory.test.ts`).
+installKvPoolHistory();
 
 /** Re-exported for the route's existing importers; the worker imports the module directly. */
 export { claimChallenge };
@@ -198,14 +205,24 @@ export async function POST(request: NextRequest) {
   const kv = getStore();
   if (!kv) return bad(503, 'no durable store; a claim that cannot be recorded must not be minted');
 
-  const ip =
-    request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown';
+  const ip = clientIp(request);
   try {
     if (await rateLimitExceeded(kv, ip, RATE_SALT, CLAIMS_PER_IP_PER_HOUR)) {
       return bad(429, 'too many claim requests from this address in the last hour');
     }
-  } catch (e) {
-    return bad(503, `the rate limiter could not be read: ${(e as Error).message}`);
+  } catch {
+    // ⛔ THE REFUSAL CARRIES NO TEXT FROM THE STORE. The store words a failure
+    // as `${error}, command was: ${JSON.stringify(commands)}` and with
+    // auto-pipelining that list holds the commands of every other request
+    // batched into the same round trip: another route's claim code, a payment
+    // signature, another caller's limiter bucket. This body is printed to the
+    // buyer verbatim (`lib/privacy/shieldClient.ts`, the claim-for-payment
+    // branch), so interpolating it hands the batch to whoever asked. Fixed
+    // words, whatever failed — the same posture as `/api/fund-ephemeral`.
+    // Pinned by `__tests__/api/claim-for-payment.test.ts` "a limiter that fails
+    // says so without passing on what the store carried", which runs the same
+    // failure with two different batches and requires one answer.
+    return bad(503, 'the rate limiter could not be read');
   }
 
   let body: { signature?: unknown; proof?: unknown; contribution?: unknown };
@@ -302,11 +319,53 @@ export async function POST(request: NextRequest) {
     return bad(400, 'proof must be base64 of a 64-byte ed25519 signature');
   }
 
+  /**
+   * ⛔ WHAT THIS PAYMENT ALREADY EARNED, ANSWERED BEFORE THE BINDING IS READ.
+   *
+   * The payer has just proved who they are, and what they are owed depends on
+   * their PAYMENT alone. The binding is not permanent — `issue-note` deletes
+   * it at redemption along with the code row — so a payer who came back after
+   * that used to be told 'that contribution is not the one this payment
+   * funded' about a payment that had funded exactly it.
+   *
+   * `get`, never `incr`: reading must not consume the gate. Pinned by
+   * `__tests__/api/claim-for-payment.test.ts` "replays the code this payment
+   * bought, even though the binding is gone" and the two refusals beside it.
+   */
+  const paidKey = notePaidKey(signature);
+  let earnedCode: string | null = null;
+  let alreadyRedeemed = false;
+  try {
+    // The counter first, and the code row only once the gate is taken: a code
+    // is written only after `incr(paidKey)`, so a counter at 0 means no code.
+    // A purchase pays one GET here; replays and refusals pay two. Pinned by
+    // "a first sale reads the payment counter, never the code row".
+    if (counterValue(await kv.get(paidKey)) >= 1) {
+      earnedCode = await kv.get<string>(notePaidCodeKey(signature));
+      alreadyRedeemed = !earnedCode;
+    }
+  } catch (e) {
+    return bad(503, `the claim record could not be read: ${(e as Error).message}`);
+  }
+  if (alreadyRedeemed) {
+    // The gate is taken and the code row is gone, which is what redemption
+    // leaves behind. Nothing is owed, and a second code would sell this
+    // payment twice.
+    return bad(409, 'this payment has already been redeemed', {
+      hint: 'Its claim code was collected at /api/issue-note, and a note already issued is not issued again.',
+    });
+  }
+
   // Did this payment fund a RELAYED DEPOSIT? Then it is a contribution's
   // payment, not a plain sale, and it can only be claimed here as the
   // fallback for a deposit that never landed.
-  const relayed = await relayedContribution(kv, connection, signature, body.contribution);
-  if (relayed instanceof NextResponse) return relayed;
+  //
+  // ⛔ Skipped once the payment has its code: every refusal in there is about
+  // whether a claim may be MINTED, and this one is not minting.
+  if (!earnedCode) {
+    const relayed = await relayedContribution(kv, connection, signature, body.contribution);
+    if (relayed instanceof NextResponse) return relayed;
+  }
 
   // One payment, one claim, and the SAME claim on a retry.
   //
@@ -315,50 +374,54 @@ export async function POST(request: NextRequest) {
   // their money and gives them nothing. Returning the code they already bought
   // is the only answer that is neither. The gate is shared with the confirm of
   // `/api/contribute-note`: whichever runs first mints, the other replays.
-  const paidKey = notePaidKey(signature);
-  let claimCode: string;
-  try {
-    const first = await kv.incr(paidKey);
-    if (first === 1) {
-      claimCode = randomBytes(32).toString('base64url');
-      await kv.set(notePaidCodeKey(signature), claimCode);
-      // The claim itself, in the shape /api/issue-note redeems. No expiry: see
-      // the founder ruling in mint-claim, a bearer asset somebody bought is not
-      // a liability to be timed out.
-      await kv.set(`p01:note:claim-minted:${claimCode}`, `payment:${signature}`);
-      /**
-       * 🚨 THE PAYMENT IS MARKED, NEVER THE LEAF. This branch runs only for a
-       * deposit this route has just PROVEN is not on the tree, so the leaf
-       * holds nothing.
-       *
-       * It used to `incr` `contrib-confirmed:<pool>:<leaf>` and write
-       * `contrib-claim` here, with no TTL and no writer that ever cleared
-       * them, and that poisoned the index for whoever came next. The reserve
-       * loop in `/api/contribute-note` reclaims a leaf the tree never reached
-       * after `RECLAIM_AFTER_MS` and hands it to the next contributor; that
-       * buyer pays, deposits honestly, and is then refused by confirm ("this
-       * contribution was already confirmed under a different payment", which
-       * also gives their payment gate back) and by this route ("already
-       * confirmed; collect its code through confirm"), each pointing at the
-       * other. Money spent, no note, no way out.
-       *
-       * Nothing is lost by dropping the writes. The replay that mattered runs
-       * off the payment: a confirm of a deposit that lands after all takes
-       * `p01:note:paid:<sig>`, sees it is not 1, and hands back
-       * `p01:note:paid:<sig>:code` - this code - rather than minting a second
-       * one. The per-leaf rows were never read by anything.
-       */
-    } else {
-      const existing = await kv.get<string>(notePaidCodeKey(signature));
-      if (!existing) {
-        // Claimed but unreadable. Refusing is right: minting a second code here
-        // is the double-sale this counter exists to stop.
-        return bad(503, 'this payment was already claimed but its code could not be read');
+  let claimCode = earnedCode ?? '';
+  if (!claimCode) {
+    try {
+      const first = await kv.incr(paidKey);
+      if (first === 1) {
+        claimCode = randomBytes(32).toString('base64url');
+        await kv.set(notePaidCodeKey(signature), claimCode);
+        // The claim itself, in the shape /api/issue-note redeems. No expiry: see
+        // the founder ruling in mint-claim, a bearer asset somebody bought is not
+        // a liability to be timed out.
+        await kv.set(`p01:note:claim-minted:${claimCode}`, `payment:${signature}`);
+        /**
+         * 🚨 THE PAYMENT IS MARKED, NEVER THE LEAF. This branch runs only for a
+         * deposit this route has just PROVEN is not on the tree, so the leaf
+         * holds nothing.
+         *
+         * It used to `incr` `contrib-confirmed:<pool>:<leaf>` and write a
+         * per-leaf claim row here, with no TTL and no writer that ever cleared
+         * them, and that poisoned the index for whoever came next. The reserve
+         * loop in `/api/contribute-note` reclaims a leaf the tree never reached
+         * after `RECLAIM_AFTER_MS` and hands it to the next contributor; that
+         * buyer pays, deposits honestly, and is then refused by confirm ("this
+         * contribution was already confirmed under a different payment", which
+         * also gives their payment gate back) and by this route ("already
+         * confirmed; collect its code through confirm"), each pointing at the
+         * other. Money spent, no note, no way out.
+         *
+         * Nothing is lost by dropping the writes. The replay that mattered runs
+         * off the payment: a confirm of a deposit that lands after all reads
+         * `p01:note:paid:<sig>:code` - this code - before it reads anything
+         * about the leaf. The per-leaf rows were never read by anything, and
+         * `/api/contribute-note` stopped writing its own in KV-1.
+         */
+      } else {
+        // A concurrent request took the gate between the read above and this
+        // increment. Hand back its code if it has been written, and refuse
+        // otherwise rather than mint a second one.
+        const existing = await kv.get<string>(notePaidCodeKey(signature));
+        if (!existing) {
+          return bad(409, 'this payment has already been redeemed', {
+            hint: 'If its claim code was issued and not yet used, ask again with the same payment.',
+          });
+        }
+        claimCode = existing;
       }
-      claimCode = existing;
+    } catch (e) {
+      return bad(503, `the claim could not be recorded: ${(e as Error).message}`);
     }
-  } catch (e) {
-    return bad(503, `the claim could not be recorded: ${(e as Error).message}`);
   }
 
   return NextResponse.json({
@@ -397,9 +460,11 @@ export async function POST(request: NextRequest) {
  *   - the treasury commitment is on the tree: the deposit landed, so the leaf
  *     is stock and confirm is the path that records it as such.
  *
- * Unless this payment already minted, in which case the code it earned is
- * returned whatever the leaf's state: confirm-then-fallback must answer with
- * the confirm's code, not a refusal.
+ * ⛔ IT IS NOT REACHED AT ALL once this payment already holds its code. The
+ * POST answers that above, before the binding is read, because the binding is
+ * deleted at redemption and every refusal in here is about whether a claim may
+ * be MINTED. So confirm-then-fallback never arrives at this function, and a
+ * missing binding can no longer refuse a payer their own code.
  */
 async function relayedContribution(
   kv: KvLike,
@@ -427,11 +492,9 @@ async function relayedContribution(
   const expected = contributionBinding(poolKey, contribution.leafIndex);
 
   let binding: string | null;
-  let alreadyMinted: string | null;
   let confirmed: unknown;
   try {
     binding = await kv.get<string>(relayPaymentContributionKey(signature));
-    alreadyMinted = await kv.get<string>(notePaidCodeKey(signature));
     confirmed = await kv.get(contribConfirmedKey(poolKey, contribution.leafIndex));
   } catch (e) {
     return bad(503, `the contribution record could not be read: ${(e as Error).message}`);
@@ -444,10 +507,6 @@ async function relayedContribution(
     });
   }
   const bound = { poolKey, leafIndex: contribution.leafIndex };
-  // This payment already earned its code, through confirm or through an
-  // earlier call here. Hand it back below, whatever the leaf's state.
-  if (alreadyMinted) return bound;
-
   if (counterValue(confirmed) >= 1) {
     return bad(409, 'this contribution was already confirmed; collect its code through confirm', {
       leafIndex: contribution.leafIndex,

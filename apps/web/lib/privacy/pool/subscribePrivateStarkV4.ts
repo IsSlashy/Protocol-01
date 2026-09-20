@@ -65,6 +65,7 @@ import { deriveSubscriptionVaultPDA } from './subscribePrivateStark';
 import {
   C7_SUBTREE_DEPTH,
   CIRCUIT_SPEND,
+  HistoryIncompleteError,
   ZK_SHIELDED_PROGRAM_ID,
   buildComputeBudgetIxs,
   buildMerkleProofFromLeavesV3,
@@ -79,6 +80,7 @@ import {
   type ShieldReceipt,
   type WalletSigner,
 } from './denominatedPool';
+import type { StoredMerklePath } from './unshieldFromPath';
 
 /**
  * `C7_SUBSCRIBE_DOMAIN` — 19 ASCII bytes, NO NUL terminator, frozen forever
@@ -363,6 +365,21 @@ export interface PrepareSubscribeV4Result {
  * `22psv1tF...` — in order to ship a subscription that is not proven at all. The
  * duplication is the cheaper risk. The two must stay identical in behaviour, so
  * change them together.
+ *
+ * 🚨 WHICH ROOT IS NAMED (SPEND-1, continued run). `merkle_root` travels in the
+ * clear and the chain accepts any ring root, so a root tied to the note dates
+ * it. The withdrawal's tie rule applies here too: a ring root the pool is not
+ * on NOW is proved only when the walk behind the map left nothing it listed
+ * unread, the map does not end at the note's own leaf, and the root is not the
+ * one saved with the note (`savedPath`: a map can end exactly where that root
+ * was taken). Otherwise one refetch, then `HistoryIncompleteError`, never
+ * PRE-FLIGHT FAIL, so `handlePoolSubscribePrepare` rethrows it instead of
+ * falling back to the C1 + C3 pair. With no readable pool account there is no
+ * refetch. The saved path is never proved here, only its root is compared.
+ * Pinned by `spendRootIsCurrent.test.ts`, "the circuit-7 SUBSCRIPTION prepare
+ * never proves a root tied to the note either", "after the one refetch, the
+ * tie rule reads the REFETCHED map, not the first one" and "the circuit-7
+ * SUBSCRIPTION applies the saved-root tie as the withdrawal does (m == k)".
  */
 export async function prepareSubscribeV4(
   receipt: ShieldReceipt,
@@ -372,6 +389,8 @@ export async function prepareSubscribeV4(
   subscriberCommitment: bigint,
   retailer: PublicKey,
   onProgress?: (step: string) => void,
+  /** The Merkle path saved with the note, as the withdrawal's `savedPath`; only its root is read. */
+  savedPath?: StoredMerklePath,
 ): Promise<PrepareSubscribeV4Result> {
   // The vault is a digest input AND account index 2, where Anchor re-derives it
   // from its three seeds. A binding built over any other vault produces a proof
@@ -394,15 +413,15 @@ export async function prepareSubscribeV4(
   const { starkProver: prover } = await import('./starkProver');
 
   onProgress?.('Fetching pool leaves from on-chain events...');
-  const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(
+  const { leavesByIndex, missing, unread } = await fetchPoolLeavesByIndex(
     connection,
     poolConfig.poolPDA,
     { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
   );
   if (missing.length > 0) {
-    console.warn(
-      `[Subscribe/v4] prepareSubscribeV4: ${missing.length} missing leaf gap(s): ${missing.slice(0, 5).join(',')}...`,
-    );
+    // The count only: the missing positions are other people's deposits
+    // (`noteIdentifierTripwire.test.ts`).
+    console.warn(`[Subscribe/v4] prepareSubscribeV4: ${missing.length} missing leaf gap(s)`);
   }
 
   onProgress?.('Building Merkle proof from leaf history...');
@@ -411,34 +430,71 @@ export async function prepareSubscribeV4(
     targetLeafIndex: receipt.leafIndex,
   });
 
+  // What ties a root the pool is not on NOW to this note, as in
+  // `prepareUnshieldV4`: the walk behind the map left listed signatures unread
+  // (it may stop where this client last read, often right after the note's own
+  // deposit or purchase), the map ends at the note's own leaf (its root is the
+  // deposit root), or the root is the saved one (a received note's issuance
+  // root, reached through a map that ends where it was taken). `unread` absent
+  // means nobody said: not shown clean.
+  const savedRootValue = ((): bigint | null => {
+    try {
+      return savedPath ? BigInt(savedPath.root) : null;
+    } catch {
+      return null;
+    }
+  })();
+  const tiedToNote = (root: bigint, top: number, walkUnread: number | undefined): boolean =>
+    walkUnread !== 0 || top === receipt.leafIndex || root === savedRootValue;
+
   // Root pre-flight. A rebuilt root the pool has never published means the proof
   // would be refused at the END of a ~78-chunk upload, so this check is worth
   // its two RPC calls.
   onProgress?.('Pre-flight root verification...');
   const poolAcct = await connection.getAccountInfo(poolConfig.poolPDA, 'confirmed');
-  if (poolAcct) {
-    const parsed = parsePoolV3Account(new Uint8Array(poolAcct.data));
-    if (parsed) {
-      const known = (root: bigint): boolean => {
-        const b = new Uint8Array(goldilocksToLeBytes32(root));
-        return bytesEqual(b, parsed.currentRoot) || parsed.historicalRoots.some((r) => bytesEqual(b, r));
-      };
-      if (!known(merkleResult.root)) {
-        onProgress?.('Root not in ring — retrying event scan with extended limit...');
-        const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
-        merkleResult = buildMerkleProofFromLeavesV3({
-          leavesByIndex: retry.leavesByIndex,
-          targetLeafIndex: receipt.leafIndex,
-        });
-        if (!known(merkleResult.root)) {
-          throw new Error(
-            `PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots ` +
-            `(current + ${parsed.historicalRoots.length} historical). Aborting before proof rent is spent. ` +
-            `Wait ~10s for the RPC to index recent transactions, then retry.`,
-          );
-        }
+  const parsed = poolAcct ? parsePoolV3Account(new Uint8Array(poolAcct.data)) : null;
+  if (parsed) {
+    const isCurrent = (root: bigint): boolean =>
+      bytesEqual(new Uint8Array(goldilocksToLeBytes32(root)), parsed.currentRoot);
+    const known = (root: bigint): boolean => {
+      const b = new Uint8Array(goldilocksToLeBytes32(root));
+      return bytesEqual(b, parsed.currentRoot) || parsed.historicalRoots.some((r) => bytesEqual(b, r));
+    };
+    // A ring root that is not current and is tied to the note is held back
+    // like an unknown root: it gets the refetch, then a refusal if the
+    // refetched map's root is held back too (`spendRootIsCurrent.test.ts`,
+    // "the circuit-7 SUBSCRIPTION prepare never proves a root tied to the note
+    // either").
+    const heldBack = (root: bigint, top: number, walkUnread: number | undefined): boolean =>
+      known(root) && !isCurrent(root) && tiedToNote(root, top, walkUnread);
+    const firstHeldBack = heldBack(merkleResult.root, leavesByIndex.length - 1, unread);
+    if (firstHeldBack || !known(merkleResult.root)) {
+      onProgress?.('Root not in ring — retrying event scan with extended limit...');
+      const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
+      merkleResult = buildMerkleProofFromLeavesV3({
+        leavesByIndex: retry.leavesByIndex,
+        targetLeafIndex: receipt.leafIndex,
+      });
+      // The REFETCHED map's own top and report (same file, "after the one
+      // refetch, the tie rule reads the REFETCHED map, not the first one").
+      const retryHeldBack = heldBack(merkleResult.root, retry.leavesByIndex.length - 1, retry.unread);
+      if (retryHeldBack || !known(merkleResult.root)) {
+        // A root the pool knows was held back: the history this client read
+        // is short, the note is not unplaceable, so this is no case for the
+        // C1 + C3 pair, which publishes the commitment.
+        if (firstHeldBack || retryHeldBack) throw new HistoryIncompleteError('subscription');
+        throw new Error(
+          `PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots ` +
+          `(current + ${parsed.historicalRoots.length} historical). Aborting before proof rent is spent. ` +
+          `Wait ~10s for the RPC to index recent transactions, then retry.`,
+        );
       }
     }
+  } else if (tiedToNote(merkleResult.root, leavesByIndex.length - 1, unread)) {
+    // No readable pool account: the root cannot be shown current, so it is
+    // proved only when nothing ties it to the note, with no refetch (same
+    // test, its unreadable-account worlds).
+    throw new HistoryIncompleteError('subscription');
   }
 
   // 12 / 3 split. `buildMerkleProofFromLeavesV3` returns the full depth-15 path

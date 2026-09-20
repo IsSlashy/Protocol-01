@@ -3,13 +3,14 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+import { clientIp } from '@/lib/net/clientIp';
 import { activeTreasurySeed } from '@/lib/privacy/treasurySeeds';
 import { claimChallenge } from '@/lib/privacy/claimChallenge';
 import {
-  contribClaimKey,
   contribConfirmedKey,
   contribReservedKey,
   contributionBinding,
+  counterValue,
   inventoryDenomination,
   notePaidCodeKey,
   notePaidKey,
@@ -24,7 +25,13 @@ import {
   type OnChainCommitment,
 } from '@/lib/privacy/pool/denominatedPool';
 import { deriveNoteBlinding } from '@/lib/privacy/pool/noteBlinding';
+import { installKvPoolHistory } from '@/lib/privacy/pool/kvPoolHistory';
 import { recordInventoryLeaf } from '@/app/api/issue-note/route';
+
+// [CACHE-1] The pool history this route walks is shared by every isolate
+// through one KV row per pool that holds public chain data only
+// (`lib/privacy/pool/kvPoolHistory.test.ts`).
+installKvPoolHistory();
 
 /**
  * CONTRIBUTE A LEAF, COLLECT A DIFFERENT NOTE — the mechanism that makes the
@@ -126,12 +133,6 @@ const RECLAIM_AFTER_MS = 20 * 60 * 1000;
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
-}
-
-function clientIp(req: NextRequest): string {
-  const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0]!.trim();
-  return req.headers.get('x-real-ip') ?? 'unknown';
 }
 
 /** The treasury's pool seed, 32 bytes as 64 hex characters. */
@@ -237,8 +238,18 @@ export async function POST(request: NextRequest) {
         limit: CONTRIBUTIONS_PER_IP_PER_HOUR,
       });
     }
-  } catch (e) {
-    return bad(503, `the rate limiter could not be read: ${(e as Error).message}`);
+  } catch {
+    // ⛔ THE REFUSAL CARRIES NO TEXT FROM THE STORE. The store words a failure
+    // as `${error}, command was: ${JSON.stringify(commands)}` and with
+    // auto-pipelining that list holds the commands of every other request
+    // batched into the same round trip: another route's claim code, a payment
+    // signature, another caller's limiter bucket. This route runs on the
+    // buyer's paid path, so the body reaches a paying caller. Fixed words,
+    // whatever failed — the same posture as `/api/fund-ephemeral`. Pinned by
+    // `__tests__/api/contribute-note.test.ts` "a limiter that fails says so
+    // without passing on what the store carried", which runs the same failure
+    // with two different batches and requires one answer.
+    return bad(503, 'the rate limiter could not be read');
   }
 
   const connection = new Connection(
@@ -400,6 +411,75 @@ export async function POST(request: NextRequest) {
   }
 
   /**
+   * ⛔ WHAT THIS PAYMENT ALREADY EARNED, ANSWERED BEFORE THE BINDING IS READ.
+   *
+   * The payer has just proved who they are, and what they are owed depends on
+   * their PAYMENT alone — so it is decided here, above the binding, because
+   * the binding is not permanent: `issue-note` deletes it at redemption along
+   * with the code row (`forgetTheCodeToPaymentTrail`). In the old order a
+   * payer replaying their own confirm was told 'that payment did not fund this
+   * leaf' about a payment that had funded exactly that leaf. Money spent, no
+   * note, and a refusal that reads as an accusation.
+   *
+   * `get`, never `incr`: reading must not consume the gate. Pinned by
+   * `__tests__/api/contribute-note.test.ts` "replays the code when the binding
+   * is gone" and "refuses a payment whose code has been redeemed".
+   */
+  const paidKey = notePaidKey(paymentSignature);
+  let earnedCode: string | null = null;
+  let alreadyRedeemed = false;
+  try {
+    // The counter first, and the code row only once the gate is taken: a code
+    // is written only after `incr(paidKey)`, so a counter at 0 means no code.
+    // A purchase pays one GET here; replays and refusals pay two. Pinned by
+    // "a first confirm reads the payment counter, never the code row".
+    if (counterValue(await kv.get(paidKey)) >= 1) {
+      earnedCode = await kv.get<string>(notePaidCodeKey(paymentSignature));
+      alreadyRedeemed = !earnedCode;
+    }
+  } catch (e) {
+    return bad(503, `the payment record could not be read: ${(e as Error).message}`);
+  }
+
+  /**
+   * The commitment this treasury owns at that index, and whether the tree
+   * holds it. Derived once, because the replay below needs the same answer the
+   * first confirm does: it is pure CPU over the history already fetched and
+   * has no side effect, so hoisting it moves no refusal.
+   */
+  const expected = treasuryCommitmentFor(seed, pool.poolPDA, pool.tokenMint, leafIndex);
+  const onChain = commitments.get(expected.toString());
+
+  if (earnedCode) {
+    if (onChain?.leafIndex === leafIndex) {
+      // The leaf IS on the tree and IS the treasury's, so it is stock whichever
+      // route minted the code. Recorded here because the fallback could not:
+      // the deposit had not landed when it ran.
+      try {
+        await recordInventoryLeaf(poolKey, leafIndex);
+      } catch {
+        /* issue-note also discovers treasury leaves by derivation; the code is what matters here */
+      }
+    }
+    return NextResponse.json({
+      ok: true,
+      claimCode: earnedCode,
+      leafIndex,
+      denomination,
+      token,
+      replayed: true,
+    });
+  }
+  if (alreadyRedeemed) {
+    // The gate is taken and the code row is gone, which is what redemption
+    // leaves behind. Nothing is owed and nothing may be minted: a second code
+    // would sell this payment twice.
+    return bad(409, 'this payment has already been redeemed', {
+      hint: 'Its claim code was collected at /api/issue-note, and a note already issued is not issued again.',
+    });
+  }
+
+  /**
    * THE LEAF THIS PAYMENT FUNDED, as the relay recorded it after the lamports
    * moved. A payer can only confirm the reservation their own payment funded:
    * naming somebody else's leaf, however well it verifies on the tree, earns
@@ -428,8 +508,6 @@ export async function POST(request: NextRequest) {
    * — and be paid a claim for it. The only thing that earns a claim is OUR
    * commitment appearing at the index we reserved.
    */
-  const expected = treasuryCommitmentFor(seed, pool.poolPDA, pool.tokenMint, leafIndex);
-  const onChain = commitments.get(expected.toString());
   if (!onChain) {
     return bad(409, 'that contribution is not on the tree', {
       leafIndex,
@@ -460,7 +538,6 @@ export async function POST(request: NextRequest) {
    * leave the payment claimed with no code behind it, which is the one state
    * neither route can repair.
    */
-  const paidKey = notePaidKey(paymentSignature);
   let paid: number;
   try {
     paid = await kv.incr(paidKey);
@@ -468,6 +545,10 @@ export async function POST(request: NextRequest) {
     return bad(503, `the payment could not be claimed: ${(e as Error).message}`);
   }
   if (paid !== 1) {
+    // A concurrent request took the gate between the read above and this
+    // increment. If it has written the code, hand that back; if it has not
+    // written it yet, refusing is right, because minting a second one is the
+    // double-sale this counter exists to stop.
     let existing: string | null = null;
     try {
       existing = await kv.get<string>(notePaidCodeKey(paymentSignature));
@@ -475,9 +556,9 @@ export async function POST(request: NextRequest) {
       /* falls through to the refusal below */
     }
     if (!existing) {
-      // Claimed but unreadable. Refusing is right: minting a second code here
-      // is the double-sale this counter exists to stop.
-      return bad(503, 'this payment was already claimed but its code could not be read');
+      return bad(409, 'this payment has already been redeemed', {
+        hint: 'If its claim code was issued and not yet used, ask again with the same payment.',
+      });
     }
     // The leaf IS on the tree (checked above) and IS the treasury's, so it is
     // stock whichever route minted the code. Recorded here because the
@@ -523,12 +604,17 @@ export async function POST(request: NextRequest) {
 
   const claimCode = mintCode();
   try {
-    // Recorded BEFORE the claim is minted: a crash between the two leaves the
-    // buyer without a code, which they can recover, rather than leaving the
-    // treasury short a leaf it paid for and cannot issue.
-    await kv.set(contribClaimKey(poolKey, leafIndex), claimCode);
-    // And under the payment, so the fallback route replays this code instead
-    // of minting another.
+    /**
+     * Under the PAYMENT, and under nothing else.
+     *
+     * ⛔ THE LEAF CARRIED THE CODE TOO until KV-1 (`contrib-claim:<pool>:
+     * <leaf>`), and nothing ever read it: this route replays off
+     * `paid:<sig>:code` and so does the fallback at `/api/claim-for-payment`.
+     * A row no code needs is a row only a dump can use, and that one paired a
+     * leaf this buyer's money funded with the code they redeem it for. Pinned
+     * by `__tests__/api/contribute-note.test.ts` "writes no leaf-to-code row",
+     * and measured across worlds by `__tests__/lib/kvRowsAtRest.test.ts`.
+     */
     await kv.set(notePaidCodeKey(paymentSignature), claimCode);
     /**
      * The leaf becomes issuable stock.
@@ -540,14 +626,19 @@ export async function POST(request: NextRequest) {
      * paying buyer. See `recordInventoryLeaf`'s contract.
      */
     await recordInventoryLeaf(poolKey, leafIndex);
-    // The value `issue-note` reads to decide the code was MINTED rather than
-    // guessed. It tests `if (!minted)`, so an empty string would burn the
-    // buyer's claim without releasing it, hence a real reference, naming both
-    // the leaf and the payment that bought it.
-    await kv.set(
-      `p01:note:claim-minted:${claimCode}`,
-      `contrib:${poolKey}:${leafIndex}:payment:${paymentSignature}`,
-    );
+    /**
+     * The value `issue-note` reads to decide the code was MINTED rather than
+     * guessed. It tests `if (!minted)`, so an empty string would burn the
+     * buyer's claim without releasing it — and the PAYMENT alone says what it
+     * needs to say.
+     *
+     * ⛔ IT NAMED THE LEAF UNTIL KV-1: the code, the leaf this buyer's payment
+     * funded and the signature that resolves publicly to their wallet, in one
+     * row, under a key that is the code. One dump joined all three.
+     * `issue-note` parses the signature back out of this value to sweep the
+     * trail at redemption, so the `payment:<sig>` shape is load-bearing.
+     */
+    await kv.set(`p01:note:claim-minted:${claimCode}`, `payment:${paymentSignature}`);
   } catch (e) {
     return bad(503, `the claim could not be minted: ${(e as Error).message}`);
   }

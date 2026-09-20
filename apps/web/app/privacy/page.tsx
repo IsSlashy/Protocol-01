@@ -77,6 +77,13 @@ import StyxShell from "../_styx/StyxShell";
  *     store, keyed by email, behind KV_REST_API_URL / UPSTASH_REDIS_REST_URL, and
  *     it counts a country code per record.
  *
+ *   privacyPolicy.s2.keys.k2.term / .desc, transaction history (web sweep 4)
+ *     "we do not maintain logs of your transactions ... we do not aggregate,
+ *     index, or link it to your identity", under "Information We Do NOT
+ *     Collect". The deployment's KV keeps payer wallet -> claim code -> note
+ *     address with no expiry and `p01:note:paid:<sig>` for good, and the
+ *     signature names the payer's wallet (docs/LEAK-LEDGER.md row D4).
+ *
  * NOT RENDERED AND NOT COMING BACK:
  *
  *   privacyPolicy.s2.keys.k4.term / .desc
@@ -235,6 +242,15 @@ const UNTRUE_RESIDUE: readonly RegExp[] = [
   // s6.i3, withheld whole: lib/waitlist/store.ts is a user store keyed by email.
   /do not operate user databases/i,
   /n['’]exploitons aucune base de données/i,
+  // s2.keys.k2, withheld whole: the deployment's own store keeps each purchase
+  // (payer wallet -> claim code -> note address with no expiry, and
+  // `p01:note:paid:<sig>` for good; docs/LEAK-LEDGER.md row D4), so "no logs"
+  // and "not linked to your identity" are both false. PrivacyPage.test.tsx,
+  // "English never says: no transaction logs are kept" and its three siblings.
+  /logs? of your transactions/i,
+  /aucun journal de vos transactions/i,
+  /link(s|ed)? (it|them) to your identity/i,
+  /(relions|lions) pas à votre identité/i,
 ];
 
 /**
@@ -341,6 +357,21 @@ export default function PrivacyPolicy() {
         row.desc !== null && !/^privacyPolicy\./.test(row.term),
     );
 
+  /**
+   * Section 2 is built the same way, since k2 ("Transaction history") is
+   * withheld: its rows number from what renders (PrivacyPage.test.tsx, "numbers
+   * each step list from 01 with no gap").
+   */
+  const notCollected = ["k1", "k2", "k3", "k5"]
+    .map((k) => ({
+      term: t(`privacyPolicy.s2.keys.${k}.term`),
+      desc: honest(t(`privacyPolicy.s2.keys.${k}.desc`)),
+    }))
+    .filter(
+      (row): row is { term: string; desc: string } =>
+        row.desc !== null && !/^privacyPolicy\./.test(row.term),
+    );
+
   /** The other two filtered strings, resolved once so each null is handled once. */
   const onChainData = honest(t("privacyPolicy.s3.sub32p"));
   const waitlistStore = honest(t("privacyPolicy.s6.i3"));
@@ -398,26 +429,14 @@ export default function PrivacyPolicy() {
               </p>
             </div>
             <ul className="styx-steps">
-              <TermStep
-                index="01"
-                term={t("privacyPolicy.s2.keys.k1.term")}
-                desc={t("privacyPolicy.s2.keys.k1.desc")}
-              />
-              <TermStep
-                index="02"
-                term={t("privacyPolicy.s2.keys.k2.term")}
-                desc={t("privacyPolicy.s2.keys.k2.desc")}
-              />
-              <TermStep
-                index="03"
-                term={t("privacyPolicy.s2.keys.k3.term")}
-                desc={t("privacyPolicy.s2.keys.k3.desc")}
-              />
-              <TermStep
-                index="04"
-                term={t("privacyPolicy.s2.keys.k5.term")}
-                desc={t("privacyPolicy.s2.keys.k5.desc")}
-              />
+              {notCollected.map((row, i) => (
+                <TermStep
+                  key={row.term}
+                  index={String(i + 1).padStart(2, "0")}
+                  term={row.term}
+                  desc={row.desc}
+                />
+              ))}
             </ul>
           </div>
         </div>
@@ -657,7 +676,7 @@ export default function PrivacyPolicy() {
               <p>
                 {t("privacyPolicy.s10.socialBefore")}{" "}
                 <a
-                  href="https://x.com/Protocol01_"
+                  href="https://x.com/Styx_PQ"
                   className="styx-link"
                   target="_blank"
                   rel="noopener noreferrer"

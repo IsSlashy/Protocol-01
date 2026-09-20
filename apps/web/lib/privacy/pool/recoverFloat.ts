@@ -67,6 +67,7 @@ import {
   CIRCUIT_MERKLE_PATH,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_POOL_COMMITMENT,
+  CIRCUIT_SPEND,
   type PoolConfig,
   type WalletSigner,
 } from './denominatedPool';
@@ -150,14 +151,24 @@ export interface RecoverFloatOptions {
    */
   funderUnknown?: boolean;
   /**
-   * Leaf indices of notes this caller actually holds, for the UNSHIELD
-   * derivation.
+   * The leaves whose SPEND key (the withdrawal and subscribe ephemeral) is
+   * read, and the only ones.
    *
    * A withdrawal or subscribe derives its ephemeral from the leaf index of the
    * note being SPENT, and spending a note advances nothing — so a note 400
    * leaves below the head strands its float 400 leaves below the head, where
-   * the shield's head-relative window cannot see it. These are unioned with
-   * that window rather than replacing it, so this can only ever find more.
+   * the shield's head-relative window cannot see it.
+   *
+   * 🚨 READING A SPEND KEY NAMES IT. A note never spent has no such account on
+   * chain yet, so reading its key, or a buffer address derived from it, tells
+   * the RPC which key will pay for that note's spend before the spend exists.
+   * The head window used to derive the spend key of every leaf near the head
+   * too, which named the future payer of any recent note the user held
+   * whatever this list said; it derives shield keys only now
+   * (`recoverReads.test.ts`, "default Recover names no untouched note’s spend
+   * key"). `shieldClient.recoverStuckFunds` passes the notes with a spend
+   * attempt or a spent mark, and every held note only on the user's own
+   * labelled click.
    */
   unshieldLeafIndices?: number[];
   onProgress?: (step: string) => void;
@@ -193,15 +204,13 @@ export async function recoverStuckFloat(
   }
 
   const plan: Array<{ leafIndex: number; kind: 'shield' | 'unshield' }> = [];
-  for (const leafIndex of window) {
-    plan.push({ leafIndex, kind: 'shield' });
-    plan.push({ leafIndex, kind: 'unshield' });
-  }
-  // The caller's own notes, for the spend derivation only, minus anything the
-  // window already covers. Order matters only for the progress log.
-  const inWindow = new Set(window);
+  for (const leafIndex of window) plan.push({ leafIndex, kind: 'shield' });
+  // Spend keys for the leaves the caller named and no others: a read names
+  // the key (see `unshieldLeafIndices`). Order matters only for the log.
+  const named = new Set<number>();
   for (const leafIndex of opts.unshieldLeafIndices ?? []) {
-    if (Number.isInteger(leafIndex) && leafIndex >= 0 && !inWindow.has(leafIndex)) {
+    if (Number.isInteger(leafIndex) && leafIndex >= 0 && !named.has(leafIndex)) {
+      named.add(leafIndex);
       plan.push({ leafIndex, kind: 'unshield' });
     }
   }
@@ -212,10 +221,14 @@ export async function recoverStuckFloat(
         ? deriveShieldEphemeral(walletSeed, poolConfig.poolPDA, leafIndex)
         : deriveUnshieldEphemeral(walletSeed, poolConfig.poolPDA, leafIndex);
 
+    // Circuit 7 is the v4 withdrawal's and subscribe's one proof, uploaded
+    // into a buffer this same key owns and alone can close
+    // (`recoverReads.test.ts`, "the circuit-7 buffer a marked note’s key owns
+    // is found and closed").
     const circuits =
       kind === 'shield'
         ? [CIRCUIT_MERKLE_UPDATE]
-        : [CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_PATH];
+        : [CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_PATH, CIRCUIT_SPEND];
 
     let closedBuffers = 0;
     const signer = ephemeralSigner(ephemeral, connection);
@@ -231,7 +244,9 @@ export async function recoverStuckFloat(
       for (const bufferAddress of candidates) {
         const info = await connection.getAccountInfo(bufferAddress);
         if (!info) continue;
-        opts.onProgress?.(`Closing a stranded proof buffer from leaf #${leafIndex}...`);
+        // No leaf in the line: it is rendered, and a spend's key is keyed to the
+        // user's own note (`noteIdentifierTripwire.test.ts`).
+        opts.onProgress?.('Closing a stranded proof buffer...');
         await closeStarkProofBuffer(bufferAddress, signer, connection);
         closedBuffers += 1;
       }
@@ -258,7 +273,7 @@ export async function recoverStuckFloat(
     const verdict = await resolveSweepDestination(connection, ephemeral.publicKey, owner, opts);
     if (verdict.refused) {
       opts.onProgress?.(
-        `Leaving ${(sweepable / 1e9).toFixed(4)} SOL on leaf #${leafIndex}: ${refusalSentence(verdict.refused)}`,
+        `Leaving ${(sweepable / 1e9).toFixed(4)} SOL on a one-time key: ${refusalSentence(verdict.refused)}`,
       );
       recovered.push({
         ephemeral: ephemeral.publicKey.toBase58(),

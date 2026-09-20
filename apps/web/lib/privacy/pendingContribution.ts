@@ -11,13 +11,51 @@
  * un-spent, what they are OWED must survive a reload, a timeout and a closed
  * tab. Anything less makes a retry a second payment.
  *
- * It stores no secret. A leaf index is public the instant it is deposited, and
- * a claim code is a bearer token for ONE note out of stock — worth protecting
- * like a receipt, not like a key. It is scoped per wallet so two identities on
- * one browser never collect each other's.
+ * 🔒 WHAT IS ON DISK (DEV-1, ledger row D7). The record used to sit here in
+ * clear: the wallet, the leaf, the payment signature, the claim code and the
+ * claim proof. A claim code is a bearer token for one note, so any extension
+ * with the `storage` permission could collect it, and the wallet next to a
+ * leaf and a payment is the (buyer, deposit, payment) join the swap exists to
+ * break. Now each record is two halves:
+ *
+ *   INDEX, in clear: `{ id, label, at, kind, paid, claimed }`. Exactly what
+ *   the pruning below reads, so the rule that fixed the double payment is
+ *   unchanged, plus the random id updates name and the identity's opaque store
+ *   label (the index every sealed store already uses, `sealedStore.ts`).
+ *
+ *   BODY, sealed: the owner, leaf, token, denomination, payment signature,
+ *   claim proof, claim code and withdrawal, sealed with X25519 + ML-KEM-768 to
+ *   the identity's V1 address (`sealedStore.sealRecord`) and padded to one
+ *   length. Updates are append-only sealed deltas, merged by the worker
+ *   (`poolOpenRecords`), so a record is never rewritten in place.
+ *
+ * Measured by `pendingContribution.test.ts`: "raw storage holds no wallet,
+ * payment signature, claim code, claim proof or leaf" and "the stored state
+ * does not move with the record values, and every sealed body has one length".
+ *
+ * Sealing needs only the PUBLIC address, so `rememberContribution` stays
+ * synchronous; the caller fetches the session in parallel with the
+ * reservation, before the wallet is asked for anything. Opening needs the pool
+ * seed, so reads go through the worker. A record the worker cannot open is
+ * KEPT, never pruned for it: its index still says whether money moved.
  */
 
-const KEY = 'p01:pending-contribution:v1';
+import { bytesToHex, randomBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+
+import {
+  openSealedRecords,
+  sealRecord,
+  StaleWorkerError,
+  storeSession,
+  type StoreSession,
+} from './sealedStore';
+
+/** The plaintext store every build before DEV-1 wrote. Still read, then
+ *  re-sealed (`pendingContribution.test.ts` "a legacy record is still
+ *  collected, then re-sealed"). Never written with a new record. */
+const KEY_V1 = 'p01:pending-contribution:v1';
+/** Since DEV-1: the plaintext index, each entry carrying its sealed body. */
+const KEY = 'p01:pending-contribution:v2';
 
 export interface PendingContribution {
   /**
@@ -62,51 +100,229 @@ export interface PendingContribution {
   at: number;
 }
 
-function read(): PendingContribution[] {
+/** A record as the store hands it back: opened, with the id updates name. */
+export interface PendingRecord extends PendingContribution {
+  id: string;
+}
+
+/**
+ * What sealing a record needs: the identity's store label and its V1
+ * address. The V1 address, like the subscription store's, because this record
+ * is irreplaceable and must stay openable across passphrase arm and disarm
+ * (`pendingContribution.test.ts`, "a record written with a passphrase armed
+ * still opens once it is disarmed, and back").
+ */
+export type PendingSession = Pick<StoreSession, 'label' | 'legacyAddress'>;
+
+/** One record on disk: the index in clear, the body sealed. */
+interface PendingIndexEntry {
+  id: string;
+  label: string;
+  at: number;
+  kind: 'contribution' | 'exchange';
+  /** A payment signature was recorded: money moved. */
+  paid: boolean;
+  /** A claim code was recorded. */
+  claimed: boolean;
+  /** The sealed base, then every sealed delta, in the order written. */
+  sealed: string[];
+}
+
+/**
+ * Every sealed body is padded to a multiple of this many bytes, so a body's
+ * length says nothing about the leaf's digits, the code's length or which
+ * fields it carries. One multiple holds every body a record writes:
+ * `pendingContribution.test.ts` "the stored state does not move with the
+ * record values, and every sealed body has one length" seals the longest
+ * values a record carries and finds a single length.
+ */
+const SEALED_BODY_BYTES = 1024;
+
+/**
+ * [SWEEP4 round 1, storage lane] How much of a PAID record's time the clear
+ * index keeps: the day it was written, and nothing finer.
+ *
+ * A contribution's `at` falls seconds before the till payment that names the
+ * wallet on chain, and an exchange's seconds before its note-in withdrawal to
+ * the till, so the exact millisecond beside a `paid: true` flag joined this
+ * device to that transaction — through a record whose every other field is
+ * sealed (DEV-1). Ledger row D17.
+ *
+ * WHY THE DAY AND NOT NOTHING AT ALL: `collectable()` below reads `at` without
+ * a key, and the cut-off it compares against (`PAYMENT_FIELD_SINCE_MS`) is a
+ * UTC midnight, so a day-truncated value answers that question identically. An
+ * UNPAID record keeps its exact time, because the 20-minute reclaim window is
+ * what it decides and a reservation with no payment has no transaction to be
+ * joined to.
+ *
+ * The exact time is not lost: it travels in the SEALED body, which is where
+ * `load` reads the `at` it returns and orders by — the rule that a buyer's
+ * oldest owed record is collected first. Measured by
+ * `pendingContribution.test.ts`, "[SWEEP4-STORAGE] a paid record does not date
+ * its own payment in the clear".
+ */
+const DAY_MS = 86_400_000;
+
+function coarseDay(at: number): number {
+  return Number.isFinite(at) ? Math.floor(at / DAY_MS) * DAY_MS : at;
+}
+
+function isEntry(e: unknown): e is PendingIndexEntry {
+  const x = e as Partial<PendingIndexEntry> | null;
+  return (
+    !!x &&
+    typeof x.id === 'string' &&
+    typeof x.label === 'string' &&
+    Array.isArray(x.sealed) &&
+    x.sealed.every((s) => typeof s === 'string')
+  );
+}
+
+function readIndex(): PendingIndexEntry[] {
   if (typeof localStorage === 'undefined') return [];
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as PendingContribution[]) : [];
+    return Array.isArray(parsed) ? parsed.filter(isEntry) : [];
   } catch {
-    // A corrupt record must not block a shield. Worst case the buyer redeems
-    // through support with the leaf index, which is on chain either way.
+    // A corrupt index must not block a shield. The payment is on chain and
+    // the deployment's claim routes are idempotent on it.
     return [];
   }
 }
 
-function write(list: PendingContribution[]): void {
-  if (typeof localStorage === 'undefined') return;
+/** False when storage refused the write; the caller decides what that costs. */
+function writeIndex(list: PendingIndexEntry[]): boolean {
+  if (typeof localStorage === 'undefined') return false;
   try {
-    localStorage.setItem(KEY, JSON.stringify(list));
+    if (list.length === 0) localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, JSON.stringify(list));
+    return true;
   } catch {
     /* storage refused; the caller still has the value in memory this run */
+    return false;
   }
+}
+
+function readLegacy(): PendingContribution[] {
+  if (typeof localStorage === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(KEY_V1);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as PendingContribution[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLegacy(list: PendingContribution[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    // Removed outright once empty, so the old format stops advertising itself.
+    if (list.length === 0) localStorage.removeItem(KEY_V1);
+    else localStorage.setItem(KEY_V1, JSON.stringify(list));
+  } catch {
+    /* storage refused; the sealed copy is already written */
+  }
+}
+
+/** Seal one body, padded so every body of this store has one length. */
+function sealPadded(session: PendingSession, body: Record<string, unknown>): string {
+  const bare = utf8ToBytes(JSON.stringify({ ...body, pad: '' })).length;
+  const target = Math.ceil(bare / SEALED_BODY_BYTES) * SEALED_BODY_BYTES;
+  return sealRecord(session.legacyAddress, { ...body, pad: ' '.repeat(target - bare) });
+}
+
+function baseBody(id: string, entry: PendingContribution): Record<string, unknown> {
+  return {
+    p01store: 1,
+    kind: 'pending',
+    id,
+    // Sealed, so the clear index can coarsen its copy the moment money moves
+    // (`coarseDay`). This is the value `load` returns and orders by.
+    at: entry.at,
+    owner: entry.owner,
+    leafIndex: entry.leafIndex,
+    token: entry.token,
+    denomination: entry.denomination,
+    pendingKind: entry.kind ?? 'contribution',
+    ...(entry.txSig ? { txSig: entry.txSig } : {}),
+    ...(entry.paymentSignature ? { paymentSignature: entry.paymentSignature } : {}),
+    ...(entry.claimProof ? { claimProof: entry.claimProof } : {}),
+    ...(entry.claimCode ? { claimCode: entry.claimCode } : {}),
+  };
+}
+
+function indexEntry(
+  session: PendingSession,
+  id: string,
+  entry: PendingContribution,
+): PendingIndexEntry {
+  const paid = !!entry.paymentSignature;
+  const claimed = !!entry.claimCode;
+  return {
+    id,
+    label: session.label,
+    // Exact only while nothing on chain can be joined to it (`coarseDay`).
+    at: paid || claimed ? coarseDay(entry.at) : entry.at,
+    kind: entry.kind ?? 'contribution',
+    paid,
+    claimed,
+    sealed: [sealPadded(session, baseBody(id, entry))],
+  };
 }
 
 /**
  * Record a contribution the moment its leaf is RESERVED — before any money
  * moves. An entry with no `claimCode` means "we may have paid for this".
+ * Returns the record's id, which every later update and the clear name.
  *
  * ⚠️ Written before the payment ON PURPOSE. Writing it after would leave the
- * exact window this file exists to close.
+ * exact window this file exists to close. Synchronous for the same reason:
+ * the session is fetched before this call, never inside it. A body that
+ * cannot be sealed throws here, before any money has moved.
  */
-export function rememberContribution(entry: PendingContribution): void {
-  const list = read().filter(
-    (e) => !(e.owner === entry.owner && e.leafIndex === entry.leafIndex),
-  );
-  list.push(entry);
-  write(list);
+export function rememberContribution(session: PendingSession, entry: PendingContribution): string {
+  const id = bytesToHex(randomBytes(16));
+  const fresh = indexEntry(session, id, entry);
+  const list = readIndex();
+  list.push(fresh);
+  writeIndex(list);
+  return id;
+}
+
+/**
+ * Append one sealed delta. The flag is set even if the delta could not be
+ * sealed: a record whose index says money moved is never pruned, and the
+ * resume then refuses loudly ("recorded without its payment signature")
+ * instead of letting the buyer pay again.
+ */
+function appendDelta(
+  session: PendingSession,
+  id: string,
+  delta: { paymentSignature: string } | { claimCode: string },
+): void {
+  const list = readIndex();
+  const entry = list.find((e) => e.id === id);
+  if (!entry) return;
+  try {
+    entry.sealed.push(sealPadded(session, { p01store: 1, kind: 'pendingDelta', id, ...delta }));
+  } catch {
+    // See above: the flag below still keeps the record.
+  }
+  if ('paymentSignature' in delta) entry.paid = true;
+  else entry.claimed = true;
+  // Money has moved, so the clear index stops dating it (`coarseDay`). The
+  // exact time stays in the sealed base body this record was written with.
+  entry.at = coarseDay(entry.at);
+  writeIndex(list);
 }
 
 /** Attach the claim once it is minted, so a resume can go straight to collecting. */
-export function attachClaim(owner: string, leafIndex: number, claimCode: string): void {
-  write(
-    read().map((e) =>
-      e.owner === owner && e.leafIndex === leafIndex ? { ...e, claimCode } : e,
-    ),
-  );
+export function attachClaim(session: PendingSession, id: string, claimCode: string): void {
+  appendDelta(session, id, { claimCode });
 }
 
 /**
@@ -114,12 +330,8 @@ export function attachClaim(owner: string, leafIndex: number, claimCode: string)
  * attempted. A record with a payment and no claim is exactly what the
  * fallback needs: the money moved, and this is the receipt for it.
  */
-export function attachPayment(owner: string, leafIndex: number, paymentSignature: string): void {
-  write(
-    read().map((e) =>
-      e.owner === owner && e.leafIndex === leafIndex ? { ...e, paymentSignature } : e,
-    ),
-  );
+export function attachPayment(session: PendingSession, id: string, paymentSignature: string): void {
+  appendDelta(session, id, { paymentSignature });
 }
 
 /**
@@ -162,11 +374,133 @@ const UNPAID_RESERVATION_TTL_MS = 20 * 60 * 1000;
  */
 const PAYMENT_FIELD_SINCE_MS = Date.parse('2026-09-02T00:00:00Z');
 
-function collectable(e: PendingContribution, now: number): boolean {
-  if (e.paymentSignature || e.claimCode) return true;
+/** The rule reads the index alone (`paid`, `claimed`, `at`), so it needs no key. */
+function collectable(e: { paid: boolean; claimed: boolean; at: number }, now: number): boolean {
+  if (e.paid || e.claimed) return true;
   if (!Number.isFinite(e.at)) return true;
   if (e.at < PAYMENT_FIELD_SINCE_MS) return true;
   return now - e.at < UNPAID_RESERVATION_TTL_MS;
+}
+
+function legacyCollectable(e: PendingContribution, now: number): boolean {
+  return collectable({ paid: !!e.paymentSignature, claimed: !!e.claimCode, at: e.at }, now);
+}
+
+/**
+ * Every record this identity holds for `owner`, opened, oldest first.
+ *
+ * `prune` drops the dead reservations of THIS identity as it passes them
+ * (`pendingFor`); other identities' entries are never touched. Legacy records
+ * of this owner are sealed into the index here, once a worker has proven it
+ * can read them back: sealing rows the answering worker cannot open would hide
+ * them until a reload, so a worker that predates this store gets
+ * `StaleWorkerError` ("reload") instead, and nothing is migrated.
+ */
+async function load(meta: string, owner: string, prune: boolean): Promise<PendingRecord[]> {
+  const now = Date.now();
+  // Nothing on this device at all: no round trip, no session needed.
+  if (readIndex().length === 0 && readLegacy().length === 0) return [];
+
+  const session = await storeSession(meta);
+  let index = readIndex();
+  if (prune) {
+    const kept = index.filter((e) => e.label !== session.label || collectable(e, now));
+    if (kept.length !== index.length) {
+      writeIndex(kept);
+      index = kept;
+    }
+  }
+  const mine = index.filter((e) => e.label === session.label);
+  if (mine.length === 0 && !readLegacy().some((e) => e.owner === owner)) return [];
+
+  // One round trip opens every body of this identity. With none to open it is
+  // the probe that says whether this worker can read the store at all.
+  const opened = await openSealedRecords(
+    meta,
+    mine.flatMap((e) => e.sealed),
+  );
+  if (opened.pending === undefined) throw new StaleWorkerError();
+
+  // Legacy records: pruned by the same rule, sealed, v2 written before v1 is
+  // touched, all in this one synchronous turn. A throw leaves v1 as it was.
+  const migrated: PendingRecord[] = [];
+  const legacy = readLegacy();
+  const legacyMine = legacy.filter(
+    (e) => e.owner === owner && (!prune || legacyCollectable(e, now)),
+  );
+  const legacyDead = prune
+    ? legacy.filter((e) => e.owner === owner && !legacyCollectable(e, now))
+    : [];
+  if (legacyMine.length > 0 || legacyDead.length > 0) {
+    const entries = legacyMine.map((rec) => {
+      const id = bytesToHex(randomBytes(16));
+      migrated.push({ ...rec, id });
+      return indexEntry(session, id, rec);
+    });
+    if (entries.length === 0 || writeIndex([...readIndex(), ...entries])) {
+      writeLegacy(legacy.filter((e) => e.owner !== owner));
+    }
+  }
+
+  const bodies = new Map(opened.pending.map((p) => [p.id, p]));
+
+  // [SWEEP4 round 1, storage lane] A row written before this change carries the
+  // exact time in the CLEAR index and none in its sealed body. It is moved
+  // here, once, with the bodies already open: the exact time is appended as a
+  // sealed delta and the index keeps the day alone (`coarseDay`). Only this
+  // identity's paid or claimed rows are touched, and only while they still
+  // hold a finer time, so a second read rewrites nothing
+  // (`pendingContribution.test.ts`, "a row written before this change is
+  // coarsened on read, keeps its record, and is stable").
+  const exactAt = new Map<string, number>();
+  let coarsened = false;
+  for (const e of mine) {
+    if (!(e.paid || e.claimed) || e.at === coarseDay(e.at)) continue;
+    const body = bodies.get(e.id);
+    if (body && body.owner === owner && body.at === undefined) {
+      try {
+        e.sealed.push(sealPadded(session, { p01store: 1, kind: 'pendingDelta', id: e.id, at: e.at }));
+        exactAt.set(e.id, e.at);
+      } catch {
+        // Sealing refused: the index is coarsened anyway. What is lost is the
+        // finer ORDER of this one record, never the record.
+      }
+    }
+    e.at = coarseDay(e.at);
+    coarsened = true;
+  }
+  if (coarsened) writeIndex(index);
+
+  const records: PendingRecord[] = [...migrated];
+  for (const e of mine) {
+    const body = bodies.get(e.id);
+    // Unopenable, or another wallet's under this identity: kept, not returned.
+    if (!body || body.owner !== owner) continue;
+    records.push({
+      id: e.id,
+      owner: body.owner,
+      leafIndex: body.leafIndex,
+      token: body.token,
+      denomination: body.denomination,
+      kind: body.kind ?? e.kind,
+      // The sealed time first: the clear index keeps only the day once money
+      // has moved, and the resume order runs on the exact one (`coarseDay`).
+      at: body.at ?? exactAt.get(e.id) ?? e.at,
+      ...(body.txSig ? { txSig: body.txSig } : {}),
+      ...(body.paymentSignature ? { paymentSignature: body.paymentSignature } : {}),
+      ...(body.claimProof ? { claimProof: body.claimProof } : {}),
+      ...(body.claimCode ? { claimCode: body.claimCode } : {}),
+    });
+  }
+  return records.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * Every record this identity holds for `owner`, opened, oldest first. A read:
+ * nothing is pruned (only a legacy record is re-sealed).
+ */
+export function pendingRecords(meta: string, owner: string): Promise<PendingRecord[]> {
+  return load(meta, owner, false);
 }
 
 /**
@@ -184,16 +518,10 @@ function collectable(e: PendingContribution, now: number): boolean {
  *
  * Expired paymentless reservations are pruned as they are passed over, so the
  * dead record stops mattering instead of accumulating. Records belonging to
- * other wallets are never touched: this store is scoped per identity.
+ * other identities are never touched: this store is scoped per identity.
  */
-export function pendingFor(owner: string): PendingContribution | null {
-  const now = Date.now();
-  const all = read();
-  const kept = all.filter((e) => e.owner !== owner || collectable(e, now));
-  if (kept.length !== all.length) write(kept);
-  const mine = kept.filter((e) => e.owner === owner);
-  if (mine.length === 0) return null;
-  return mine.sort((a, b) => a.at - b.at)[0]!;
+export async function pendingFor(meta: string, owner: string): Promise<PendingRecord | null> {
+  return (await load(meta, owner, true))[0] ?? null;
 }
 
 /**
@@ -202,6 +530,9 @@ export function pendingFor(owner: string): PendingContribution | null {
  * ⛔ ONLY AFTER THE NOTE IS STORED. Clearing on the claim alone would lose the
  * one thing that proves a buyer is owed something.
  */
-export function clearContribution(owner: string, leafIndex: number): void {
-  write(read().filter((e) => !(e.owner === owner && e.leafIndex === leafIndex)));
+export function clearContribution(id: string | undefined): void {
+  if (!id) return;
+  const list = readIndex();
+  const kept = list.filter((e) => e.id !== id);
+  if (kept.length !== list.length) writeIndex(kept);
 }

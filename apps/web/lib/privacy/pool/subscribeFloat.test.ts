@@ -258,7 +258,8 @@ let rentFor: number[] = [];
 
 function rentFaithfulConnection(): Connection {
   return {
-    // Nothing is spent — `isNullifierSpent` reads the nullifier PDA.
+    // Nothing is spent: the pool-wide spent set is empty (RPC-1).
+    getProgramAccounts: async () => [],
     getAccountInfo: async () => null,
     getMinimumBalanceForRentExemption: async (len: number) => {
       rentFor.push(len);

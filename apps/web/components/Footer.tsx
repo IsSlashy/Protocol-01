@@ -68,7 +68,7 @@ const footerLinks: Record<string, FooterSection> = {
     title: "community",
     links: [
       { name: "Discord", href: "https://discord.gg/EfqnVmb2dV", external: true },
-      { name: "Twitter / X", href: "https://x.com/Protocol01_", external: true },
+      { name: "Twitter / X", href: "https://x.com/Styx_PQ", external: true },
       { name: "careers", href: "/careers" },
       // WAITLIST MODE: GitHub de-emphasized while access runs through the waitlist, restore at launch:
       // { name: "GitHub", href: "https://github.com/IsSlashy/Protocol-01-releases", external: true },
@@ -89,7 +89,7 @@ const XIcon = () => (
 const DiscordIcon = () => <MessageCircle size={18} />;
 
 const socialLinks = [
-  { icon: XIcon, href: "https://x.com/Protocol01_", label: "Twitter/X" },
+  { icon: XIcon, href: "https://x.com/Styx_PQ", label: "Twitter/X" },
   // WAITLIST MODE: restore at launch:
   // { icon: GithubIcon, href: "https://github.com/IsSlashy/Protocol-01-releases", label: "GitHub" },
   { icon: DiscordIcon, href: "https://discord.gg/EfqnVmb2dV", label: "Discord" },

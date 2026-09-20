@@ -515,14 +515,15 @@ describe('the v4 subscribe job refuses a note circuit 7 would only appear to pro
   });
 
   it('carries the needle the worker falls back on, so the note stays subscribable', async () => {
-    // ⛔ THIS STRING IS LOAD-BEARING ACROSS TWO FILES. `V4_REBUILD_FAILURES` in
-    // poolHandlers.ts routes on `includes('circuit 7 needs at least')`. Reword
-    // the throw without rewording that list and the note stops falling back to
-    // the C1 + C3 pair — it becomes unsubscribable from the web app instead,
-    // silently, because refusing looks like working.
+    // ⛔ THIS STRING IS LOAD-BEARING ACROSS TWO FILES. poolHandlers.ts opens the
+    // C1 + C3 pair (after its disclosure) only for a refusal carrying
+    // `PRE_BLINDING_REFUSAL`, 'circuit 7 needs at least a randomised blinding'
+    // (V3-1). Reword the throw without rewording that constant and the note is
+    // refused as a blinded one: unsubscribable from the web app, and the refusal
+    // would tell its holder to retry something that can never work.
     await expect(
       prepareSubscribeJobV4(EPOCH_LIKE, POOL, NO_CONNECTION, NO_SEED, terms),
-    ).rejects.toThrow(/circuit 7 needs at least/);
+    ).rejects.toThrow(/circuit 7 needs at least a randomised blinding/);
   });
 
   it('pins the needle in the worker`s allow-list, so the two cannot drift apart', () => {
@@ -534,6 +535,14 @@ describe('the v4 subscribe job refuses a note circuit 7 would only appear to pro
     );
     expect(handlers).toContain(
       "const V4_REBUILD_FAILURES = ['PRE-FLIGHT FAIL', 'circuit 7 needs at least'] as const;",
+    );
+    // V3-1: the list says which refusals are recognised; only this one, on a
+    // note under the 2**32 ceiling, may reach the pair, and only after the
+    // disclosure (`poolHandlersUnshieldV4.test.ts`, "a pre-blinding
+    // subscription gets the same disclosure, and a withdrawal disclosure does
+    // not confirm it").
+    expect(handlers).toContain(
+      "const PRE_BLINDING_REFUSAL = 'circuit 7 needs at least a randomised blinding';",
     );
 
     // ⛔ AND THE SUBSCRIBE PREPARE ROUTES THROUGH IT — anchored, not merely
@@ -554,22 +563,38 @@ describe('the v4 subscribe job refuses a note circuit 7 would only appear to pro
     const guards = handlers.match(/if \(!isV4RebuildFailure\(err\)\) throw err;/g) ?? [];
     expect(guards, 'both v4 fallbacks must keep their allow-list guard').toHaveLength(2);
 
-    const handlerStart = handlers.indexOf('async function handlePoolSubscribePrepare');
-    const subscribeWarn = handlers.indexOf(
-      "'[pool/subscribe] circuit 7 could not prove this note; falling back to the C1 + C3 '",
-    );
+    // V3-1's second guard, which keeps a BLINDED note off the pair whatever
+    // the rebuild said. Also once per handler: the withdrawal's names its own
+    // spend, so it cannot stand in for the subscription's.
+    const blindedGuard = /if \(!isPreBlindingRefusal\(err, note\.receipt\)\) throw blindedNoteRefusal\('(withdrawal|subscription)', err\);/g;
+    expect(
+      [...handlers.matchAll(blindedGuard)].map((m) => m[1]),
+      'both v4 fallbacks must keep the blinded-note refusal',
+    ).toEqual(['withdrawal', 'subscription']);
+
+    // Anchored on the handler's own body, not on a log line: newlines
+    // normalised first (the file is CRLF), then from the function to its
+    // closing brace at column 0.
+    const src = handlers.replace(/\r\n/g, '\n');
+    const handlerStart = src.indexOf('async function handlePoolSubscribePrepare(');
+    const handlerEnd = src.indexOf('\n}\n', handlerStart);
     // Both anchors must exist and be in this order, or the slice below would be
     // some other region of the file agreeing with itself.
     expect(handlerStart, 'handlePoolSubscribePrepare not found').toBeGreaterThan(-1);
-    expect(subscribeWarn, 'the subscribe fallback warning not found').toBeGreaterThan(handlerStart);
+    expect(handlerEnd, 'the end of handlePoolSubscribePrepare not found').toBeGreaterThan(handlerStart);
 
-    const subscribeFallback = handlers.slice(handlerStart, subscribeWarn);
+    const subscribeFallback = src.slice(handlerStart, handlerEnd);
     // The withdrawal handler ends before `handlePoolSubscribePrepare` begins, so
     // its copy of the line cannot satisfy this.
     expect(subscribeFallback).toContain('if (!isV4RebuildFailure(err)) throw err;');
     expect(
       subscribeFallback.match(/if \(!isV4RebuildFailure\(err\)\) throw err;/g) ?? [],
     ).toHaveLength(1);
+    expect(subscribeFallback).toContain(
+      "if (!isPreBlindingRefusal(err, note.receipt)) throw blindedNoteRefusal('subscription', err);",
+    );
+    // And the pair is reached only through the disclosure's confirmation.
+    expect(subscribeFallback.match(/confirmPreBlindingSpend\(/g) ?? []).toHaveLength(1);
   });
 
   it('refuses rate = 0 before proving', async () => {

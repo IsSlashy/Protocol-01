@@ -21,7 +21,7 @@
  */
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import nacl from 'tweetnacl';
@@ -36,7 +36,6 @@ import {
   type OnChainCommitment,
   type PoolConfig,
   fetchSpentNullifierSet,
-  isNullifierSpent,
   isNullifierSpentInSet,
   readPoolUnspentCount,
   type PoolToken,
@@ -114,6 +113,7 @@ import {
   type LicenseTagListing,
 } from '../licenseTagMatch';
 import { claimChallenge } from '../claimChallenge';
+import { noteTag, type NoteTag } from '../pool/noteTag';
 
 // ---------------------------------------------------------------------------
 // Wire protocol
@@ -540,6 +540,13 @@ export interface PoolImportNoteRequest {
   /** Blobs already stored locally, so importing the same note twice is refused
    *  instead of silently drawing the same money as two rows. */
   encryptedNotes?: string[];
+  /**
+   * The claim code an ISSUED note was bought with (DEV-1). The issuer sealed
+   * it to `poolIssueAddress(meta, claimCode)`, so the import tries that
+   * one-time key first, then this identity's own keys (a hand-delivered note,
+   * or a reply the issuer stored before DEV-1). Absent for a hand-over.
+   */
+  claimCode?: string;
 }
 
 export interface PoolImportNoteResponse {
@@ -569,6 +576,31 @@ export interface PoolNoteAddressRequest {
 export interface PoolNoteAddressResponse {
   kind: 'poolNoteAddress';
   /** `p01pq:<base64>`, derived from the ACTIVE seed: the address to publish. */
+  address: string;
+}
+
+/**
+ * A ONE-TIME `p01pq:` address for one issuance (DEV-1, ledger row D9).
+ *
+ * `requestIssuedNote` used to send the published address above with every
+ * purchase, so the issuer could group every note one buyer ever bought under
+ * one public key. This address is the note keys of
+ * HKDF(active seed, 'p01:issue-seal:v1' || sha256(claimCode)): fresh per code,
+ * and re-derivable from the seed and the code alone, which is what lets a
+ * retry with the same code open the reply the issuer kept for it (ISSUE-1).
+ * `worker/issueAddress.test.ts` "two issuances, unlinkable addresses" and
+ * "the same code, retried after a lost answer, opens the reply the issuer kept".
+ */
+export interface PoolIssueAddressRequest {
+  kind: 'poolIssueAddress';
+  meta: string;
+  /** The claim code this issuance redeems. Only the address derived from it comes back. */
+  claimCode: string;
+}
+
+export interface PoolIssueAddressResponse {
+  kind: 'poolIssueAddress';
+  /** `p01pq:<base64>`, valid for this one code. Public-key material. */
   address: string;
 }
 
@@ -843,13 +875,17 @@ export interface PoolStoreLabelResponse {
 }
 
 /** The payout-record fields that survive the whitelist in `poolOpenRecords`.
- *  Identical to `shieldClient.PayoutRecord`; all five are public values. */
+ *  Identical to `shieldClient.PayoutRecord`; the first five are public
+ *  values, `tag` is the paying note's display name (UI-1,
+ *  `pool/poolNoteTag.test.ts` "poolOpenRecords returns a payout record’s tag
+ *  only when it has exactly the tag’s shape"). */
 export interface StoredPayoutRecord {
   pool: string;
   leafIndex: number;
   address: string;
   txSig: string;
   denomination: number;
+  tag?: NoteTag;
 }
 
 /** The handoff-record fields that survive the whitelist. Identical to
@@ -877,6 +913,59 @@ export interface StoredSubscriptionWire {
   leafIndex?: number;
   openedAt: number;
   licenseScheme?: LicenseScheme;
+}
+
+/**
+ * One pending-payment record (`lib/privacy/pendingContribution.ts`, DEV-1),
+ * merged from its sealed base and its append-only sealed deltas. These are the
+ * values the main thread presents to the deployment to collect what a payment
+ * bought, so they cross back; they never sit on disk in clear
+ * (`pendingContribution.test.ts` "raw storage holds no wallet, payment
+ * signature, claim code, claim proof or leaf").
+ */
+export interface StoredPendingWire {
+  /** The record's random id, the join to its plaintext index entry. */
+  id: string;
+  /**
+   * When the reservation was written, to the millisecond. SEALED since the
+   * sweep-round-1 storage fix: the clear index keeps only the day once the
+   * record is paid or claimed, because that time falls seconds before a public
+   * till payment (`pendingContribution.ts`, `coarseDay`). Absent on a record
+   * written before that change, where the index still carries it.
+   */
+  at?: number;
+  owner: string;
+  leafIndex: number;
+  token: 'SOL' | 'USDC';
+  denomination: number;
+  kind?: 'contribution' | 'exchange';
+  txSig?: string;
+  paymentSignature?: string;
+  claimProof?: string;
+  claimCode?: string;
+}
+
+/**
+ * [SWEEP4 round 1, confirmed item 5] One relay payment receipt
+ * (`pool/relayPaymentReceipts.ts`), opened. These values are what the main
+ * thread presents to `/api/relay-to-buyer` to collect a payment that already
+ * left the buyer's wallet, so they cross back; they never sit on disk in clear
+ * (`pool/relayPaymentReceipts.test.ts`, "leaves no payment signature, no
+ * ephemeral and no till in the dump").
+ */
+export interface StoredRelayReceiptWire {
+  /** The record's random id, the join to its opaque index entry. */
+  id: string;
+  /** The depositing key. Deterministic in (seed, pool, leafIndex). */
+  ephemeralPubkey: string;
+  /** The buyer's till payment, the thing the relay is presented again. */
+  signature: string;
+  valueLamports: number;
+  feeLamports: number;
+  requiredLamports: number;
+  till: string;
+  /** ISO 8601, the write order and what an operator settles by hand. */
+  createdAt: string;
 }
 
 /**
@@ -925,6 +1014,15 @@ export interface PoolOpenRecordsResponse {
   handoffs: StoredHandoffRecord[];
   /** Subscriptions this browser tracks (`lib/pay/subscriptions.ts`). */
   subscriptions: StoredSubscriptionWire[];
+  /** Pending payments (`lib/privacy/pendingContribution.ts`), each base merged
+   *  with its deltas in the order the blobs were sent. */
+  pending: StoredPendingWire[];
+  /** Outstanding relay payment receipts (`pool/relayPaymentReceipts.ts`): a
+   *  payment that has already left the buyer's wallet and has not yet been
+   *  forwarded. Required, like every array above — its ABSENCE is how the page
+   *  tells an older worker from an empty store, and reading "no receipt" off an
+   *  older worker is how a buyer pays a second denomination. */
+  relayReceipts: StoredRelayReceiptWire[];
   /** Blobs that opened under no seed, or whose plaintext is not a record. */
   skipped: number;
 }
@@ -1019,6 +1117,7 @@ export type PoolRequest =
   | PoolExportNoteRequest
   | PoolExportSeedRequest
   | PoolImportNoteRequest
+  | PoolIssueAddressRequest
   | PoolLicenseKeyRequest
   | PoolNoteAddressRequest
   | PoolOpenRecordsRequest
@@ -1094,6 +1193,8 @@ export interface PoolShieldExecuteResponse {
   denomination: number;
   /** The note, encrypted to the user's own PQ address. Safe to persist as-is. */
   encryptedNote: string;
+  /** The new note's display name; see `PoolNoteView.tag`. */
+  tag?: NoteTag;
 }
 
 export interface PoolNoteView {
@@ -1101,8 +1202,22 @@ export interface PoolNoteView {
   token: 'SOL' | 'USDC';
   denomination: number;
   counter: number;
+  /**
+   * A HANDLE, never a label. The main thread keys rows, spent records and
+   * payout keys by `pool:leafIndex`, so it stays (the residual UI-1 names);
+   * no screen, message or log may print it. `tag` is what a screen shows
+   * (`__tests__/lib/noteIdentifierTripwire.test.ts`).
+   */
   leafIndex: number;
   commitment: string;
+  /**
+   * The note's display name, `noteTag` over its secrets (`pool/noteTag.ts`):
+   * computed here because the secrets never leave the worker. Optional only so
+   * a page served by a worker older than UI-1 still type-checks and shows the
+   * amount alone; this worker always sets it when the secrets parse
+   * (`pool/poolNoteTag.test.ts`).
+   */
+  tag?: NoteTag;
   spent: boolean;
   /** Which seed derivation owns this note — 1 = wallet signature only,
    *  2 = signature + passphrase. Notes shielded before a passphrase was adopted
@@ -1220,6 +1335,9 @@ export interface PoolUnshieldExecuteResponse {
   claimProof?: string;
 }
 
+/** See `PoolSubscribePrepareResponse.noteProvenance`. */
+export type NoteProvenance = 'own-deposit' | 'received';
+
 export interface PoolSubscribePrepareResponse {
   kind: 'poolSubscribePrepare';
   jobId: string;
@@ -1228,42 +1346,37 @@ export interface PoolSubscribePrepareResponse {
   denomination: number;
   derivation: DerivationVersion;
   /**
-   * Who paid for the DEPOSIT that created the note about to be spent, base58.
+   * Where the note about to be spent came from, decided from what this device
+   * holds and nothing else: `'received'` when its stored blob was filed by
+   * `poolImportNote` (a hand-over or an issued note), `'own-deposit'` for every
+   * other note, including one the seed search finds and a shield-time blob.
    *
-   * 🚨 THE ONE FACT THAT DECIDES WHETHER ANY OF THE REST IS WORTH ANYTHING.
-   * Spending republishes the deposit's commitment in cleartext, so a stranger
-   * walks spend → commitment → deposit in one hop and lands on this address. If
-   * it is the wallet doing the spending, routing the spend through a funder
-   * buys NOTHING — the wallet is still one hop away, through the deposit.
+   * Pessimistic for every note this device shielded: only the import's marker
+   * says "received", so an unmarked note reads as the buyer's own deposit, and
+   * a relayed own deposit is never called clean because the float paid for it.
    *
-   * Costs no RPC call: the pool scan already fetches every insert transaction
-   * to read its event log, and this is `accountKeys[0]` of what it holds.
+   * KNOWN LIMIT, on the optimistic side: `poolImportNote` writes
+   * `source: 'received'` for EVERY import, so a note the buyer deposited from
+   * another wallet they control and then imported here reads as received. A
+   * local verdict cannot see who funded a deposit made elsewhere
+   * (`noPointedNullifierRead.test.ts`, "a blob filed by the import is
+   * received").
    *
-   * `null` when the leaf was not found in the scanned window or its transaction
-   * carried no readable header. Callers must treat `null` as UNKNOWN, never as
-   * safe — an unread channel reported clean is the failure this whole effort
-   * exists to refuse.
+   * It replaced a chain walk (the deposit's fee payer, then that payer's
+   * funder) that named the depositing ephemeral to the RPC from the buyer's IP
+   * and still called a relayed own deposit unreachable. Pinned by
+   * `noPointedNullifierRead.test.ts` ("subscribe prepare never names the
+   * depositing ephemeral", "the worker reports where the note came from, from
+   * local facts only") and `selfDepositedNote.test.ts` ("deposit verdict local
+   * and pessimistic").
    */
-  depositPayer: string | null;
-  /**
-   * Who funded that payer — the address one hop behind the deposit.
-   *
-   * 🚨 THIS, NOT `depositPayer`, IS WHAT A CALLER MUST COMPARE THE WALLET
-   * AGAINST. A deposit is signed by a fresh ephemeral, so `depositPayer` is
-   * always a key nobody has heard of and never equals the wallet — a guard
-   * built on it cannot fire in the case it exists for. The human is one
-   * transfer behind: an ephemeral cannot pay a fee from nothing.
-   *
-   * `null` = could not be established. UNKNOWN, never safe.
-   */
-  depositFunder: string | null;
-  /** The deposit's signature, so a caller can show or verify the claim. */
-  depositSignature: string | null;
+  noteProvenance: NoteProvenance;
   /**
    * Which circuit the prepared job proved on. REPORTED, never guessed: a caller
-   * that asked for circuit 7 can be answered with the C1 + C3 pair when the
-   * rebuild could not place the note, and it must be able to say so on screen
-   * rather than claim a privacy property the transaction does not have.
+   * that asked for circuit 7 can be answered with the C1 + C3 pair for a
+   * pre-blinding note, after its disclosure (V3-1), and it must be able to say
+   * so on screen rather than claim a privacy property the transaction does not
+   * have.
    */
   version: 'v3' | 'v4';
   /**
@@ -1296,22 +1409,27 @@ export interface PoolSubscribeExecuteResponse {
 /**
  * WHAT IS DELIBERATELY ABSENT FROM THIS TYPE: the note itself. `sealedNote` is
  * ciphertext under the RECIPIENT's public key, so even the tab that asked for it
- * cannot read it back. Every other field here is already public on chain.
+ * cannot read it back.
+ *
+ * ALSO ABSENT SINCE UI-1: the leaf index and the commitment. SendForm printed
+ * both beside the sealed note, and the deposit published both, so a screenshot
+ * of a hand-over named the deposit behind it. The page names the note by `tag`
+ * (`pool/poolNoteTag.test.ts`, "poolExportNote names the note by its tag").
  */
 export interface PoolExportNoteResponse {
   kind: 'poolExportNote';
   /** `p01enc1:<base64>` — hybrid X25519 + ML-KEM-768, sealed to the recipient. */
   sealedNote: string;
   denomination: number;
-  leafIndex: number;
-  /** Public: the deposit already published it on chain. */
-  commitment: string;
+  /** The handed-over note's display name, so the sender can tell two apart. */
+  tag: NoteTag;
   /** Seed derivation the note was found under, resolved in the worker. */
   derivation: DerivationVersion;
   /**
    * Where the Merkle path in the sealed note came from, so the UI can say
    * whether the recipient will need this pool's RPC history to withdraw.
-   *   'stored'  — the exact witness captured at shield time (never wrong).
+   *   'stored'  — no longer produced by the export (SPEND-1): a stored path
+   *               names the root of the note's own insertion.
    *   'rebuilt' — recomputed from the leaves this RPC still serves (best
    *               effort: a pruned RPC yields a root the pool will reject).
    *   'none'    — no path travels with the note; the recipient rebuilds.
@@ -1360,6 +1478,7 @@ export type PoolResponse =
   | PoolExportNoteResponse
   | PoolExportSeedResponse
   | PoolImportNoteResponse
+  | PoolIssueAddressResponse
   | PoolLicenseKeyResponse
   | PoolNoteAddressResponse
   | PoolOpenRecordsResponse
@@ -1542,6 +1661,10 @@ export function clearPoolState(): void {
   prepared.clear();
   preparedUnshields.clear();
   preparedSubscribes.clear();
+  // A disclosure shown to this identity confirms nothing once its keys are
+  // gone (`poolHandlersUnshieldV4.test.ts`, "the confirmation is one-shot,
+  // scoped to its payee, expires after ten minutes, and dies with the pool state").
+  preBlindingDisclosuresShown.clear();
 }
 
 function requireSeeds(meta: string): PoolSeedSet {
@@ -1633,6 +1756,7 @@ function handlePoolScanLocal(req: PoolScanLocalRequest): PoolScanLocalResponse {
         counter: Number(note.counter ?? 0),
         leafIndex,
         commitment,
+        tag: tagOfNote(poolStr, note.secret, note.nullifier_preimage),
         // NOT a claim. Nothing here has seen a nullifier PDA.
         spent: false,
         spentKnown: false,
@@ -1644,8 +1768,41 @@ function handlePoolScanLocal(req: PoolScanLocalRequest): PoolScanLocalResponse {
     if (!placed) skipped += 1;
   }
 
-  notes.sort((a, b) => a.denomination - b.denomination || a.leafIndex - b.leafIndex);
+  notes.sort(byDenominationThenTag);
   return { kind: 'poolScanLocal', notes, skipped };
+}
+
+/**
+ * A note's display name (`pool/noteTag.ts`), or nothing when its secrets do
+ * not parse: a malformed blob paints without a name rather than breaking the
+ * list. Computed here because the secrets never leave the worker (UI-1,
+ * `pool/poolNoteTag.test.ts`, one case per place a note view is made).
+ */
+function tagOfNote(pool: string, secret: unknown, nullifierPreimage: unknown): NoteTag | undefined {
+  try {
+    return noteTag({
+      pool,
+      secret: secret as bigint | string,
+      nullifierPreimage: nullifierPreimage as bigint | string,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Display order of every note list: denomination, then tag. It was leaf order,
+ * which put the oldest deposit first and let a screenshot rank a user's notes
+ * by age (`pool/poolNoteTag.test.ts`, "lists them by denomination then tag").
+ * The leaf only breaks a tie between two notes without a tag (an older worker's
+ * rows). Same rule as `shieldClient.mergeScanWithLocal`.
+ */
+function byDenominationThenTag(a: PoolNoteView, b: PoolNoteView): number {
+  if (a.denomination !== b.denomination) return a.denomination - b.denomination;
+  const ta = a.tag?.text ?? '￿';
+  const tb = b.tag?.text ?? '￿';
+  if (ta !== tb) return ta < tb ? -1 : 1;
+  return a.leafIndex - b.leafIndex;
 }
 
 /**
@@ -1791,6 +1948,7 @@ function toNoteView(n: RecoveredNote, derivation: DerivationVersion): PoolNoteVi
     counter: n.counter,
     leafIndex: n.receipt.leafIndex,
     commitment: n.receipt.commitment.toString(),
+    tag: tagOfNote(n.receipt.pool, n.receipt.secret, n.receipt.nullifierPreimage),
     spent: n.spent,
     derivation,
   };
@@ -1870,9 +2028,12 @@ async function handlePoolShieldExecute(
     // Persist-ready note, encrypted to the user's OWN post-quantum address, so
     // the main thread can store it without ever seeing a secret. Recovery does
     // not depend on this blob (see poolNotes.ts) — it is the fast path.
+    // Padded to one length: the blob's length otherwise said whether a Merkle
+    // path travels with the note and how many digits its leaf index has
+    // (`STORED_NOTE_BYTES`).
     const encryptedNote = encryptNote(
       createNoteEncryptionAddress(seed),
-      utf8ToBytes(JSON.stringify({
+      paddedJson({
         version: 1,
         pool: receipt.pool,
         secret: receipt.secret.toString(),
@@ -1893,7 +2054,7 @@ async function handlePoolShieldExecute(
         token: receipt.token,
         denominationHuman: receipt.denominationHuman,
         shieldedAt: receipt.shieldedAt,
-      })),
+      }, STORED_NOTE_BYTES),
     );
 
     return {
@@ -1903,6 +2064,7 @@ async function handlePoolShieldExecute(
       leafIndex: receipt.leafIndex,
       denomination: receipt.denominationHuman,
       encryptedNote,
+      tag: tagOfNote(receipt.pool, receipt.secret, receipt.nullifierPreimage),
     };
   } finally {
     prepared.delete(req.jobId);
@@ -2035,6 +2197,18 @@ export async function locateOwnedNote(
    *  because `poolExportNote` needs them to rebuild a Merkle path, and a second
    *  full history pull is the heaviest call on the path — see below. */
   commitments: Map<string, OnChainCommitment>;
+  /** What that walk could not read (`PoolWalkReport.unread`). The v4 prepare
+   *  proves a lagging root only from a walk that read all it listed
+   *  (`poolHandlersUnshieldV4.test.ts`, "hands the circuit-7 prepare what its
+   *  walk could not read"). Undefined when the walk made no report. */
+  unread: number | undefined;
+  /** The pool-wide spent set read below, handed on so a later spent check in
+   *  the same request asks the set instead of naming this note's nullifier PDA
+   *  (`noPointedNullifierRead.test.ts`). */
+  spentSet: ReadonlySet<string>;
+  /** Where the note came from, from local facts only; see
+   *  `PoolSubscribePrepareResponse.noteProvenance`. */
+  provenance: NoteProvenance;
 }> {
   const conn = requireConnection();
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
@@ -2090,7 +2264,12 @@ export async function locateOwnedNote(
   // Cleared in the caller's `finally` below instead, so no path leaves the
   // interval running.
   let commitments: Awaited<ReturnType<typeof fetchPoolCommitments>>;
-  commitments = await fetchPoolCommitments(conn, pool.poolPDA);
+  const walkReport: { unread?: number } = {};
+  commitments = await fetchPoolCommitments(conn, pool.poolPDA, {
+    onWalked: (report) => {
+      walkReport.unread = report.unread;
+    },
+  });
   // Pool-wide and derivation-independent, like `commitments` above, so it is
   // fetched once and shared across the candidate loop for the same reason.
   const spentSet = await fetchSpentNullifierSet(conn, pool.poolPDA);
@@ -2136,7 +2315,7 @@ export async function locateOwnedNote(
       pool,
       req.leafIndex,
       commitments,
-      conn,
+      spentSet,
     );
     if (received) owner = { candidate: candidates[0], note: received };
   }
@@ -2177,7 +2356,7 @@ export async function locateOwnedNote(
       pool,
       req.leafIndex,
       commitments,
-      conn,
+      spentSet,
     );
     // The ACTIVE candidate on purpose: it drives the ephemeral derivation and
     // the subscribe path's own-blob address, both of which belong to the
@@ -2186,8 +2365,10 @@ export async function locateOwnedNote(
   }
 
   if (!owner) {
+    // No position in the message: the page renders it, and the leaf a user
+    // picked names their deposit (`noteIdentifierTripwire.test.ts`).
     throw new Error(
-      `No note of yours found at leaf #${req.leafIndex} in the ${pool.denomination} ` +
+      `No note of yours found for that row in the ${pool.denomination} ` +
         `${pool.token} pool. If it was just shielded, wait for the RPC to index it.`,
     );
   }
@@ -2201,6 +2382,11 @@ export async function locateOwnedNote(
       note,
       storedPath: extractStoredPath(candidate.seed, req.encryptedNotes, note.receipt.commitment),
       commitments,
+      unread: walkReport.unread,
+      spentSet,
+      // Only the import's marker reads as received; everything else, the seed
+      // search included, is an own deposit (`noPointedNullifierRead.test.ts`).
+      provenance: note.receipt.source === 'received' ? 'received' : 'own-deposit',
     };
   } finally {
     // Every exit, including both throws above. An interval left running in a
@@ -2210,8 +2396,16 @@ export async function locateOwnedNote(
 }
 
 /**
- * Failures of the circuit-7 REBUILD that the C1 + C3 prepare can still answer,
- * and therefore the only ones `handlePoolUnshieldPrepare` routes around.
+ * Failures of the circuit-7 REBUILD the two prepare handlers RECOGNISE, and
+ * therefore the only ones they answer with anything but a rethrow.
+ *
+ * 🚨 V3-1: RECOGNISED IS NOT ROUTED. Until V3-1 every failure on this list was
+ * answered with the C1 + C3 pair, which publishes the note's commitment, the
+ * value its deposit published, with nothing on screen. Now a BLINDED note gets
+ * `blindedNoteRefusal` (nothing proved, funded or sent; retry), and only
+ * `PRE_BLINDING_REFUSAL` on a note under `LEGACY_BLINDING_CEILING` reaches the
+ * pair, after `confirmPreBlindingSpend` has shown its disclosure
+ * (`poolHandlersUnshieldV4.test.ts`, "blinded note refused, not proved on v3").
  *
  * ⛔ AN ALLOW-LIST, NOT A DENY-LIST, and that is the whole safety property.
  * Anything unrecognised is rethrown, so a new failure mode fails CLOSED —
@@ -2244,14 +2438,107 @@ function isV4RebuildFailure(err: unknown): boolean {
 }
 
 /**
+ * The ONE circuit-7 refusal the C1 + C3 pair may still answer (V3-1): a note
+ * deposited before commitment blinding, whose third commitment input is its
+ * deposit epoch. `prepareUnshieldJobV4` and `prepareSubscribeJobV4` raise it
+ * with this wording below the same 2**32 ceiling (unshieldEphemeral.ts,
+ * subscribeEphemeral.ts), and the pair is the only spend such a note has.
+ *
+ * BOTH halves must hold: the needle says which refusal fired, and the ceiling
+ * re-reads the note, so a reworded message, or a blinded note that somehow
+ * produced it, is refused rather than proved on the pair. Pinned against both
+ * jobs' sources by `poolHandlersUnshieldV4.test.ts`, "the pre-blinding needle
+ * and ceiling match both circuit-7 jobs", and "a pre-blinding refusal from a
+ * blinded note is refused too: the handler re-checks the ceiling".
+ */
+const PRE_BLINDING_REFUSAL = 'circuit 7 needs at least a randomised blinding';
+const LEGACY_BLINDING_CEILING = 2n ** 32n;
+
+function isPreBlindingRefusal(err: unknown, receipt: { noteBlinding: bigint }): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes(PRE_BLINDING_REFUSAL) && receipt.noteBlinding < LEGACY_BLINDING_CEILING;
+}
+
+type SpendKind = 'withdrawal' | 'subscription';
+
+/**
+ * What a BLINDED note gets when circuit 7 could not build its spend (V3-1),
+ * instead of the C1 + C3 pair. Thrown before anything is proved, funded or
+ * sent, so a retry costs one event scan.
+ *
+ * The reason is said in words and the job's own message is NOT quoted: it
+ * carries a `V4_REBUILD_FAILURES` needle, and a refusal holding one would read
+ * as routable to the very pair it refuses. It names no note value either; the
+ * page shows it as the error line (`poolHandlersUnshieldV4.test.ts`, "the
+ * refusal says nothing was sent and to retry, names no note value and carries
+ * no needle").
+ */
+function blindedNoteRefusal(spend: SpendKind, err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  const reason = msg.includes('PRE-FLIGHT FAIL')
+    ? 'the Merkle root it rebuilt is not one the pool accepts yet'
+    : 'the Merkle path it rebuilt does not fit the circuit';
+  return new Error(
+    `Circuit 7 could not build this ${spend}: ${reason}. Nothing was proved, funded or ` +
+      'sent, and it is not retried on the older C1 + C3 pair: that pair ' +
+      "publishes the note's commitment, the value its deposit also published, so anyone " +
+      'reading the chain could match the two. Wait about ten seconds for the RPC to catch up, ' +
+      'then retry. If it keeps failing, the RPC is not serving the whole pool history.',
+  );
+}
+
+/**
+ * Pre-blinding spends whose disclosure this worker has shown, by the spend it
+ * was shown for (note and payee or retailer), with the time it was shown.
+ * Memory only: a reload, or `clearPoolState`, forgets every one.
+ */
+const preBlindingDisclosuresShown = new Map<string, number>();
+const PRE_BLINDING_CONFIRM_MINUTES = 10;
+
+/**
+ * The only door from a pre-blinding note to the C1 + C3 pair (V3-1): never a
+ * silent fallback. The pair publishes the note's commitment, so the FIRST
+ * request is answered with a disclosure the page shows as its error line, and
+ * nothing is proved, funded or sent. The same request again, for the same note
+ * and payee, within `PRE_BLINDING_CONFIRM_MINUTES`, is the confirmation, and
+ * one confirmation opens one prepare (`poolHandlersUnshieldV4.test.ts`, "the
+ * confirmation is one-shot, scoped to its payee, expires after ten minutes,
+ * and dies with the pool state").
+ */
+function confirmPreBlindingSpend(key: string, spend: SpendKind): void {
+  const shownAt = preBlindingDisclosuresShown.get(key);
+  preBlindingDisclosuresShown.delete(key);
+  const now = Date.now();
+  if (shownAt !== undefined && now - shownAt <= PRE_BLINDING_CONFIRM_MINUTES * 60_000) return;
+  preBlindingDisclosuresShown.set(key, now);
+  throw new Error(
+    'This note was deposited before we randomised the blinding, so it can only be spent on ' +
+      "the older C1 + C3 pair, and that pair publishes the note's commitment. Its deposit " +
+      `published the same value, so anyone reading the chain can match this ${spend} to that ` +
+      'deposit. Nothing was proved, funded or sent. To spend it this way anyway, press the ' +
+      `same button again within ${PRE_BLINDING_CONFIRM_MINUTES} minutes.`,
+  );
+}
+
+/**
  * Prove and price ONE withdrawal, on whichever circuit the request supplies the
  * inputs for.
  *
  * THE ROUTE IS PER REQUEST, NOT A MIGRATION. `unshield_denominated_stark_v3`
  * stays registered on chain indefinitely: a note whose blinding is unknown can
- * be spent nowhere else, and `prepareUnshieldV4` has no stored-path fast path,
- * so a note whose root has aged out of the pool's 100-root ring still needs the
- * v3 rebuild. Neither is legacy.
+ * be spent nowhere else, and reaches it here only after its disclosure
+ * (`confirmPreBlindingSpend`, V3-1). A BLINDED note circuit 7 cannot place in
+ * the pool's root ring (PRE-FLIGHT FAIL) no longer gets the v3 rebuild: the
+ * pair publishes its commitment, so it is refused with a retry message
+ * (`poolHandlersUnshieldV4.test.ts`, "blinded note refused, not proved on
+ * v3"). A history hole with an OLDER saved root is not such a note either: `prepareUnshieldV4` raises
+ * `HistoryIncompleteError`, which is rethrown here, because the saved root dates
+ * the deposit (`spendRootIsCurrent.test.ts`; `poolHandlersUnshieldV4.test.ts`,
+ * "does NOT fall back to the C1 + C3 pair when the history is incomplete"). Nor
+ * is a note no map the prepare read places: it raises the same error
+ * (`poolHandlersUnshieldV4.test.ts`, "a note whose insert no walk read places
+ * is refused on circuit 7 and never reaches the C1 + C3 pair: the real walk
+ * and the real prepare").
  *
  * ⛔ THE SUBSCRIBE PATH CANNOT REACH THE v4 BRANCH, and here is the proof rather
  * than the assurance. TWO independent facts, each checkable without running
@@ -2310,7 +2597,7 @@ async function handlePoolUnshieldPrepare(
     );
   }
 
-  const { conn, pool, candidate, note, storedPath } = await locateOwnedNote(req, onProgress);
+  const { conn, pool, candidate, note, storedPath, commitments, unread } = await locateOwnedNote(req, onProgress);
 
   if (req.recipient !== undefined && req.ownerPubkey !== undefined) {
     // `prepareUnshieldJobV4` is referenced ONLY inside this branch, and the
@@ -2339,40 +2626,44 @@ async function handlePoolUnshieldPrepare(
         conn,
         candidate.seed,
         onProgress,
-        // The note's own witness, the same value the v3 branch below has always
-        // been handed. Passing it is what stops a stored-path note falling back
-        // to the pair that republishes its commitment.
-        storedPath,
+        // The leaves `locateOwnedNote` already walked, so the prepare builds the
+        // path from pool state without a second walk; the saved witness is used
+        // only when its root is the pool's current root
+        // (`poolHandlersUnshieldV4.test.ts`, "hands the circuit-7 prepare the
+        // leaves it already walked"; `spendRootIsCurrent.test.ts`). `unread` is
+        // what that walk could not read, so a lagging root is proved only from
+        // a walk that read all it listed (same test file, "hands the circuit-7
+        // prepare what its walk could not read").
+        { leaves: commitments, unread, savedPath: storedPath },
       );
     } catch (err) {
-      // ⛔ FALL BACK, OR THIS NOTE CANNOT BE WITHDRAWN FROM THE WEB APP AT ALL.
+      // ⛔ ONE NOTE STILL FALLS BACK, AND NEVER SILENTLY (V3-1).
       // `unshieldFromPool` types both fields as required and sends them on every
       // withdrawal, so this branch is the ONLY route apps/web still has to the
-      // C1 + C3 pair. Without the fallback, the v3 branch below is dead code in
-      // production and a note circuit 7 cannot prove stops being spendable from
-      // this client — while `spendRouting.test.ts` and four comments in this
-      // tree state that v3 stays reachable indefinitely.
+      // C1 + C3 pair, and the pair publishes the note's commitment, the value
+      // its deposit published. So:
+      //   - anything unrecognised is rethrown (the allow-list);
+      //   - a BLINDED note is refused with a retry message, never proved on
+      //     the pair (`poolHandlersUnshieldV4.test.ts`, "blinded note refused,
+      //     not proved on v3");
+      //   - a pre-blinding note, which has no other spend, reaches the pair
+      //     only on the same request asked again after its disclosure ("the
+      //     confirmation is one-shot, scoped to its payee, expires after ten
+      //     minutes, and dies with the pool state").
+      // `HistoryIncompleteError` carries no needle, so it is rethrown by the
+      // first line (`spendRootIsCurrent.test.ts`, "hole plus older saved root:
+      // refuse, never name it, no v3").
       //
-      // The asymmetry between the two prepares is real and runs one way:
-      // `prepareUnshieldJob` tries the Merkle path captured when the note was
-      // shielded and rebuilds from history only if that path has aged out
-      // (unshieldEphemeral.ts:163-172); `prepareUnshieldV4` has no stored-path
-      // route at all and always rebuilds.
-      //
-      // Nothing has been spent at this point, which is what makes the retry
+      // Nothing has been spent at this point, which is what makes both refusals
       // free: `prepareUnshieldV4` refuses before it proves and long before it
-      // uploads — its own message says "Aborting before proof rent is spent" —
-      // so the second attempt costs one event scan and no rent. The v3 rebuild
-      // pre-flights the root too (denominatedPool.ts:2132), so a note neither
-      // can place gets the same refusal from the other side rather than a doomed
-      // upload.
+      // uploads, so a retry costs one event scan and no rent.
       if (!isV4RebuildFailure(err)) throw err;
-      console.warn(
-        '[pool/unshield] circuit 7 could not prove this note; falling back to the C1 + C3 ' +
-          'pair, which publishes the note commitment:',
-        err instanceof Error ? err.message : String(err),
+      if (!isPreBlindingRefusal(err, note.receipt)) throw blindedNoteRefusal('withdrawal', err);
+      confirmPreBlindingSpend(
+        `unshield:${req.meta}:${pool.poolPDA.toBase58()}:${req.leafIndex}:${req.recipient}`,
+        'withdrawal',
       );
-      onProgress?.('Circuit 7 cannot prove this note — falling back to the C1 + C3 pair...');
+      onProgress?.('Falling back to the C1 + C3 pair, as confirmed; it publishes the note commitment...');
     }
 
     if (v4) {
@@ -2402,7 +2693,7 @@ async function handlePoolUnshieldPrepare(
   // ── The v3 path. Byte for byte what it was before circuit 7 existed, except
   // for the `version` tag the caller is now told instead of guessing — and it is
   // reached two ways now: a request that named no payee at all, and a circuit-7
-  // request whose rebuild could not produce a usable Merkle path.
+  // request for a pre-blinding note, confirmed after its disclosure (V3-1).
   const ctx = await prepareUnshieldJob(
     note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
   );
@@ -2472,7 +2763,7 @@ async function receivedNoteFromBlobs(
   pool: PoolConfig,
   leafIndex: number,
   commitments: Map<string, OnChainCommitment>,
-  conn: Connection,
+  spentSet: ReadonlySet<string>,
 ): Promise<RecoveredNote | null> {
   for (const blob of blobs ?? []) {
     let parsed: ShareableNote | null = null;
@@ -2505,18 +2796,25 @@ async function receivedNoteFromBlobs(
     const onChain = commitments.get(receipt.commitment.toString());
     if (onChain && onChain.leafIndex !== leafIndex) continue;
 
-    // Sanctioned single-note lookup: this runs inside the withdrawal flow, on the
-    // one note about to be spent, so its nullifier is published on chain moments
-    // later and the RPC learns nothing it is not about to see anyway. Every
-    // caller that runs on page load or over a LIST of unspent notes uses
-    // `fetchSpentNullifierSet` instead — see its header.
-    const spent = await isNullifierSpent(
-      conn,
+    // Membership in the pool-wide set `locateOwnedNote` already read, never a
+    // read of this note's nullifier PDA: the export reaches this function too
+    // and spends nothing, and a relayed withdrawal is published by the relayer,
+    // not by this IP (`noPointedNullifierRead.test.ts`).
+    const spent = isNullifierSpentInSet(
+      spentSet,
       pool.poolPDA,
       receipt.nullifierPreimage,
       receipt.secret,
     );
-    return { counter: leafIndex, spent, receipt: { ...receipt, source: 'received' } };
+    // The blob says where the note came from: `poolImportNote` files
+    // `source: 'received'`, the shield-time blob carries no marker and is this
+    // identity's own deposit (`noPointedNullifierRead.test.ts`, "a blob with no
+    // source marker (the shield-time blob) is an own deposit").
+    const source =
+      (parsed as ShareableNote & { source?: unknown }).source === 'received'
+        ? ('received' as const)
+        : ('shielded' as const);
+    return { counter: leafIndex, spent, receipt: { ...receipt, source } };
   }
   return null;
 }
@@ -2763,38 +3061,59 @@ async function handlePoolExportNote(
   // keeps a pre-passphrase note exportable. It also refuses an already-spent
   // note, which matters more here than anywhere else: a sealed note that was
   // already withdrawn looks exactly like a good one to the recipient.
-  const { pool, candidate, note, storedPath, commitments } = await locateOwnedNote(req, onProgress);
+  const { pool, candidate, note, storedPath, commitments, unread } = await locateOwnedNote(req, onProgress);
 
   // The Merkle path is what lets the recipient withdraw with no history rebuild.
-  // Stored first: it is the exact witness the shield captured and was accepted
-  // on chain. The rebuild is a fallback because it can only see the leaves this
-  // RPC still serves, and a pruned history yields a root the pool never had.
+  // It is REBUILT from the leaves just walked, never the path stored at shield
+  // time: that one folds to the root of the note's own insertion, and a spend
+  // naming it dates the deposit (`poolExportNote.test.ts`, "ships a rebuilt
+  // path, never the root stored at shield time").
   let merkleRoot: string | undefined;
   let merklePathElements: string[] | undefined;
   let merklePathIndices: number[] | undefined;
   let merklePath: PoolExportNoteResponse['merklePath'] = 'none';
 
-  if (storedPath) {
-    merkleRoot = storedPath.root;
-    merklePathElements = storedPath.pathElements;
-    merklePathIndices = storedPath.pathIndices;
-    merklePath = 'stored';
-  } else {
+  // Nor a rebuilt path whose root is tied to the note: when the note is the
+  // newest leaf the walk read, it folds to the note's own deposit root, and a
+  // walk that left listed inserts unread (or made no report) may end where this
+  // client last read, often its own purchase. A recipient spending on it would
+  // name that root, so none ships and the recipient rebuilds from history
+  // (`poolExportNote.test.ts`, "ships no path when the walk ends at the note or
+  // left listed inserts unread").
+  const leavesByIndex = leavesFromCommitments(commitments);
+  const tiedToNote = unread !== 0 || leavesByIndex.length - 1 === note.receipt.leafIndex;
+  // Nor a rebuilt root that IS the root filed with the note: a walk can end
+  // exactly where it was taken (a received note's issuance, right after the
+  // buyer's own deposit, with nothing newer listed yet), and a recipient
+  // spending on that path names the purchase (`poolExportNote.test.ts`, "ships
+  // no path whose root is the one filed with the note, when the walk ends where
+  // that root was taken").
+  const filedRoot = ((): bigint | null => {
     try {
+      return storedPath ? BigInt(storedPath.root) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  try {
+    if (!tiedToNote) {
       onProgress?.('Building the Merkle path the recipient will withdraw with...');
       const built = buildMerkleProofFromLeavesV3({
-        leavesByIndex: leavesFromCommitments(commitments),
+        leavesByIndex,
         targetLeafIndex: note.receipt.leafIndex,
       });
-      merkleRoot = built.root.toString();
-      merklePathElements = built.pathElements.map((e) => e.toString());
-      merklePathIndices = built.pathIndices;
-      merklePath = 'rebuilt';
-    } catch {
-      // Leave the path off rather than ship a wrong one. The recipient then
-      // rebuilds from history, which is slower but always correct.
-      merklePath = 'none';
+      if (built.root !== filedRoot) {
+        merkleRoot = built.root.toString();
+        merklePathElements = built.pathElements.map((e) => e.toString());
+        merklePathIndices = built.pathIndices;
+        merklePath = 'rebuilt';
+      }
     }
+  } catch {
+    // Leave the path off rather than ship a wrong one. The recipient then
+    // rebuilds from history, which is slower but always correct.
+    merklePath = 'none';
   }
 
   const shareable: ShareableNote = {
@@ -2809,27 +3128,80 @@ async function handlePoolExportNote(
     leafIndex: note.receipt.leafIndex,
     token: note.receipt.token,
     denominationHuman: note.receipt.denominationHuman,
-    shieldedAt: note.receipt.shieldedAt,
+    // No `shieldedAt`. For an issued or received note it was the moment this
+    // device imported it, seconds after the public till payment that bought it,
+    // and every later holder kept it (`poolExportNote.test.ts`, "hands the
+    // recipient no time: a note filed at two different moments seals the same
+    // plaintext"). The field is optional on `ShareableNote`.
     merkle_root: merkleRoot,
     merkle_path_elements: merklePathElements,
     merkle_path_indices: merklePathIndices,
   };
 
   onProgress?.('Sealing the note to the recipient (X25519 + ML-KEM-768)...');
-  const sealedNote = encryptNote(
-    req.recipientAddress,
-    utf8ToBytes(JSON.stringify(shareable)),
-  );
+  const sealedNote = encryptNote(req.recipientAddress, paddedHandoff(shareable));
 
   return {
     kind: 'poolExportNote',
     sealedNote,
     denomination: pool.denomination,
-    leafIndex: note.receipt.leafIndex,
-    commitment: note.receipt.commitment.toString(),
+    // The display name only; see the note on `PoolExportNoteResponse`.
+    tag: noteTag({
+      pool: note.receipt.pool,
+      secret: note.receipt.secret,
+      nullifierPreimage: note.receipt.nullifierPreimage,
+    }),
     derivation: candidate.derivation,
     merklePath,
   };
+}
+
+/**
+ * Every handoff's plaintext is padded with spaces to a multiple of this many
+ * bytes. Unpadded, the sealed string's length (printed on the Send screen and
+ * carried by the QR code and the clipboard) told a pre-blinding note from a
+ * blinded one, a received note from an own one, a path from none, and the
+ * digits of the leaf index; measured 1,928 to 2,704 characters over five
+ * shapes on the real handler (`scratchpad/web-run/logs4/sweep4-r1/check/
+ * S4R1-HANDOFF-red.log`). The longest note a web client holds (three
+ * BN254-reduced fields of 77 digits, a 63-bit blinding, a five-digit leaf, the
+ * longest denomination and a 15-element path) is about 950 bytes, so every
+ * note pads to 1,008 and seals to 2,900 characters: still one QR code
+ * (`SendForm.tsx` QR_BYTE_CAPACITY). Spaces are JSON whitespace, so every
+ * client that parses the note reads the same note. Pinned by
+ * `poolExportNote.test.ts`, "seals every handoff to one length, whatever the
+ * note, its source, its path or its digits".
+ */
+const SEALED_HANDOFF_BYTES = 1_008;
+
+/**
+ * [SWEEP4 round 1, storage lane] The same rule for the blobs this worker files
+ * in the LOCAL note store, where the reader is a storage dump rather than a
+ * recipient: unpadded, the blob's length said whether a Merkle path was stored
+ * with the note — which tells a received or own note from a bare one — and the
+ * digit count of its leaf index.
+ *
+ * 2,048, because a note with the longest shape a web client holds (three
+ * BN254-reduced fields of 77 digits, a 19-digit blinding, a six-digit leaf,
+ * the longest denomination and a 15-element path of 77-digit elements)
+ * measures 1,932 bytes, while a note with no path measures 540: one bucket has
+ * to hold both, or the bucket itself tells them apart. Pinned by
+ * `poolImportNote.test.ts`, "files every note at one length, path or no path,
+ * whatever its digits".
+ */
+const STORED_NOTE_BYTES = 2_048;
+
+function paddedJson(value: unknown, bucket: number): Uint8Array {
+  const json = utf8ToBytes(JSON.stringify(value));
+  const size = Math.max(1, Math.ceil(json.length / bucket)) * bucket;
+  const out = new Uint8Array(size).fill(0x20);
+  out.set(json);
+  return out;
+}
+
+/** Spaces are JSON whitespace, so every client reads the same note. */
+function paddedHandoff(note: ShareableNote): Uint8Array {
+  return paddedJson(note, SEALED_HANDOFF_BYTES);
 }
 
 /**
@@ -2867,13 +3239,27 @@ async function handlePoolImportNote(
 
   onProgress?.('Opening the sealed note...');
   let plaintext: Uint8Array | null = null;
-  for (const candidate of candidates) {
-    try {
-      plaintext = decryptNote(candidate.seed, sealed);
-      break;
-    } catch {
-      // Not this derivation's blob. Try the next.
+  // An ISSUED note is sealed to the one-time key of its claim code (DEV-1), so
+  // that key goes first, under every seed derivation; the identity keys follow
+  // for a hand-over and for a reply the issuer stored before DEV-1
+  // (`worker/issueAddress.test.ts`, "two issuances, unlinkable addresses",
+  // "a retry after a passphrase was armed still opens the reply the issuer
+  // kept" and "a reply sealed before DEV-1 to the published address still
+  // opens with its code").
+  const oneTime = req.claimCode
+    ? candidates.map((candidate) => issueSealSeed(candidate.seed, req.claimCode!))
+    : [];
+  try {
+    for (const seed of [...oneTime, ...candidates.map((candidate) => candidate.seed)]) {
+      try {
+        plaintext = decryptNote(seed, sealed);
+        break;
+      } catch {
+        // Not this derivation's blob. Try the next.
+      }
     }
+  } finally {
+    for (const seed of oneTime) seed.fill(0);
   }
   if (!plaintext) {
     throw new Error(
@@ -2941,10 +3327,12 @@ async function handlePoolImportNote(
     !!shared.merkle_root &&
     Array.isArray(shared.merkle_path_elements) &&
     Array.isArray(shared.merkle_path_indices);
+  // Padded to one length, like every other blob filed on this device; see
+  // `STORED_NOTE_BYTES`.
   const encryptedNote = encryptNote(
     createNoteEncryptionAddress(requireActiveSeed(req.meta)),
-    utf8ToBytes(
-      JSON.stringify({
+    paddedJson(
+      {
         version: 1,
         pool: receipt.pool,
         secret: receipt.secret.toString(),
@@ -2964,9 +3352,13 @@ async function handlePoolImportNote(
           : {}),
         token: receipt.token,
         denominationHuman: receipt.denominationHuman,
-        shieldedAt: receipt.shieldedAt,
+        // Never the sender's time: an older sender seals the moment it imported
+        // the note, which dates the purchase. 0 is what a seed-scanned own note
+        // carries (`poolImportNote.test.ts`, "files no sender time").
+        shieldedAt: 0,
         source: 'received',
-      }),
+      },
+      STORED_NOTE_BYTES,
     ),
   );
 
@@ -2980,6 +3372,7 @@ async function handlePoolImportNote(
       counter: 0,
       leafIndex: receipt.leafIndex,
       commitment: receipt.commitment.toString(),
+      tag: tagOfNote(receipt.pool, receipt.secret, receipt.nullifierPreimage),
       spent: false,
       // True only when the chain actually answered the nullifier read above.
       spentKnown: spent !== null,
@@ -2995,6 +3388,41 @@ function handlePoolNoteAddress(req: PoolNoteAddressRequest): PoolNoteAddressResp
     kind: 'poolNoteAddress',
     address: createNoteEncryptionAddress(requireActiveSeed(req.meta)),
   };
+}
+
+/** HKDF info prefix of the one-time issuance keys. Distinct from every seed,
+ *  note-key and store-label info string. */
+const ISSUE_SEAL_INFO = utf8ToBytes('p01:issue-seal:v1');
+
+/**
+ * The seed of the one-time issuance keys for `claimCode`: HKDF(seed,
+ * 'p01:issue-seal:v1' || sha256(code)). Keyed by the pool seed, so the issuer,
+ * who holds the code and its sha256 (`p01:note:sealed:<sha256(code)>`), cannot
+ * tie the address to this identity or to its other purchases
+ * (`worker/issueAddress.test.ts`, "two issuances, unlinkable addresses").
+ * See `PoolIssueAddressRequest`.
+ */
+function issueSealSeed(seed: Uint8Array, claimCode: string): Uint8Array {
+  return hkdf(
+    sha256,
+    seed,
+    undefined,
+    concatBytes(ISSUE_SEAL_INFO, sha256(utf8ToBytes(claimCode))),
+    32,
+  );
+}
+
+/** One issuance's own address (DEV-1). Public material; both seeds stay in here. */
+function handlePoolIssueAddress(req: PoolIssueAddressRequest): PoolIssueAddressResponse {
+  if (typeof req.claimCode !== 'string' || req.claimCode.length === 0) {
+    throw new Error('An issuance address needs the claim code it is for.');
+  }
+  const seed = issueSealSeed(requireActiveSeed(req.meta), req.claimCode);
+  try {
+    return { kind: 'poolIssueAddress', address: createNoteEncryptionAddress(seed) };
+  } finally {
+    seed.fill(0);
+  }
 }
 
 /**
@@ -3016,112 +3444,6 @@ function handlePoolNoteAddress(req: PoolNoteAddressRequest): PoolNoteAddressResp
  *
  * Neither value's input leaves the worker.
  */
-/**
- * Who put the lamports on `payer` — one hop, from the oldest end of its life.
- *
- * WHY THIS HOP IS THE WHOLE POINT. A pool deposit is signed by a fresh
- * ephemeral, so the deposit transaction names a key nobody has ever heard of.
- * The address that matters is one transfer behind it: an ephemeral cannot pay a
- * fee from nothing, and whoever funded it is the human. Probe P9 walks exactly
- * this, and a client that decides "was this my own deposit?" without walking it
- * is asking a question it cannot answer.
- *
- * Reads the OLDEST transactions of the payer's life, because that is where a
- * funding transfer is: the key is created by being funded. Bounded to one small
- * page — this runs on the subscribe path and must not turn into a history walk.
- *
- * Returns null when nothing can be established. Callers must treat null as
- * UNKNOWN and never as safe: an unfunded-looking payer is far more likely to be
- * a pruned history than a key that materialised with lamports.
- */
-/**
- * How far back to look for the payer's first transaction. A shield ephemeral
- * lives ~158 signatures; 1000 clears that with room and is the same ceiling
- * `recoverFloat` uses for the same walk. An address busier than this returns
- * null rather than a guess.
- */
-const FUNDER_SIGNATURE_LIMIT = 1000;
-/** How many of the oldest to actually fetch. The funding transfer is the first. */
-const FUNDER_OLDEST_SAMPLE = 5;
-/**
- * How far the source's loss may sit from the payer's gain and still be called
- * the source: the difference is that transaction's fee. Generous next to any
- * real transfer, and far tighter than the 5000-lamport fee that used to win.
- */
-const FUNDER_AMOUNT_TOLERANCE_LAMPORTS = 1_000_000;
-
-export async function resolveFunderOfPayer(
-  conn: Connection,
-  payer: string,
-): Promise<string | null> {
-  try {
-    const key = new PublicKey(payer);
-    // 🚨 THE PAGE HAS TO REACH THE PAYER'S FIRST TRANSACTION, AND `limit: 50`
-    // DID NOT.
-    //
-    // `getSignaturesForAddress` returns the NEWEST first, so reversing a page of
-    // 50 reaches the oldest of the newest 50 — the true beginning only when the
-    // address has lived 50 signatures or fewer. A shield ephemeral signs ~150
-    // proof-chunk uploads before it does anything else (see the header of
-    // `handlePoolShieldExecute`), so the five entries examined were uploads from
-    // the MIDDLE of its life, in which it only ever pays fees. `gained <= 0`
-    // skipped all five and the function fell through to `null` — for every note
-    // this client has ever deposited, treasury-issued ones included.
-    //
-    // MEASURED 2026-08-18: a subscription refused its own freshly issued note
-    // because of this, and the refusal read as "you deposited this yourself".
-    const sigs = await conn.getSignaturesForAddress(key, { limit: FUNDER_SIGNATURE_LIMIT });
-    if (sigs.length === 0) return null;
-    // Oldest last in the response, so the tail is the start of the key's life.
-    // Nothing else is worth reading: a funding transfer is how the key comes
-    // into existence, and `recoverFloat` records the same shape.
-    const oldestFirst = [...sigs].reverse().slice(0, FUNDER_OLDEST_SAMPLE);
-    for (const s of oldestFirst) {
-      if (s.err) continue;
-      const tx = await conn.getParsedTransaction(s.signature, {
-        maxSupportedTransactionVersion: 0,
-        commitment: 'confirmed',
-      });
-      if (!tx?.meta) continue;
-      const keys = tx.transaction.message.accountKeys.map((k) => k.pubkey.toBase58());
-      const idx = keys.indexOf(payer);
-      if (idx < 0) continue;
-      const gained = (tx.meta.postBalances[idx] ?? 0) - (tx.meta.preBalances[idx] ?? 0);
-      if (gained <= 0) continue;
-      // Balance deltas rather than decoded instructions, for the reason
-      // `recoverFloat` documents: a transfer can arrive as `transfer`, as
-      // `createAccount`, or through a CPI naming none of them, and the runtime's
-      // own numbers see all three.
-      //
-      // ⛔ NOT "the first account that lost lamports". `accountKeys[0]` IS the
-      // fee payer and its delta is always negative, so that rule returned the
-      // fee payer every time and never the source of the value — right only by
-      // luck, because every funding transfer this repo writes happens to set
-      // `feePayer == source`. The same luck probe P6 was recorded as relying on.
-      //
-      // This matters more than it looks: paired with the widened page above, the
-      // old rule would start returning a CONFIDENT WRONG address instead of
-      // null. The wallet comparison in `shieldClient` would then measure the
-      // wrong thing and let a genuinely self-deposited note through — turning a
-      // guard that fails closed into one that fails silently open.
-      let best: { addr: string; miss: number } | null = null;
-      for (let i = 0; i < keys.length; i++) {
-        if (i === idx) continue;
-        const delta = (tx.meta.postBalances[i] ?? 0) - (tx.meta.preBalances[i] ?? 0);
-        if (delta >= 0) continue;
-        // The source loses what the payer gained, plus whatever fee it paid.
-        const miss = Math.abs(-delta - gained);
-        if (miss > FUNDER_AMOUNT_TOLERANCE_LAMPORTS) continue;
-        if (!best || miss < best.miss) best = { addr: keys[i]!, miss };
-      }
-      if (best) return best.addr;
-    }
-  } catch {
-    // Unknown, which the caller must not read as safe.
-  }
-  return null;
-}
-
 /**
  * The circuit-0 (`subscriber_ownership`) commitment over the note secret, as the
  * Goldilocks felt the vault PDA is seeded on.
@@ -3169,43 +3491,18 @@ async function handlePoolSubscribePrepare(
   req: PoolSubscribePrepareRequest,
   onProgress?: (step: string) => void,
 ): Promise<PoolSubscribePrepareResponse> {
-  const { conn, pool, candidate, note, storedPath, commitments } = await locateOwnedNote(
+  const { conn, pool, candidate, note, storedPath, spentSet, provenance } = await locateOwnedNote(
     req,
     onProgress,
   );
 
-  // Who deposited the note we are about to spend. Looked up by the note's own
-  // commitment, which is the SAME value the spend will republish in cleartext —
-  // so this is exactly the address a stranger reaches in one hop from the
-  // subscription. Free: `commitments` is already in hand from the scan.
-  const origin = commitments.get(note.receipt.commitment.toString()) ?? null;
-
-  // 🚨 AND THEN ONE HOP FURTHER, WHICH THE FIRST VERSION OF THIS DID NOT DO.
-  //
-  // `origin.depositPayer` is the fee payer of the insert transaction, and in
-  // this client that is ALWAYS a fresh ephemeral — a deposit is signed by
-  // `deriveShieldEphemeral`, never by the wallet. MEASURED on a real devnet
-  // shield: wallet `BRop…TjNN`, deposit fee payer `8Eq1jsbB…`.
-  //
-  // So comparing the connected wallet against `depositPayer` compares a wallet
-  // to an ephemeral, which never matches, and the guard built to catch "you
-  // deposited this note yourself" could not fire in the one case it exists for.
-  // The screen would then have said "your wallet did not sign or pay for this
-  // subscription" — true, and read as "nobody can reach me", while the actual
-  // walk is: deposit → its ephemeral → whoever funded that ephemeral → the
-  // wallet. That is one getSignaturesForAddress away, and it is precisely what
-  // probe P9 measures.
-  //
-  // So resolve the funder of the deposit's payer. Bounded: the ephemeral's
-  // funding transfer is the OLDEST entry of its short life, so a small page from
-  // the far end answers it. `null` stays `null` — unknown, never safe.
-  // Says what it is doing, because it is a chain walk on the critical path and
-  // a frozen sentence is how the last one got mistaken for a hang. Measured
-  // 2026-08-18 against devnet: ~1s for a payer with 102 signatures.
-  onProgress?.('Checking who deposited this note...');
-  const depositFunder = origin?.depositPayer
-    ? await resolveFunderOfPayer(conn, origin.depositPayer)
-    : null;
+  // Who deposited the note is NOT asked of the chain. The walk that did it (the
+  // deposit's fee payer, then that payer's funder) named the depositing
+  // ephemeral to the RPC from this IP, and still called a relayed own deposit
+  // clean. `provenance` comes from the local blob instead
+  // (`noPointedNullifierRead.test.ts`, "subscribe prepare never names the
+  // depositing ephemeral"; `selfDepositedNote.test.ts`, "deposit verdict local
+  // and pessimistic").
 
   // ── Circuit 7, when the caller supplied the terms it needs ────────────────
   //
@@ -3277,27 +3574,39 @@ async function handlePoolSubscribePrepare(
           licenseCommitment: licenseCommitmentBytes,
         },
         onProgress,
+        spentSet,
+        // Never proved on this route: `prepareSubscribeV4` reads only its root, and
+        // holds back a map whose root IS the saved one, as the withdrawal does
+        // (`poolHandlersUnshieldV4.test.ts`, "hands the circuit-7 SUBSCRIPTION
+        // prepare the saved witness it read from the stored blob").
+        storedPath,
       );
     } catch (err) {
-      // ⛔ FALL BACK, OR THIS NOTE CANNOT BE SUBSCRIBED FROM THE WEB APP AT ALL.
-      // The asymmetry between the two prepares is real and runs one way:
-      // `prepareSubscribeJob` inherits `prepareUnshieldJob`'s stored-Merkle-path
-      // shortcut, while `prepareSubscribeV4` has no such route and always
-      // rebuilds from history. A note whose root aged out of the 100-root ring,
-      // or one that predates commitment blinding, has only the C1 + C3 pair.
+      // ⛔ ONE NOTE STILL FALLS BACK, AND NEVER SILENTLY (V3-1), as on the
+      // withdrawal. The pair publishes the note's commitment, the value its
+      // deposit published, and a subscription leaves a public vault beside it.
+      //   - anything unrecognised is rethrown (the allow-list): a prover that
+      //     cannot produce a circuit-7 trace, or a caller that named a vault
+      //     the seeds do not derive, is a bug to surface;
+      //   - a BLINDED note is refused with a retry message
+      //     (`poolHandlersUnshieldV4.test.ts`, "a blinded subscription is
+      //     refused, not proved on v3");
+      //   - a pre-blinding note reaches the pair only on the same request asked
+      //     again after its disclosure ("a pre-blinding subscription gets the
+      //     same disclosure, and a withdrawal disclosure does not confirm it").
+      // `HistoryIncompleteError` carries no needle and is rethrown by the first
+      // line (same file, "a circuit-7 subscription refused for an incomplete
+      // history does NOT fall back to the C1 + C3 pair").
       //
-      // Nothing has been spent at this point, which is what makes the retry
-      // free: `prepareSubscribeV4` refuses before it proves and long before it
-      // uploads. The allow-list fails CLOSED — a prover that cannot produce a
-      // circuit-7 trace, or a caller that named a vault the seeds do not derive,
-      // is a bug to surface, not to route around.
+      // Nothing has been spent at this point: `prepareSubscribeV4` refuses
+      // before it proves and long before it uploads.
       if (!isV4RebuildFailure(err)) throw err;
-      console.warn(
-        '[pool/subscribe] circuit 7 could not prove this note; falling back to the C1 + C3 ' +
-          'pair, which publishes the note commitment:',
-        err instanceof Error ? err.message : String(err),
+      if (!isPreBlindingRefusal(err, note.receipt)) throw blindedNoteRefusal('subscription', err);
+      confirmPreBlindingSpend(
+        `subscribe:${req.meta}:${pool.poolPDA.toBase58()}:${req.leafIndex}:${req.retailer}`,
+        'subscription',
       );
-      onProgress?.('Circuit 7 cannot prove this note — falling back to the C1 + C3 pair...');
+      onProgress?.('Falling back to the C1 + C3 pair, as confirmed; it publishes the note commitment...');
     }
 
     if (v4) {
@@ -3326,9 +3635,7 @@ async function handlePoolSubscribePrepare(
         requiredLamports: v4.requiredLamports,
         denomination: pool.denomination,
         derivation: candidate.derivation,
-        depositPayer: origin?.depositPayer ?? null,
-        depositFunder,
-        depositSignature: origin?.signature ?? null,
+        noteProvenance: provenance,
         version: 'v4',
         licenseScheme: 'v2',
       };
@@ -3338,7 +3645,7 @@ async function handlePoolSubscribePrepare(
   // ── The v3 path. Byte for byte what it was before circuit 7 existed, except
   // for the `version` tag the caller is now told instead of guessing — and it is
   // reached two ways now: a request that named no terms at all, and a circuit-7
-  // request whose rebuild could not produce a usable Merkle path.
+  // request for a pre-blinding note, confirmed after its disclosure (V3-1).
   const ctx = await prepareSubscribeJob(
     note.receipt, pool, conn, candidate.seed, onProgress, storedPath,
   );
@@ -3377,9 +3684,7 @@ async function handlePoolSubscribePrepare(
     requiredLamports: ctx.requiredLamports,
     denomination: pool.denomination,
     derivation: candidate.derivation,
-    depositPayer: origin?.depositPayer ?? null,
-    depositFunder,
-    depositSignature: origin?.signature ?? null,
+    noteProvenance: provenance,
     version: 'v3',
     licenseScheme: 'v2',
   };
@@ -3991,6 +4296,14 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
   const spentKeys: string[] = [];
   const handoffs: StoredHandoffRecord[] = [];
   const subscriptions: StoredSubscriptionWire[] = [];
+  const relayReceipts: StoredRelayReceiptWire[] = [];
+  const pendingById = new Map<string, StoredPendingWire>();
+  const pendingDeltas: Array<{
+    id: string;
+    paymentSignature?: string;
+    claimCode?: string;
+    at?: number;
+  }> = [];
   let skipped = 0;
 
   for (const blob of req.blobs ?? []) {
@@ -4016,14 +4329,28 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
       (rec.leafIndex as number) >= 0
     ) {
       // Whitelist copy: exactly the five public fields, nothing the blob may
-      // have smuggled alongside them.
-      payouts.push({
+      // have smuggled alongside them, plus the paying note's display name when
+      // it has exactly the tag's shape (UI-1; older records carry none;
+      // `pool/poolNoteTag.test.ts` "poolOpenRecords returns a payout record’s
+      // tag only when it has exactly the tag’s shape").
+      const payout: StoredPayoutRecord = {
         pool: rec.pool,
         leafIndex: rec.leafIndex as number,
         address: String(rec.address ?? ''),
         txSig: String(rec.txSig ?? ''),
         denomination: Number(rec.denomination ?? 0),
-      });
+      };
+      const tag = rec.tag as { text?: unknown; color?: unknown } | undefined;
+      if (
+        tag &&
+        typeof tag.text === 'string' &&
+        typeof tag.color === 'string' &&
+        /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/.test(tag.text) &&
+        /^#[0-9a-f]{6}$/i.test(tag.color)
+      ) {
+        payout.tag = { text: tag.text, color: tag.color };
+      }
+      payouts.push(payout);
     } else if (rec.kind === 'spent' && typeof rec.key === 'string') {
       spentKeys.push(rec.key);
     } else if (
@@ -4066,12 +4393,94 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
         sub.leafIndex = rec.leafIndex as number;
       }
       subscriptions.push(sub);
+    } else if (
+      rec.kind === 'pending' &&
+      typeof rec.id === 'string' &&
+      typeof rec.owner === 'string' &&
+      Number.isInteger(rec.leafIndex) &&
+      (rec.leafIndex as number) >= 0 &&
+      !pendingById.has(rec.id)
+    ) {
+      // A pending-payment base (DEV-1). Field-by-field copy like every kind
+      // above; the padding and anything smuggled beside it never cross.
+      const base: StoredPendingWire = {
+        id: rec.id,
+        owner: rec.owner,
+        leafIndex: rec.leafIndex as number,
+        token: rec.token === 'USDC' ? 'USDC' : 'SOL',
+        denomination: Number(rec.denomination ?? 0),
+      };
+      if (rec.pendingKind === 'contribution' || rec.pendingKind === 'exchange') {
+        base.kind = rec.pendingKind;
+      }
+      // The sealed reservation time (see `StoredPendingWire.at`).
+      if (typeof rec.at === 'number' && Number.isFinite(rec.at)) base.at = rec.at;
+      for (const field of ['txSig', 'paymentSignature', 'claimProof', 'claimCode'] as const) {
+        const value = rec[field];
+        if (typeof value === 'string' && value) base[field] = value;
+      }
+      pendingById.set(rec.id, base);
+    } else if (
+      rec.kind === 'relayReceipt' &&
+      typeof rec.id === 'string' &&
+      typeof rec.ephemeralPubkey === 'string' &&
+      typeof rec.signature === 'string' &&
+      typeof rec.till === 'string'
+    ) {
+      // Field-by-field copy, the same discipline as every kind above: the
+      // padding and anything smuggled beside the receipt never cross.
+      relayReceipts.push({
+        id: rec.id,
+        ephemeralPubkey: rec.ephemeralPubkey,
+        signature: rec.signature,
+        valueLamports: Number(rec.valueLamports ?? 0),
+        feeLamports: Number(rec.feeLamports ?? 0),
+        requiredLamports: Number(rec.requiredLamports ?? 0),
+        till: rec.till,
+        createdAt: String(rec.createdAt ?? ''),
+      });
+    } else if (rec.kind === 'pendingDelta' && typeof rec.id === 'string') {
+      // An append-only update: what `attachPayment` / `attachClaim` learned
+      // after the base was sealed. Applied below, in the order sent.
+      const delta: { id: string; paymentSignature?: string; claimCode?: string; at?: number } = {
+        id: rec.id,
+      };
+      if (typeof rec.paymentSignature === 'string' && rec.paymentSignature) {
+        delta.paymentSignature = rec.paymentSignature;
+      }
+      if (typeof rec.claimCode === 'string' && rec.claimCode) delta.claimCode = rec.claimCode;
+      // The reservation time a row written before the storage sweep carried in
+      // clear, moved into the store on the read that coarsened its index.
+      if (typeof rec.at === 'number' && Number.isFinite(rec.at)) delta.at = rec.at;
+      pendingDeltas.push(delta);
     } else {
       skipped += 1;
     }
   }
 
-  return { kind: 'poolOpenRecords', payouts, spentKeys, handoffs, subscriptions, skipped };
+  for (const delta of pendingDeltas) {
+    const base = pendingById.get(delta.id);
+    if (!base) {
+      // A delta whose base did not open is no record: counted, never guessed at.
+      skipped += 1;
+      continue;
+    }
+    if (delta.paymentSignature) base.paymentSignature = delta.paymentSignature;
+    if (delta.claimCode) base.claimCode = delta.claimCode;
+    if (delta.at !== undefined) base.at = delta.at;
+  }
+  const pending = [...pendingById.values()];
+
+  return {
+    kind: 'poolOpenRecords',
+    payouts,
+    spentKeys,
+    handoffs,
+    subscriptions,
+    pending,
+    relayReceipts,
+    skipped,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -4116,6 +4525,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolNoteAddress':
       res = handlePoolNoteAddress(req);
+      break;
+    case 'poolIssueAddress':
+      res = handlePoolIssueAddress(req);
       break;
     case 'poolDeriveIdentity':
       res = handlePoolDeriveIdentity(req);

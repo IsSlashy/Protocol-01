@@ -159,7 +159,12 @@ describe.skipIf(!LIVE)('buying a note that was deposited before you arrived', ()
       });
       const issued = await issueRes.json();
       expect(issueRes.status, JSON.stringify(issued)).toBe(200);
-      say(`4. NOTE   leaf ${issued.leafIndex}  commitment ${String(issued.commitment).slice(0, 18)}…`);
+      // ⛔ THE REPLY NAMES NO LEAF AND NO COMMITMENT, and a run log the founder
+      // may share must not print one either. Both live inside the sealed blob
+      // alone, which is why the leaf below is read off the note the buyer
+      // OPENED (`__tests__/api/issue-note.node.test.ts` "does not move when the
+      // leaf moves, and does not name the recipient").
+      say('4. NOTE   sealed to this buyer');
 
       // ── 6. The property the whole design exists for ───────────────────────
       //
@@ -189,8 +194,8 @@ describe.skipIf(!LIVE)('buying a note that was deposited before you arrived', ()
         meta,
         sealedNote: issued.sealedNote,
       } as never)) as { note: { leafIndex: number; denomination: number }; merklePath?: string };
-      say(`5. OPENED leaf ${imported.note.leafIndex}  ${imported.note.denomination} SOL  path ${imported.merklePath ?? '?'}`);
-      expect(imported.note.leafIndex).toBe(issued.leafIndex);
+      say(`5. OPENED ${imported.note.denomination} SOL  path ${imported.merklePath ?? '?'}`);
+      expect(typeof imported.note.leafIndex, 'the blob opened to no leaf').toBe('number');
       expect(imported.note.denomination).toBe(1);
       // A stored path means the eventual spend needs no history rebuild — the
       // difference between a subscription that proves in seconds and one that

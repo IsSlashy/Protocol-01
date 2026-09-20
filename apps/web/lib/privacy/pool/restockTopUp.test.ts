@@ -363,7 +363,11 @@ describe('runTopUp', () => {
     expect(allowed.plan.verdict).toBe('move');
   });
 
-  it('the log line names public keys and amounts, and no secret', async () => {
+  it('the log line carries the verdict and nothing else', async () => {
+    // This line lands in a PUBLIC Actions log (ledger row E5). It used to name
+    // the float, the restock wallet, both balances and the transfer signature.
+    // What moves it is measured in `ciLogHygiene.test.ts`; this pins the two
+    // keys and the signature of a real run, which that file builds synthetically.
     const f = eligible();
     const r = await runTopUp({
       chain: f.chain,
@@ -375,11 +379,14 @@ describe('runTopUp', () => {
     });
     const line = formatTopUpLine(r);
     expect(line).toContain('verdict=move');
-    expect(line).toContain(funder.publicKey.toBase58());
-    expect(line).toContain(restock.publicKey.toBase58());
-    expect(line).toContain('sig=SIGNATURE_1');
+    expect(line).not.toContain(funder.publicKey.toBase58());
+    expect(line).not.toContain(restock.publicKey.toBase58());
+    expect(line).not.toContain('SIGNATURE_1');
     expect(line).not.toContain(Buffer.from(funder.secretKey).toString('hex'));
     expect(line).not.toContain(JSON.stringify(Array.from(funder.secretKey)));
+    // No balance, no surplus, no deficit, no quiet time: any digit run of three
+    // or more is one of those.
+    expect(line).not.toMatch(/\d{3,}/);
     expect(line.split('\n')).toHaveLength(1);
   });
 });

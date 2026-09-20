@@ -10,11 +10,20 @@
  * `filled_subtrees[0]`, so the history walk is the only source of the leaves;
  * what is optional is walking it again.
  *
- * The cache keeps, per (RPC endpoint, pool), the decoded leaf events and the
- * NEWEST signature seen. The next walk asks the RPC for signatures `until` that
- * one and decodes only those; the map is merged, never rebuilt. Every entry is
- * public on-chain data (a commitment and the signature that emitted it), so
- * holding it locally reveals nothing the chain does not.
+ * The cache keeps, per (RPC HOST, pool), the decoded leaf events, the NEWEST
+ * signature seen and the OLDEST one. The next walk asks the RPC for signatures
+ * `until` the newest and, while the history is not yet whole, for the page
+ * before the oldest; the map is merged, never rebuilt. Every entry is public
+ * on-chain data (a commitment and the signature that emitted it), so holding
+ * it locally reveals nothing the chain does not.
+ *
+ * [HIST-1 2026-09-16] The key used to be `${rpcEndpoint}|${pool}`, and was
+ * copied into the row as `key` as well, so every row on a device — and every
+ * JSON file the live harness wrote — spelled a Helius URL's credential in
+ * clear. It is the host alone now, and a row left under the old key is read
+ * once, migrated and deleted. Pinned by the `[HIST-1]` block of
+ * `poolHistoryCache.test.ts`; the walk that fills the new fields is pinned by
+ * `poolHistoryBackfill.test.ts`.
  *
  * Storage is pluggable: IndexedDB when the runtime has it (the web worker),
  * memory otherwise, or whatever `setPoolHistoryStore` installs (the live devnet
@@ -29,17 +38,78 @@ export interface CachedCommitmentEntry {
   signature: string;
 }
 
+export const POOL_HISTORY_VERSION = 2;
+
+/**
+ * How many times one signature is asked for before the walk gives up on it and
+ * counts it. Five, so a run of RPC 429s costs nothing permanent, while a
+ * signature the RPC will never serve cannot be re-read for ever.
+ */
+export const MAX_HISTORY_READ_ATTEMPTS = 5;
+
+/** The longest re-read list carried between calls; the overflow is counted, not forgotten. */
+export const MAX_HISTORY_RETRY_ENTRIES = 256;
+
+/**
+ * The most unfinished middle stretches carried between calls. Past it, the two
+ * oldest are merged into one stretch that also covers the signatures between
+ * them: re-listed, never skipped.
+ */
+export const MAX_HISTORY_GAPS = 16;
+
+/**
+ * A stretch of history a warm walk listed only part of because its budget ran
+ * out: the signatures older than `before` and newer than `until` (both
+ * exclusive, the RPC's own paging bounds) have not been listed yet. Pinned by
+ * `poolHistoryBackfill.test.ts`, "growth past maxSignatures between two warm
+ * calls is completed, in a bounded number of pages".
+ */
+export interface PoolHistoryGap {
+  before: string;
+  until: string;
+}
+
+/** A signature whose transaction did not arrive, and how many times it has been asked for. */
+export interface PoolHistoryRetry {
+  signature: string;
+  attempts: number;
+}
+
 export interface PoolHistorySnapshot {
-  version: 1;
+  version: typeof POOL_HISTORY_VERSION;
   key: string;
   /** The newest signature whose transaction has been decoded, or null for an empty history. */
+  newestSignature: string | null;
+  /** The oldest signature this walk listed: where a capped walk resumes. */
+  oldestSignature: string | null;
+  /** True once a page older than `oldestSignature` came back short or empty. */
+  reachedOldest: boolean;
+  /** True when leaves 0..next_leaf_index-1 are all in hand and nothing is waiting to be re-read. */
+  complete: boolean;
+  retry: PoolHistoryRetry[];
+  /** Signatures given up on, so a hole is a number rather than a silence. */
+  dropped: number;
+  /** Unfinished middle stretches, newest first. */
+  gaps: PoolHistoryGap[];
+  /** next_leaf_index when a hole nothing accounted for last scheduled a re-walk, or null. */
+  rewalkAt: number | null;
+  entries: CachedCommitmentEntry[];
+  savedAt: number;
+}
+
+/** The shape shipped on 2026-09-13. Read for migration only; never written. */
+export interface PoolHistorySnapshotV1 {
+  version: 1;
+  key: string;
   newestSignature: string | null;
   entries: CachedCommitmentEntry[];
   savedAt: number;
 }
 
+export type StoredPoolHistory = PoolHistorySnapshot | PoolHistorySnapshotV1;
+
 export interface PoolHistoryStore {
-  load(key: string): Promise<PoolHistorySnapshot | null>;
+  load(key: string): Promise<StoredPoolHistory | null>;
   save(snapshot: PoolHistorySnapshot): Promise<void>;
   clear(key: string): Promise<void>;
 }
@@ -90,8 +160,9 @@ export function indexedDbPoolHistoryStore(idb: IDBFactory): PoolHistoryStore {
   return {
     async load(key) {
       try {
-        const v = await run<PoolHistorySnapshot | undefined>('readonly', (s) => s.get(key) as IDBRequest<PoolHistorySnapshot | undefined>);
-        return v && v.version === 1 ? v : null;
+        const v = await run<StoredPoolHistory | undefined>('readonly', (s) => s.get(key) as IDBRequest<StoredPoolHistory | undefined>);
+        // A v1 row is served so `loadPoolHistory` can migrate it.
+        return v && (v.version === 1 || v.version === POOL_HISTORY_VERSION) ? v : null;
       } catch {
         return fallback.load(key);
       }
@@ -115,8 +186,47 @@ export function indexedDbPoolHistoryStore(idb: IDBFactory): PoolHistoryStore {
 
 let activeStore: PoolHistoryStore | null = null;
 
+/**
+ * [SWEEP4 repair r1, gate RED 6] Signatures the walk has GIVEN UP on: listed as
+ * successful, read `MAX_HISTORY_READ_ATTEMPTS` times, never returned, counted
+ * once into the row's `dropped`. In memory only — a raw signature written into
+ * the stored row is a signature in a storage dump, and the ones that land there
+ * newest-first are this device's own recent pool activity.
+ *
+ * ⛔ WHY IT HAD TO EXIST THE MOMENT THE RESUME POINT LEARNED TO SKIP UNREAD
+ * SIGNATURES. The resume point is what the next walk lists FROM, so a signature
+ * it skips is listed again for ever. A signature the RPC will not serve used to
+ * BECOME the resume point and leave the walk's sight; now it does not, so
+ * without this set it is re-queued and re-read on every walk and `dropped`
+ * climbs without bound. Measured: `spendRootIsCurrent.test.ts`, "signatures the
+ * walk gave up on keep a short map from being proved", read `dropped` 4 instead
+ * of 2 with the skip in place and this set missing.
+ *
+ * ⚠️ IT LIVES HERE, NEXT TO THE STORE, SO THAT REPLACING THE STORE EMPTIES IT.
+ * A module-scope set in `denominatedPool.ts` outlived a test's world and hid a
+ * leaf from the next one (144 of 256 worlds in `spendRootIsCurrent.test.ts`).
+ * "A new store is a new history" is the rule a test and a real client both obey,
+ * and in a browser `setPoolHistoryStore` runs once.
+ */
+const gaveUpSignatures = new Set<string>();
+
+/** Forgetting one costs a single re-read, the trade `leaflessSignatures` makes. */
+const MAX_GIVEN_UP_REMEMBERED = 4096;
+
+export function rememberGivenUpSignature(signature: string): void {
+  if (gaveUpSignatures.size >= MAX_GIVEN_UP_REMEMBERED) gaveUpSignatures.clear();
+  gaveUpSignatures.add(signature);
+}
+
+export function hasGivenUpOnSignature(signature: string): boolean {
+  return gaveUpSignatures.has(signature);
+}
+
 export function setPoolHistoryStore(store: PoolHistoryStore | null): void {
   activeStore = store;
+  // A new store is a new history: what the previous one gave up on says nothing
+  // about this one. See `gaveUpSignatures`.
+  gaveUpSignatures.clear();
 }
 
 export function getPoolHistoryStore(): PoolHistoryStore {
@@ -126,6 +236,100 @@ export function getPoolHistoryStore(): PoolHistoryStore {
   return activeStore;
 }
 
+/**
+ * The endpoint's host, with no path, query, fragment or credentials. A Helius
+ * URL carries its API key in the query and some providers carry it in the
+ * path, so nothing but the host may reach a stored row.
+ *
+ * Two endpoints that differ only by their credential therefore share one
+ * snapshot, which is right: same host, same chain, same public leaves. The
+ * cost is that two clusters served from ONE host under different paths would
+ * share a row too; no endpoint in this repo is of that shape.
+ */
+function rpcHostOf(rpcEndpoint: string): string {
+  try {
+    const host = new URL(rpcEndpoint).host;
+    if (host) return host;
+  } catch {
+    // Not a URL. Fall through to the textual cut below.
+  }
+  const cut = rpcEndpoint.split(/[/?#]/)[0] ?? '';
+  const afterCredentials = cut.includes('@') ? cut.slice(cut.lastIndexOf('@') + 1) : cut;
+  return afterCredentials || 'rpc';
+}
+
 export function poolHistoryKey(rpcEndpoint: string, poolPDA: string): string {
+  return `${rpcHostOf(rpcEndpoint)}|${poolPDA}`;
+}
+
+/** The key the 2026-09-13 walk wrote: the whole endpoint, credential and all. */
+function legacyPoolHistoryKey(rpcEndpoint: string, poolPDA: string): string {
   return `${rpcEndpoint}|${poolPDA}`;
+}
+
+/** Fill in the fields a v1 row never had, without inventing what it did not know. */
+function upgradeSnapshot(raw: StoredPoolHistory, key: string): PoolHistorySnapshot {
+  if (raw.version === POOL_HISTORY_VERSION) {
+    return {
+      ...raw,
+      key,
+      oldestSignature: raw.oldestSignature ?? null,
+      reachedOldest: raw.reachedOldest === true,
+      complete: raw.complete === true,
+      retry: Array.isArray(raw.retry) ? raw.retry : [],
+      dropped: typeof raw.dropped === 'number' ? raw.dropped : 0,
+      // A row the round-0 walk of this work package wrote has neither field.
+      gaps: Array.isArray(raw.gaps) ? raw.gaps : [],
+      rewalkAt: typeof raw.rewalkAt === 'number' ? raw.rewalkAt : null,
+      entries: Array.isArray(raw.entries) ? raw.entries : [],
+    };
+  }
+  // v1 recorded only the newest signature, so the oldest transaction it
+  // decoded is the only resume point it left behind. Paging before that one
+  // re-reads a few transactions between it and the true end of the old walk,
+  // which is cheap and cannot skip anything.
+  let oldest: { signature: string; slot: number } | null = null;
+  for (const e of raw.entries ?? []) {
+    if (typeof e.depositSlot !== 'number') continue;
+    if (!oldest || e.depositSlot < oldest.slot) oldest = { signature: e.signature, slot: e.depositSlot };
+  }
+  return {
+    version: POOL_HISTORY_VERSION,
+    key,
+    newestSignature: raw.newestSignature ?? null,
+    oldestSignature: oldest?.signature ?? null,
+    reachedOldest: false,
+    complete: false,
+    retry: [],
+    dropped: 0,
+    gaps: [],
+    rewalkAt: null,
+    entries: raw.entries ?? [],
+    savedAt: raw.savedAt ?? 0,
+  };
+}
+
+/**
+ * The snapshot for (host, pool), with any row left under a key that spelled
+ * the endpoint migrated and DELETED — deleted whether or not it was needed, so
+ * a row naming the credential cannot outlive one walk. Pinned by
+ * `poolHistoryCache.test.ts`, "a legacy row keyed by the whole endpoint is
+ * migrated and deleted".
+ */
+export async function loadPoolHistory(
+  store: PoolHistoryStore,
+  rpcEndpoint: string,
+  poolPDA: string,
+): Promise<{ key: string; snapshot: PoolHistorySnapshot | null }> {
+  const key = poolHistoryKey(rpcEndpoint, poolPDA);
+  let raw = await store.load(key);
+  const legacyKey = legacyPoolHistoryKey(rpcEndpoint, poolPDA);
+  if (legacyKey !== key) {
+    const legacy = await store.load(legacyKey);
+    if (legacy) {
+      if (!raw) raw = legacy;
+      await store.clear(legacyKey);
+    }
+  }
+  return { key, snapshot: raw ? upgradeSnapshot(raw, key) : null };
 }

@@ -58,11 +58,24 @@ const wire = vi.hoisted(() => ({ log: [] as string[] }));
  */
 const skew = vi.hoisted(() => ({ strip: [] as string[] }));
 
+/**
+ * [SWEEP4 round 1, storage lane] The RESTARTED-worker dial, at the seam rather
+ * than in the store: `openRecords` is the message a worker that lost its seeds
+ * under the open tab rejects with (`requireSeeds` in `worker/poolHandlers.ts`),
+ * and it arrives at the caller as a plain `Error`. The skew dial above cannot
+ * stand in for it — a skewed worker ANSWERS, a restarted one refuses — and the
+ * difference is exactly what the subscription writer used to get wrong.
+ */
+const fail = vi.hoisted(() => ({ openRecords: null as string | null }));
+
 vi.mock('../workerClient', async () => {
   const { handlePoolRequest } = await import('../worker/poolHandlers');
   return {
     poolRequest: async (req: never, onProgress?: (step: string) => void) => {
       wire.log.push(JSON.stringify(req));
+      if ((req as { kind?: string }).kind === 'poolOpenRecords' && fail.openRecords) {
+        throw new Error(fail.openRecords);
+      }
       const res = await handlePoolRequest(req, onProgress);
       const kind = (res as { kind?: string }).kind;
       if (kind === 'poolOpenRecords' && skew.strip.length > 0) {
@@ -145,6 +158,7 @@ beforeEach(() => {
   setPoolSeed(META, SIGNATURE);
   wire.log.length = 0;
   skew.strip = [];
+  fail.openRecords = null;
 });
 
 // ---------------------------------------------------------------------------
@@ -917,5 +931,266 @@ describe('storeEncryptedNote announces the write', () => {
     } finally {
       delete (globalThis as { window?: EventTarget }).window;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. The last-resort note write names no wallet (DEV-1)
+// ---------------------------------------------------------------------------
+
+describe('a failed v2 note write (DEV-1)', () => {
+  /** True when any key or value of `dump` contains `needle`. */
+  function dumpContains(dump: Array<[string, string]>, needle: string): boolean {
+    return dump.some(([k, v]) => k.includes(needle) || v.includes(needle));
+  }
+
+  /** Every `crypto.getRandomValues` draw from a seeded LCG, so a world replays byte for byte. */
+  function seedRandom(seed: number): () => void {
+    let s = seed >>> 0;
+    const spy = vi
+      .spyOn(globalThis.crypto, 'getRandomValues')
+      .mockImplementation(<T extends ArrayBufferView | null>(arr: T): T => {
+        const view = arr as unknown as ArrayBufferView;
+        const u8 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        for (let i = 0; i < u8.length; i++) {
+          s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+          u8[i] = s >>> 24;
+        }
+        return arr;
+      });
+    return () => spy.mockRestore();
+  }
+
+  it('failed v2 write keeps the note and names no wallet', async () => {
+    /**
+     * A received note's blob is its ONLY copy (`storeEncryptedNote`'s
+     * header), so a write the sealed store refuses must still land. It used
+     * to land in `p01_pay_notes_v1` under the WALLET PUBKEY, which is the
+     * (wallet, holds a note) row the v2 store exists to remove.
+     */
+    const unsigned = 'meta-before-signing';
+    const BLOB = 'p01enc1:the-only-copy-of-a-received-note';
+    await shieldClient.storeEncryptedNote(unsigned, WALLET, BLOB);
+    const afterWrite = ls.dump();
+
+    // First half: the note is kept. Readable before the wallet signs...
+    expect(await shieldClient.loadEncryptedNotes('meta-still-unsigned', WALLET)).toContain(BLOB);
+    // ...and after a reload, once the worker holds this identity's seeds.
+    setPoolSeed(unsigned, SIGNATURE);
+    expect(await shieldClient.loadEncryptedNotes(unsigned, WALLET)).toContain(BLOB);
+
+    // Second half: nothing the failed write stored names the wallet. The
+    // scan's positive control is the shape the fallback used to write.
+    expect(dumpContains([['p01_pay_notes_v1', JSON.stringify({ [WALLET]: [BLOB] })]], WALLET)).toBe(true);
+    expect(dumpContains(afterWrite, WALLET), 'the fallback is keyed by the wallet').toBe(false);
+
+    // Measured, not spelled: the same failed write for two different wallets,
+    // with seeded randomness, stores byte-identical state. A key derived from
+    // the wallet without a secret (a hash, a prefix) would move it.
+    const OTHER_WALLET = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+    async function world(wallet: string): Promise<string> {
+      ls.clear();
+      const restore = seedRandom(0xd1ce);
+      try {
+        await shieldClient.storeEncryptedNote('meta-never-signed', wallet, BLOB);
+      } finally {
+        restore();
+      }
+      return JSON.stringify(ls.dump().sort());
+    }
+    const base = await world(WALLET);
+    expect(await world(WALLET), 'the world does not replay').toBe(base);
+    expect(await world(OTHER_WALLET), 'the stored state moved with the wallet').toBe(base);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. [SWEEP4 round 1, storage lane] What the CIPHERTEXT still says, and what a
+//    failed write may never fall back to
+// ---------------------------------------------------------------------------
+
+/**
+ * A storage dump reads two things through a sealed store without opening
+ * anything: how many blobs each label holds, and how long each one is. The
+ * count is the number of notes, withdrawals, spends and subscriptions; the
+ * length is the plaintext's length plus a fixed overhead, so it told a spend
+ * mark from an attempt mark (the `attempt:` prefix is 8 bytes), a merchant's
+ * `serviceTag` / `serviceName` / `rate` lengths inside a small public registry,
+ * and the digit count of a leaf index.
+ *
+ * `pendingContribution.ts` already padded its bodies to one length (DEV-1);
+ * these cases hold the same rule for every store that goes through
+ * `sealRecord`. The COUNTS are not closed here — hiding them needs decoy
+ * records that every reader would have to filter — and that residual is named
+ * in the lane report.
+ */
+describe('[SWEEP4-STORAGE] a sealed blob length says nothing about the record', () => {
+  const SUB_SHORT = {
+    vaultPDA: 'Vau1tShort1111111111111111111111111111111111',
+    retailer: 'q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr',
+    serviceTag: 'ab',
+    token: 'SOL',
+    denomination: 1,
+    rate: '1',
+    intervalSlots: '1',
+    openedAt: 1,
+  };
+  const SUB_LONG = {
+    ...SUB_SHORT,
+    vaultPDA: 'Vau1tLong11111111111111111111111111111111111',
+    serviceTag: 'a-very-long-registry-slug-for-one-merchant',
+    serviceName: 'A Merchant With A Notably Long Display Name',
+    rate: '123456789012345',
+    intervalSlots: '987654321',
+    openTxSig: 'S'.repeat(88),
+    pool: POOL_58,
+    leafIndex: 123_456,
+    openedAt: 1_700_000_000_000,
+  };
+
+  /** Every blob a store holds, across labels, as a dump reads them. */
+  function blobsOf(key: string): string[] {
+    const raw = ls.getItem(key);
+    if (!raw) return [];
+    return Object.values(JSON.parse(raw) as Record<string, string[]>).flat();
+  }
+
+  it('one length per store, whatever the record holds', async () => {
+    await shieldClient.recordPayout(META, WALLET, REC);
+    await shieldClient.recordPayout(META, WALLET, {
+      pool: POOL_58,
+      leafIndex: 123_456,
+      address: shieldClient
+        .derivePoolPayoutKeypair(PAYOUT_ROOT, POOL_58, 123_456)
+        .publicKey.toBase58(),
+      txSig: 'z'.repeat(88),
+      denomination: 0.1,
+    });
+    await shieldClient.recordSpentNote(META, WALLET, `${POOL_58}:7`);
+    await shieldClient.recordSpentNote(META, WALLET, `${POOL_58}:123456`);
+    await subscriptions.recordSubscription(META, WALLET, SUB_SHORT);
+    await subscriptions.recordSubscription(META, WALLET, SUB_LONG);
+    await handoffs.recordHandoff(META, WALLET, { pool: POOL_58, leafIndex: 7, sealedAt: 1 });
+    await handoffs.recordHandoff(META, WALLET, {
+      pool: POOL_58,
+      leafIndex: 123_456,
+      sealedAt: 1_700_000_000_000,
+    });
+
+    for (const key of [
+      'p01_pay_pool_payouts_v2',
+      'p01_pay_spent_notes_v2',
+      'p01_pay_subscriptions_v2',
+      'p01_pay_handoffs_v2',
+    ]) {
+      const blobs = blobsOf(key);
+      expect(blobs.length, `${key}: nothing was written, so the rule is vacuous`).toBe(2);
+      expect(new Set(blobs.map((b) => b.length)).size, `${key}: two blob lengths`).toBe(1);
+    }
+
+    // POSITIVE CONTROL: the same two records sealed the way they were before
+    // this fix DO differ in length, so the assertions above are not vacuous.
+    const { address } = await storeSession(META);
+    const bare = (record: Record<string, unknown>) =>
+      encryptNote(address, utf8ToBytes(JSON.stringify(record))).length;
+    expect(
+      bare({ p01store: 1, kind: 'subscription', ...SUB_SHORT }),
+      'the control seals two records to the same length',
+    ).not.toBe(bare({ p01store: 1, kind: 'subscription', ...SUB_LONG }));
+  });
+
+  it('a blob sealed before the padding still opens, and reading it changes nothing', async () => {
+    const { address, label } = await storeSession(META);
+    // Exactly what `sealRecord` produced before this change: no padding.
+    const legacyBlob = encryptNote(
+      address,
+      utf8ToBytes(JSON.stringify({ p01store: 1, kind: 'payout', ...REC })),
+    );
+    ls.setItem('p01_pay_pool_payouts_v2', JSON.stringify({ [label]: [legacyBlob] }));
+
+    // Read twice: an old row keeps working, and reading it does not change it.
+    expect((await shieldClient.loadPayouts(META, WALLET)).records).toEqual([REC]);
+    expect(blobsOf('p01_pay_pool_payouts_v2')).toEqual([legacyBlob]);
+    expect((await shieldClient.loadPayouts(META, WALLET)).records).toEqual([REC]);
+
+    // And a record written beside it now: both open, and the new one is
+    // padded. The payout store APPENDS (see `recordPayout`), so the row that
+    // was there keeps the length it was written with until something rewrites
+    // it — stated as a residual in the lane report rather than papered over.
+    await shieldClient.recordPayout(META, WALLET, { ...REC, leafIndex: 58 });
+    expect(
+      (await shieldClient.loadPayouts(META, WALLET)).records.map((r) => r.leafIndex).sort(),
+      'the old row was lost when a new one was written',
+    ).toEqual([57, 58]);
+    const fresh = blobsOf('p01_pay_pool_payouts_v2').filter((b) => b !== legacyBlob);
+    expect(fresh).toHaveLength(1);
+    // Padded to the same length as any other record of this store.
+    await shieldClient.recordSpentNote(META, WALLET, `${POOL_58}:123456`);
+    expect(fresh[0]!.length).toBe(blobsOf('p01_pay_spent_notes_v2')[0]!.length);
+  });
+});
+
+/**
+ * [SWEEP4 round 1, storage lane] The subscription writer's last resort.
+ *
+ * `recordSubscription` sealed inside one `try`, and ANY throw in it — a worker
+ * that restarted under the open tab, a timeout while the store was being
+ * opened — wrote `p01_pay_subscriptions_v1[<wallet pubkey>]` in clear: the
+ * whole (wallet -> note -> vault -> merchant) row the sealed store exists to
+ * remove. The session is CACHED by then (`sealedStore.storeSession`) and
+ * sealing needs only its public address, so there was nothing to fall back
+ * from. The cleartext store stays as the last resort for the case it was
+ * written for: no session at all.
+ */
+describe('[SWEEP4-STORAGE] a subscription write that fails late does not fall back to cleartext', () => {
+  const SUB = {
+    vaultPDA: '7WaBm7Kq5WDYa5ykFgaUes1ZCXHXqkyfquJEkmBxzyqw',
+    retailer: 'q8R2oNtnCH1Y3Pgjm8okR1Vz6wuxwMwPyoCxm5emLdr',
+    serviceTag: 'bitwarden-test',
+    token: 'SOL',
+    denomination: 1,
+    rate: '50000000',
+    intervalSlots: '1500',
+    openTxSig: 'SUBSCRIBEtxSIGNATUREveryRECOGNIZABLE'.padEnd(88, 's'),
+    pool: POOL_58,
+    leafIndex: 57,
+    openedAt: 1_000,
+  };
+  const VAULT_B = 'Vau1tB11111111111111111111111111111111111111';
+
+  it('a worker that restarted mid-session seals the record instead of naming the wallet', async () => {
+    // A healthy write first: the session is cached from here on.
+    await subscriptions.recordSubscription(META, WALLET, SUB);
+
+    // The worker restarts under the open tab: the seeds are gone, so opening
+    // the store throws, while the cached session still holds the address.
+    fail.openRecords = 'No pool keys for this identity. Reconnect and sign to derive.';
+    await subscriptions.recordSubscription(META, WALLET, {
+      ...SUB,
+      vaultPDA: VAULT_B,
+      openTxSig: 'OpenSig2'.padEnd(88, 'o'),
+      leafIndex: 43,
+    });
+
+    expect(ls.getItem('p01_pay_subscriptions_v1'), 'the wallet-keyed cleartext store').toBeNull();
+    expect(storesContain(WALLET), 'a stored key or value names the wallet').toBe(false);
+    expect(storesContain(SUB.retailer), 'a stored value names the merchant').toBe(false);
+    expect(storesContain(VAULT_B), 'a stored value names the vault').toBe(false);
+
+    // And nothing was lost: this record is the only pointer to a vault, so it
+    // must still be there once the worker can read again.
+    fail.openRecords = null;
+    const { records } = await subscriptions.loadSubscriptions(META, WALLET);
+    expect(records.map((r) => r.vaultPDA).sort()).toEqual([SUB.vaultPDA, VAULT_B].sort());
+    expect(records.find((r) => r.vaultPDA === VAULT_B)!.leafIndex).toBe(43);
+  });
+
+  it('with NO session at all the cleartext store is still the last resort', async () => {
+    // The case the fallback was written for, unchanged: nothing can be sealed
+    // before the wallet has signed, and losing the record is the one
+    // unacceptable outcome.
+    await subscriptions.recordSubscription('meta-never-signed-subs', WALLET, SUB);
+    const v1 = JSON.parse(ls.getItem('p01_pay_subscriptions_v1')!) as Record<string, unknown[]>;
+    expect(v1[WALLET]).toHaveLength(1);
   });
 });

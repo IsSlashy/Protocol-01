@@ -58,7 +58,7 @@
  *   cd apps/web
  *   P01_RESTOCK=1 P01_LIVE_KEYPAIR=... P01_LIVE_RPC=... \
  *     P01_TREASURY_TARGET=10 P01_TREASURY_LOW_WATER=7 \
- *     npx vitest run --config vitest.pool.config.mts \
+ *     npx vitest run --config vitest.pool.config.mts --silent --reporter=dot --disableConsoleIntercept=false \
  *       lib/privacy/pool/restockInventory.test.ts
  */
 import { describe, expect, it } from 'vitest';
@@ -72,6 +72,7 @@ import {
   sendAndConfirmTransaction,
 } from '@solana/web3.js';
 import nacl from 'tweetnacl';
+import bs58 from 'bs58';
 
 import { handlePoolRequest } from '@/lib/privacy/worker/poolHandlers';
 import { buildDerivationMessage } from '@/lib/privacy/message';
@@ -86,6 +87,7 @@ import {
 } from '@/lib/privacy/pool/denominatedPool';
 import { deriveNoteBlinding } from '@/lib/privacy/pool/noteBlinding';
 import { restockConfigFromEnv } from '@/lib/privacy/pool/restockConfig';
+import { ciRedactedError, ciSay } from '@/lib/privacy/ciLog';
 
 const LIVE = process.env.P01_RESTOCK === '1';
 
@@ -106,11 +108,6 @@ const {
 } = restockConfigFromEnv();
 
 const DENOMINATION = 1;
-
-function say(s: string) {
-  // eslint-disable-next-line no-console
-  console.log(s);
-}
 
 /** The leaves the operator has authorised, ranges included. Mirrors the route. */
 function authorisedLeaves(): number[] {
@@ -133,18 +130,53 @@ function authorisedLeaves(): number[] {
   return [...new Set(out)];
 }
 
+/**
+ * The treasury keypair from the key file's text, in the two shapes the top-up
+ * reads the same secret in (`secretKeyBytes` in scripts/topUpRestockWallet.mts):
+ * a JSON array of bytes, or base58. `undefined` when it is neither.
+ *
+ * 🚨 NEVER THE PARSER'S OWN MESSAGE. V8's JSON.parse quotes the first
+ * characters of what it could not parse, and this file handed it the key in
+ * whatever shape it was stored: a key in base58 put 9 of its characters on
+ * the public log through the redacting rethrow, since none is a digit and 10
+ * is not a long run (the web run round-3 verifier's major; re-run as
+ * `web-run/logs2/CI-1-cr1-probe-before-P1-base58-8.log`). So a failure here
+ * says only that the file holds no keypair. Pinned by `ciLogHygiene.test.ts`,
+ * case "the live restock, run against a fake chain, …", whose worlds hold the
+ * key in base58 and in five shapes that are not a keypair.
+ */
+function treasuryKeypair(text: string): Keypair | undefined {
+  const s = text.trim();
+  try {
+    return Keypair.fromSecretKey(s.startsWith('[') ? Uint8Array.from(JSON.parse(s) as number[]) : bs58.decode(s));
+  } catch {
+    return undefined;
+  }
+}
+
 describe.skipIf(!LIVE)('the inventory refills itself, on a clock', () => {
   it('tops the pot back up to target', { timeout: 3_600_000 }, async () => {
-    const wallet = Keypair.fromSecretKey(
-      Uint8Array.from(
-        JSON.parse(
-          readFileSync(
-            (process.env.P01_LIVE_KEYPAIR ?? '').replace(/^~/, process.env.USERPROFILE ?? ''),
-            'utf8',
-          ),
-        ),
-      ),
+    // 🚨 THIS RUNS INTO A PUBLIC ACTIONS LOG. A message thrown by the pool
+    // library or by web3.js names leaves, keys and amounts, and vitest prints
+    // it even under --silent. Rethrown redacted and with no `cause`, because
+    // an Error prints its cause beside it. Pinned by `ciLogHygiene.test.ts`.
+    try {
+      await topUpThePot();
+    } catch (e) {
+      throw ciRedactedError(e);
+    }
+  });
+
+  async function topUpThePot() {
+    const loaded = treasuryKeypair(
+      readFileSync((process.env.P01_LIVE_KEYPAIR ?? '').replace(/^~/, process.env.USERPROFILE ?? ''), 'utf8'),
     );
+    // A fixed message, and nothing of the file: see treasuryKeypair above.
+    expect(
+      loaded !== undefined,
+      'the treasury key file holds no keypair: P01_TREASURY_KEYPAIR_JSON must hold a JSON array of bytes (solana-keygen), or the key as a wallet exports it (Phantom)',
+    ).toBe(true);
+    const wallet = loaded as Keypair;
     const conn = new Connection(process.env.P01_LIVE_RPC!, 'confirmed');
     const pool = findPoolV3('SOL', DENOMINATION);
     expect(pool, 'the 1 SOL pool must exist').toBeTruthy();
@@ -225,19 +257,42 @@ describe.skipIf(!LIVE)('the inventory refills itself, on a clock', () => {
     }
 
     const before = await stock();
-    const balance = await conn.getBalance(wallet.publicKey);
-    say(`stock ${before}/${TARGET}  low-water ${LOW_WATER}  balance ${(balance / 1e9).toFixed(3)} SOL`);
-
-    if (before > LOW_WATER) {
-      say('above low-water — nothing to do. A tick that deposits every time tracks demand.');
+    // ⛔ THE STOCK IS NOT SAID, nor anything computed from it. `stock()` counts
+    // the authorised leaves still UNSPENT, and no endpoint serves that number:
+    // `GET /api/issue-note` serves the CONFIGURED size, spent or not. Said on
+    // every tick, two ticks apart it gave the number of issued notes spent in
+    // between, which in a quiet window labels a pool spend as an issued note.
+    // What is said is what the chain shows anyway: whether this tick deposits,
+    // and how many of its deposits landed.
+    //
+    // The floor is checked FIRST for the same reason. A wallet under its floor
+    // deposits nothing, so the chain cannot tell a pot above low water from one
+    // below it, and naming the branch there was one bit more.
+    //
+    // Both pinned by `ciLogHygiene.test.ts`, case "the live restock, run
+    // against a fake chain, says nothing that moves with the unspent stock, the
+    // leaves, the balance or the random draws", which runs THIS file in worlds
+    // that differ in the unspent stock alone.
+    if ((await conn.getBalance(wallet.publicKey)) < FLOOR_LAMPORTS) {
+      ciSay('restock floor');
       return;
     }
+    if (before > LOW_WATER) {
+      ciSay('restock above-low-water');
+      return;
+    }
+    ciSay('restock below-low-water');
 
     // 🚨 A RANDOM START, so the deposits are not "the ones that land near the
     // cron minute". A recognisable class of deposits partitions the anonymity
     // set, and a partitioned set is smaller than its count says.
     const jitterMs = Math.floor(Math.random() * Number(process.env.P01_RESTOCK_JITTER_MS ?? 900_000));
-    say(`waiting ${Math.round(jitterMs / 1000)}s before the first deposit`);
+    // How long it waits is exactly what the delay is for: saying it lets a
+    // reader subtract it and recover the cron minute. Pinned by
+    // `ciLogHygiene.test.ts`: case "the restock job and the top-up script
+    // print only through ciLog" (the jitter is not a vetted count), and the
+    // fake-chain case above, whose "the random draws" world moves the delay.
+    ciSay('restock waiting');
     await new Promise((r) => setTimeout(r, jitterMs));
 
     const wanted = Math.min(TARGET - before, MAX_PER_RUN);
@@ -245,7 +300,7 @@ describe.skipIf(!LIVE)('the inventory refills itself, on a clock', () => {
     for (let i = 0; i < wanted; i += 1) {
       const bal = await conn.getBalance(wallet.publicKey);
       if (bal < FLOOR_LAMPORTS) {
-        say(`FLOOR — ${(bal / 1e9).toFixed(3)} SOL left, stopping cleanly`);
+        ciSay('restock floor');
         break;
       }
       const prep = (await handlePoolRequest({
@@ -268,14 +323,20 @@ describe.skipIf(!LIVE)('the inventory refills itself, on a clock', () => {
         { commitment: 'confirmed' },
       );
 
-      const done = (await handlePoolRequest({
+      // ⛔ The leaf index this returns is deliberately not read. It is the
+      // whole of map A defect 9: one line per deposit labelled the inventory.
+      // Pinned by `ciLogHygiene.test.ts` ("the restock job and the top-up
+      // script print only through ciLog"): no sink but ciSay, vetted counts
+      // only; and by the fake-chain case, whose "the leaf index the pool
+      // reports" world moves it.
+      await handlePoolRequest({
         kind: 'poolShieldExecute',
         jobId: prep.jobId,
         ownerPubkey: wallet.publicKey.toBase58(),
         sweepTo: wallet.publicKey.toBase58(),
-      } as never)) as { leafIndex?: number };
+      } as never);
       landed += 1;
-      say(`  +1 leaf ${done.leafIndex ?? '?'}  (${landed}/${wanted})`);
+      ciSay('restock landed', landed);
 
       // Random gap between deposits, for the same reason as the start jitter.
       if (i < wanted - 1) {
@@ -285,7 +346,7 @@ describe.skipIf(!LIVE)('the inventory refills itself, on a clock', () => {
     }
 
     const after = await stock();
-    say(`\nstock ${before} -> ${after}  (target ${TARGET}, landed ${landed})`);
+    ciSay('restock done');
     expect(after).toBeGreaterThanOrEqual(before);
-  });
+  }
 });

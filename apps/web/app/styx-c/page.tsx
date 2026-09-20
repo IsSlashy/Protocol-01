@@ -51,9 +51,9 @@ const STEPS = [
   {
     no: '02',
     name: 'Address',
-    body: 'The recipient hands out a one-time stealth address, derived through a hybrid X25519 and ML-KEM-768 (FIPS 203) key exchange. Announcements travel on the specter program.',
-    metaName: 'specter',
-    metaHref: sourceUrl('programs/specter/src/lib.rs'),
+    body: 'The recipient hands out a one-time stealth address, derived through a hybrid X25519 and ML-KEM-768 (FIPS 203) key exchange. The meta-address is published in the registry program; the announcement transport is parked since the specter program was closed on devnet on 2026-09-13.',
+    metaName: 'p01_registry',
+    metaHref: sourceUrl('programs/p01_registry/src/lib.rs'),
   },
   {
     no: '03',

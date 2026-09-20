@@ -77,7 +77,11 @@ import {
   type PrepareSubscribeV4Result,
   type SubscribeBinding,
 } from './subscribePrivateStarkV4';
-import { goldilocksU64To32, isNullifierSpent } from './denominatedPool';
+import {
+  fetchSpentNullifierSet,
+  goldilocksU64To32,
+  isNullifierSpentInSet,
+} from './denominatedPool';
 import { jitterPrefund } from './prefundAmount';
 import { SUBSCRIPTION_VAULT_LEN, subscribeFloorLamports } from './subscribeFloat';
 import nacl from 'tweetnacl';
@@ -402,6 +406,20 @@ export async function prepareSubscribeJobV4(
     licenseCommitment?: Uint8Array;
   },
   onProgress?: (step: string) => void,
+  /**
+   * The pool-wide spent set the caller already read (`locateOwnedNote`). Absent,
+   * the set is read here. Either way the check is membership in the pool set,
+   * never a read of this note's nullifier PDA (`noPointedNullifierRead.test.ts`,
+   * "circuit-7 subscribe prepare of a note the seed search finds").
+   */
+  spentSet?: ReadonlySet<string>,
+  /**
+   * The Merkle path saved with the note (`locateOwnedNote`'s `storedPath`).
+   * Never proved: `prepareSubscribeV4` reads only its root, to hold back a map
+   * whose root IS that saved root (`spendRootIsCurrent.test.ts`, "the circuit-7
+   * SUBSCRIPTION applies the saved-root tie as the withdrawal does (m == k)").
+   */
+  savedPath?: StoredMerklePath,
 ): Promise<PreparedSubscribeV4> {
   // 🚨 A PRE-BLINDING NOTE GAINS NOTHING FROM CIRCUIT 7, AND SAYING OTHERWISE IS
   // THE LIE. The same refusal `prepareUnshieldJobV4` makes, for the same reason,
@@ -429,7 +447,9 @@ export async function prepareSubscribeJobV4(
   if (receipt.noteBlinding < LEGACY_BLINDING_CEILING) {
     throw new Error(
       'circuit 7 needs at least a randomised blinding, and this note carries its deposit ' +
-        `epoch (${receipt.noteBlinding}) instead — it predates commitment blinding. Proving ` +
+        // No value here: an epoch dates the deposit, and poolHandlers prints
+        // this message (`noteIdentifierTripwire.test.ts`, UI-1).
+        'epoch instead — it predates commitment blinding. Proving ' +
         'it on circuit 7 would hide the commitment while leaving the leaf recoverable from ' +
         'the published nullifier by trying a few thousand epochs, which is worse than the ' +
         'C1 + C3 pair only in that it looks private. Falling back to the pair.',
@@ -450,8 +470,8 @@ export async function prepareSubscribeJobV4(
   }
 
   onProgress?.('Checking the note is unspent...');
-  const spent = await isNullifierSpent(
-    connection,
+  const spent = isNullifierSpentInSet(
+    spentSet ?? (await fetchSpentNullifierSet(connection, poolConfig.poolPDA)),
     poolConfig.poolPDA,
     receipt.nullifierPreimage,
     receipt.secret,
@@ -481,6 +501,7 @@ export async function prepareSubscribeJobV4(
     terms.subscriberCommitment,
     terms.retailer,
     onProgress,
+    savedPath,
   );
 
   onProgress?.('Pricing the subscription...');

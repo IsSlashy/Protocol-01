@@ -24,7 +24,7 @@ export interface PoolMetric {
   address: string;
 }
 
-/** The 7 STARK circuits that make up the verifier. Static but real. */
+/** The 8 STARK circuits the verifier accepts (ids 0..7). Static but real. */
 export interface CircuitInfo {
   id: number;
   key: string;
@@ -68,4 +68,5 @@ export const STARK_CIRCUIT_LIST: CircuitInfo[] = [
   { id: 4, key: 'confidentialBalance', name: 'Confidential Balance', postQuantum: true },
   { id: 5, key: 'transfer', name: 'Transfer', postQuantum: true },
   { id: 6, key: 'merkleUpdate', name: 'Merkle Update', postQuantum: true },
+  { id: 7, key: 'spend', name: 'Spend', postQuantum: true },
 ];

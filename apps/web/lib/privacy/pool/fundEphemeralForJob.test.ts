@@ -18,6 +18,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Keypair, PublicKey, SystemProgram, Transaction, type Connection } from '@solana/web3.js';
 
+const { clearPoolState, setPoolSeed } = await import('../worker/poolHandlers');
+
+/** The identity the receipts are sealed to. One wallet signature, per file. */
+const META = 'meta-fund-ephemeral';
+const META_SIGNATURE = Uint8Array.from({ length: 64 }, (_, i) => (i * 7 + 3) & 0xff);
+
 import {
   DirtyEphemeralError,
   WalletExposureRefusedError,
@@ -123,12 +129,17 @@ describe('a float-only job with a funder available', () => {
 });
 
 describe('the fallback is loud, not silent', () => {
+  // ⚠️ SINCE FUND-1 THESE RUN ONLY UNDER THE EXPLICIT OPT-IN. A value-0 job no
+  // longer falls back to the wallet by default, it refuses ('FUND-1: a spend is
+  // never funded by the wallet', below). `allowWalletFundedSpend: true` is the
+  // one door left, no screen opens it, and when it is opened the fallback must
+  // still say why it happened.
   it('falls back to the wallet and CARRIES THE REASON when the funder refuses', async () => {
     // A 429, a 409 and an operator switching the funder off all put the wallet
     // back on chain. If the reason is dropped they are indistinguishable, and
     // the user is told nothing about the world they ended up in.
     stubFunder('refuse');
-    const d = await fundEphemeralForJob(job());
+    const d = await fundEphemeralForJob(job({ allowWalletFundedSpend: true }));
     expect(d.fundedBy).toBe('wallet');
     expect(d.sweepTo).toBe(OWNER.toBase58());
     expect(d.funderFallbackReason).toMatch(/too many funding requests/);
@@ -137,7 +148,7 @@ describe('the fallback is loud, not silent', () => {
 
   it('does the same when the funder is unreachable', async () => {
     stubFunder('network');
-    const d = await fundEphemeralForJob(job());
+    const d = await fundEphemeralForJob(job({ allowWalletFundedSpend: true }));
     expect(d.fundedBy).toBe('wallet');
     expect(d.funderFallbackReason).toBeTruthy();
   });
@@ -146,7 +157,7 @@ describe('the fallback is loud, not silent', () => {
     // Not a fallback — there was nothing to fall back from. A reason here would
     // read as a failure on a deployment that simply has no funder.
     vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', '');
-    const d = await fundEphemeralForJob(job());
+    const d = await fundEphemeralForJob(job({ allowWalletFundedSpend: true }));
     expect(d.fundedBy).toBe('wallet');
     expect(d.funderFallbackReason).toBeUndefined();
     expect(fetchCalls).toHaveLength(0);
@@ -249,16 +260,19 @@ describe('neverExposeWallet — the last way the buyer lands on chain', () => {
     // wrong: it works on every machine where both sides happen to share a node,
     // which includes most development.
     stubFunder('refuse');
-    await fundEphemeralForJob(job());
+    await fundEphemeralForJob(job({ allowWalletFundedSpend: true }));
     expect(signed).toHaveLength(1);
     expect(blockhashCommitment).toBe('finalized');
   });
 
-  it('still falls back when the flag is OFF', async () => {
-    // The other negative control: a deployment with no funder must keep working
-    // for users who did not ask for this.
+  it('still falls back when the flag is OFF and the caller opted in', async () => {
+    // The other negative control: off, this flag defers to the spend rule, and
+    // since FUND-1 a spend reaches the wallet only through
+    // `allowWalletFundedSpend: true`, which no screen passes.
     stubFunder('refuse');
-    const d = await fundEphemeralForJob(job({ neverExposeWallet: false }));
+    const d = await fundEphemeralForJob(
+      job({ neverExposeWallet: false, allowWalletFundedSpend: true }),
+    );
     expect(d.fundedBy).toBe('wallet');
     expect(signed).toHaveLength(1);
   });
@@ -280,6 +294,129 @@ describe('neverExposeWallet — the last way the buyer lands on chain', () => {
       fundEphemeralForJob(job({ neverExposeWallet: true })),
     ).rejects.toBeInstanceOf(WalletExposureRefusedError);
     expect(signed).toHaveLength(0);
+  });
+});
+
+describe('FUND-1: a spend is never funded by the wallet', () => {
+  // 🚨 THE FLAGS THE SCREENS ACTUALLY RUN WITH. `neverExposeWallet` refuses a
+  // wallet-funded job, but the subscribe screen passes it false
+  // (`SubscribePanel.tsx`, NEVER_EXPOSE_WALLET) and the withdrawal screen does
+  // not pass it at all. So every reason the funder did not serve (a 429, a
+  // drained float, a rotated ticket, no ticket in this bundle) turned a spend
+  // into a wallet transfer to the spend's own fee payer: the wallet one hop from
+  // the spend, on chain, for good. A value-0 job takes nothing from the wallet
+  // but its address, so it now refuses unless the caller opts in by name.
+  //
+  // Every case settles the promise into a VALUE, so the unmodified code fails
+  // on an assertion about what happened rather than on a thrown error.
+  type Settled = {
+    settled: 'resolved' | 'rejected';
+    fundedBy: string;
+    name: string;
+    message: string;
+    retryable: unknown;
+  };
+  function settle(p: Promise<{ fundedBy: string }>): Promise<Settled> {
+    return p.then(
+      (d) => ({
+        settled: 'resolved' as const,
+        fundedBy: d.fundedBy,
+        name: '',
+        message: '',
+        retryable: undefined,
+      }),
+      (e: Error & { retryable?: unknown }) => ({
+        settled: 'rejected' as const,
+        fundedBy: '',
+        name: e.name,
+        message: e.message,
+        retryable: e.retryable,
+      }),
+    );
+  }
+
+  it('FUND-1: a value-0 job never asks the wallet when the funder refuses', async () => {
+    stubFunder('refuse');
+    blockhashCommitment = undefined;
+    const out = await settle(fundEphemeralForJob(job()));
+    // The plan's positive control: the unmodified code signs a wallet transfer here.
+    expect(signed, 'the wallet signed a pre-fund for a spend').toHaveLength(0);
+    // Not even a blockhash: the refusal comes before the transaction exists.
+    expect(blockhashCommitment).toBeUndefined();
+    expect(out.settled).toBe('rejected');
+    expect(out.name).toBe('WalletExposureRefusedError');
+  });
+
+  it('FUND-1: a value-0 job never asks the wallet when the funder cannot be reached', async () => {
+    stubFunder('network');
+    const out = await settle(fundEphemeralForJob(job()));
+    expect(signed, 'the wallet signed a pre-fund for a spend').toHaveLength(0);
+    expect(out.name).toBe('WalletExposureRefusedError');
+  });
+
+  it('FUND-1: a value-0 job never asks the wallet when this bundle carries no funder', async () => {
+    // The stale-bundle case: the ticket is inlined at build time, so a
+    // deployment that turned its funder on without a rebuild ships a bundle
+    // with none. Nothing is asked, so nothing fails, and a guard living only in
+    // the catch would miss it.
+    vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', '');
+    const out = await settle(fundEphemeralForJob(job()));
+    expect(signed, 'the wallet signed a pre-fund for a spend').toHaveLength(0);
+    expect(fetchCalls).toHaveLength(0);
+    expect(out.name).toBe('WalletExposureRefusedError');
+  });
+
+  it('FUND-1: the screens’ own flags refuse too — neverExposeWallet false is not an opt-in', async () => {
+    // What SubscribePanel passes today, plus an explicit `false` for the new
+    // switch: the default has to be closed, not merely "not true".
+    stubFunder('refuse');
+    const out = await settle(
+      fundEphemeralForJob(job({ neverExposeWallet: false, allowWalletFundedSpend: false })),
+    );
+    expect(signed, 'the wallet signed a pre-fund for a spend').toHaveLength(0);
+    expect(out.name).toBe('WalletExposureRefusedError');
+  });
+
+  it('FUND-1: a funder outage asks for a retry and says nothing moved', async () => {
+    stubFunder('refuse');
+    const out = await settle(fundEphemeralForJob(job()));
+    expect(out.settled).toBe('rejected');
+    expect(out.retryable).toBe(true);
+    expect(out.message).toMatch(/try again/i);
+    expect(out.message).toMatch(/signed nothing and none of your funds moved/i);
+    // The funder's own words, so a 429 and a drained float read differently.
+    expect(out.message).toMatch(/too many funding requests/);
+  });
+
+  it('FUND-1: no funder in the bundle is not an outage, and no retry is promised', async () => {
+    vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', '');
+    const out = await settle(fundEphemeralForJob(job()));
+    expect(out.settled).toBe('rejected');
+    expect(out.retryable).toBe(false);
+    expect(out.message).not.toMatch(/try again in a minute/i);
+    expect(out.message).toMatch(/no funder configured/i);
+  });
+
+  it('FUND-1: a job whose value is not a positive number is treated as a spend', async () => {
+    // `!(value > 0)`, not `value === 0`: a NaN from a broken prepare must not
+    // slip past the rule as if it were a deposit. Added after the red capture;
+    // its positive control is mutant M3 in FUND-1-mutants.log.
+    stubFunder('refuse');
+    const out = await settle(fundEphemeralForJob(job({ valueLamports: Number.NaN })));
+    expect(signed, 'the wallet signed a pre-fund for a spend').toHaveLength(0);
+    expect(out.name).toBe('WalletExposureRefusedError');
+  });
+
+  it('FUND-1: only the explicit opt-in lets the wallet pay for a spend', async () => {
+    // The negative control: the refusal keys on the opt-in, not on the funder
+    // having failed. Without this case a guard that refused every wallet path
+    // (the public treasury deposit included) would pass the ones above.
+    // The deposit side is 'refuses to ask the funder when the job carries the
+    // user’s own value', above, which must keep signing.
+    stubFunder('refuse');
+    const d = await fundEphemeralForJob(job({ allowWalletFundedSpend: true }));
+    expect(d.fundedBy).toBe('wallet');
+    expect(signed).toHaveLength(1);
   });
 });
 
@@ -496,6 +633,8 @@ const deposit = (over: Record<string, unknown> = {}) =>
     signOne: recordingSignOne,
     signMessage: async (m: Uint8Array) => new Uint8Array(64).fill(m.length & 0xff),
     relayThroughDeployment: true,
+    // The identity the payment receipt is sealed to (SWEEP4 item 5).
+    meta: META,
     ...over,
   }) as never;
 
@@ -536,6 +675,10 @@ beforeEach(() => {
   calls = [];
   relayedBody = null;
   storage = installStorage();
+  // A fresh page, and a wallet that has signed: the worker holds this
+  // identity's seeds, which is what sealing and opening a receipt needs.
+  clearPoolState();
+  setPoolSeed(META, META_SIGNATURE);
   // Module state, not test state: the deployment's addresses are cached for the
   // session and would otherwise leak from one case into the next — which is how
   // a case asserting "no till declared" quietly runs against a declared one.
@@ -807,7 +950,13 @@ describe('a payment that already left is never made twice', () => {
   it('drops the receipt once the relay has actually forwarded it', async () => {
     stubDeployment({ relay: 'ok' });
     await fundEphemeralForJob(deposit());
-    expect(JSON.parse(storage.get('p01_relay_payment_receipts_v1') ?? '[]')).toHaveLength(0);
+    // ⚠️ THE KEY MOVED WITH THE SWEEP4 FIX, THE PROPERTY DID NOT. `…_v1` was the
+    // clear store; `…_v2` is the opaque index whose bodies are sealed. What is
+    // asserted is unchanged: once the relay has forwarded the payment, this
+    // device holds no receipt for it, so a later deposit on the same key cannot
+    // resume a payment that has already been spent.
+    expect(JSON.parse(storage.get('p01_relay_payment_receipts_v2') ?? '[]')).toHaveLength(0);
+    expect(storage.get('p01_relay_payment_receipts_v1') ?? null).toBeNull();
 
     // And a later deposit on the same key pays for itself rather than resuming
     // a payment that has already been spent.
@@ -938,7 +1087,10 @@ describe('nothing irreversible happens before the relay has agreed to serve', ()
     const src = readFileSync(join(import.meta.dirname, 'ephemeralFunder.ts'), 'utf8');
     const pay = src.slice(
       src.indexOf("req.onProgress?.('Paying the deployment"),
-      src.indexOf('rememberRelayPayment({'),
+      // A PREFIX, not the whole call: the SWEEP4 receipt fix added a session
+      // parameter, `indexOf` returned -1, and `slice(start, -1)` swept in the
+      // treasury path's own blockhash — failing this for a line it is not about.
+      src.indexOf('rememberRelayPayment('),
     );
     expect(pay).toContain("getLatestBlockhash('confirmed')");
     expect(pay).not.toContain("getLatestBlockhash('finalized')");
@@ -1175,5 +1327,163 @@ describe('what the buyer actually signs', () => {
     expect(d.sweepTo).toBe(FUNDER);
     expect(d.sweepTo).not.toBe(TILL);
     expect(d.sweepTo).not.toBe(OWNER.toBase58());
+  });
+});
+
+// ===========================================================================
+// FUND-1 through the client: a refused spend never reaches execute.
+//
+// `unshieldFromPool` and `subscribeFromPool` are the two spends the screens
+// start. They run here with the REAL funding decision and a stubbed worker, so
+// what is pinned is the whole main-thread leg: prepare, then the refusal, then
+// no execute and no wallet signature. The screens print `error.message`
+// (`PoolPanel.tsx` handleUnshield, `SubscribePanel.tsx` handleSubscribe), and
+// that is the existing error path the refusal takes to the user.
+// ===========================================================================
+
+/**
+ * ⚠️ ONE `vi.mock('../workerClient')` FOR THE WHOLE FILE, AND IT ROUTES.
+ *
+ * `vi.mock` is hoisted, so a second factory for the same path silently replaces
+ * the first — which is how a store call ended up answered by an unimplemented
+ * `vi.fn()` (`undefined`) rather than by the worker. There is exactly one here.
+ *
+ * [SWEEP4 round 1, confirmed item 5] The relayed payment receipt is SEALED to
+ * the buyer's own identity, so `storeSession` and `poolOpenRecords` have to
+ * behave like the real worker: those three kinds go to the REAL
+ * `handlePoolRequest`, so the receipts these cases keep and present again are
+ * sealed and opened by the real hybrid X25519 + ML-KEM-768, exactly as a
+ * browser does. Everything else goes to the `poolRequest` spy the FUND-1 block
+ * below drives.
+ */
+const { poolRequest } = vi.hoisted(() => ({ poolRequest: vi.fn() }));
+const STORE_KINDS = new Set(['poolStoreLabel', 'poolNoteAddress', 'poolOpenRecords']);
+vi.mock('../workerClient', async () => {
+  const { handlePoolRequest } = await import('../worker/poolHandlers');
+  return {
+    poolRequest: (...args: unknown[]) => {
+      const kind = (args[0] as { kind?: string })?.kind ?? '';
+      if (STORE_KINDS.has(kind)) {
+        return handlePoolRequest(args[0] as never, args[1] as undefined);
+      }
+      return poolRequest(...args);
+    },
+  };
+});
+// The pool table pulls in the prover's module graph; nothing here reads it.
+vi.mock('./denominatedPool', () => ({ findPoolV3: () => null }));
+
+import { subscribeFromPool, unshieldFromPool } from '../shieldClient';
+
+describe('FUND-1 through the client: a refused spend never reaches execute', () => {
+  const PAYOUT = Keypair.generate().publicKey;
+  const RETAILER = Keypair.generate().publicKey;
+  const kinds = () => poolRequest.mock.calls.map((c) => (c[0] as { kind: string }).kind);
+  const execute = () =>
+    poolRequest.mock.calls
+      .map((c) => c[0] as { kind: string; sweepTo?: string })
+      .find((r) => r.kind.endsWith('Execute'));
+
+  beforeEach(() => {
+    poolRequest.mockReset();
+    poolRequest.mockImplementation(async (req: { kind: string }) => {
+      switch (req.kind) {
+        case 'poolUnshieldPrepare':
+          return {
+            kind: req.kind,
+            jobId: 'unshield-v4:POOL:7',
+            ephemeralPubkey: ephemeral,
+            requiredLamports: FLOAT_ONLY,
+            denomination: 0.1,
+            derivation: 'v1',
+            version: 'v4',
+          };
+        case 'poolUnshieldExecute':
+          return { kind: req.kind, txSig: 'TXSIG', denomination: 0.1 };
+        case 'poolSubscribePrepare':
+          return {
+            kind: req.kind,
+            jobId: 'subscribe-v4:POOL:7',
+            ephemeralPubkey: ephemeral,
+            requiredLamports: FLOAT_ONLY,
+            denomination: 0.1,
+            derivation: 'v1',
+            version: 'v4',
+            noteProvenance: 'received',
+          };
+        case 'poolSubscribeExecute':
+          return {
+            kind: req.kind,
+            txSig: 'TXSIG',
+            vaultPDA: 'VAULT',
+            licenseKey: 'P01-X',
+            serviceTag: 'tag',
+            denomination: 0.1,
+          };
+        default:
+          throw new Error(`unexpected worker request: ${req.kind}`);
+      }
+    });
+  });
+
+  const withdraw = () =>
+    unshieldFromPool({
+      meta: 'meta',
+      token: 'SOL',
+      denomination: 0.1,
+      leafIndex: 7,
+      recipient: PAYOUT,
+      owner: OWNER,
+      connection: fakeConnection(),
+      signOne,
+    }).then(
+      (r) => ({ settled: 'resolved', fundedBy: r.fundedBy, name: '' }),
+      (e: Error) => ({ settled: 'rejected', fundedBy: '', name: e.name }),
+    );
+
+  it('FUND-1: a withdrawal whose funder refuses stops after prepare, and the wallet signs nothing', async () => {
+    stubFunder('refuse');
+    const out = await withdraw();
+    expect(signed, 'the wallet signed a pre-fund for a withdrawal').toHaveLength(0);
+    expect(kinds()).toEqual(['poolUnshieldPrepare']);
+    expect(out).toEqual({ settled: 'rejected', fundedBy: '', name: 'WalletExposureRefusedError' });
+  });
+
+  it('FUND-1: a subscription made with the screen’s own flags stops after prepare when the funder refuses', async () => {
+    stubFunder('refuse');
+    const out = await subscribeFromPool({
+      meta: 'meta',
+      token: 'SOL',
+      denomination: 0.1,
+      leafIndex: 7,
+      retailer: RETAILER,
+      rate: 1_000n,
+      intervalSlots: 100n,
+      owner: OWNER,
+      connection: {
+        ...(fakeConnection() as unknown as Record<string, unknown>),
+        getSignaturesForAddress: async () => [],
+      } as unknown as Connection,
+      signOne,
+      // What SubscribePanel passes: NEVER_EXPOSE_WALLET is false.
+      neverExposeWallet: false,
+    }).then(
+      (r) => ({ settled: 'resolved', fundedBy: r.fundedBy, name: '' }),
+      (e: Error) => ({ settled: 'rejected', fundedBy: '', name: e.name }),
+    );
+    expect(signed, 'the wallet signed a pre-fund for a subscription').toHaveLength(0);
+    expect(kinds()).toEqual(['poolSubscribePrepare']);
+    expect(out).toEqual({ settled: 'rejected', fundedBy: '', name: 'WalletExposureRefusedError' });
+  });
+
+  it('a withdrawal whose funder serves still runs, and sweeps to the funder', async () => {
+    // The harness control: without it, the two refusals above could be a
+    // broken stub rather than the rule.
+    stubFunder('ok');
+    const out = await withdraw();
+    expect(out).toEqual({ settled: 'resolved', fundedBy: 'funder', name: '' });
+    expect(kinds()).toEqual(['poolUnshieldPrepare', 'poolUnshieldExecute']);
+    expect(execute()?.sweepTo).toBe(FUNDER);
+    expect(signed).toHaveLength(0);
   });
 });

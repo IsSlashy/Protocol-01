@@ -33,6 +33,7 @@ import nacl from 'tweetnacl';
 import { claimChallenge } from '@/lib/privacy/claimChallenge';
 import bs58 from 'bs58';
 import { getStore, rateLimitExceeded, rateLimitRemaining } from '@/lib/waitlist/store';
+import { clientIp, rateLimitAdvisories } from '@/lib/net/clientIp';
 import { namesBoth } from '@/lib/privacy/coNaming';
 import { P11_FUNDER_WALK_LIMIT, funderHistoryVerdict } from '@/lib/privacy/funderHistory';
 import {
@@ -529,8 +530,7 @@ export async function GET(request: NextRequest) {
   //
   // ⚠️ `null` is UNKNOWN, not zero — same rule as the float balance. A store
   // that cannot be read must not delete the only private path.
-  const ip =
-    request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown';
+  const ip = clientIp(request);
   let relaysRemaining: number | null = null;
   const store = getStore();
   if (store) {
@@ -565,6 +565,8 @@ export async function GET(request: NextRequest) {
     funderHistory: funderHistoryVerdict(funderHistoryLength),
     ready: reasons.length === 0,
     reasons,
+    // Never folded into `ready` (__tests__/lib/rateLimitKey.test.ts).
+    advisories: rateLimitAdvisories(),
   });
 }
 
@@ -720,6 +722,13 @@ export async function POST(request: NextRequest) {
       // settler and the maturity gate exist to break, kept for ever in a store
       // shared with the waitlist, and NOTHING in this repository ever read it.
       // A row no code needs is a row that only an operator dump can use.
+      // ⛔ NO `ex`, EVER, AND NO `expire`. This row is the only thing that says
+      // whose payment funded a reserved leaf. A TTL on it would answer a buyer
+      // who paid, deposited and came back late with 'that payment did not fund
+      // this leaf' — about a payment that funded exactly that leaf. Its
+      // lifetime is the redemption, not a clock: `issue-note` deletes it then.
+      // Pinned by `__tests__/api/relay-to-buyer.test.ts` "the contribution
+      // binding carries no expiry".
       if (binding) await kv.set(relayPaymentContributionKey(signature), binding);
       return true;
     } catch {
@@ -727,16 +736,25 @@ export async function POST(request: NextRequest) {
     }
   };
 
-  const ip =
-    request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for') ?? 'unknown';
+  const ip = clientIp(request);
   try {
     if (await rateLimitExceeded(kv, ip, RATE_SALT, RELAYS_PER_IP_PER_HOUR)) {
       return bad(429, 'too many relays from this address in the last hour', {
         limit: RELAYS_PER_IP_PER_HOUR,
       });
     }
-  } catch (e) {
-    return bad(503, `the rate limiter could not be read: ${(e as Error).message}`);
+  } catch {
+    // ⛔ THE REFUSAL CARRIES NO TEXT FROM THE STORE. The store words a failure
+    // as `${error}, command was: ${JSON.stringify(commands)}` and with
+    // auto-pipelining that list holds the commands of every other request
+    // batched into the same round trip: another route's claim code, a payment
+    // signature, another caller's limiter bucket. This route runs after the
+    // buyer's lamports have moved, so the body reaches a paying caller. Fixed
+    // words, whatever failed — the same posture as `/api/fund-ephemeral`.
+    // Pinned by `__tests__/api/relay-to-buyer.test.ts` "a limiter that fails
+    // says so without passing on what the store carried", which runs the same
+    // failure with two different batches and requires one answer.
+    return bad(503, 'the rate limiter could not be read');
   }
 
   const rpc = process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com';

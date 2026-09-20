@@ -184,9 +184,13 @@ export default function AdminPage() {
     if (!confirm(`Revoke access for ${wallet.slice(0, 8)}...?`)) return;
 
     try {
-      const res = await fetch(`/api/whitelist?wallet=${wallet}`, {
+      // The wallet travels in the BODY, never in the URL: the address of a
+      // developer being revoked is exactly the line a request log should not
+      // hold (SWEEP4 round 1, item 15; `app/api/whitelist/route.ts`).
+      const res = await fetch(`/api/whitelist`, {
         method: "DELETE",
-        headers: { "x-admin-password": password },
+        headers: { "x-admin-password": password, "content-type": "application/json" },
+        body: JSON.stringify({ wallet }),
       });
 
       if (res.ok) {

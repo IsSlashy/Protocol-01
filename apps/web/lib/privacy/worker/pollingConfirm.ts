@@ -60,8 +60,13 @@ export function usePollingConfirmation(connection: Connection): Connection {
           // `await connection.confirmTransaction(...)` without inspecting the
           // result — so a transaction that failed on-chain would otherwise be
           // reported to the user as a successful shield.
+          //
+          // No signature in either refusal: this message reaches the panels'
+          // error line, and the transaction is a deposit (its leaf) or a spend
+          // (its nullifier). The caller holds the signature it asked about
+          // (pollingConfirm.test.ts, "pollingConfirm refusals name no transaction").
           throw new Error(
-            `Transaction ${signature} failed on-chain: ${JSON.stringify(status.err)}`,
+            `A transaction failed on-chain: ${JSON.stringify(status.err)}`,
           );
         }
         const level = status.confirmationStatus;
@@ -79,7 +84,7 @@ export function usePollingConfirmation(connection: Connection): Connection {
     }
 
     throw new Error(
-      `Transaction ${signature} was not confirmed within ${MAX_WAIT_MS / 1000}s`,
+      `A transaction was not confirmed within ${MAX_WAIT_MS / 1000}s`,
     );
   }) as Connection['confirmTransaction'];
 

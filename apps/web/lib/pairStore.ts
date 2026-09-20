@@ -17,7 +17,7 @@
  * Uses @vercel/kv (already a web dependency; Upstash-backed REST client).
  */
 import { createClient, type VercelKV } from '@vercel/kv';
-import { createHash } from 'node:crypto';
+import { rateLimitBucket } from '@/lib/net/clientIp';
 
 const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
 const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -88,8 +88,10 @@ const rlMem: Map<string, RlEntry> =
 
 /**
  * Per-IP fixed-window (1 minute) rate limit; returns true when over the limit.
- * Mirrors rateLimitExceeded in lib/waitlist/store.ts: the IP is hashed with a
- * server secret so raw IPs never touch the store. Falls back to an in-process
+ * Mirrors rateLimitExceeded in lib/waitlist/store.ts: the row is named by
+ * `rateLimitBucket` (HMAC under P01_RATE_LIMIT_KEY when set; else the public
+ * sha256(ip + salt) a KV dump reverses, __tests__/lib/rateLimitKey.test.ts
+ * "the pairing relay bucket matches nothing either"). Falls back to an in-process
  * counter when no KV backend is wired (dev), so local runs never hard-fail.
  */
 export async function pairRateLimitExceeded(
@@ -98,9 +100,8 @@ export async function pairRateLimitExceeded(
   limit: number,
 ): Promise<boolean> {
   const salt = process.env.WAITLIST_STATS_TOKEN ?? 'salt';
-  const hash12 = createHash('sha256').update(ip + salt).digest('hex').slice(0, 12);
   const minute = new Date().toISOString().slice(0, 16); // YYYY-MM-DDTHH:MM (UTC)
-  const rlKey = `p01pair:rl:${kind}:${hash12}:${minute}`;
+  const rlKey = `p01pair:rl:${kind}:${rateLimitBucket(salt, minute, ip)}:${minute}`;
 
   if (kv) {
     const count = await kv.incr(rlKey);

@@ -100,7 +100,7 @@ export const metadata: Metadata = {
    */
   title: "Styx Protocol",
   description:
-    "Private payments on Solana: a shielded pool with hash-based STARK proofs and hybrid post-quantum stealth addresses. Running on devnet. Not audited.",
+    "On Solana anyone can see who you pay and how much. Styx hides both with proofs built to outlast quantum computers. On devnet, not audited, no mainnet.",
   keywords: [
     "privacy",
     "solana",
@@ -115,7 +115,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Styx Protocol",
     description:
-      "Private payments on Solana. Built to be checked, not believed. Running on devnet, not audited.",
+      "Payments on Solana that hide who you pay and how much, with proofs built to outlast quantum computers. On devnet, not audited.",
     type: "website",
     locale: "en_US",
   },
@@ -123,7 +123,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Styx Protocol",
     description:
-      "Private payments on Solana. Built to be checked, not believed. Running on devnet, not audited.",
+      "Payments on Solana that hide who you pay and how much, with proofs built to outlast quantum computers. On devnet, not audited.",
   },
 };
 

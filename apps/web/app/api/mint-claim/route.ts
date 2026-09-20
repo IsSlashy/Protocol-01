@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import { getStore } from '@/lib/waitlist/store';
 
@@ -90,6 +90,26 @@ export async function POST(request: NextRequest) {
   }
   const reference = String(body.reference ?? 'manual').slice(0, 200);
 
+  /**
+   * ⛔ THE DIGEST IS RECORDED, NOT THE STRING.
+   *
+   * `reference` is whatever authorised the mint — an operator's note, a
+   * processor's receipt id — and it used to be stored verbatim under a key
+   * that IS the claim code, with no expiry. So a copy of the store read
+   * whatever the operator happened to type (a customer id, an email address)
+   * beside the code that names the note it bought.
+   *
+   * Nothing ever read the value: `/api/issue-note` only tests `if (!minted)`,
+   * i.e. that something is there. 16 hex of sha256 is enough for an operator
+   * holding the original to confirm a match, and is not a string a reader can
+   * lift an identity out of.
+   *
+   * ⚠️ IT IS NOT A SECRET. A digest of a low-entropy reference is recoverable
+   * by guessing, and this hash is unkeyed. It narrows what a dump reads;
+   * keying the rows is KVX-1. Pinned by `__tests__/api/mint-claim.test.ts`.
+   */
+  const mintedReference = createHash('sha256').update(reference).digest('hex').slice(0, 16);
+
   // 32 bytes of CSPRNG, base64url. Guessing one is not a threat model this
   // endpoint has to reason about, and a code short enough to type is a code
   // short enough to enumerate.
@@ -99,7 +119,7 @@ export async function POST(request: NextRequest) {
     // ⛔ NO `ex`. See the block above CLAIM_TTL_SECONDS's removal: a TTL here
     // makes a paying customer's code answer "never issued against a payment"
     // and burns it on the way. The absence of an expiry option is the feature.
-    await kv.set(`p01:note:claim-minted:${claimCode}`, reference);
+    await kv.set(`p01:note:claim-minted:${claimCode}`, mintedReference);
   } catch (e) {
     return bad(503, `the claim could not be recorded: ${(e as Error).message}`);
   }

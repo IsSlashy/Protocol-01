@@ -316,10 +316,9 @@ describe.skipIf(!LIVE)('the note-in exchange, live', () => {
           }),
         });
         const issued = await issueRes.json();
-        say(`  issue-note -> ${issueRes.status} leaf ${issued.leafIndex}`);
+        say(`  issue-note -> ${issueRes.status}, an older note sealed to the buyer`);
         expect(issueRes.status, JSON.stringify(issued)).toBe(200);
         held.sealedNote = issued.sealedNote;
-        held.receivedLeaf = issued.leafIndex;
         keep();
       }
 
@@ -329,14 +328,25 @@ describe.skipIf(!LIVE)('the note-in exchange, live', () => {
         sealedNote: held.sealedNote,
       });
       expect(imported.note.denomination).toBe(DENOMINATION);
-      expect(imported.note.leafIndex).toBe(held.receivedLeaf);
+      // The leaf is read off the note the buyer OPENED; the reply names none
+      // (`__tests__/api/issue-note.node.test.ts` "does not move when the leaf
+      // moves, and does not name the recipient"). On a resumed run the leaf
+      // recorded then is what this blob must still open to.
+      if (typeof held.receivedLeaf === 'number') {
+        expect(imported.note.leafIndex, 'the note re-opened to a different leaf').toBe(
+          held.receivedLeaf,
+        );
+      } else {
+        held.receivedLeaf = imported.note.leafIndex;
+        keep();
+      }
       // The whole point: what came back is not what went in.
       expect(
         imported.note.leafIndex,
         'the exchange handed back the same leaf that was given up',
       ).not.toBe(held.gaveUpLeaf);
       say(
-        `  EXCHANGED leaf ${held.gaveUpLeaf} -> leaf ${imported.note.leafIndex}, ` +
+        `  EXCHANGED: the note that came back is not the note that went in, ` +
           'deposited by the treasury before this buyer existed',
       );
 
@@ -348,8 +358,9 @@ describe.skipIf(!LIVE)('the note-in exchange, live', () => {
               flow: 'note-in-exchange',
               spendSig: held.spendSig,
               claimKind: 'pool-withdrawal',
-              gaveUpLeaf: held.gaveUpLeaf,
-              receivedLeaf: imported.note.leafIndex,
+              noteHandedBack: 'a different, older note than the one given up',
+              leafNumbersOmitted:
+                'a funded-to-issued pair; kept out of the public repository, pinned by apps/web/__tests__/lib/docsNoLeafJoin.test.ts',
               tillCreditLamports: held.tillCredit,
               denomination: DENOMINATION,
               landedAt: held.landedAt,

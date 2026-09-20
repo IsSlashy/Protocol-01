@@ -16,10 +16,10 @@ import { createClient, type VercelKV } from '@vercel/kv';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join as joinPath } from 'node:path';
+import { rateLimitBucket } from '@/lib/net/clientIp';
 import {
   INTERESTS,
   LOCALES,
-  sha256Hex,
   type Interest,
   type Locale,
 } from './validate';
@@ -308,7 +308,7 @@ const K = {
   locale: (l: string) => `wl:loc:${l}`,
   source: (s: string) => `wl:src:${s}`,
   country: (c: string) => `wl:ctry:${c}`,
-  rate: (hash12: string, hour: string) => `wl:rl:${hash12}:${hour}`,
+  rate: (bucket: string, hour: string) => `wl:rl:${bucket}:${hour}`,
 } as const;
 
 const SOURCE_CAP = 50;
@@ -419,7 +419,9 @@ export async function recordConfirmCounters(kv: KvLike, confirmedAt: string): Pr
 
 /**
  * Per-IP hourly rate limit. Returns true when the caller is over the limit.
- * The IP is hashed with a server secret so raw IPs never touch the store.
+ * The row is named by `rateLimitBucket` (lib/net/clientIp.ts): HMAC under
+ * P01_RATE_LIMIT_KEY when set, else sha256(ip + salt), whose salts are public
+ * and which a KV dump reverses (__tests__/lib/rateLimitKey.test.ts).
  */
 /**
  * How many calls this bucket has left, WITHOUT spending one.
@@ -442,9 +444,8 @@ export async function rateLimitRemaining(
   salt: string,
   limit = 20,
 ): Promise<number> {
-  const hash12 = sha256Hex(ip + salt).slice(0, 12);
   const hour = new Date().toISOString().slice(0, 13);
-  const used = await kv.get<number>(K.rate(hash12, hour));
+  const used = await kv.get<number>(K.rate(rateLimitBucket(salt, hour, ip), hour));
   const n = typeof used === 'number' ? used : Number(used ?? 0);
   return Math.max(0, limit - (Number.isFinite(n) ? n : 0));
 }
@@ -455,9 +456,8 @@ export async function rateLimitExceeded(
   salt: string,
   limit = 20,
 ): Promise<boolean> {
-  const hash12 = sha256Hex(ip + salt).slice(0, 12);
   const hour = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH (UTC)
-  const key = K.rate(hash12, hour);
+  const key = K.rate(rateLimitBucket(salt, hour, ip), hour);
   const count = await kv.incr(key);
   await kv.expire(key, 3600);
   return count > limit;

@@ -6,6 +6,7 @@ import { sharedTransaction } from '@/lib/privacy/coNaming';
 import { purchasesCarried } from '@/lib/privacy/pool/settlementPolicy';
 
 import { getStore, rateLimitExceeded } from '@/lib/waitlist/store';
+import { clientIp } from '@/lib/net/clientIp';
 
 /**
  * fund-ephemeral — pay the rent and fees for one pool job, so the user's wallet
@@ -207,17 +208,6 @@ async function settlementPurchaseCount(
     return null;
   }
 }
-/** First hop of the forwarding chain; falls back to a stable sentinel. Same
- *  shape as the waitlist route's, deliberately — one definition of "who is
- *  calling" across every rate-limited endpoint. */
-function clientIp(req: NextRequest): string {
-  const real = req.headers.get('x-real-ip');
-  if (real) return real.trim();
-  const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return 'unknown';
-}
-
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
 }
@@ -527,11 +517,22 @@ export async function POST(request: NextRequest) {
         limit: GRANTS_PER_IP_PER_HOUR,
       });
     }
-  } catch (e) {
+  } catch {
     // A limiter that errors is a limiter that is not limiting. Same posture as
     // an absent one: refuse. Serving here would make every KV outage a window
     // in which the treasury is unbounded.
-    return bad(503, `the rate limiter could not be read: ${(e as Error).message}`);
+    //
+    // ⛔ AND THE REFUSAL CARRIES NO TEXT FROM THE STORE. The client shows this
+    // error on screen (`The funder refused: ${body.error}`,
+    // lib/privacy/pool/ephemeralFunder.ts), and the store words a failure as
+    // `${error}, command was: ${JSON.stringify(commands)}` — with
+    // auto-pipelining, the commands of every other request batched into the
+    // same one: another route's claim code, a payment signature, another
+    // caller's limiter bucket. Fixed words, whatever failed. Pinned by
+    // `__tests__/api/fund-ephemeral.test.ts` "says the limiter failed WITHOUT
+    // passing on what the store said", which runs the same failure with two
+    // different batches and requires one answer.
+    return bad(503, 'the rate limiter could not be read');
   }
 
   const rpc = process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com';
