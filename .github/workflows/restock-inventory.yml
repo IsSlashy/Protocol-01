@@ -50,6 +50,23 @@ concurrency:
   group: restock-inventory
   cancel-in-progress: false
 
+# ⛔ WHAT THE RUNNER SHOWS IS PUBLIC TOO, not only what a step echoes: each
+# step's name, each action's inputs, and each run step's env block with its
+# values. GitHub masks a secret only as its exact string, so an expression
+# derived from one (`fromJSON(secrets.X)[0]`, `startsWith(secrets.X, 'a')`)
+# shows in clear. So an expression is the WHOLE value of an env entry and sits
+# nowhere else, and every env value, `with:` input and `if:` below is pinned
+# by its step and its exact text in
+# apps/web/lib/privacy/pool/ciLogHygiene.test.ts, case "the public workflows
+# echo no response body and run the restock silently" (mutants Z3, E1, E3,
+# E5-E7: web-run/logs/CI-1-wr3b-mutants-after.log).
+#
+# ⛔ EVERY LINE OF THIS FILE THAT IS NOT A COMMENT IS PINNED, by its exact text
+# and in order, in that same case (VETTED_WORKFLOW_LINES). Changing one, a new
+# low-water mark say, turns it red until the list changes with it, which is
+# the point: a change to this job is read. A comment or blank line is free,
+# except inside a `\` continuation (bash splits the command there) and at an
+# indentation other than the line below it (web-run/logs2/CI-1-cr1-*).
 jobs:
   restock:
     name: Restock the note inventory
@@ -85,7 +102,27 @@ jobs:
       #
       # BEFORE the restock, so the deposits have something to spend. Secrets
       # are referenced by name and read from the environment by the script,
-      # which prints public keys and amounts only.
+      # which says what happened only through apps/web/lib/privacy/ciLog.ts:
+      # one allowlisted verdict, or one redacted ::error::, into the verdict
+      # file the "Say what happened" step prints.
+      #
+      # ⛔ ITS OWN STDOUT AND STDERR GO TO PRIVATE FILES, and not by
+      # preference. web3.js prints the transfer signature on its own when a
+      # websocket subscribe fails, in a retry loop: run against a fake RPC,
+      # the step log carried it 43,720 times
+      # (web-run/logs/verify-CI-1-r1-topup-probe-wserror.log). The script now
+      # confirms by status polling, which removes that one print at its
+      # source; the redirect is for whatever else a library prints, which
+      # nothing this repository writes can refuse. RUNNER_TEMP is emptied at
+      # the end of the job. Pinned by
+      # apps/web/lib/privacy/pool/ciLogHygiene.test.ts, case "the public
+      # workflows echo no response body and run the restock silently", which
+      # vets this command by its exact line, both redirects included, and
+      # refuses a redirect into the verdict file. Private streams do not make
+      # any OTHER command innocent there: a command can copy these files into
+      # the step summary or the verdict file by argument, so every command in
+      # this job that is not echo, printf or a quiet shell word is vetted by
+      # its line.
       #
       # continue-on-error, deliberately: a missing float key or a failed
       # transfer must show as a red step with an ::error:: annotation, but it
@@ -107,7 +144,15 @@ jobs:
           # are also the deployment's unless it overrode them.
           P01_SETTLE_MIN_PURCHASES: ${{ vars.P01_SETTLE_MIN_PURCHASES }}
           P01_SETTLE_MIN_QUIET_SECONDS: ${{ vars.P01_SETTLE_MIN_QUIET_SECONDS }}
-        run: npx tsx scripts/topUpRestockWallet.mts
+          # Where lib/privacy/ciLog.ts appends the verdict or the redacted
+          # ::error::. "Say what happened" prints it, and it is this step's
+          # only way onto the public log besides the step summary: the
+          # command below keeps both of its streams private (pinned by
+          # apps/web/lib/privacy/pool/ciLogHygiene.test.ts, "the public
+          # workflows echo no response body and run the restock silently").
+          P01_CI_VERDICT_FILE: ${{ format('{0}/ci-verdicts.txt', runner.temp) }}
+        run: |
+          npx tsx scripts/topUpRestockWallet.mts > "$RUNNER_TEMP/topup.out" 2> "$RUNNER_TEMP/topup.err"
 
       # [2026-09-12] The stock, read from the live deployment BEFORE the key is
       # needed. This job had failed on every one of its 4-hourly runs since at
@@ -153,16 +198,66 @@ jobs:
         working-directory: apps/web
         env:
           P01_RESTOCK: '1'
-          P01_LIVE_KEYPAIR: ${{ runner.temp }}/treasury.json
+          P01_LIVE_KEYPAIR: ${{ format('{0}/treasury.json', runner.temp) }}
           P01_LIVE_RPC: ${{ secrets.P01_FUNDER_RPC }}
           P01_TREASURY_NOTE_LEAVES: ${{ secrets.P01_TREASURY_NOTE_LEAVES }}
           P01_TREASURY_TARGET: ${{ github.event.inputs.target || '10' }}
           P01_TREASURY_LOW_WATER: '7'
           P01_TREASURY_MAX_PER_RUN: '3'
           NODE_OPTIONS: --max-old-space-size=8192
+          P01_CI_VERDICT_FILE: ${{ format('{0}/ci-verdicts.txt', runner.temp) }}
+        # ⛔ --silent, and not by preference. This log is public (ledger row
+        # E5): without it every console.warn from the pool library lands here,
+        # and prepareUnshield / prepareUnshieldV4 in
+        # apps/web/lib/privacy/pool/denominatedPool.ts print missing leaf gaps
+        # BY INDEX — named by function, not by line, because those two lines
+        # have already moved once. --reporter=dot does the same for the
+        # reporter. The job says what happened through the verdict file,
+        # printed by the step below.
+        #
+        # ⚠️ IT SILENCES console.*, NOT THE PROCESS STREAMS. Measured on the
+        # same two runs: a console.warn goes 1 hit -> 0 hits with these flags,
+        # a raw process.stdout.write stays at 1. The offender named above uses
+        # console.warn, so this closes it; what covers a message THROWN by the
+        # library is the ciRedactedError rethrow in restockInventory.test.ts,
+        # not this flag. Pinned by
+        # apps/web/lib/privacy/pool/ciLogHygiene.test.ts, which reads the flags
+        # off the vitest COMMAND with the comments stripped, so this comment
+        # cannot satisfy it.
+        #
+        # ⚠️ --silent IS ONLY AS GOOD AS WHAT ELSE VITEST LOADS. One key in the
+        # config, `disableConsoleIntercept: true`, turned it off;
+        # --disableConsoleIntercept=false takes that back. A setupFiles in the
+        # config, a vitest.workspace.* beside it, a NODE_OPTIONS preload or an
+        # npm node-options in apps/web/.npmrc also turned it off, and no flag
+        # takes those back. So the same test evaluates vitest.pool.config.mts
+        # against a closed shape, refuses a workspace file beside it, and holds
+        # every env block here and apps/web/.npmrc to closed key sets (case "the
+        # public workflows echo no response body and run the restock silently").
         run: |
-          npx vitest run --config vitest.pool.config.mts \
+          npx vitest run --config vitest.pool.config.mts --silent --reporter=dot \
+            --disableConsoleIntercept=false \
             lib/privacy/pool/restockInventory.test.ts
+
+      # The verdict file both steps above write through
+      # apps/web/lib/privacy/ciLog.ts: allowlisted words, at most one count
+      # (how many deposits landed, which the chain shows anyway), and the
+      # top-up's redacted ::error:: line, which GitHub raises as an annotation
+      # here (pinned by apps/web/lib/privacy/pool/ciLogHygiene.test.ts, "ciSay
+      # refuses a word or a number nothing allowlisted (positive control)" and
+      # "a verdict goes to the file the workflow prints, and to stdout when
+      # there is none"). The Restock step's own output (vitest's dots and a
+      # redacted failure) is the other public text of this job.
+      - name: Say what happened
+        if: always()
+        env:
+          P01_CI_VERDICT_FILE: ${{ format('{0}/ci-verdicts.txt', runner.temp) }}
+        run: |
+          if [ -s "$P01_CI_VERDICT_FILE" ]; then
+            cat "$P01_CI_VERDICT_FILE"
+          else
+            echo "no verdict was recorded"
+          fi
 
       - name: Shred the key
         if: always()

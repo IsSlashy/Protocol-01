@@ -58,6 +58,12 @@ jobs:
       - name: Ask the deployment to settle if the policy allows it
         env:
           SECRET: ${{ secrets.P01_SETTLE_TRIGGER_SECRET }}
+          # Pinned by its exact value, with every env value of this file
+          # (apps/web/lib/privacy/pool/ciLogHygiene.test.ts, case "the public
+          # workflows echo no response body and run the restock silently";
+          # mutants E4, E10 in web-run/logs/CI-1-wr3b-mutants-after.log): the
+          # curl below sends the trigger secret to this host, and names the
+          # host in its own error on the public log.
           ENDPOINT: https://protocol-01.dev/api/settle-till
         run: |
           set -euo pipefail
@@ -70,11 +76,17 @@ jobs:
 
           # -sS keeps curl quiet but still prints errors; --fail-with-body is what
           # makes an HTTP 4xx/5xx fail the job WITHOUT swallowing the reason, which
-          # plain --fail does. The reason is the whole value of this log line.
+          # plain --fail does.
+          #
+          # ⛔ THE BODY IS NEVER PRINTED. This log is public (ledger row E5) and
+          # the response carries the till and float balances, the amount and the
+          # purchase count of the batch. Only the three parsed fields below reach
+          # the summary: a verdict word and two booleans. Pinned by
+          # apps/web/lib/privacy/pool/ciLogHygiene.test.ts ("the public workflows
+          # echo no response body and run the restock silently").
           body=$(curl -sS --fail-with-body --max-time 120 \
                    -H "authorization: Bearer $SECRET" \
                    "$ENDPOINT")
-          echo "$body"
 
           # ⛔ NEVER PIPE THIS INTO ANOTHER COMMAND. `| tail` returns tail's exit
           # code and manufactures a green run over a red one — the trap already
