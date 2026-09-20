@@ -74,6 +74,8 @@ trace blinding ships, and the pin means a premature "fix" turns CI red first.
 | **P6** | the fee payer's two funding edges — where its lamports came from, where they went |
 | **P7** | the commitment in instruction *arguments* outside the proof payload |
 | **P8** | the same walk on the *deposit's* payer, and whether one wallet stands behind both ends |
+| **P12** | how old the Merkle root the spend named is, in insertions (`--max-root-age` only) |
+| **P13** | whether the published subtree path narrows the set to one bucket (`--max-root-age` only) |
 
 **P6 is the cheapest attack in this file, and it is not cryptographic.** P1–P4
 chase a commitment; an analyst would not. The spend is signed by an ephemeral

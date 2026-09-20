@@ -1,0 +1,35 @@
+{
+  "synthetic": true,
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. It is verify/fixtures/v4-stale-root with one flag changed: depositLimit 7, so the tree walk stops at its budget before the history ends. The named root is inside what was read, and P12 and P13 must still report no measure: a walk that cannot show it read everything reports INCONCLUSIVE, never an age. Pins the handoff of the walk to both probes (VERIFY-1 fix round 2).",
+  "spend": "3GYruHF9T86fLHS9wfuwfyBuEkDdbvYwVVHgh7oUFp9KfW6u28R62udKoQVjD1htJhxxGinsDiwJ9LCYtQfwJatx",
+  "kind": "unshield_denominated_stark_v4",
+  "flags": {
+    "maxChunkTx": 200,
+    "depositLimit": 7,
+    "maxRootAge": 2
+  },
+  "pools": {
+    "DNA6C7DsDaMTXZmspfh9FCEbg4VqFde4Ffy5fZCdiy2N": {
+      "label": "SYNTHETIC 1 SOL (truncated-walk fixture)",
+      "tree": "EWn7dE93GeQJu72WEkEmC5MZpm5FhiJzkcJEf1xpRdWP"
+    }
+  },
+  "expect": {
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "PASS",
+    "P6": "PASS",
+    "P7": "FAIL",
+    "P8": "FAIL",
+    "P9": "FAIL",
+    "P10": "PASS",
+    "P12": "FAIL",
+    "P13": "FAIL"
+  },
+  "measure": {
+    "P6": 0,
+    "P10": 0
+  }
+}

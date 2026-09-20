@@ -25,6 +25,31 @@
  *   P8  no single wallet funded both the deposit and the spend
  *   P9  the DEPOSIT's fee payer cannot be traced to a funding wallet
  *   P10 the withdrawal's PAYEE cannot be traced to a wallet
+ *   P12 the Merkle root the spend named is not an old one (--max-root-age)
+ *   P13 the published subtree path does not narrow the set (--max-root-age)
+ *
+ * 🚨 WHY P12 EXISTS: P1, P2 AND P4 PASS ON EVERY v4 SPEND
+ * ──────────────────────────────────────────────────────
+ * A circuit-7 spend publishes no commitment, so the three probes that chase one
+ * report PASS and stop. They are silent about the one field the spender still
+ * chooses: `merkle_root`. The pool keeps its old roots in a ring and accepts any
+ * of them (`pool_v3.rs` MAX_HISTORICAL_ROOTS), and a root is created by exactly
+ * ONE insertion — so naming an old root dates the note to that insertion. That
+ * is not hypothetical: a client that spends with the Merkle path it stored at
+ * shield time names the root its OWN deposit created.
+ *
+ * MEASURED on devnet 2026-09-15, 1 SOL pool: of 34 v4 spends, 1 named a root 4
+ * insertions old and 33 named the current one.
+ *
+ * ⛔ P12 AND P13 ARE BUILT ONLY WHEN `--max-root-age` IS PASSED. An always-on
+ * probe would have turned all eight committed fixtures red for two reasons that
+ * are both this file working as designed: their manifests carry no pin for it
+ * (`selfTestAgainstManifest` fails any probe with no pin), and their frozen RPC
+ * sets hold no answer for the tree walk it needs (`makeReplayRpc` treats a miss
+ * as a hard stop). The flag lives in the two new fixtures' manifests instead,
+ * so not one byte of the older eight had to change. P12 never names the deposit
+ * it dates — that is P4's job, and printing it here would publish the join in a
+ * CI log that is public.
  *
  * 🚨 WHY P10 EXISTS: EVERY OTHER PROBE HERE WATCHES A PAYER
  * ────────────────────────────────────────────────────────
@@ -156,17 +181,33 @@
  *                          instruction is not an anonymous transaction, and a
  *                          fixture showing only the green half would teach the
  *                          opposite. (reality pin -- see its README)
+ *   fixtures/v4-stale-root HAND-BUILT: a v4 spend proving against a root four
+ *   fixtures/v4-fresh-root insertions old, and the SAME WORLD with one field
+ *                          changed — the 32 bytes of `merkle_root` — proving
+ *                          against the newest. P12 is pinned FAIL measure 4 on
+ *                          the first and PASS measure 0 on the second, so
+ *                          neither half can go green for a reason the other
+ *                          does not share. Recording the real stale spend would
+ *                          freeze the deposit it dates into a public
+ *                          repository, which is the join the probe exists to
+ *                          warn about. (control pair -- see their READMEs)
  *
  * USAGE
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v3-subscribe
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-synthetic-errored
  *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-live
+ *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-stale-root
+ *   node verify/p01-verify.mjs --self-test --replay verify/fixtures/v4-fresh-root
  *   node verify/p01-verify.mjs --self-test [--rpc URL]
  *   node verify/p01-verify.mjs --spend <signature> [--rpc URL] [--record DIR]
  *   node verify/p01-verify.mjs --pool <poolPDA> [--limit N] [--rpc URL]
  *   node verify/p01-verify.mjs ... --pools <extra-pools.json>
  *   node verify/p01-verify.mjs ... --wallet <pubkey>   name one address explicitly
+ *   node verify/p01-verify.mjs ... --max-root-age <n>  build P12/P13, bound the
+ *                                                      root age at n insertions
+ *   node verify/p01-verify.mjs ... --since-slot <slot>  fail unless a v4 spend
+ *                                                      AFTER that slot was read
  *
  * Exit code 0 = every probe passed (under --self-test: every control held).
  * 1 = a linkage survived (under --self-test: a control broke). 2 = the tool
@@ -174,8 +215,10 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const DEFAULT_RPC = 'https://api.devnet.solana.com';
 const ZK_SHIELDED = 'GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c';
@@ -286,6 +329,25 @@ const SPEND_KINDS = [
   // and the read would still succeed, printing a syntactically valid address
   // belonging to nobody. `totalLen` is what pins it: P10 must refuse any v4
   // instruction whose length is not exactly 147.
+  //
+  // ⛔ [2026-09-16] THE WARNING ABOVE CAME TRUE, AND `totalLen` NEVER PINNED
+  // ANYTHING: grep it — it is read by no line of this file, so the sentence
+  // "P10 must refuse" describes a guard that was never written. What moved was
+  // not the pool depth but the CIRCUIT depth: `SPEND_SUBTREE_DEPTH` went 12 ->
+  // 11 on 2026-08-30 (`spend_root.rs:85-92`), so a depth-15 pool walks FOUR
+  // levels, not three, and the instruction the client builds today is 156 bytes
+  // with the payee at 124 (`C7_SUBTREE_DEPTH = 11`,
+  // apps/web/lib/privacy/pool/denominatedPool.ts:2789).
+  //
+  // MEASURED: the first fixture written at the new geometry made this table
+  // read 32 bytes spanning the last sibling, the two Borsh lengths and part of
+  // the payee, and the replay hard-stopped walking that invented address.
+  //
+  // 115 and 147 are KEPT because they are exactly right for the five fixtures
+  // recorded before that date, and they are now the FALLBACK: `readRecipient`
+  // takes the payee from the parsed instruction first (`readSpendPath`), which
+  // derives it from this instruction's own vector lengths and therefore follows
+  // the circuit instead of trailing it. Ledger row G2 is this defect by name.
   { name: 'unshield_denominated_stark_v4', commitmentOffset: null, totalLen: 147, recipientOffset: 115 },
   // ⛔ ADDED 2026-08-28, BEFORE THE FIRST ONE LANDS, because the last two
   // entries in this table were added the day after and the probe was blind in
@@ -619,6 +681,13 @@ function writeFixture(dir, store, report, opts) {
       // Recording it is what lets an old fixture stay valid instead of
       // becoming a landmine the day a new probe wants a deeper read.
       ...(opts.wallet ? { wallet: opts.wallet, exhaustiveWalk: true } : {}),
+      // Recorded because its PRESENCE decides whether the tree was walked at
+      // all, so a fixture taken without it cannot answer a replay that has it —
+      // the replay says so as a miss, which is the honest outcome. Its VALUE is
+      // only a threshold and shapes no request, so a reader may tighten it on
+      // frozen bytes. Writing it here is what makes a live `--record
+      // --max-root-age n` run replayable as a control afterwards.
+      ...(opts.maxRootAge !== null && opts.maxRootAge !== undefined ? { maxRootAge: opts.maxRootAge } : {}),
     },
     expect: Object.fromEntries(report.results.map((r) => [r.id, r.passed ? 'PASS' : 'FAIL'])),
     // PASS/FAIL alone is too coarse for a probe that counts. A sixth instruction
@@ -684,6 +753,12 @@ function decodeLeafInserted(logs) {
       // A V3 commitment is a Goldilocks u64 zero-padded to 32 bytes, so the
       // value that matters is the low limb.
       leaf: d.readBigUInt64LE(48),
+      // The root THIS insertion created, `merkle_tree_v3.rs:340-346`: pool 32,
+      // leaf_index 8, leaf 32, new_root 32, old_root 32. Exactly one insertion
+      // ever produces a given root, which is what lets P12 turn the root a
+      // spend named back into a position in the tree's history. Hex rather than
+      // a Buffer so it can be a Map/equality key.
+      newRoot: d.subarray(80, 112).toString('hex'),
       raw: d,
     });
   }
@@ -1123,7 +1198,88 @@ async function traceFunderEdges(rpc, payer, { historyLimit, exhaustive = false }
  *
  * Returns null when this spend kind publishes no payee argument.
  */
+/**
+ * Where every spend instruction publishes the root it proves against.
+ *
+ * It is one number for every kind in the table above — disc 8 | nullifier 32 |
+ * merkle_root — and `selfTestOffsets` re-derives it from each program signature
+ * rather than trusting this line, because a kind that ever moved the field
+ * would make P12 read 32 bytes of something else, match no insertion, and
+ * report INCONCLUSIVE forever instead of saying it had been broken.
+ */
+const MERKLE_ROOT_OFFSET = 40;
+
+/**
+ * The `(subtree_root, siblings, directions)` block a circuit-7 spend publishes,
+ * parsed FORWARD rather than read at a pinned offset.
+ *
+ * WHY A PARSE AND NOT A NUMBER
+ * ────────────────────────────
+ * The two Borsh vector lengths are the only thing in a v4 instruction that
+ * moves, and they move with the CIRCUIT: the on-chain walk is `tree_depth -
+ * SPEND_SUBTREE_DEPTH` levels (`spend_root.rs:92,127`). That was 3 levels until
+ * 2026-08-30 and is 4 today on the same depth-15 pool, because circuit 7 gave
+ * up a level to grow its blinding region. Every fixed offset past byte 80 moved
+ * with it, and the table above did not.
+ *
+ * MEASURED: the first fixture built at the new geometry made `recipientOffset:
+ * 115` read across the last sibling, both vector lengths and part of the payee,
+ * and the replay hard-stopped walking that invented address. A probe that
+ * prints an address belonging to nobody is the false-clean shape this file
+ * exists to refuse, in the one direction nothing here was checking. Ledger row
+ * G2 names this defect ("offset 115 only holds at one depth") and had nothing
+ * reading it.
+ *
+ * Returns null unless every field is self-consistent, because a parse that
+ * guesses is a pinned offset with extra steps. Controls:
+ * "P12 · the path parses at four walked levels" and the three refusals beside
+ * it in `selfTestChannelDecoders`.
+ */
+function readSpendPath(spend) {
+  const layout = SPEND_LAYOUTS[spend.kind.name];
+  if (!layout?.some(([f]) => f === 'siblings')) return null;
+  const d = spend.data;
+  let at = MERKLE_ROOT_OFFSET + 32 + 8; // past disc | nullifier | root | subtree_root
+  if (d.length < at + 4) return null;
+  const siblingsLen = d.readUInt32LE(at);
+  at += 4;
+  // A walked level costs one on-chain hash and the deepest era pool is 19 over
+  // a circuit of 11, so 1..16 is generous. Outside it, this is a misparse
+  // rather than a deep tree, and saying so is cheaper than reading 2^32 bytes.
+  if (siblingsLen < 1 || siblingsLen > 16) return null;
+  if (d.length < at + 8 * siblingsLen + 4) return null;
+  at += 8 * siblingsLen;
+  const directionsLen = d.readUInt32LE(at);
+  at += 4;
+  // The program refuses unequal counts (`SpendRootError::WrongSiblingCount`),
+  // so a mismatch here means these bytes are not the structure they resemble.
+  if (directionsLen !== siblingsLen || d.length < at + directionsLen) return null;
+  const directions = [...d.subarray(at, at + directionsLen)];
+  if (directions.some((b) => b > 1)) return null; // `NonBinaryDirection`
+  at += directionsLen;
+  const endsWithRecipient = layout[layout.length - 1][0] === 'recipient';
+  return {
+    levels: siblingsLen,
+    directions,
+    // `bucket_index`, `spend_root.rs:154-160`: the slice is bottom-up, LSB first.
+    bucket: directions.reduce((b, bit, i) => b | (bit << i), 0),
+    // Only for the kinds whose signature ENDS with the payee. A subscribe's
+    // tail continues into the vault fields, so its payee offset stays null and
+    // P10 keeps saying "this spend kind has no payee argument".
+    recipientOffset: endsWithRecipient && d.length === at + 32 ? at : null,
+  };
+}
+
 function readRecipient(spend) {
+  // The parsed tail first: it is derived from this instruction's own vector
+  // lengths, so it follows a depth change instead of trailing it. On the five
+  // fixtures recorded before 2026-08-30 it lands on 115 and agrees with the
+  // table below — asserted in `selfTestChannelDecoders`, so the two sources are
+  // measured against each other rather than assumed to match.
+  const parsed = readSpendPath(spend);
+  if (parsed && parsed.recipientOffset !== null) {
+    return b58encode(spend.data.subarray(parsed.recipientOffset, parsed.recipientOffset + 32));
+  }
   const off = spend.kind.recipientOffset;
   if (off === null || off === undefined) return null;
   if (spend.data.length < off + 32) return null;
@@ -1368,6 +1524,13 @@ async function verifySpend(rpc, signature, opts = {}) {
         `continuing without it would silently skip P4.`,
     );
   }
+
+  // Read ONCE, here rather than at P5, because P13 divides this pool's depth by
+  // the instruction's walked levels to derive its bucket size. Same request, so
+  // every fixture recorded before this moved replays unchanged; only the order
+  // of two reads differs, and `makeReplayRpc` keys on the request, not on when
+  // it was made.
+  const state = await readPoolState(rpc, poolPDA);
 
   // ── P1: does the spend instruction carry the commitment by name? ──────────
   let published = null;
@@ -2173,8 +2336,33 @@ async function verifySpend(rpc, signature, opts = {}) {
     results.push(probe('P11', P11_NAME, p11.passed, p11.detail, p11.measure));
   }
 
+  // ── P12/P13: the root, and the bucket, a v4 spend still chooses ───────────
+  //
+  // Built ONLY when --max-root-age is given. `null` is not `0`: 0 is the
+  // strictest bound there is ("name the current root or fail"), and null means
+  // these two probes are not in this report at all — which is what let them
+  // ship without touching the eight fixtures recorded before them. See the
+  // header, and the flag in main().
+  if (opts.maxRootAge !== null && opts.maxRootAge !== undefined) {
+    const namedRoot =
+      spend.data.length >= MERKLE_ROOT_OFFSET + 32
+        ? spend.data.subarray(MERKLE_ROOT_OFFSET, MERKLE_ROOT_OFFSET + 32).toString('hex')
+        : null;
+    // One walk, shared by both probes.
+    const walk = await scanLeafInsertions(rpc, POOLS[poolPDA].tree, opts.depositLimit ?? 400);
+    results.push(
+      ...rootProbes({
+        namedRoot,
+        path: readSpendPath(spend),
+        walk,
+        spendSlot: tx.slot,
+        pool: state,
+        maxRootAge: opts.maxRootAge,
+      }),
+    );
+  }
+
   // ── P5: context, never a pass/fail ────────────────────────────────────────
-  const state = await readPoolState(rpc, poolPDA);
   const context = {
     pool: POOLS[poolPDA].label,
     unspentNotes: state.unspentNotes,
@@ -2322,6 +2510,356 @@ async function traceDepositChain(rpc, treePDA, leaf, limit) {
 }
 
 /**
+ * Every `LeafInserted` the tree ever emitted, with the root each one created.
+ *
+ * P12 needs two numbers a spend does not carry: which insertion made the root
+ * it named, and how many insertions existed when it landed. Both live in the
+ * tree's own history — the same walk `findLeafInsertion` makes, with the same
+ * page size and the same cursor, so a replay serves both from one recorded page
+ * and a live run pays for the second one only once.
+ *
+ * ⛔ `complete` IS THE WHOLE GUARD, AND IT FAILS IN THE DANGEROUS DIRECTION
+ * WITHOUT IT. A walk that stopped early has seen FEWER insertions than exist,
+ * so the count before the spend is a floor and any age derived from it is an
+ * UNDER-estimate — a stale root reported as fresh, which is exactly the false
+ * clean this file refuses everywhere else. Callers must not report an age
+ * unless this is true. Pinned against THIS walker, on a stub history, by the
+ * "P12 walker ·" controls in `selfTestChannelDecoders` (longer than the budget,
+ * exactly the budget, a short last page, a full page then an empty one, an
+ * empty history), which no fixture can reach; "P12 · a truncated tree walk
+ * cannot report an age" pins what the verdict does with the flag.
+ */
+async function scanLeafInsertions(rpc, treePDA, limit) {
+  const events = [];
+  let before = undefined;
+  let scanned = 0;
+  let complete = false;
+  while (scanned < limit) {
+    const asked = Math.min(100, limit - scanned);
+    const page = await rpc('getSignaturesForAddress', [
+      treePDA,
+      { limit: asked, ...(before ? { before } : {}) },
+    ]);
+    if (!page?.length) {
+      // The history ended inside the budget: nothing is left unread.
+      complete = true;
+      break;
+    }
+    for (const s of page) {
+      scanned += 1;
+      if (s.err) continue;
+      const tx = await getTx(rpc, s.signature);
+      if (!tx) continue;
+      for (const ev of decodeLeafInserted(tx.meta?.logMessages)) {
+        events.push({ leafIndex: ev.leafIndex, newRoot: ev.newRoot, slot: tx.slot });
+      }
+    }
+    if (page.length < asked) {
+      complete = true;
+      break;
+    }
+    before = page[page.length - 1].signature;
+  }
+  return { events, scanned, complete };
+}
+
+const P12_NAME = 'the spend does not prove against a stale Merkle root';
+
+/**
+ * P12 and P13 from ONE tree walk: the block `verifySpend` runs under
+ * `--max-root-age`, lifted out so its wiring can be driven offline.
+ *
+ * ⛔ [fix round 2] THE HANDOFF WAS THE UNTESTED PART. The walker's `complete`
+ * flag and both verdicts had controls, but hard-coding `complete: true` at this
+ * call site (for P12 or for P13), feeding P13 the size's LOWER bound, or
+ * dropping it all left every CI replay green: a frozen walk always completes.
+ * Controls: the "P12/P13 wiring ·" cases in `selfTestChannelDecoders`, and end
+ * to end `verify/fixtures/v4-truncated-walk` (a history longer than its
+ * manifest's `depositLimit`, pinned P12 FAIL and P13 FAIL with no measure).
+ */
+function rootProbes({ namedRoot, path, walk, spendSlot, pool, maxRootAge }) {
+  // Only for P13's bucket fill. P12 bounds the tree size itself, from both
+  // sides of the spend's slot (`treeSizeAtSpend`).
+  const before = walk.events.filter((e) => e.slot < spendSlot);
+  const p12 = rootAgeVerdict({
+    namedRoot,
+    events: walk.events,
+    spendSlot,
+    poolSize: pool.nextLeafIndex,
+    maxAge: maxRootAge,
+    complete: walk.complete,
+    scanned: walk.scanned,
+  });
+
+  const subtreeDepth = path && Number.isInteger(pool.treeDepth) ? pool.treeDepth - path.levels : null;
+  // The UPPER bound: more leaves can only mean more occupied buckets, so an
+  // uncertain size errs toward reporting a crossing rather than hiding one.
+  // Control: "P12/P13 wiring · a same-slot insertion at the boundary counts
+  // toward the crossing".
+  const sizeBound = treeSizeAtSpend(walk.events, spendSlot, pool.nextLeafIndex);
+  const p13 = bucketVerdict({
+    path,
+    treeDepth: pool.treeDepth,
+    sizeAtSpend: sizeBound ? sizeBound.high : null,
+    leavesInNamedBucket:
+      subtreeDepth !== null && subtreeDepth > 0 && subtreeDepth < 32
+        ? before.filter((e) => Math.floor(e.leafIndex / 2 ** subtreeDepth) === path.bucket).length
+        : null,
+    complete: walk.complete,
+  });
+  return [
+    probe('P12', P12_NAME, p12.passed, p12.detail, p12.measure),
+    probe('P13', P13_NAME, p13.passed, p13.detail, p13.measure),
+  ];
+}
+
+/**
+ * P12's verdict, as one pure function of what the tree walk found.
+ *
+ * WHAT THE NUMBER MEANS
+ * ─────────────────────
+ * A root is created by exactly ONE insertion. The pool keeps 255 of them in a
+ * ring (`pool_v3.rs:194-217`) and `is_valid_root` accepts any, so the spender
+ * chooses which one to name and the chain records the choice forever. Age is
+ * how far back that choice points, counted in insertions:
+ *
+ *   age 0   the root the whole pool was naming at that moment. It points at
+ *           the tree, which is everybody's.
+ *   age n   the tree as it stood n insertions ago. A client that spends with
+ *           the Merkle path it STORED at shield time names the root its own
+ *           deposit created, so a large age is that deposit's fingerprint.
+ *
+ * ⛔ IT DOES NOT NAME THE DEPOSIT, ON PURPOSE. The walk holds the signature and
+ * the payer of the insertion that made the root, and printing them would put
+ * the deposit->spend join into a CI log that is public on a public repository —
+ * the join this probe exists to warn about. Tracing is P4's job, and P4 is
+ * silent on a v4 spend precisely because no commitment is published.
+ *
+ * ⛔ NOR DOES IT PRINT A TREE SIZE, BECAUSE A SIZE AND AN AGE ARE THE POSITION.
+ * Round 1 printed "the root names a tree of N" beside the age: N is the named
+ * insertion's position plus one, in decimal, and the base58-only check beside it
+ * could not see it. The verdict now prints the age and the bound, nothing that
+ * subtracts to a position. Pinned by "P12 · a failing verdict names neither the
+ * insertion nor the tree size" (and its passing and inconclusive siblings),
+ * which use position 1,037 so no geometry number can collide with it.
+ */
+/**
+ * How many insertions the tree held when the spend landed, as a RANGE.
+ *
+ * Two readings of the same walk can disagree, and both disagreements used to
+ * resolve toward a lower age — the false-clean direction:
+ *  - an insertion in the spend's OWN slot has no order against it we can read,
+ *    so it may or may not have preceded the spend;
+ *  - a missing `LeafInserted` log (a truncated log, a failed decode) makes a
+ *    COUNT of events too low, while the positions of the events that were
+ *    decoded still say how far the tree had grown.
+ * So `low` is the highest position decoded strictly before the spend's slot,
+ * plus one, and `high` is the lowest position decoded strictly AFTER it — or,
+ * when nothing followed, the pool account's `next_leaf_index`, read after the
+ * spend and therefore never below the true size. Returns null when there is no
+ * upper bound or the two contradict each other. Controls: "P12 · a same-slot
+ * insertion that flips the verdict is inconclusive", "P12 · a missing log in
+ * the middle does not lower the age", "P12 · a missing newest log widens the
+ * range upward", "P12 · a pool smaller than the walk is refused".
+ */
+function treeSizeAtSpend(events, spendSlot, poolSize) {
+  let low = 0;
+  let high = null;
+  for (const e of events) {
+    if (e.slot < spendSlot) low = Math.max(low, e.leafIndex + 1);
+    else if (e.slot > spendSlot) high = high === null ? e.leafIndex : Math.min(high, e.leafIndex);
+  }
+  if (high === null && Number.isInteger(poolSize)) high = poolSize;
+  if (high === null || high < low) return null;
+  return { low, high };
+}
+
+function rootAgeVerdict({ namedRoot, events, spendSlot, poolSize, maxAge, complete, scanned }) {
+  if (namedRoot === null) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        'INCONCLUSIVE: this instruction is too short to carry a merkle_root argument, so there ' +
+        'is no choice to measure. An unread channel is not a clean one.',
+    };
+  }
+  if (!complete) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        `INCONCLUSIVE: the tree's history was not exhausted (${scanned} transaction(s) read, ` +
+        `${events.length} insertion(s) found). The count of insertions before this spend is ` +
+        'therefore a floor, and an age computed from a floor is an UNDER-estimate — it would ' +
+        'report a stale root as fresh. Raise --deposit-limit or use an archival RPC.',
+    };
+  }
+  const matches = events.filter((e) => e.newRoot === namedRoot);
+  if (matches.length === 0) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        `INCONCLUSIVE: the root this spend named matches none of the ${events.length} insertion(s) ` +
+        `read from the tree (${scanned} transaction(s)). Either the root predates the window, or ` +
+        'this is not the tree that produced it. Not a clean result — see P4.',
+    };
+  }
+  // The OLDEST match, which is the larger age. Two insertions cannot honestly
+  // produce one root, so this only bites if the chain did something impossible;
+  // when it does, failing closed is the side to be on.
+  const hit = matches.reduce((a, b) => (b.leafIndex < a.leafIndex ? b : a));
+  const size = treeSizeAtSpend(events, spendSlot, poolSize);
+  if (!size) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        'INCONCLUSIVE: the tree size when the spend landed has no upper bound this run can trust ' +
+        '(nothing decoded after the spend, and the pool account gave no leaf count that covers ' +
+        'what the walk decoded before it). An age with no upper bound can only be a floor.',
+    };
+  }
+  // Clamped at 0: a root at or past `low` was created in the spend's own slot,
+  // which is as fresh as it gets. Never negative, never a number nobody can use.
+  const ageLow = Math.max(0, size.low - (hit.leafIndex + 1));
+  const ageHigh = Math.max(0, size.high - (hit.leafIndex + 1));
+  const shared =
+    matches.length > 1 ? ` ⚠️ ${matches.length} insertions report this same root, which should be impossible.` : '';
+  // ⛔ WHEN THE TWO READINGS DISAGREE ABOUT THE VERDICT, THERE IS NO VERDICT.
+  // Picking either would be a guess, and round 1's guess was the lower age.
+  if (ageLow <= maxAge !== ageHigh <= maxAge) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        `INCONCLUSIVE: the age is between ${ageLow} and ${ageHigh} insertion(s), and --max-root-age ` +
+        `${maxAge} falls inside that range. Insertions sharing the spend's slot, or a LeafInserted ` +
+        'log the walk could not decode, leave the order open. Not a clean result.' +
+        shared,
+    };
+  }
+  // Agreeing readings: report the larger, the side that cannot under-state.
+  const age = ageHigh;
+  const ageText = ageLow === ageHigh ? `${age}` : `${ageLow} to ${ageHigh}`;
+  if (age <= maxAge) {
+    return {
+      passed: true,
+      measure: age,
+      detail:
+        `age ${ageText} insertion(s), within --max-root-age ${maxAge}. Age 0 is the ` +
+        'only value that names the tree everyone else is naming rather than one moment in it. ' +
+        '⛔ This closes ONE dating channel and says nothing about the others: the nullifier, the ' +
+        'payee and the fee payer are all still published, and P6/P10 measure them.' +
+        shared,
+    };
+  }
+  return {
+    passed: false,
+    measure: age,
+    detail:
+      `the spend proved against a root ${ageText} insertion(s) old, over --max-root-age ${maxAge}. ` +
+      'A root is created by exactly ONE insertion, so naming an old one dates this note to ' +
+      'that moment — which is what a Merkle path stored at shield time does, because the root it ' +
+      'was built against is the root the depositor\'s own deposit created. The insertion is NOT ' +
+      'named here: that is P4\'s job, and printing it would publish the join in a public log.' +
+      shared,
+  };
+}
+
+const P13_NAME = 'the published subtree path does not narrow the anonymity set';
+
+/**
+ * P13: the bucket the spend named, and how much of the pool it leaves.
+ *
+ * Circuit 7 proves membership in a subtree of depth `SPEND_SUBTREE_DEPTH`, and
+ * the instruction publishes the direction bits for the levels above it. Those
+ * bits name which bucket of `2^SPEND_SUBTREE_DEPTH` leaves the note is in.
+ * While the pool occupies ONE bucket they are constant across everybody and
+ * carry nothing; from the first leaf of the second bucket they partition the
+ * set, and that first leaf is alone in its bucket.
+ *
+ * ⛔ THE BUCKET SIZE IS DERIVED, NEVER PINNED, AND THAT IS THE POINT. It is
+ * `2^(tree_depth - levels)`, both read from this run: the depth from the pool
+ * account, the levels from the instruction's own vector lengths. A literal
+ * would have gone stale on 2026-08-30 with everything else the depth cut moved
+ * — the boundary was leaf 4,097 and is leaf 2,049 — and ledger row G2 is about
+ * exactly that class of frozen number. Rust pins the same arithmetic in
+ * `the_bucket_index_is_free_only_while_one_bucket_is_occupied`.
+ */
+function bucketVerdict({ path, treeDepth, sizeAtSpend, leavesInNamedBucket, complete }) {
+  if (!path) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        'INCONCLUSIVE: this spend kind publishes no subtree path, so there are no bucket bits to ' +
+        'read. Not a clean result, a spend kind this probe does not apply to.',
+    };
+  }
+  if (!complete) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        'INCONCLUSIVE: the tree history was not exhausted, so how many buckets the pool occupies ' +
+        'is a floor. A floor cannot show that the bits separate nothing.',
+    };
+  }
+  const subtreeDepth = Number.isInteger(treeDepth) ? treeDepth - path.levels : NaN;
+  if (!Number.isInteger(subtreeDepth) || subtreeDepth < 1 || subtreeDepth > 31) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        `INCONCLUSIVE: a pool of depth ${treeDepth} under ${path.levels} walked level(s) gives a ` +
+        'subtree depth this tool will not compute a bucket from. The pool and the circuit disagree ' +
+        'about geometry, which the program itself refuses as PoolShallowerThanCircuit.',
+    };
+  }
+  if (!Number.isInteger(sizeAtSpend)) {
+    return {
+      passed: false,
+      measure: null,
+      detail:
+        'INCONCLUSIVE: the tree size when the spend landed has no trustworthy upper bound, so the ' +
+        'number of occupied buckets cannot be shown to be one.',
+    };
+  }
+  const leavesPerBucket = 2 ** subtreeDepth;
+  const buckets = 2 ** path.levels;
+  const occupied = Math.max(1, Math.ceil(sizeAtSpend / leavesPerBucket));
+  if (occupied === 1) {
+    return {
+      passed: true,
+      measure: occupied,
+      detail:
+        `INFO: the spend publishes ${path.levels} direction bit(s), naming 1 of ${buckets} buckets ` +
+        `of ${leavesPerBucket} leaves (pool depth ${treeDepth} over a subtree of ${subtreeDepth}). ` +
+        // No leaf count here (fix round 1): a tree size printed beside P12's age
+        // subtracts to the named insertion's position. Pinned by "P13 · names no
+        // tree size in its verdict".
+        'Every leaf inserted so far sits in one bucket, so the bits are constant ' +
+        `across the whole pool and separate nothing. They start partitioning it at leaf ` +
+        `${leavesPerBucket + 1}, and the first leaf of a new bucket is alone in its own.`,
+    };
+  }
+  return {
+    passed: false,
+    measure: occupied,
+    detail:
+      `the ${path.levels} published direction bit(s) name bucket ${path.bucket} of ${buckets}, and ` +
+      `the pool now spans ${occupied} bucket(s) of ${leavesPerBucket}. The set this ` +
+      'spend belongs to is no longer the pool but that bucket' +
+      // A FULL bucket's count is geometry; a partial one is the newest bucket,
+      // and its count is the tree size modulo the bucket, so it is not printed.
+      (leavesInNamedBucket === leavesPerBucket ? `, which holds ${leavesInNamedBucket} leaves` : '') +
+      '. This is a property of the geometry, not of one client: every spend publishes these bits.',
+  };
+}
+
+/**
  * P11's verdict, as one pure function of the surfaces that were read.
  *
  * P11 is the probe the demo runbook puts in front of an auditor, and it is the
@@ -2464,7 +3002,7 @@ function p4Verdict(target, deposit) {
  * on a known-leaky spend and on a known-clean one. A control nobody had to
  * think about is not a control.
  */
-function selfTestAgainstManifest(report, manifest, dir) {
+function selfTestAgainstManifest(report, manifest, dir, printedLines = []) {
   console.log(`\n  ── SELF-TEST vs ${dir} ──────────────────────────────────`);
   if (manifest.synthetic) {
     console.log('   NOTE  this fixture is SYNTHETIC — hand-built bytes, no chain involved.');
@@ -2521,12 +3059,49 @@ function selfTestAgainstManifest(report, manifest, dir) {
       console.log(`   OK    ${r.id} measure = ${got}, as pinned`);
     }
   }
+
+  // Words a probe's PRINTED detail must carry (`manifest.printed`), checked on
+  // what `render` wrote. See `printedPinResults` for why a verdict and a
+  // measure were not enough.
+  for (const p of printedPinResults(printedLines, manifest.printed)) {
+    if (!p.ok) deviations += 1;
+    console.log(`   ${p.ok ? 'OK  ' : 'FAIL'}  ${p.why}`);
+  }
   console.log(
     deviations === 0
       ? '   PASS  every probe behaved exactly as pinned. The control holds.'
       : `   ${deviations} deviation(s). Do NOT quote any result from this tool until resolved.`,
   );
   return deviations === 0 ? 0 : 1;
+}
+
+/**
+ * [web fix round 1] Text pins: words a probe's PRINTED detail must carry.
+ *
+ * ⛔ A VERDICT AND A MEASURE COULD NOT SEE WHICH GEOMETRY P13 DERIVED. Forcing
+ * the walked levels to 3 where `verifySpend` hands the path to P13 made it
+ * report buckets of 4,096 leaves and still PASS with measure 1, so all 13 CI
+ * steps stayed green (VERIFY-1-r3-mutants.log R14). On a live pool between
+ * leaf 2,049 and 4,096 that would hide a real bucket crossing. The root-age
+ * fixtures pin "16 buckets of 2048 leaves": the geometry their bytes carry
+ * (four walked levels under a depth-15 pool), the same for every spend, so it
+ * names no position. Read off the line after the probe's own header, so the
+ * same words printed under another probe do not count. Controls: the
+ * "--replay text pin ·" cases in `selfTestChannelDecoders`.
+ */
+function printedPinResults(lines, pins) {
+  return Object.entries(pins ?? {}).map(([id, text]) => {
+    const header = new RegExp(`^\\s+(PASS|FAIL|\\?\\?\\?\\?)\\s+${id.replace(/[^A-Za-z0-9]/g, '')}\\s+\\[`);
+    const at = lines.findIndex((l) => header.test(l));
+    const detail = at >= 0 ? lines[at + 1] : undefined;
+    if (detail === undefined) {
+      return { ok: false, why: `${id} is pinned to print "${text}" but no ${id} line was printed` };
+    }
+    if (!detail.includes(text)) {
+      return { ok: false, why: `${id}'s printed detail no longer says "${text}"` };
+    }
+    return { ok: true, why: `${id} printed "${text}", as pinned` };
+  });
 }
 
 /**
@@ -2632,6 +3207,28 @@ const SPEND_LAYOUTS = {
     ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['subtree_root', 8],
     ['siblings_len', 4], ['siblings', 24], ['directions_len', 4], ['directions', 3],
     ['recipient', 32],
+  ],
+  // [2026-09-16] ADDED BECAUSE ITS ABSENCE WAS SILENT. `selfTestOffsets` skips
+  // any kind with no field list (`if (!layout) continue`), so the one v4
+  // instruction that had none — the subscribe — was the one kind whose offsets
+  // nothing asserted, and the control printed a green total that did not
+  // include it. The loop now refuses an unlisted kind instead of skipping it.
+  //
+  // `:668-680`, read field by field. The two Vec widths below are the
+  // tree_depth-15 over SPEND_SUBTREE_DEPTH-12 geometry, the same as the two
+  // rows above and for the same reason: they are what the five fixtures
+  // recorded before 2026-08-30 contain. The walk is four levels today, so the
+  // live instruction is 8 bytes longer; nothing here reads a fixed offset past
+  // `merkle_root`, which is why that move costs this table nothing.
+  //
+  // `totalLen` stays null on its row because the tail is genuinely variable:
+  // the trailing `Option<[u8; 32]>` is 1 byte when None and 33 when Some, which
+  // is the 196 / 228 the row's own comment measured.
+  subscribe_private_stark_v4: [
+    ['disc', 8], ['nullifier', 32], ['merkle_root', 32], ['subtree_root', 8],
+    ['siblings_len', 4], ['siblings', 24], ['directions_len', 4], ['directions', 3],
+    ['subscriber_commitment', 32], ['rate', 8], ['interval_slots', 8],
+    ['vk_hash_subscriber', 32], ['license_option_tag', 1],
   ],
 };
 
@@ -3288,10 +3885,475 @@ function selfTestChannelDecoders() {
     check('P11 · and the edges are still all found', forced.edges.length, 2);
     check('P11 · nothing in the history goes unread', forced.scanned, forced.historyLength);
 
+    // ── P12/P13: the root a spend names, and the bucket it names with it ────
+    //
+    // 🚨 THE TWO ROOT-AGE FIXTURES CARRY ONE AGE EACH (4 and 0). The branches
+    // that decide whether an age may be REPORTED AT ALL — a tree walk that
+    // stopped early, a root matching no insertion — are the false-clean ones,
+    // and no fixture can reach either: a frozen fixture's walk always completes
+    // and its root always matches, by construction. They are built here, with
+    // the boundary either side of the flag, for the same reason P4's and P10's
+    // real branches live in this function.
+    const rootOf = (i) => `insertion-${i}-root`;
+    const eight = Array.from({ length: 8 }, (_, i) => ({ leafIndex: i, newRoot: rootOf(i), slot: 100 + i }));
+    const age = (named, over = {}) =>
+      rootAgeVerdict({
+        namedRoot: rootOf(named), events: eight, spendSlot: 200, poolSize: 8, maxAge: 2, complete: true, scanned: 9, ...over,
+      });
+
+    // The fresh root: the newest insertion, the only value that names the tree
+    // everybody else is naming rather than one moment in it.
+    check('P12 · a fresh root passes', age(7).passed, true);
+    check('P12 · and measures 0', age(7).measure, 0);
+    // THE SWAP, which is what the two committed fixtures are: same world, same
+    // walk, one field changed — the root of an insertion four back.
+    check('P12 · the swap: an older ring root fails', age(3).passed, false);
+    check('P12 · and measures the age in insertions', age(3).measure, 4);
+    // Both sides of the bound, because `--max-root-age n` is inclusive and an
+    // off-by-one here is a probe that fails every honest spend or passes a
+    // stale one.
+    check('P12 · an age equal to the bound is not a failure', age(5).passed, true);
+    check('P12 · and it is the bound, not a rounding', age(5).measure, 2);
+    check('P12 · one insertion over the bound fails', age(4).passed, false);
+    // ⛔ THE TWO FALSE-CLEAN BRANCHES. A truncated walk has seen fewer
+    // insertions than exist, so its age is an under-estimate — a stale root
+    // reported as fresh.
+    check('P12 · a truncated tree walk cannot report an age', age(7, { complete: false }).passed, false);
+    check('P12 · and reports no measure rather than 0', age(7, { complete: false }).measure, null);
+    check('P12 · it says INCONCLUSIVE, not clean', /INCONCLUSIVE/.test(age(7, { complete: false }).detail), true);
+    check('P12 · a root matching no insertion is not clean', age(99).passed, false);
+    check('P12 · nor does it invent a measure', age(99).measure, null);
+    // An insertion in the spend's own slot is fresher than everything counted;
+    // it reads 0 rather than a negative number nobody can act on.
+    check('P12 · a root newer than the counted set is age 0', age(7, { spendSlot: 107 }).measure, 0);
+    // ⛔ [fix round 1] THE TWO WAYS A SIZE COUNT UNDER-STATED THE AGE. Round 1
+    // counted decoded events strictly before the spend's slot: an insertion in
+    // the same slot was dropped, and a LeafInserted log that failed to decode
+    // made the count one short. Both lower the age, the false-clean side.
+    check('P12 · a same-slot insertion that flips the verdict is inconclusive', age(3, { spendSlot: 106 }).measure, null);
+    check('P12 · and does not pass', age(3, { spendSlot: 106 }).passed, false);
+    check('P12 · a same-slot insertion that flips nothing still measures the larger age', age(3, { spendSlot: 106, maxAge: 5 }).measure, 3);
+    const withoutLog = (i) => eight.filter((e) => e.leafIndex !== i);
+    check('P12 · a missing log in the middle does not lower the age', age(3, { events: withoutLog(5), maxAge: 3 }).measure, 4);
+    check('P12 · and the stale root still fails', age(3, { events: withoutLog(5), maxAge: 3 }).passed, false);
+    check('P12 · a missing newest log widens the range upward', age(3, { events: withoutLog(7) }).measure, 4);
+    check('P12 · and a bound inside that range is inconclusive', age(3, { events: withoutLog(7), maxAge: 3 }).measure, null);
+    check('P12 · a pool smaller than the walk is refused', age(7, { poolSize: 5 }).measure, null);
+    check('P12 · no upper bound on the size is refused', age(7, { poolSize: undefined }).passed, false);
+    // The verdict must stay a measurement of the channel, not a trace: naming
+    // the insertion would publish the deposit->spend join in a public CI log.
+    check('P12 · names no address or signature in its verdict', /[1-9A-HJ-NP-Za-km-z]{25,}/.test(age(3).detail), false);
+    check('P12 · a pass does not claim more than it measured', /says nothing about the others/.test(age(7).detail), true);
+    // ⛔ [fix round 1] THE CHECK ABOVE ONLY LOOKS FOR BASE58, AND THE VERDICT
+    // PRINTED THE INSERTION IN DECIMAL: "the root names a tree of 4" is the
+    // position of the insertion that made the root, and the size at spend minus
+    // the age gives it back. With a distinctive position (1,037) no count in the
+    // verdict can be mistaken for a geometry number: neither the position, nor
+    // position + 1, nor the tree size at spend may appear in any branch.
+    // ⛔ [web fix round 1] AND THE HISTORY MUST BE ONE A COMPLETE WALK CAN
+    // RETURN. `far` used to hold 16 insertions at positions 1,030..1,045 under
+    // `complete: true`, which no complete walk produces, so a verdict printing
+    // `events.length` (the tree size, on a real complete walk) printed 16 and
+    // this check could not see it: VERIFY-1-r3-mutants.log R4 survived all 13
+    // CI steps. The walk now holds every insertion from position 0, the last
+    // three after the spend, and `scanned` counts the spend too, so 1,046
+    // events and 1,047 transactions are both numbers a verdict must not print.
+    // The second check is the stronger one: any number other than the ages and
+    // the bound is refused, whatever it counts.
+    const far = Array.from({ length: 1046 }, (_, i) => ({ leafIndex: i, newRoot: rootOf(i), slot: 100 + 10 * i }));
+    const farAge = (maxAge) =>
+      rootAgeVerdict({ namedRoot: rootOf(1037), events: far, spendSlot: 10525, poolSize: 1046, maxAge, complete: true, scanned: 1047 });
+    const namesPosition = (text) => /\b(1037|1038|1042|1043|1046|1047)\b/.test(text);
+    const strayNumbers = (text, allowed) => (text.match(/\b\d+\b/g) ?? []).filter((n) => !allowed.includes(Number(n))).join(',');
+    check('P12 · a failing verdict names neither the insertion nor the tree size', namesPosition(farAge(2).detail), false);
+    check('P12 · a passing verdict names neither the insertion nor the tree size', namesPosition(farAge(9).detail), false);
+    check('P12 · and the age it does print is the age', farAge(2).measure, 5);
+    check('P12 · a failing verdict prints no number but the age and the bound', strayNumbers(farAge(2).detail, [5, 2]), '');
+    check('P12 · a passing verdict prints no number but the age, the bound and 0', strayNumbers(farAge(9).detail, [5, 9, 0]), '');
+    // Spend in the slot of position 1,042: the size is 1,042 to 1,043.
+    const farRange = rootAgeVerdict({
+      namedRoot: rootOf(1037), events: far, spendSlot: 10520, poolSize: 1046, maxAge: 4, complete: true, scanned: 1047,
+    });
+    check('P12 · an inconclusive range is what this case reaches', farRange.measure, null);
+    check('P12 · an inconclusive verdict names neither the insertion nor the tree size', namesPosition(farRange.detail), false);
+    check('P12 · an inconclusive verdict prints no number but the two ages and the bound', strayNumbers(farRange.detail, [4, 5]), '');
+
+    // ── The walker's `complete` flag, through the REAL walker ────────────────
+    //
+    // ⛔ [fix round 1] "a truncated tree walk cannot report an age" above hands
+    // `complete: false` to the verdict directly, so it never ran the code that
+    // computes the flag: with `let complete = true` in `scanLeafInsertions`
+    // every replay stayed green. These drive the walker against a stub history
+    // of N signatures, newest first, paged exactly like getSignaturesForAddress.
+    const leafLog = (i) => {
+      const b = Buffer.alloc(LEAF_INSERTED_LEN);
+      LEAF_INSERTED_DISC.copy(b, 0);
+      b.writeBigUInt64LE(BigInt(i), 40);
+      b.writeUInt32LE(i + 1, 80);
+      return `Program data: ${b.toString('base64')}`;
+    };
+    const historyRpc = (length) => {
+      const sigs = Array.from({ length }, (_, k) => `sig-${length - 1 - k}`);
+      return async (method, params) => {
+        if (method === 'getSignaturesForAddress') {
+          const { limit, before } = params[1];
+          const from = before ? sigs.indexOf(before) + 1 : 0;
+          return sigs.slice(from, from + limit).map((signature) => ({ signature, err: null }));
+        }
+        if (method === 'getTransaction') {
+          const i = Number(String(params[0]).slice(4));
+          return { slot: 10 + i, meta: { logMessages: [leafLog(i)] }, transaction: { message: { accountKeys: [], instructions: [] } } };
+        }
+        return null;
+      };
+    };
+    const walked = (length, limit) => scanLeafInsertions(historyRpc(length), 'TREE', limit);
+    const longer = await walked(450, 400);
+    check('P12 walker · a history longer than the budget is not complete', longer.complete, false);
+    check('P12 walker · and it stops at the budget', longer.scanned, 400);
+    const exact = await walked(400, 400);
+    check('P12 walker · a history exactly the budget cannot be shown complete', exact.complete, false);
+    const shortLast = await walked(250, 400);
+    check('P12 walker · a short last page is complete', shortLast.complete, true);
+    check('P12 walker · and every insertion on it was decoded', shortLast.events.length, 250);
+    const fullThenEmpty = await walked(100, 400);
+    check('P12 walker · a full page then an empty one is complete', fullThenEmpty.complete, true);
+    const none = await walked(0, 400);
+    check('P12 walker · an empty history is complete', none.complete, true);
+    check('P12 walker · and holds no insertion', none.events.length, 0);
+
+    // ── new_root at byte 80, on CHAIN bytes rather than on our own fixtures ──
+    //
+    // ⛔ [fix round 1] Both root-age fixtures are generated under the same
+    // byte-80 reading the decoder uses, so they cannot catch a wrong offset. A
+    // recorded fixture holds real LeafInserted events from consecutive
+    // insertions, and the program writes each one's old_root (byte 112) as the
+    // previous one's new_root: if the decoder's `newRoot` is read from any
+    // other window, the link breaks. The bytes are verify/fixtures/v3-subscribe
+    // /rpc.json, already committed; nothing from them is printed.
+    let links = 0;
+    let breaks = 0;
+    let zeroRoots = 0;
+    try {
+      const here = dirname(fileURLToPath(import.meta.url));
+      const recorded = JSON.parse(readFileSync(join(here, 'fixtures', 'v3-subscribe', 'rpc.json'), 'utf8'));
+      const byIndex = new Map();
+      for (const c of recorded.calls ?? []) {
+        for (const ev of decodeLeafInserted(c.result?.meta?.logMessages)) byIndex.set(ev.leafIndex, ev);
+      }
+      for (const [i, ev] of byIndex) {
+        const next = byIndex.get(i + 1);
+        if (!next) continue;
+        if (/^0+$/.test(ev.newRoot)) zeroRoots += 1;
+        if (next.raw.subarray(112, 144).toString('hex') === ev.newRoot) links += 1;
+        else breaks += 1;
+      }
+    } catch (e) {
+      console.log(`   FAIL  P12 · the recorded LeafInserted bytes could not be read: ${e.message}`);
+    }
+    check('P12 · a recorded consecutive pair links through new_root at byte 80', links >= 1, true);
+    check('P12 · and no recorded pair breaks that link', breaks, 0);
+    check('P12 · and the linked root is not an all-zero window', zeroRoots, 0);
+
+    const ctx = { pool: 'X', unspentNotes: 5, leavesEverInserted: 1046, gapSlots: null };
+    check('P5 · prints no leaf count beside a root age', /1046/.test(contextLine({ context: ctx, results: [{ id: 'P12' }] })), false);
+    check('P5 · and still prints it when P12 was not built', /1046/.test(contextLine({ context: ctx, results: [{ id: 'P10' }] })), true);
+
+    // ── --since-slot, as the pure gate main() calls ──────────────────────────
+    const r = (kind, slot) => ({ kind, slot });
+    check('--since-slot · a v4 spend after the slot passes', sinceSlotVerdict([r('unshield_denominated_stark_v4', 1001)], 1000).passed, true);
+    check('--since-slot · a v4 spend IN the slot does not', sinceSlotVerdict([r('unshield_denominated_stark_v4', 1000)], 1000).passed, false);
+    check('--since-slot · v3-only reports do not', sinceSlotVerdict([r('unshield_denominated_stark_v3', 5000), r('subscribe_private_stark', 5000)], 1000).passed, false);
+    check('--since-slot · a relayed v4 spend counts', sinceSlotVerdict([r('unshield_denominated_stark_v4_relayed', 1001)], 1000).passed, true);
+    check('--since-slot · a v4 subscribe counts', sinceSlotVerdict([r('subscribe_private_stark_v4', 1001)], 1000).passed, true);
+    check('--since-slot · an empty run does not', sinceSlotVerdict([], 0).passed, false);
+    const refuses = (raw) => {
+      try {
+        wholeNumberArg('--max-root-age', raw);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    check('--flags · a word is refused, not read as NaN', refuses('two'), true);
+    check('--flags · a negative number is refused', refuses('-1'), true);
+    check('--flags · a fraction is refused', refuses('1.5'), true);
+    check('--flags · a whole number is read', wholeNumberArg('--max-root-age', '2'), 2);
+    check('--flags · 0 is a bound, not absent', wholeNumberArg('--max-root-age', '0'), 0);
+    check('--flags · an absent flag is null', wholeNumberArg('--max-root-age', null), null);
+    check('--since-slot · it counts only the newer v4 spends',sinceSlotVerdict([r('unshield_denominated_stark_v4', 999), r('subscribe_private_stark_v4', 1002)], 1000).newer, 1);
+
+    // P13's bucket arithmetic, and the boundary no pool has crossed yet.
+    const path4 = { levels: 4, directions: [0, 0, 0, 0], bucket: 0, recipientOffset: 124 };
+    const bucket = (over = {}) =>
+      bucketVerdict({ path: path4, treeDepth: 15, sizeAtSpend: 8, leavesInNamedBucket: 8, complete: true, ...over });
+
+    check('P13 · one occupied bucket separates nothing', bucket().passed, true);
+    // [fix round 1] A size printed here, beside P12's age, subtracts to the
+    // named insertion's position. Neither branch may print it, nor the fill of
+    // a partial bucket (the size modulo the bucket).
+    check('P13 · names no tree size in its verdict', /\b1043\b/.test(bucket({ sizeAtSpend: 1043, leavesInNamedBucket: 1043 }).detail), false);
+    check('P13 · nor when the pool has crossed', /\b(3001|953)\b/.test(bucket({ sizeAtSpend: 3001, leavesInNamedBucket: 953 }).detail), false);
+    check('P13 · an unbounded size is inconclusive', bucket({ sizeAtSpend: null }).measure, null);
+    check('P13 · and it counts buckets, not leaves', bucket().measure, 1);
+    // `the_bucket_index_is_free_only_while_one_bucket_is_occupied` pins the same
+    // two numbers in Rust (`spend_root.rs:278-299`). No fixture can reach them:
+    // it would need 2,049 recorded insertions.
+    check('P13 · 2,048 leaves are still one bucket', bucket({ sizeAtSpend: 2048 }).measure, 1);
+    check('P13 · 2,049 leaves are two', bucket({ sizeAtSpend: 2049 }).measure, 2);
+    check('P13 · and crossing is a failure, not a note', bucket({ sizeAtSpend: 2049 }).passed, false);
+    // ⛔ THE BUCKET SIZE IS DERIVED FROM THIS RUN, NOT PINNED. Four walked
+    // levels over a depth-15 pool is 2,048 leaves per bucket; three — the
+    // geometry the five older fixtures carry — is 4,096. A literal would have
+    // gone stale on 2026-08-30 with every other number the depth cut moved.
+    check('P13 · four walked levels means 2,048 per bucket', /2048 leaves/.test(bucket().detail), true);
+    check(
+      'P13 · three walked levels means 4,096',
+      /4096 leaves/.test(bucket({ path: { ...path4, levels: 3, directions: [0, 0, 0] } }).detail),
+      true,
+    );
+    check('P13 · a spend with no subtree path is inconclusive', bucket({ path: null }).passed, false);
+    check('P13 · a truncated walk cannot count buckets', bucket({ complete: false }).passed, false);
+    check('P13 · a pool shallower than the circuit is refused', bucket({ treeDepth: 4 }).passed, false);
+    // [web fix round 1] The manifest's text pin, which is what lets a replay
+    // see the geometry P13 derived (see `printedPinResults`). Driven on the
+    // verdict's own words at both geometries, on the line layout `render`
+    // prints.
+    const shownAs = (id, detail) => [`   PASS  ${id.padEnd(3)} [proven    ] ${P13_NAME}`, `         ${detail}`];
+    const geometryPin = { P13: '16 buckets of 2048 leaves' };
+    const pinHolds = (lines) => printedPinResults(lines, geometryPin).every((p) => p.ok);
+    check('--replay text pin · four walked levels print the pinned geometry', pinHolds(shownAs('P13', bucket().detail)), true);
+    check(
+      '--replay text pin · three walked levels do not',
+      pinHolds(shownAs('P13', bucket({ path: { ...path4, levels: 3, directions: [0, 0, 0] } }).detail)),
+      false,
+    );
+    check('--replay text pin · a pinned probe that printed nothing fails', pinHolds([]), false);
+    check('--replay text pin · the words on another probe line do not count', pinHolds(shownAs('P12', bucket().detail)), false);
+    // And the manifest checker itself, on a planted report, so that dropping
+    // any of its three pin loops (verdict, measure, printed words) is red too:
+    // no replay can show it, because every committed fixture matches its pins.
+    const planted = { results: [probe('P13', P13_NAME, true, bucket().detail, 1)] };
+    const pinsOf = (over) => ({ expect: { P13: 'PASS' }, measure: { P13: 1 }, printed: geometryPin, ...over });
+    const quietly = (fn) => {
+      const log = console.log;
+      console.log = () => {};
+      try {
+        return fn();
+      } finally {
+        console.log = log;
+      }
+    };
+    const checked = (manifest) =>
+      quietly(() => selfTestAgainstManifest(planted, manifest, 'a planted report', shownAs('P13', bucket().detail)));
+    check('--replay manifest · a planted report matching its pins passes', checked(pinsOf({})), 0);
+    check('--replay manifest · a wrong verdict pin fails', checked(pinsOf({ expect: { P13: 'FAIL' } })), 1);
+    check('--replay manifest · a wrong measure pin fails', checked(pinsOf({ measure: { P13: 2 } })), 1);
+    check('--replay manifest · a wrong printed geometry fails', checked(pinsOf({ printed: { P13: '8 buckets of 4096 leaves' } })), 1);
+
+    // ── [fix round 2] The wiring between the walk and the two verdicts ──────
+    //
+    // Every control above calls a verdict directly, so none of them could see
+    // what `rootProbes` hands it. Measured: `complete: true` hard-coded for P12
+    // or for P13, and P13 fed the lower size bound, each left all ten CI
+    // replays green (VERIFY-1-r2-mutants.log, W13/W14/W7).
+    const pool15 = (nextLeafIndex) => ({ treeDepth: 15, nextLeafIndex });
+    const wired = (over = {}) => {
+      const [p12, p13] = rootProbes({
+        namedRoot: rootOf(3),
+        path: path4,
+        walk: { events: eight, complete: true, scanned: 9 },
+        spendSlot: 200,
+        pool: pool15(8),
+        maxRootAge: 2,
+        ...over,
+      });
+      return { p12, p13 };
+    };
+    check('P12/P13 wiring · both probes come back, in order', rootProbes({
+      namedRoot: rootOf(3), path: path4, walk: { events: eight, complete: true, scanned: 9 }, spendSlot: 200, pool: pool15(8), maxRootAge: 2,
+    }).map((p) => p.id).join(','), 'P12,P13');
+    check('P12/P13 wiring · a complete walk reports the age', wired().p12.measure, 4);
+    const truncated = { walk: { events: eight, complete: false, scanned: 9 } };
+    check('P12/P13 wiring · a truncated walk reaches P12 as truncated', wired(truncated).p12.measure, null);
+    check('P12/P13 wiring · and P12 does not pass on it', /^INCONCLUSIVE/.test(wired({ ...truncated, namedRoot: rootOf(7) }).p12.detail), true);
+    check('P12/P13 wiring · a truncated walk reaches P13 as truncated', wired(truncated).p13.passed, false);
+    check('P12/P13 wiring · and P13 reports no bucket count on it', wired(truncated).p13.measure, null);
+    check('P12/P13 wiring · the bound reaches P12', wired({ maxRootAge: 4 }).p12.passed, true);
+    check('P12/P13 wiring · the pool size reaches P12', wired({ pool: pool15(5) }).p12.measure, null);
+    // 2,048 leaves strictly before the spend's slot, one more IN that slot, and
+    // a pool account reading 2,049: the size is 2,048 to 2,049, and only the
+    // upper bound shows the second bucket.
+    const boundary = {
+      namedRoot: 'boundary-root-2047',
+      walk: {
+        events: [
+          { leafIndex: 2047, newRoot: 'boundary-root-2047', slot: 900 },
+          { leafIndex: 2048, newRoot: 'boundary-root-2048', slot: 1000 },
+        ],
+        complete: true,
+        scanned: 2,
+      },
+      spendSlot: 1000,
+      pool: pool15(2049),
+    };
+    check('P12/P13 wiring · a same-slot insertion at the boundary counts toward the crossing', wired(boundary).p13.measure, 2);
+    check('P12/P13 wiring · and the crossing fails', wired(boundary).p13.passed, false);
+    // The bucket fill counts insertions BEFORE the spend only: here bucket 1
+    // holds 2,047 leaves at spend time and is filled by an insertion after it,
+    // so "which holds 2048 leaves" would describe a later tree.
+    const fill = Array.from({ length: 4096 }, (_, i) => ({ leafIndex: i, newRoot: `fill-${i}`, slot: i < 4095 ? 10 : 30 }));
+    const filled = rootProbes({
+      namedRoot: 'fill-4094', path: { ...path4, bucket: 1 }, walk: { events: fill, complete: true, scanned: 4096 }, spendSlot: 20, pool: pool15(4096), maxRootAge: 2,
+    })[1];
+    check('P12/P13 wiring · the bucket fill ignores insertions after the spend', /holds/.test(filled.detail), false);
+    check('P12/P13 wiring · and that case has crossed', filled.measure, 2);
+    // [web fix round 1] And a FULL named bucket prints its fill, which is
+    // geometry. The count depends on the subtree depth `rootProbes` derives on
+    // its own; that derivation had no control (an off-by-one there left every
+    // CI step green, VERIFY-1-wr1 mutants-before.log R26). 3,000 leaves before
+    // the spend: bucket 0 holds 2,048 of them.
+    const fullHistory = Array.from({ length: 3000 }, (_, i) => ({ leafIndex: i, newRoot: `full-${i}`, slot: 10 }));
+    const fullBucket = rootProbes({
+      namedRoot: 'full-2999', path: path4, walk: { events: fullHistory, complete: true, scanned: 3000 }, spendSlot: 20, pool: pool15(3000), maxRootAge: 2,
+    })[1];
+    check('P12/P13 wiring · a full named bucket prints its fill', /which holds 2048 leaves/.test(fullBucket.detail), true);
+
+    // ⛔ [web fix round 1, resumed] ONE WORLD MOVED, NOT A LIST OF SPELLINGS
+    // (wp-logs/PROTOCOL.md, "a test that measures a leak"). The checks above
+    // read decimal numbers, so a verdict that printed the named insertion in
+    // hex or base 36, the size bound in hex, the read count in hex or the
+    // deposit slot in hex passed every one of them and all 14 CI steps
+    // (web-run/logs/VERIFY-1-wr1b/mutants-before.log: V7, X2, X3, X5, X6).
+    // Here the same history is moved 100 insertions up the tree, 7,777 slots
+    // later, and read beside 53 more transactions. The ages and the bound stay
+    // put, so neither verdict may move: any function of the position, the time
+    // or the read count, in any encoding, moves it. The planted leaks show
+    // that each world is live on its own axis.
+    const worlds = [
+      { up: 0, later: 0, moreRead: 0 },
+      { up: 100, later: 0, moreRead: 0 },
+      { up: 0, later: 7777, moreRead: 0 },
+      { up: 0, later: 0, moreRead: 53 },
+    ];
+    const inWorld = ({ up, later, moreRead }, maxRootAge, spendAt) => ({
+      namedRoot: rootOf(1037 + up),
+      path: path4,
+      walk: {
+        events: Array.from({ length: 1046 + up }, (_, i) => ({ leafIndex: i, newRoot: rootOf(i), slot: later + 100 + 10 * i })),
+        complete: true,
+        scanned: 1047 + up + moreRead,
+      },
+      spendSlot: later + 10 * up + spendAt,
+      pool: pool15(1046 + up),
+      maxRootAge,
+    });
+    // The indexes of the worlds whose verdicts differ from world 0's.
+    const movedIn = (verdictOf) => {
+      const base = JSON.stringify(verdictOf(worlds[0]));
+      return worlds.flatMap((w, k) => (JSON.stringify(verdictOf(w)) === base ? [] : [k])).join(',');
+    };
+    const bothProbes = (maxRootAge, spendAt) => (w) => rootProbes(inWorld(w, maxRootAge, spendAt));
+    const namedIn = (a) => a.walk.events.find((e) => e.newRoot === a.namedRoot);
+    const plantedIn = (leak) => (w) => {
+      const a = inWorld(w, 2, 10525);
+      return rootProbes(a)[0].detail + leak(a);
+    };
+    check('P12 moved worlds · a planted position in hex moves in the world moved up', movedIn(plantedIn((a) => ` 0x${namedIn(a).leafIndex.toString(16)}`)), '1');
+    check('P12 moved worlds · a planted deposit slot also moves in the later world', movedIn(plantedIn((a) => ` 0x${namedIn(a).slot.toString(16)}`)), '1,2');
+    check('P12 moved worlds · a planted read count also moves in the wider read', movedIn(plantedIn((a) => ` 0x${a.walk.scanned.toString(16)}`)), '1,3');
+    check('P12 moved worlds · every world measures age 5', worlds.map((w) => bothProbes(2, 10525)(w)[0].measure).join(','), '5,5,5,5');
+    check('P12 moved worlds · the same-slot spend is inconclusive in every world', worlds.map((w) => String(bothProbes(4, 10520)(w)[0].measure)).join(','), 'null,null,null,null');
+    check('P12/P13 moved worlds · a failing verdict moves in none', movedIn(bothProbes(2, 10525)), '');
+    check('P12/P13 moved worlds · nor a passing one', movedIn(bothProbes(9, 10525)), '');
+    check('P12/P13 moved worlds · nor an inconclusive range', movedIn(bothProbes(4, 10520)), '');
+    // P13 once the pool has crossed: bucket 1 partly filled, two sizes 100 apart.
+    const crossedAt = (size, fill) =>
+      bucketVerdict({ path: { ...path4, bucket: 1 }, treeDepth: 15, sizeAtSpend: size, leavesInNamedBucket: fill, complete: true }).detail;
+    check('P13 moved worlds · a crossed verdict does not move with the tree size', crossedAt(3001, 953) === crossedAt(3101, 1053), true);
+
+    // The OLDEST match when two insertions report one root (which should be
+    // impossible): the larger age, so the impossible case fails closed.
+    const twice = eight.map((e) => (e.leafIndex === 6 ? { ...e, newRoot: rootOf(2) } : e));
+    check('P12 · two insertions sharing a root report the larger age', age(2, { events: twice, maxAge: 9 }).measure, 5);
+    check('P12 · and say it should be impossible', /should be impossible/.test(age(2, { events: twice, maxAge: 9 }).detail), true);
+
+    // `--record --max-root-age n` must write n into the manifest: its presence
+    // is what makes a replay walk the tree, so a recording without it cannot
+    // be replayed as the control it was taken to be. 0 is a bound, not absent.
+    const recordedFlags = (maxRootAge) => {
+      const dir = mkdtempSync(join(tmpdir(), 'p01-verify-record-'));
+      try {
+        writeFixture(dir, { calls: [] }, { signature: 'S', kind: 'K', results: [] }, { maxChunkTx: 200, depositLimit: 400, maxRootAge });
+        return JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')).flags;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    check('--record · writes --max-root-age into the manifest', recordedFlags(2).maxRootAge, 2);
+    check('--record · writes a bound of 0 as 0, not as absent', recordedFlags(0).maxRootAge, 0);
+    check('--record · writes nothing when the flag was not given', 'maxRootAge' in recordedFlags(null), false);
+
+    // ── The instruction parse both probes stand on, at BOTH geometries ──────
+    //
+    // 🚨 THIS IS THE CONTROL THE FILE DID NOT HAVE, AND THE ONE THAT CAUGHT A
+    // LIVE DEFECT. `recipientOffset: 115` is right for a 147-byte instruction
+    // and wrong for the 156-byte one the client builds today; measured, it made
+    // P10 walk an address belonging to nobody. Both shapes are asserted here so
+    // neither reading can quietly become the only one.
+    const v4Ix = (levels, payeeB58, dirs) => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32LE(levels);
+      return b58encode(
+        Buffer.concat([
+          discriminator('unshield_denominated_stark_v4'),
+          Buffer.alloc(32, 0x11), // nullifier
+          Buffer.alloc(32, 0x22), // merkle_root
+          Buffer.alloc(8), // subtree_root
+          len,
+          Buffer.alloc(8 * levels), // siblings
+          len,
+          Buffer.from(dirs ?? new Array(levels).fill(0)),
+          b58decode(payeeB58),
+        ]),
+      );
+    };
+    const at4 = spendOf(v4Ix(4, PAYEE));
+    const at3 = spendOf(v4Ix(3, PAYEE));
+    check('P12 · the path parses at four walked levels', readSpendPath(at4)?.levels, 4);
+    check('P12 · and at the three the older fixtures carry', readSpendPath(at3)?.levels, 3);
+    check('P10 · the payee sits at 124 at four levels', readSpendPath(at4)?.recipientOffset, 124);
+    check('P10 · and at 115 at three, where the table pins it', readSpendPath(at3)?.recipientOffset, 115);
+    check(
+      'P10 · the table and the parse agree on the frozen shape',
+      SPEND_KINDS.find((k) => k.name === 'unshield_denominated_stark_v4')?.recipientOffset,
+      readSpendPath(at3)?.recipientOffset,
+    );
+    check('P10 · the payee reads back intact at the live depth', readRecipient(at4), PAYEE);
+    check('P10 · and at the frozen one', readRecipient(at3), PAYEE);
+    // `bucket_index` reads the slice bottom-up, LSB first (spend_root.rs:154).
+    check('P13 · bucket bits are read LSB-first', readSpendPath(spendOf(v4Ix(4, PAYEE, [1, 0, 1, 0])))?.bucket, 5);
+    check('P13 · all-zero bits are bucket 0', readSpendPath(at4)?.bucket, 0);
+    // And it must refuse rather than guess, or it is a pinned offset with extra
+    // steps: each of these is a way for the bytes to not be what they resemble.
+    const mutated = (mutate) => {
+      const d = b58decode(v4Ix(4, PAYEE));
+      mutate(d);
+      return readSpendPath(spendOf(b58encode(d)));
+    };
+    check('P12 · a non-binary direction byte is a misparse', mutated((d) => { d[120] = 2; }), null);
+    check('P12 · unequal vector lengths are a misparse', mutated((d) => { d.writeUInt32LE(3, 116); }), null);
+    check(
+      'P12 · a truncated instruction is a misparse',
+      readSpendPath(spendOf(b58encode(b58decode(v4Ix(4, PAYEE)).subarray(0, 90)))),
+      null,
+    );
+    check('P12 · a v3 spend publishes no subtree path', readSpendPath(spendOf(unshieldIx(PAYEE))), null);
+
     console.log(
       broken === 0
         ? '   PASS  every channel decoder answers in both directions.'
-        : `   ${broken} decoder control(s) broken — P6/P7/P8/P9/P10/P11 results are not trustworthy.`,
+        : `   ${broken} decoder control(s) broken — P6/P7/P8/P9/P10/P11/P12/P13 results are not trustworthy.`,
     );
     return broken === 0 ? 0 : 1;
   })();
@@ -3315,6 +4377,7 @@ function selfTestOffsets() {
     // reported the one instruction that publishes no commitment as broken.
     let derived = null;
     let derivedRecipient = null;
+    let derivedRoot = null;
     const total = layout.reduce((n, [, w]) => n + w, 0);
     const buf = Buffer.alloc(total);
     let at = 0;
@@ -3322,6 +4385,7 @@ function selfTestOffsets() {
       if (field === 'stark_commitment') { derived = at; buf.writeBigUInt64LE(COMMITMENT, at); }
       else if (field === 'min_epoch') buf.writeBigUInt64LE(MIN_EPOCH, at);
       else if (field === 'recipient') { derivedRecipient = at; buf.fill(0xAB, at, at + width); }
+      else if (field === 'merkle_root') derivedRoot = at;
       at += width;
     }
 
@@ -3356,6 +4420,37 @@ function selfTestOffsets() {
     } else if (derivedRecipient !== null) {
       console.log(`   ok    ${kind.name}: recipient at ${derivedRecipient}, agrees with the encoder`);
     }
+
+    // The root P12 reads, derived from the same signature. Every spend names
+    // the root it proves against immediately after the nullifier, and a kind
+    // that ever moved it would make P12 read 32 bytes of something else, match
+    // no insertion and report INCONCLUSIVE forever — a probe that had silently
+    // stopped working, wearing the same word it uses when it is honestly
+    // blocked.
+    if (derivedRoot !== MERKLE_ROOT_OFFSET) {
+      broken += 1;
+      console.log(
+        `   FAIL  ${kind.name}: the signature puts merkle_root at ${derivedRoot}, P12 reads ` +
+          `${MERKLE_ROOT_OFFSET}. Every age this probe reports would be measured from the wrong bytes.`,
+      );
+    } else {
+      console.log(`   ok    ${kind.name}: merkle_root at ${derivedRoot}, where P12 reads it`);
+    }
+  }
+
+  // ⛔ A SKIPPED KIND USED TO BE INVISIBLE, AND ONE WAS BEING SKIPPED. The loop
+  // above does `if (!layout) continue`, so a spend kind with no field list was
+  // asserted by nothing while the control still printed a green total — which
+  // is how `subscribe_private_stark_v4`, the only v4 instruction that reaches
+  // the chain through the subscribe path, went unchecked from the day it was
+  // added. Refusing here costs one line and makes the next omission loud.
+  const unlisted = SPEND_KINDS.filter((k) => !SPEND_LAYOUTS[k.name]).map((k) => k.name);
+  if (unlisted.length > 0) {
+    broken += 1;
+    console.log(
+      `   FAIL  no field list for ${unlisted.join(', ')} — their offsets are asserted by nothing. ` +
+        'Add the signature to SPEND_LAYOUTS rather than trusting the table.',
+    );
   }
 
   if (checked === 0) {
@@ -3377,6 +4472,46 @@ function selfTestOffsets() {
 function arg(flag, fallback) {
   const i = process.argv.indexOf(flag);
   return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : fallback;
+}
+
+/**
+ * A flag that is a whole number of things, or absent.
+ *
+ * `Number('')` is 0 and `Number('two')` is NaN, and both would arrive at a
+ * probe as a threshold: the first silently the strictest bound there is, the
+ * second comparing false against every age and passing everything. A threshold
+ * nobody typed is worse than a missing flag, so this refuses instead.
+ * [fix round 2] Split from `arg` so the refusal has a control: removing it left
+ * every CI step green (VERIFY-1-r2-mutants.log W10). Controls: the "--flags ·"
+ * cases in `selfTestChannelDecoders`.
+ */
+function intArg(flag) {
+  return wholeNumberArg(flag, arg(flag, null));
+}
+
+function wholeNumberArg(flag, raw) {
+  if (raw === null) return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`${flag} takes a whole number of 0 or more, got "${raw}"`);
+  }
+  return n;
+}
+
+/**
+ * The `--since-slot` gate, as a pure function of the reports a run produced.
+ *
+ * Passes only when at least one report is a v4 spend (direct, relayed or
+ * subscribe) whose slot is STRICTLY after `slot`: a spend in the deploy slot
+ * itself may predate the deploy. Pulled out of `main` in fix round 1 because
+ * the inline gate could be replaced by `if (false)` with every CI step still
+ * green. Controls: the "--since-slot ·" cases in `selfTestChannelDecoders`.
+ */
+function sinceSlotVerdict(reports, slot) {
+  const after = reports.filter(
+    (r) => typeof r.kind === 'string' && /_v4(_relayed)?$/.test(r.kind) && Number.isInteger(r.slot) && r.slot > slot,
+  );
+  return { passed: after.length > 0, newer: after.length, total: reports.length };
 }
 
 /** Newest spends on a pool, found through the NullifierRecord each one creates. */
@@ -3477,14 +4612,72 @@ function render(report) {
     console.log(`         ${r.detail}`);
     if (cls.why) console.log(`         └─ structural: ${cls.why}`);
   }
-  if (report.context) {
-    console.log(
-      `   INFO  pool ${report.context.pool}: ${report.context.unspentNotes} unspent of ` +
-        `${report.context.leavesEverInserted} ever deposited` +
-        (report.context.gapSlots !== null ? `; deposit->spend gap ${report.context.gapSlots} slots` : ''),
-    );
-  }
+  if (report.context) console.log(contextLine(report));
   return { failed: failed.length, inconclusive: failed.filter(isInconclusive).length };
+}
+
+/**
+ * P5's INFO line.
+ *
+ * ⛔ [fix round 1] NO LEAF COUNT WHEN P12 IS IN THE REPORT. The count is the
+ * pool's size now, which is at least its size when the spend landed and equal
+ * to it when nothing was inserted since: minus P12's age, that is the named
+ * insertion's position, the number P12's own verdict stopped printing. Control:
+ * "P5 · prints no leaf count beside a root age" in `selfTestChannelDecoders`.
+ */
+function contextLine(report) {
+  const c = report.context;
+  const hasRootAge = report.results.some((r) => r.id === 'P12');
+  return (
+    `   INFO  pool ${c.pool}: ${c.unspentNotes} unspent` +
+    (hasRootAge ? '' : ` of ${c.leavesEverInserted} ever deposited`) +
+    (c.gapSlots !== null ? `; deposit->spend gap ${c.gapSlots} slots` : '')
+  );
+}
+
+/**
+ * [fix round 2] The P5 rule, checked on the text `render` PRINTED, not on
+ * `contextLine` called by hand.
+ *
+ * ⛔ "P5 · prints no leaf count beside a root age" called `contextLine`
+ * directly, so a `render` that printed the count again (for instance by
+ * passing it a report with P12 filtered out) left every CI replay green —
+ * measured, VERIFY-1-r2-mutants.log W2 — while the stale-root replay printed
+ * the pool's size next to "age 4", which subtracts to the named insertion.
+ * So every `--self-test` captures what `render` wrote and checks the INFO line
+ * both ways: no count when P12 is in the report (the three root-age fixtures),
+ * the count present when it is not (the eight older ones). The second half is
+ * what shows the capture itself read something.
+ */
+function selfTestPrintedOutput(reports, printed) {
+  console.log('\n  ── OUTPUT CONTROL (what was printed) ─────────────────────');
+  let broken = 0;
+  reports.forEach((report, i) => {
+    const info = (printed[i] ?? []).filter((l) => /^\s*INFO\s/.test(l));
+    const hasRootAge = report.results.some((r) => r.id === 'P12');
+    const count = report.context?.leavesEverInserted;
+    if (info.length !== 1 || !Number.isInteger(count)) {
+      broken += 1;
+      console.log(`   FAIL  expected exactly one printed INFO line with a known pool size, found ${info.length}`);
+      return;
+    }
+    const printsCount = new RegExp(`\\b${count}\\b`).test(info[0]) || /ever deposited/.test(info[0]);
+    if (printsCount === hasRootAge) {
+      broken += 1;
+      console.log(
+        hasRootAge
+          ? '   FAIL  the printed INFO line carries the pool size next to a root age'
+          : '   FAIL  the printed INFO line lost the pool size with no root age to protect',
+      );
+    } else {
+      console.log(
+        hasRootAge
+          ? '   ok    the printed INFO line carries no pool size next to the root age'
+          : '   ok    the printed INFO line carries the pool size (no root age in this report)',
+      );
+    }
+  });
+  return broken === 0 ? 0 : 1;
 }
 
 async function main() {
@@ -3529,9 +4722,19 @@ async function main() {
   const poolsFile = arg('--pools', null);
   if (poolsFile) registerPools(JSON.parse(readFileSync(poolsFile, 'utf8')), poolsFile);
 
+  // See the gate below the reports loop: this one is about what the run LOOKED
+  // at, not about what any single spend did.
+  const sinceSlot = intArg('--since-slot');
+
   const opts = {
     maxChunkTx: Number(arg('--max-chunk-tx', '200')),
     depositLimit: Number(arg('--deposit-limit', '400')),
+    // ⛔ null, AND NULL IS NOT ZERO. Absent means P12 and P13 are never built,
+    // which is what kept the eight fixtures recorded before them valid to the
+    // byte; 0 means "name the current root or fail", the strictest bound there
+    // is. A default of 0 here would have been a silent, breaking gate on every
+    // committed control at once.
+    maxRootAge: intArg('--max-root-age'),
     // ⚠️ An earlier version of this comment said `--wallet` is deliberately NOT
     // read from a manifest, because "pinning it would freeze one operator's
     // question into everyone's control". That was wrong for the one fixture it
@@ -3563,6 +4766,15 @@ async function main() {
     // replay miss. `--wallet` shapes no request at all, so a caller naming
     // their own address must win.
     if (!opts.wallet && manifest.flags?.wallet) opts.wallet = manifest.flags.wallet;
+    // Same rule as the wallet, for the same reason and one more. The VALUE is a
+    // threshold and shapes no request, so a caller tightening it on frozen
+    // bytes must win. Its PRESENCE does shape requests — it is what makes the
+    // tool walk the tree — so a fixture recorded without it cannot answer a run
+    // that has it, and reports that as a replay miss rather than as a probe
+    // that quietly did not run.
+    if (opts.maxRootAge === null && manifest.flags?.maxRootAge !== undefined) {
+      opts.maxRootAge = manifest.flags.maxRootAge;
+    }
     // Naming an address makes the payer walks exhaustive (see traceFunderEdges),
     // which fetches transactions a shallow recording never captured. So on a
     // replay the walk depth comes from the FIXTURE, not from the flag: a
@@ -3599,15 +4811,58 @@ async function main() {
   let totalFailures = 0;
   let totalInconclusive = 0;
   const reports = [];
+  // What `render` actually wrote, per report, for the output control below.
+  const printed = [];
   for (const sig of signatures) {
     const report = await verifySpend(rpc, sig, opts);
     reports.push(report);
-    const tally = render(report);
+    const lines = [];
+    printed.push(lines);
+    const print = console.log;
+    console.log = (...args) => {
+      lines.push(args.join(' '));
+      print(...args);
+    };
+    let tally;
+    try {
+      tally = render(report);
+    } finally {
+      console.log = print;
+    }
     totalFailures += tally.failed;
     totalInconclusive += tally.inconclusive;
   }
 
   if (recordDir) writeFixture(recordDir, store, reports[0], opts);
+
+  // ── --since-slot: the run has to have looked at something that came AFTER ─
+  //
+  // 🚨 THE REGRESSION THIS CLOSES IS A REPORT, NOT A LEAK. A root-age fix ships,
+  // the tool is pointed at the pool, and it examines whatever spends it finds —
+  // every one of them made by the client that shipped BEFORE the fix. Each one
+  // measures exactly what it measured last week, the run prints the same
+  // verdicts, and nothing anywhere says that the change was never exercised.
+  // That is the same failure as a probe that declines to ask: a green about
+  // something nobody looked at.
+  //
+  // Naming the slot the change went live at turns that into arithmetic. The run
+  // FAILS unless at least one v4 spend it read is newer, and it fails rather
+  // than warning because a warning next to a green is read as a green.
+  if (sinceSlot !== null) {
+    const gate = sinceSlotVerdict(reports, sinceSlot);
+    if (!gate.passed) {
+      console.log(
+        `\n  --since-slot ${sinceSlot}: NONE of the ${reports.length} spend(s) examined is a v4\n` +
+          '  spend after that slot, so this run says nothing about the client that shipped\n' +
+          '  there. Reported as a failure rather than as a green with a footnote: a probe\n' +
+          '  that was never pointed at the new behaviour has not measured it.\n',
+      );
+      process.exit(1);
+    }
+    console.log(
+      `\n  --since-slot ${sinceSlot}: ${gate.newer} of ${gate.total} spend(s) examined are v4 and newer.`,
+    );
+  }
 
   if (selfTest) {
     // The offset control runs on every --self-test, replay or live: it needs no
@@ -3616,10 +4871,11 @@ async function main() {
     // Same rule as the offset control: no chain, no fixture, runs every time.
     // It is the ONLY place P7's green state is ever exercised.
     const channels = await selfTestChannelDecoders();
+    const output = selfTestPrintedOutput(reports, printed);
     const probes = manifest?.expect
-      ? selfTestAgainstManifest(reports[0], manifest, replayDir)
+      ? selfTestAgainstManifest(reports[0], manifest, replayDir, printed[0])
       : selfTestLive(reports);
-    process.exit(offsets === 0 && channels === 0 && probes === 0 ? 0 : 1);
+    process.exit(offsets === 0 && channels === 0 && output === 0 && probes === 0 ? 0 : 1);
   }
 
   const detected = totalFailures - totalInconclusive;

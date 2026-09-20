@@ -1,0 +1,41 @@
+{
+  "synthetic": true,
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. It is verify/fixtures/v4-stale-root with nothing inserted after the spend, so the only upper bound on the tree size at spend time is the pool account, and P12 must still measure age 4 from it; the newest insertion lands one slot before the spend. Pins the pool size and the spend slot handed to P12 and P13 (VERIFY-1 web fix round 1).",
+  "spend": "3GYruHF9T86fLHS9wfuwfyBuEkDdbvYwVVHgh7oUFp9KfW6u28R62udKoQVjD1htJhxxGinsDiwJ9LCYtQfwJatx",
+  "kind": "unshield_denominated_stark_v4",
+  "flags": {
+    "maxChunkTx": 200,
+    "depositLimit": 400,
+    "maxRootAge": 2
+  },
+  "pools": {
+    "DNA6C7DsDaMTXZmspfh9FCEbg4VqFde4Ffy5fZCdiy2N": {
+      "label": "SYNTHETIC 1 SOL (root-age at-tip fixture)",
+      "tree": "EWn7dE93GeQJu72WEkEmC5MZpm5FhiJzkcJEf1xpRdWP"
+    }
+  },
+  "expect": {
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "PASS",
+    "P6": "PASS",
+    "P7": "FAIL",
+    "P8": "FAIL",
+    "P9": "FAIL",
+    "P10": "PASS",
+    "P12": "FAIL",
+    "P13": "PASS"
+  },
+  "measure": {
+    "P6": 0,
+    "P10": 0,
+    "P12": 4,
+    "P13": 1
+  },
+  "printed": {
+    "P12": "a root 4 insertion(s) old, over --max-root-age 2.",
+    "P13": "16 buckets of 2048 leaves"
+  }
+}

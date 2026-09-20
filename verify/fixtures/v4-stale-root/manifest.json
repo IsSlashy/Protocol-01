@@ -1,0 +1,40 @@
+{
+  "synthetic": true,
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. It describes a v4 spend that proves against a Merkle root 4 insertions older than the tree at spend time, so P12 measures age 4. The shape is real and was MEASURED on devnet 2026-09-15 (1 SOL pool: 1 of 34 v4 spends named a root 4 insertions old); the identities here are not, deliberately — freezing the real one would publish, in a public repository, the deposit that the stale root dates. Its twin verify/fixtures/v4-fresh-root is the same world with one field changed.",
+  "spend": "3GYruHF9T86fLHS9wfuwfyBuEkDdbvYwVVHgh7oUFp9KfW6u28R62udKoQVjD1htJhxxGinsDiwJ9LCYtQfwJatx",
+  "kind": "unshield_denominated_stark_v4",
+  "flags": {
+    "maxChunkTx": 200,
+    "depositLimit": 400,
+    "maxRootAge": 2
+  },
+  "pools": {
+    "DNA6C7DsDaMTXZmspfh9FCEbg4VqFde4Ffy5fZCdiy2N": {
+      "label": "SYNTHETIC 1 SOL (root-age fixture)",
+      "tree": "EWn7dE93GeQJu72WEkEmC5MZpm5FhiJzkcJEf1xpRdWP"
+    }
+  },
+  "expect": {
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "PASS",
+    "P6": "PASS",
+    "P7": "FAIL",
+    "P8": "FAIL",
+    "P9": "FAIL",
+    "P10": "PASS",
+    "P12": "FAIL",
+    "P13": "PASS"
+  },
+  "measure": {
+    "P6": 0,
+    "P10": 0,
+    "P12": 4,
+    "P13": 1
+  },
+  "printed": {
+    "P13": "16 buckets of 2048 leaves"
+  }
+}

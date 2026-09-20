@@ -1,0 +1,40 @@
+{
+  "synthetic": true,
+  "note": "SYNTHETIC fixture — hand-built by generate.mjs, never touched any chain. It describes a v4 spend that proves against the newest root the tree had, so P12 measures age 0 and passes. It is the positive half of the root-age control pair — without it, a P12 that failed every spend would satisfy verify/fixtures/v4-stale-root and measure nothing. The two fixtures are one world and differ in one field, the 32 bytes of merkle_root. It is NOT evidence that any real spend names a fresh root: the client that sends the stored path is what decides that, and it was MEASURED naming a 4-insertion-old root on devnet 2026-09-15.",
+  "spend": "3GYruHF9T86fLHS9wfuwfyBuEkDdbvYwVVHgh7oUFp9KfW6u28R62udKoQVjD1htJhxxGinsDiwJ9LCYtQfwJatx",
+  "kind": "unshield_denominated_stark_v4",
+  "flags": {
+    "maxChunkTx": 200,
+    "depositLimit": 400,
+    "maxRootAge": 2
+  },
+  "pools": {
+    "DNA6C7DsDaMTXZmspfh9FCEbg4VqFde4Ffy5fZCdiy2N": {
+      "label": "SYNTHETIC 1 SOL (root-age fixture)",
+      "tree": "EWn7dE93GeQJu72WEkEmC5MZpm5FhiJzkcJEf1xpRdWP"
+    }
+  },
+  "expect": {
+    "P1": "PASS",
+    "P2": "PASS",
+    "P3": "PASS",
+    "P3b": "FAIL",
+    "P4": "PASS",
+    "P6": "PASS",
+    "P7": "FAIL",
+    "P8": "FAIL",
+    "P9": "FAIL",
+    "P10": "PASS",
+    "P12": "PASS",
+    "P13": "PASS"
+  },
+  "measure": {
+    "P6": 0,
+    "P10": 0,
+    "P12": 0,
+    "P13": 1
+  },
+  "printed": {
+    "P13": "16 buckets of 2048 leaves"
+  }
+}
