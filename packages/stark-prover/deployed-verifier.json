@@ -249,7 +249,8 @@
         "elf_bytes": 798881
       }
     },
-    "accepts_client_blob_sha256": "0ad6d7f1eaed14a8bea12626c1e65f0737ba592b8f31205f8017228d29fa6cd7",
+    "accepts_client_blob_sha256": "d5583d41c3780a1234b619231963679edc15df247fdc7c56dcc1f85c856365aa",
+    "accepts_client_blob_sha256_evidence_2026_09_20": "NTT-prover reship: 0ad6d7f1 (265,324 B) -> d5583d41 (262,363 B), rebuilt twice byte-identically with scripts/ci/wasm-repro.mjs pins (rustc 1.98.1, wasm-pack 0.14.0, wasm-bindgen 0.2.114, binaryen version_117). A circuit-7 proof (79,405 B) from this blob was ACCEPTED by DGY37k3J... on devnet: signature 5Kp9dMnUh5JUak8iDdc2eiHbQajgXmWhyRiSfcX2mdZW9KhRdtRUJiiwMAUNcaRNHWuTskuiTJ6v9csvzaPjLvVd, slot 501407541, 889,691 CU, via scripts/c7-live-proof.ts. Nothing in the `deployed` program record changed; the verifier was not redeployed.",
     "accepts_client_blob_sha256_note": [
       "UNKNOWN, and deliberately left null rather than guessed.",
       "",
@@ -459,8 +460,8 @@
       "still RED. Reshipping the client blob does not and must not green anything on the chain side."
     ],
     "path": "packages/stark-prover/wasm/p01_stark_bg.wasm",
-    "sha256": "0ad6d7f1eaed14a8bea12626c1e65f0737ba592b8f31205f8017228d29fa6cd7",
-    "bytes": 265324,
+    "sha256": "d5583d41c3780a1234b619231963679edc15df247fdc7c56dcc1f85c856365aa",
+    "bytes": 262363,
     "proof_format_generation": "b2",
     "generation_evidence": {
       "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node THROUGH THE GENERATED GLUE (initSync) and generates one proof per shipping circuit on eight fixed witnesses. The three unmasked circuits (C0, C2, C4) are judged by proof sha256; the five masked circuits (C1, C3, C5, C6, C7) draw a fresh CSPRNG mask per proof and are judged by exact proof LENGTH, pinned in src/wireFormat.test.ts. The generation is the column that ALL EIGHT rows match; a mixture, an unrecognised digest, a refusal or a wrong length is UNCLASSIFIABLE and fails the gate.",

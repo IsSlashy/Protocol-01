@@ -13,7 +13,7 @@ Last checked against devnet and the npm registry on 2026-09-14.
 
 - Private payments on Solana: a shielded pool where the proof is hash-based (STARK over Goldilocks / Poseidon, no trusted setup) and the stealth-address key exchange is hybrid X25519 + ML-KEM-768, the NIST post-quantum KEM.
 - Four Anchor programs on the product path, live on devnet (verifier, shielded pool, registry, relayer); two more deployed but not called by any shipping flow (see the table below).
-- Eight STARK circuits, all proven on the user's device from a 265,324-byte WASM blob and verified on-chain by an FRI verifier written for Solana (C7 spend: 890,643 CU, both phases in one transaction, `BENCHMARK-2026-09-13.md` §6).
+- Eight STARK circuits, all proven on the user's device from a 262,363-byte WASM blob and verified on-chain by an FRI verifier written for Solana (C7 spend: 890,643 CU, both phases in one transaction, `BENCHMARK-2026-09-13.md` §6).
 - Measured on devnet 2026-09-12 (`BENCHMARK-2026-09-13.md` §6c): shield 1 SOL 18.6 s, private subscription 23.0 s, private withdrawal 20.8 s, end to end through the app's own code.
 - Android APK (latest tag v1.0.3), Chrome MV3 extension, Next.js web app, 11 npm packages under `@protocol-01`.
 - Built solo by Slashy Fx. Not audited, not on mainnet; both are stated on the site.
@@ -97,7 +97,7 @@ Every link below points to Solana Explorer on devnet.
 ## Architecture at a glance
 
 ```
-User generates a STARK proof on-device (Winterfell prover, Goldilocks / Poseidon, 265,324-byte WASM blob)
+User generates a STARK proof on-device (Winterfell prover, Goldilocks / Poseidon, 262,363-byte WASM blob)
     -> Proof uploaded in 4,096-byte transaction v1 chunks (21 to 25 per proof) and verified by the on-chain FRI verifier
        (C7 spend: 890,643 CU, both phases in one transaction)
         -> zk_shielded applies the state transition
@@ -116,7 +116,7 @@ Groth16 was fully retired during the March 2026 migration; the legacy Circom cir
 - 9 Arcis MPC circuits in `@protocol-01/arcium-sdk`; no shipping client calls them.
 - Test counts per suite: [`README.md`](../README.md#testing) (measured 2026-08-04) and [`HANDOFF-2026-09-13.md`](./HANDOFF-2026-09-13.md) §4c (2026-09-13).
 - 11 npm packages published under `@protocol-01/*` (versions read from the registry 2026-09-14): p01-js, merchant-sdk, auth-sdk, privacy-sdk, specter-sdk, privacy-toolkit, arcium-sdk, stark-prover, zk-sdk, zkspl-sdk, rpc-config. Repo holds 16.
-- Prover bundled as a 265,324-byte WASM blob (`packages/stark-prover/wasm/p01_stark_bg.wasm`, digest prefix `0ad6d7f1`), run in a browser worker on the web and inside a hidden WebView on Android.
+- Prover bundled as a 262,363-byte WASM blob (`packages/stark-prover/wasm/p01_stark_bg.wasm`, digest prefix `d5583d41`), run in a browser worker on the web and inside a hidden WebView on Android.
 
 > If a number above looks off, treat the file paths as the source of truth, not this summary.
 

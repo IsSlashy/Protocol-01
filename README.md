@@ -264,7 +264,7 @@ protocol-01/
 │   ├── p01-js/             # npm 0.3.2 — merchant pay button & browser SDK
 │   ├── privacy-toolkit/    # npm 1.0.4 — Merkle trees, Goldilocks-Poseidon, commitment helpers
 │   ├── rpc-config/         # npm 0.1.2 — shared RPC connection manager
-│   ├── stark-prover/       # npm 0.1.3 (0.2.0 in repo, publish pending) — WASM STARK prover bindings, 265,324-byte blob
+│   ├── stark-prover/       # npm 0.1.3 (0.2.0 in repo, publish pending) — WASM STARK prover bindings, 262,363-byte blob
 │   ├── whitelist-sdk/      # unpublished — developer whitelist
 │   ├── react-native-zk/    # unpublished — STARK prover packaged for React Native
 │   ├── pay-core/           # unpublished — /pay page core

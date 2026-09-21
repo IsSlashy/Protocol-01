@@ -103,8 +103,8 @@ const BLOB = join(here, '..', 'wasm', 'p01_stark_bg.wasm');
  * 2H5p3dqE..., slot 497236376, 2026-09-12). A pin that moves without that
  * evidence says "this is the artifact we ship", not "the chain has taken it".
  */
-const SHIPPED_SHA256 = '0ad6d7f1eaed';
-const SHIPPED_BYTES = 265_324;
+const SHIPPED_SHA256 = 'd5583d41c378';
+const SHIPPED_BYTES = 262_363;
 
 /**
  * The pre-C7 coset build. NOT "rejected": it was the shipped artifact until
@@ -152,7 +152,7 @@ describe('the shipped STARK prover blob', () => {
     expect(
       actual,
       `The prover blob shipped by @protocol-01/stark-prover changed.\n\n` +
-        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, the 2026-09-12 uniform-mask reship)\n` +
+        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, the 2026-09-20 NTT-prover reship)\n` +
         `  found    ${actual} (${statSync(BLOB).size} bytes)\n\n` +
         `If this is the 4ace8913 / 192,732-byte build, or the 72a8c700 / 267,610-byte one, a\n` +
         `wasm-pack run overwrote the shipped prover with an older local build. Every proof it\n` +

@@ -12,6 +12,14 @@ this verifier refuses at the parser; do not pair it with the current program.
 
 ### The prover blob
 
+- **2026-09-20 reship (before publish).** `wasm/p01_stark_bg.wasm` is now
+  `d5583d41c3780a12…`, 262,363 bytes: the same prover with the NTT low-degree
+  extension (`stark/src/ntt.rs`). Rebuilt twice byte-identically with the pins of
+  `scripts/ci/wasm-repro.mjs`; wire lengths unchanged (`src/wireFormat.test.ts`,
+  67/67); a circuit-7 proof from it was accepted on devnet at slot 501407541
+  (signature `5Kp9dMnU…`, 889,691 CU, `scripts/c7-live-proof.ts`). The entry
+  below describes the 2026-09-12 blob it replaces.
+
 - `wasm/p01_stark_bg.wasm` is `0ad6d7f1eaed14a8…`, 265,324 bytes. All eight
   circuits carry the same three-part mask (row mask, lift column, randomizer)
   and the out-of-domain point is resampled from the transcript hash on both

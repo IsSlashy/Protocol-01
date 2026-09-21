@@ -79,7 +79,7 @@ nullifier, the root and the recipient hash, never the note commitment.
 ```
 generateStarkProof(circuitId, privateInputs)
     │
-    ├── 1. initStarkWasm()          → wasm/p01_stark_bg.wasm (265,324 B)
+    ├── 1. initStarkWasm()          → wasm/p01_stark_bg.wasm (262,363 B)
     ├── 2. generateProofBytes()     → JSON parse, hex decode
     └── 3. uploadAndVerify()        → Solana RPC
             ├── createAccount + init_proof_buffer_v3   (one transaction; a keypair
