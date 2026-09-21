@@ -355,9 +355,12 @@ fn published_section(out: &mut String) {
          `tools/security-levels/prose-ledger.tsv`. What is read, exactly: every file under those four roots whose \
          extension is one of md, mdx, html, htm, ts, tsx, js, jsx, mjs, txt, except this file, the directories \
          node_modules, .next, .turbo, dist and build, and the local-only files listed in `prose::LOCAL_ONLY_FILES` \
-         (gitignored or untracked, so a clean checkout does not have them). Every other file under those roots is \
-         checked by `prose::unread_files_with_figures`, which fails the test if it states a figure; a PDF or PPTX is \
-         not read at all and must have a text source of the same name that is. The figures below are the floors of the \
+         (gitignored or untracked, so a clean checkout does not have them). A file under those roots that is not read \
+         because of its extension, or because it sits in a dist or build directory, is checked by \
+         `prose::unread_files_with_figures`, and the test fails if it states a figure. A local-only file is neither \
+         read nor checked: a figure in one fails nothing, nothing in it ships, and the test re-checks with git \
+         (where git can read the tree) that none of them is tracked. A PDF or PPTX is not read at all and must have a \
+         text source of the same name that is. The figures below are the floors of the \
          as-shipped v1 figures above. The v2 figures are candidates and are not published.\n"
     );
     let _ = writeln!(out, "<!-- published-figures:begin -->");

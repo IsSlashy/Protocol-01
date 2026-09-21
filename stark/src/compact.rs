@@ -10974,4 +10974,171 @@ mod wp0d_ntt_lde {
             ),
         );
     }
+
+    // ---------------------------------------------------------------------
+    // [gate v2 r1, R4 / WP0D-CLOSURE F7] The other eight rewritten sites.
+    // ---------------------------------------------------------------------
+    //
+    // Byte identity proves the rewrite CORRECT, never COMPLETE: a call site left
+    // on (or put back to) the per-point loop computes the same field elements,
+    // so every digest holds. The three guards above cover 3 of the 11 sites that
+    // build an `lde_coset_domain`. The other eight are the periodic columns of
+    // `compute_quotient_lde_circuit_{0,1,2,3,4,5,7}` and the legacy `compute_lde`.
+    //
+    // They cannot be timed at two sizes like C6: three of the seven take a
+    // periodic builder with no length argument, and C7 asserts its trace length.
+    // So each is timed ONCE, at the size it ships with, against the thing it
+    // replaced: the per-point evaluation of its own periodic columns. A site
+    // that still does that work costs AT LEAST that much (it also evaluates the
+    // constraints), so its ratio is >= 1. With one NTT per column the periodic
+    // part is ~n/log2(N) times cheaper and what is left is the constraint loop,
+    // which is linear in the LDE size. The ceiling sits between the two.
+    //
+    // The per-point cost is measured on ONE column and multiplied by the column
+    // count: the old loop cost the same for every column (every periodic column
+    // is materialised on the full trace domain before it is interpolated), and
+    // timing all 13 of C7's would make this the slowest test in the crate.
+
+    /// A site must cost less than this fraction of the per-point evaluation of
+    /// its own periodic columns. Measured on 2026-09-20 (i9-14900K, release):
+    /// see `scratchpad/v2-run/logs/repair-r1/wp0d-02-cost-guards-green.log`.
+    const PER_POINT_FRACTION_CEILING: f64 = 0.5;
+
+    /// Pre-WP0d periodic-column body, verbatim, for one column: seconds.
+    fn per_point_column_seconds(col: &[BaseElement], blowup: usize) -> f64 {
+        let trace_length = col.len();
+        let lde_size = trace_length * blowup;
+        let trace_g = get_domain_generator_generic(trace_length);
+        let lde_g = get_domain_generator_generic(lde_size);
+        let t = Instant::now();
+        let poly = inverse_ntt(col, trace_g);
+        let mut out = vec![BaseElement::ZERO; lde_size];
+        for (i, slot) in out.iter_mut().enumerate() {
+            let x = lde_coset_shift() * lde_g.exp(i as u64);
+            *slot = evaluate_poly(&poly, x);
+        }
+        black_box(&out);
+        t.elapsed().as_secs_f64()
+    }
+
+    /// `Some(why)` when the site is too dear. Returned, not asserted, so one run
+    /// names EVERY site that fell back rather than the first.
+    fn dearer_than_per_point(
+        what: &str,
+        trace_length: usize,
+        periodic_columns: usize,
+        mut site: impl FnMut(),
+    ) -> Option<String> {
+        let column = felts(0xF7, trace_length);
+        let mut best_site = f64::INFINITY;
+        let mut best_column = f64::INFINITY;
+        for _ in 0..REPS {
+            let t = Instant::now();
+            site();
+            best_site = best_site.min(t.elapsed().as_secs_f64());
+            best_column = best_column.min(per_point_column_seconds(black_box(&column), GENERIC_BLOWUP));
+        }
+        let per_point = best_column * periodic_columns as f64;
+        let fraction = best_site / per_point;
+        println!(
+            "[WP0d F7] {what}: site {:.2} ms; per-point periodic columns {periodic_columns} x {:.2} ms = {:.2} ms; \
+             fraction {fraction:.3} (ceiling {PER_POINT_FRACTION_CEILING})",
+            best_site * 1e3,
+            best_column * 1e3,
+            per_point * 1e3,
+        );
+        (fraction >= PER_POINT_FRACTION_CEILING).then(|| {
+            format!(
+                "{what} costs {fraction:.2} of the per-point evaluation of its own {periodic_columns} periodic \
+                 columns: {:.2} ms against {:.2} ms, best of {REPS}",
+                best_site * 1e3,
+                per_point * 1e3,
+            )
+        })
+    }
+
+    #[test]
+    fn every_fixed_size_periodic_lde_is_cheaper_than_per_point_evaluation() {
+        use crate::air::{
+            balance_proof as c2, confidential_balance as c4, denominated_pool as c1, merkle_path as c3,
+            spend as c7, subscriber_ownership as c0, transfer as c5,
+        };
+        let alpha = BaseElement::new(0xA1FA);
+        let lde = |seed: u64, width: usize, n: usize| random_trace(seed, width, n * GENERIC_BLOWUP);
+        let mut fell_back: Vec<String> = Vec::new();
+
+        let (n, t) = (c0::MASKED_TRACE_LENGTH, lde(0xD0, c0::MASKED_TRACE_WIDTH, c0::MASKED_TRACE_LENGTH));
+        fell_back.extend(dearer_than_per_point("compute_quotient_lde_circuit_0", n, c0::SUBSCRIBER_OWNERSHIP_NUM_PERIODIC, || {
+            black_box(compute_quotient_lde_circuit_0(black_box(&t), GENERIC_BLOWUP, n, alpha));
+        }));
+        let (n, t) = (c1::TRACE_LENGTH, lde(0xD1, c1::TRACE_WIDTH, c1::TRACE_LENGTH));
+        fell_back.extend(dearer_than_per_point("compute_quotient_lde_circuit_1", n, c1::POOL_COMMITMENT_NUM_PERIODIC, || {
+            black_box(compute_quotient_lde_circuit_1(black_box(&t), GENERIC_BLOWUP, n, alpha));
+        }));
+        let (n, t) = (c2::TRACE_LENGTH, lde(0xD2, c2::TRACE_WIDTH, c2::TRACE_LENGTH));
+        fell_back.extend(dearer_than_per_point("compute_quotient_lde_circuit_2", n, c2::BALANCE_PROOF_NUM_PERIODIC, || {
+            black_box(compute_quotient_lde_circuit_2(black_box(&t), GENERIC_BLOWUP, n, alpha));
+        }));
+        let depth = c3::CANONICAL_DEPTH;
+        let n = c3::trace_length_for_depth(depth);
+        let t = lde(0xD3, c3::TRACE_WIDTH, n);
+        fell_back.extend(dearer_than_per_point("compute_quotient_lde_circuit_3", n, c3::MERKLE_PATH_NUM_PERIODIC, || {
+            black_box(compute_quotient_lde_circuit_3(black_box(&t), GENERIC_BLOWUP, n, depth, alpha));
+        }));
+        let (n, t) = (c4::TRACE_LENGTH, lde(0xD4, c4::TRACE_WIDTH, c4::TRACE_LENGTH));
+        fell_back.extend(dearer_than_per_point("compute_quotient_lde_circuit_4", n, c4::CONFIDENTIAL_BALANCE_NUM_PERIODIC, || {
+            black_box(compute_quotient_lde_circuit_4(black_box(&t), GENERIC_BLOWUP, n, alpha));
+        }));
+        let (n, t) = (c5::TRACE_LENGTH, lde(0xD5, c5::TRACE_WIDTH, c5::TRACE_LENGTH));
+        fell_back.extend(dearer_than_per_point("compute_quotient_lde_circuit_5", n, c5::TRANSFER_NUM_PERIODIC, || {
+            black_box(compute_quotient_lde_circuit_5(black_box(&t), GENERIC_BLOWUP, n, alpha));
+        }));
+        let (n, t) = (c7::TRACE_LENGTH, lde(0xD7, c7::TRACE_WIDTH, c7::TRACE_LENGTH));
+        fell_back.extend(dearer_than_per_point("compute_quotient_lde_circuit_7", n, c7::SPEND_NUM_PERIODIC, || {
+            black_box(compute_quotient_lde_circuit_7(black_box(&t), GENERIC_BLOWUP, n, alpha));
+        }));
+        assert!(
+            fell_back.is_empty(),
+            "[WP0d F7] {} of 7 periodic-column sites cost at least {PER_POINT_FRACTION_CEILING} of their own \
+             per-point evaluation; a site that still evaluates its columns point by point costs at least 1.0 of \
+             it. Byte identity cannot see this, the values are the same either way:\n  {}",
+            fell_back.len(),
+            fell_back.join("\n  "),
+        );
+    }
+
+    /// The legacy C0 builder is 3 columns of 32 rows: one call is microseconds,
+    /// so both sides run `LEGACY_RUNS` times per sample. The per-point side is
+    /// `per_point_lde_legacy_oracle`, the pre-WP0d body kept verbatim above.
+    #[test]
+    fn legacy_c0_lde_is_cheaper_than_per_point_evaluation() {
+        const LEGACY_RUNS: usize = 200;
+        let trace = random_trace(0xE0, TRACE_WIDTH, TRACE_LENGTH);
+        let mut best_site = f64::INFINITY;
+        let mut best_oracle = f64::INFINITY;
+        for _ in 0..REPS {
+            let t = Instant::now();
+            for _ in 0..LEGACY_RUNS {
+                black_box(compute_lde(black_box(&trace)));
+            }
+            best_site = best_site.min(t.elapsed().as_secs_f64());
+            let t = Instant::now();
+            for _ in 0..LEGACY_RUNS {
+                black_box(per_point_lde_legacy_oracle(black_box(&trace)));
+            }
+            best_oracle = best_oracle.min(t.elapsed().as_secs_f64());
+        }
+        let fraction = best_site / best_oracle;
+        println!(
+            "[WP0d F7] compute_lde (legacy C0, {TRACE_WIDTH} x {TRACE_LENGTH}, x{LEGACY_RUNS}): site {:.2} ms, \
+             per-point {:.2} ms, fraction {fraction:.3} (ceiling {PER_POINT_FRACTION_CEILING})",
+            best_site * 1e3,
+            best_oracle * 1e3,
+        );
+        assert!(
+            fraction < PER_POINT_FRACTION_CEILING,
+            "[WP0d F7] the legacy C0 `compute_lde` costs {fraction:.2} of its per-point oracle (ceiling \
+             {PER_POINT_FRACTION_CEILING}); left on the per-point loop it costs 1.0"
+        );
+    }
 }

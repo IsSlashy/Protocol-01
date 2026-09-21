@@ -1,5 +1,5 @@
-// ⛔ ... and no caller can read the drawn mask back out as an owned Vec to
-// re-use it on a second proof.
+// ⛔ ... and the PRIVATE FIELD stays private: no caller moves the Vec out of a mask. That is all
+// this pins -- `m.as_slice().to_vec()` copies the values and `&m` can serve two proofs; both compile.
 use p01_stark::BlindingMask;
 
 fn main() {

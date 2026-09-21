@@ -48,13 +48,20 @@
 //! `TEXT_EXTENSIONS` (md, mdx, html, htm, ts, tsx, js, jsx, mjs, txt), except
 //! the generated document itself, anything under the five directories of
 //! `SKIPPED_DIRECTORIES` (node_modules, .next, .turbo, dist, build) and the
-//! local-only files of `LOCAL_ONLY_FILES`. Every OTHER file under those roots
-//! — another extension (.css, .py, .mmd, .bat on 2026-09-20), a `dist` or
-//! `build` directory, a local-only file — is checked by
-//! `unread_files_with_figures` instead, which fails the test if it states a
-//! figure. Only dependency trees (`DEPENDENCY_DIRECTORIES`), binary exports,
-//! the generated document itself and files that are not valid UTF-8 escape
-//! both.
+//! local-only files of `LOCAL_ONLY_FILES`. A file under those roots that the
+//! scan does not read because of its extension (.css, .py, .mmd, .bat on
+//! 2026-09-20) or because it sits in a `dist` or `build` directory is checked
+//! by `unread_files_with_figures` instead, and `tests/prose.rs` fails if it
+//! states a figure. A local-only file is neither read nor checked:
+//! `unread_files_with_figures` does return its figures, with the file's
+//! reason, and the test drops exactly the `LOCAL_ONLY_FILES` paths, so a figure
+//! in one fails nothing (gate v2 r1 measured it: "999 bits unconditional" in
+//! `docs/FACTS-2026-09-14.md`, suite green; until then this header promised
+//! the opposite). Nothing in such a file ships, and `tests/prose.rs` re-checks
+//! with git that none of them is tracked (it says so and passes where git
+//! cannot read the tree, as in an export with no `.git`). Dependency trees
+//! (`DEPENDENCY_DIRECTORIES`), binary exports, the generated document itself
+//! and files that are not valid UTF-8 escape both as well.
 //!
 //! What it does not read, stated as plainly:
 //! * binary exports (`BINARY_EXPORT_EXTENSIONS`: PDF, PPTX, ...). This crate
@@ -113,7 +120,9 @@ pub struct Figure {
     pub end: usize,
     /// "N bits per query", "N bits of grinding": a parameter, never a level.
     pub parameter: bool,
-    /// "N-bit preimage": a preimage bound, never a collision bound. The
+    /// "N-bit preimage", "N-bit (preimage)" or, since gate v2 r1, "preimage
+    /// ... N bits" (`preimage_clause_before`): a preimage bound, never a
+    /// collision bound. The
     /// document publishes no preimage line, and `docs/quantum-resistance.md`
     /// writes both bounds of a hash on one row, so without this flag the
     /// "~128-bit preimage" of `quantum-resistance.md:295` matched SHA-256's
@@ -168,13 +177,13 @@ pub const DEPENDENCY_DIRECTORIES: &[&str] = &["node_modules", ".next", ".turbo"]
 pub const LOCAL_ONLY_FILES: &[(&str, &str)] = &[
     (
         "docs/stark-migration-assessment.md",
-        "gitignored under \"Internal project planning docs (keep local only)\" (.gitignore:275). It carries a stale \
+        "gitignored under \"Internal project planning docs (keep local only)\" (.gitignore:286). It carries a stale \
          \"127-bit conjectured\" twice (lines 69 and 205); as shipped the conjectured figures are 45.60 to 46.91. \
          Un-ignoring it is a founder decision, and the stale figure is reported as a finding instead",
     ),
     (
         "docs/full-technical-inventory.md",
-        "gitignored under the same block (.gitignore:270); its one figure is an amount width, not a level",
+        "gitignored under the same block (.gitignore:281); its one figure is an amount width, not a level",
     ),
     (
         "docs/HANDOFF-2026-09-14.md",
@@ -548,6 +557,25 @@ fn alternative_before(chars: &[char], from: usize) -> Option<(usize, f64)> {
     number_before(chars, lb)
 }
 
+const PREIMAGE_WORDS: [&str; 4] = ["preimage", "pre-image", "préimage", "pré-image"];
+
+/// "preimage resistance is 128 bits": the preimage word BEFORE the figure, in
+/// the clause the figure closes. The clause runs back from the figure to the
+/// nearest `,` `;` `:` `|`, or to the previous figure's "bit", and it must not
+/// say "collision" as well: then the word order does not tell which of the two
+/// the number is, and the figure stays what it was read as before. (Gate v2
+/// r1: only the word order "128-bit preimage" was read, so "SHA-256 preimage
+/// resistance is 128 bits; collision ..." matched SHA-256's collision figure.)
+fn preimage_clause_before(chars: &[char], begin: usize) -> bool {
+    let mut from = begin;
+    while from > 0 && !matches!(chars[from - 1], ',' | ';' | ':' | '|') {
+        from -= 1;
+    }
+    let clause: String = chars[from..begin].iter().collect();
+    let clause = clause.rfind("bit").map_or(clause.as_str(), |at| &clause[at..]);
+    PREIMAGE_WORDS.iter().any(|p| clause.contains(p)) && !clause.contains("collision")
+}
+
 /// Every figure of one line, read through `view`.
 pub fn figures_in_line(line: &str) -> Vec<Figure> {
     figures_in_view(&view(line).chars)
@@ -573,8 +601,10 @@ fn figures_in_view(chars: &[char]) -> Vec<Figure> {
         let is_parameter = ["per ", "par requ", "of grinding", "de grinding", "per-query"]
             .iter()
             .any(|p| after.starts_with(p));
-        let is_preimage =
-            ["preimage", "pre-image", "préimage", "pré-image"].iter().any(|p| after.starts_with(p));
+        // "128-bit preimage", "128-bit (preimage)"; the other word order is read
+        // below, once the start of the figure is known
+        let after_words = after.trim_start_matches(['(', '[', ' ']);
+        let preimage_after = PREIMAGE_WORDS.iter().any(|p| after_words.starts_with(p));
         // number, then up to two joiners, then "bit"
         let mut k = i;
         let mut joiners = 0;
@@ -617,6 +647,7 @@ fn figures_in_view(chars: &[char]) -> Vec<Figure> {
                 }
             }
         }
+        let is_preimage = preimage_after || preimage_clause_before(chars, begin);
         // alternatives before it, "a/b bits" and "a or b bits": each is a figure
         let mut alternatives = Vec::new();
         let mut from = begin;
@@ -762,15 +793,65 @@ fn starts_a_list_item(rest: &str) -> bool {
     }
 }
 
+/// HTML elements that end a sentence the way a table row or a list item does:
+/// what sits on either side of one is not one run of text.
+const HTML_BLOCK_TAGS: &[&str] = &[
+    "tr", "td", "th", "table", "thead", "tbody", "tfoot", "caption", "p", "div", "hr", "br", "h1", "h2", "h3", "h4",
+    "h5", "h6", "ul", "ol", "li", "dl", "dt", "dd", "section", "article", "header", "footer", "blockquote", "pre",
+    "figure", "figcaption", "details", "summary",
+];
+
+/// Whether the tag that starts at `chars[0] == '<'` (opening, closing or
+/// self-closed) is a block-level one. The NAME is compared, whole and without
+/// case, so `<path>` and `<param-x>` are not `<p>`.
+fn is_block_tag(chars: &[char]) -> bool {
+    if chars.first() != Some(&'<') {
+        return false;
+    }
+    let from = if chars.get(1) == Some(&'/') { 2 } else { 1 };
+    let name: String = chars[from..]
+        .iter()
+        .take_while(|c| c.is_ascii_alphanumeric() || **c == '-')
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    HTML_BLOCK_TAGS.contains(&name.as_str())
+}
+
+/// Whether the break between `head` (the previous line, trimmed at its end)
+/// and `rest` (this line's text) is an HTML row, cell or block boundary: a
+/// block-level tag starts `rest`, or ends `head`. An inline tag (`<strong>`,
+/// `<code>`) is not one, and neither is a block tag away from the break, so a
+/// figure wrapped inside one `<td>` or one `<p>` still joins.
+///
+/// Gate v2 r1 found the hole: "... sits at 41</td></tr>" / "<tr><td>- 45 bits"
+/// read as the range 41 to 45, which matches. Same false channel as the
+/// markdown table row and the list item round 3 closed.
+fn html_block_boundary(head: &str, rest: &str) -> bool {
+    let rest: Vec<char> = rest.chars().collect();
+    if is_block_tag(&rest) {
+        return true;
+    }
+    let head: Vec<char> = head.chars().collect();
+    if head.last() != Some(&'>') {
+        return false;
+    }
+    match head.iter().rposition(|c| *c == '<') {
+        Some(open) => is_block_tag(&head[open..]),
+        None => false,
+    }
+}
+
 /// Line `i` joined to the line before it, for a figure wrapped across the
 /// break: (the previous line's text, one space, line `i`'s continuation; the
 /// char index where the continuation starts; how many chars of line `i` the
 /// continuation drops: its indentation and a `//` or `>` marker). None when
-/// either line is a markdown table row, and none when line `i` opens a new
-/// list item: that item is a sentence of its own, and joining it read its
-/// marker as the "-" of a range ("... at 41" / "- 45 bits" as 41 to 45,
-/// round 3, Y1). A blank line needs no rule: only adjacent lines are joined,
-/// and no figure can start or end on a blank one.
+/// either line is a markdown table row, none when line `i` opens a new list
+/// item, and none across an HTML row, cell or block boundary
+/// (`html_block_boundary`): each of those is a sentence of its own, and
+/// joining it read its marker as the "-" of a range ("... at 41" / "- 45 bits"
+/// as 41 to 45, round 3, Y1; the HTML spellings, gate v2 r1). A blank line
+/// needs no rule: only adjacent lines are joined, and no figure can start or
+/// end on a blank one.
 fn soft_wrap(lines: &[&str], i: usize) -> Option<(String, usize, usize)> {
     if i == 0 {
         return None;
@@ -789,7 +870,7 @@ fn soft_wrap(lines: &[&str], i: usize) -> Option<(String, usize, usize)> {
         t
     };
     let rest = rest.trim_start();
-    if starts_a_list_item(rest) {
+    if starts_a_list_item(rest) || html_block_boundary(head, rest) {
         return None;
     }
     let skip = cur.chars().count() - rest.chars().count();

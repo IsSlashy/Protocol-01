@@ -157,7 +157,56 @@ fn pinned(name: &str) -> (usize, &'static str) {
     (row.1, row.2)
 }
 
+/// One fixture, proved inside `catch_unwind`: the proof, or the panic message.
+///
+/// [gate v2 r1, R4] The gate used to call `prove` bare. Every sabotage the WP0d
+/// verifiers ran trips a degree guard INSIDE the prover (`B1 TERMINAL DEGREE
+/// BOUND VIOLATED`, `[B2] UNDER-SEGMENTED`), so the test died at the first
+/// generic fixture, "C0": "C0-legacy", proved first, had passed silently, C1 to
+/// C7 were never attempted, and the gate's own message was never produced by
+/// any experiment. A panic is now one fixture's verdict, not the end of the run.
+fn prove_caught(name: &str) -> Result<Vec<u8>, String> {
+    let name = name.to_string();
+    std::panic::catch_unwind(move || prove(&name)).map_err(|payload| {
+        let msg = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_else(|| "a panic with no message".to_string());
+        msg.lines().next().unwrap_or("").chars().take(200).collect()
+    })
+}
+
+/// What is wrong with one fixture's outcome, or `None` when it is the pinned
+/// proof.
+fn verdict(name: &str, outcome: &Result<Vec<u8>, String>) -> Option<String> {
+    let (len, want) = pinned(name);
+    match outcome {
+        Ok(bytes) => {
+            let digest = sha256_hex(bytes);
+            (bytes.len() != len || digest != want)
+                .then(|| format!("{name}: got {} B {digest}, pinned {len} B {want}", bytes.len()))
+        }
+        Err(panic) => Some(format!("{name}: NO PROOF, the prover panicked: {panic}")),
+    }
+}
+
+fn gate_message(mismatches: &[String]) -> String {
+    format!(
+        "WP0d BYTE-IDENTITY BROKEN: {} of {} proofs differ from the pre-NTT prover.\n  {}\n\
+         The LDE rewrite must evaluate the same polynomials at the same coset points in the \
+         same order. Do not re-pin: a moved v1 proof is a wire change.",
+        mismatches.len(),
+        NAMES.len(),
+        mismatches.join("\n  "),
+    )
+}
+
 /// THE GATE. Every fixture's proof is byte-identical to the pre-WP0d prover's.
+///
+/// Every fixture is attempted, whatever the others did, and the failure lists
+/// all of them: a moved digest and a prover panic are both "this fixture is not
+/// the pinned proof".
 ///
 /// `P01_WP0D_DUMP_DIR=<dir>` also writes each proof to `<dir>/<fixture>.bin`,
 /// so a before/after pair can be compared with `cmp` independently of this
@@ -170,30 +219,53 @@ fn proofs_are_byte_identical_to_the_pre_ntt_prover() {
     println!();
     println!("{:<10} {:>7}  sha256", "fixture", "bytes");
     for name in NAMES {
-        let bytes = prove(name);
-        let digest = sha256_hex(&bytes);
-        println!("{name:<10} {:>7}  {digest}", bytes.len());
-        if let Some(dir) = &dump {
-            std::fs::create_dir_all(dir).expect("create dump dir");
-            std::fs::write(format!("{dir}/{name}.bin"), &bytes).expect("write dump");
+        let outcome = prove_caught(name);
+        match &outcome {
+            Ok(bytes) => {
+                println!("{name:<10} {:>7}  {}", bytes.len(), sha256_hex(bytes));
+                if let Some(dir) = &dump {
+                    std::fs::create_dir_all(dir).expect("create dump dir");
+                    std::fs::write(format!("{dir}/{name}.bin"), bytes).expect("write dump");
+                }
+            }
+            Err(panic) => println!("{name:<10}   PANIC  {panic}"),
         }
-        let (len, want) = pinned(name);
-        if bytes.len() != len || digest != want {
-            mismatches.push(format!(
-                "{name}: got {} B {digest}, pinned {len} B {want}",
-                bytes.len()
-            ));
-        }
+        mismatches.extend(verdict(name, &outcome));
     }
-    assert!(
-        mismatches.is_empty(),
-        "WP0d BYTE-IDENTITY BROKEN: {} of {} proofs differ from the pre-NTT prover.\n  {}\n\
-         The LDE rewrite must evaluate the same polynomials at the same coset points in the \
-         same order. Do not re-pin: a moved v1 proof is a wire change.",
-        mismatches.len(),
-        NAMES.len(),
-        mismatches.join("\n  "),
-    );
+    assert!(mismatches.is_empty(), "{}", gate_message(&mismatches));
+}
+
+/// [gate v2 r1, R4] The reporting path itself, which no sabotage had ever
+/// reached: a proof with one byte flipped, a truncated proof and a panicking
+/// prover are each reported under their fixture's name, and the pinned proof
+/// is not. Without this, a gate that silently dropped a mismatch (or a fixture)
+/// would still be green on a correct prover.
+#[test]
+fn the_gate_reports_a_moved_proof_a_short_proof_and_a_panic() {
+    let good = prove("C0-legacy");
+    assert_eq!(verdict("C0-legacy", &Ok(good.clone())), None, "the pinned proof is not a mismatch");
+
+    let mut flipped = good.clone();
+    let last = flipped.len() - 1;
+    flipped[last] ^= 1;
+    let moved = verdict("C0-legacy", &Ok(flipped)).expect("one flipped bit is a mismatch");
+    assert!(moved.starts_with("C0-legacy: got 47641 B ") && moved.contains("pinned 47641 B 157f45be"), "{moved}");
+
+    let short = verdict("C0-legacy", &Ok(good[..good.len() - 1].to_vec())).expect("a short proof is a mismatch");
+    assert!(short.contains("got 47640 B"), "{short}");
+
+    // The same bytes under another fixture's name are that fixture's mismatch.
+    assert!(verdict("C7", &Ok(good)).is_some_and(|m| m.starts_with("C7: ")));
+
+    // A panic inside the prover is caught, attributed, and does not stop the run.
+    let caught = prove_caught("no-such-fixture").expect_err("an unknown fixture panics");
+    assert_eq!(caught, "unknown fixture no-such-fixture");
+    let panicked = verdict("C7", &Err(caught)).expect("a panic is a mismatch");
+    assert_eq!(panicked, "C7: NO PROOF, the prover panicked: unknown fixture no-such-fixture");
+
+    let msg = gate_message(&[moved, panicked]);
+    assert!(msg.starts_with("WP0d BYTE-IDENTITY BROKEN: 2 of 9 proofs differ"), "{msg}");
+    assert!(msg.contains("\n  C0-legacy: got ") && msg.contains("\n  C7: NO PROOF"), "{msg}");
 }
 
 /// The pin only means something if a fixture is a function of its inputs. If a

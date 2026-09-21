@@ -331,6 +331,197 @@ fn every_local_only_file_is_really_absent_from_a_clean_checkout() {
     );
 }
 
+/// Gate v2 r1, R3 (wp1-break must-fix 1): `prose.rs`'s header and the
+/// generated, PUBLIC `docs/SECURITY-LEVELS.md` both said a local-only file "is
+/// checked by `unread_files_with_figures` instead, which fails the test if it
+/// states a figure". It is not: `no_unread_file_in_the_repository_states_an_
+/// unlisted_figure` filters `LOCAL_ONLY_FILES` out, on purpose (the stale
+/// "127-bit conjectured" of `docs/stark-migration-assessment.md` is a founder
+/// finding, and the file does not ship). The gate's probe: `docs/FACTS-2026-09-
+/// 14.md` holding "Soundness is 999 bits unconditional." leaves the suite
+/// green. The behaviour stays; the two documents now say what it is.
+///
+/// First half: the behaviour, measured, so the sentence below is about
+/// something. Second half: the words, in both places.
+#[test]
+fn the_documents_do_not_promise_a_check_that_local_only_files_do_not_get() {
+    let (local_only, _) = prose::LOCAL_ONLY_FILES.last().expect("a local-only file");
+    let root = std::env::temp_dir().join(format!("p01-security-levels-localonly-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("docs")).expect("temporary docs");
+    fs::write(root.join(local_only), "Soundness is 999 bits unconditional.\n").expect("local-only file");
+    let scanned: Vec<String> = prose::scan_repo(&root).into_iter().map(|h| h.path).collect();
+    let spots = prose::unread_files_with_figures(&root);
+    let _ = fs::remove_dir_all(&root);
+    assert!(!scanned.iter().any(|p| p == local_only), "a local-only file is not read by the scan");
+    // The library still SEES it (that is how `--prose` can report it) ...
+    assert!(
+        spots.iter().any(|s| s.path == *local_only && s.figures == ["999 bits"]),
+        "unread_files_with_figures reports the figure of a local-only file: {spots:?}"
+    );
+    // ... and the repository test drops exactly those paths, so nothing fails.
+    let failing: Vec<_> =
+        spots.iter().filter(|s| !prose::LOCAL_ONLY_FILES.iter().any(|(p, _)| *p == s.path)).collect();
+    assert!(failing.is_empty(), "the only blind spot in this tree is the local-only file: {failing:?}");
+
+    let normal = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let generated = normal(&p01_security_levels::render::document());
+    let header: String = include_str!("../src/prose.rs")
+        .lines()
+        .take_while(|l| l.starts_with("//!"))
+        .map(|l| l.trim_start_matches("//!").trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    for (name, text) in [("docs/SECURITY-LEVELS.md as generated", &generated), ("the header of src/prose.rs", &normal(&header))]
+    {
+        assert!(
+            text.contains("A local-only file is neither read nor checked"),
+            "{name} must say plainly that a local-only file is neither read nor checked: a figure in it fails nothing"
+        );
+        // the old promise, in either wording
+        assert!(
+            !text.contains("Every other file under those roots is checked")
+                && !text.contains("a local-only file — is checked"),
+            "{name} still promises that EVERY file the scan does not read is checked for figures; the local-only \
+             files are not"
+        );
+    }
+}
+
+/// Gate v2 r1, R3 (wp1-break missed 6): the reasons cited `.gitignore:275` and
+/// `:270`; `git check-ignore -v` says 286 and 281, because WP1's own
+/// `.gitignore` edit added 11 lines above them. A line number in a string rots
+/// silently, so it is re-measured here, without git: `.gitignore` is tracked,
+/// so a clean checkout has it.
+#[test]
+fn the_gitignore_lines_the_local_only_reasons_cite_are_the_lines_that_ignore_them() {
+    let gitignore = fs::read_to_string(repo_root().join(".gitignore")).expect(".gitignore at the repository root");
+    let lines: Vec<&str> = gitignore.lines().collect();
+    let mut cited = 0;
+    for (path, reason) in prose::LOCAL_ONLY_FILES {
+        let Some(at) = reason.find(".gitignore:") else {
+            assert!(!reason.starts_with("gitignored"), "{path}: says it is gitignored and cites no .gitignore line");
+            continue;
+        };
+        let digits: String = reason[at + ".gitignore:".len()..].chars().take_while(char::is_ascii_digit).collect();
+        let n: usize = digits.parse().unwrap_or_else(|_| panic!("{path}: no line number after \".gitignore:\""));
+        cited += 1;
+        assert_eq!(
+            lines.get(n - 1).map(|l| l.trim()),
+            Some(*path),
+            "{path}: its reason cites .gitignore:{n}, and that line does not ignore it; it is on line {:?}",
+            lines.iter().position(|l| l.trim() == *path).map(|i| i + 1)
+        );
+    }
+    assert_eq!(cited, 2, "two of the local-only files are gitignored and cite their line");
+}
+
+/// Gate v2 r1, R3 (wp1-break must-fix 2): round 3 made a markdown table row
+/// and a new list item a wrap barrier, and left the HTML spellings of the same
+/// thing open. Two table rows, two cells, or a text line and a `<hr>` joined
+/// into one line, and the list marker of the second became the "-" of a range:
+/// "... sits at 41</td></tr>" / "<tr><td>- 45 bits unconditional" read as "41 -
+/// 45 bits", which MATCHES (41 and 45 are both published). The roots hold
+/// scanned `.html` files. A block-level tag at the start of the second line, or
+/// at the end of the first, is now a barrier; an inline tag is not, and a
+/// figure wrapped INSIDE one cell still joins (Z3 above).
+#[test]
+fn an_html_row_cell_or_block_boundary_is_not_a_wrap() {
+    let doc = "<!-- published-figures:begin -->\n```text\n\
+               C0 unique-decoding 42\nC1 unique-decoding 45\nC7 unique-decoding 41\n\
+               ```\n<!-- published-figures:end -->\n";
+    let published = prose::parse_published(doc);
+    let figures = |text: &str| -> Vec<(usize, f64, f64)> {
+        prose::scan_text("x.html", text).iter().map(|h| (h.line_no, h.figure.low, h.figure.high)).collect()
+    };
+    let uncovered = |text: &str| prose::check(&prose::scan_text("x.html", text), &published, &[]).uncovered.len();
+
+    // The gate's three probes (`gate2/06b-open-mustfix-probes.log`). On the old
+    // behaviour each reads (1, 41, 45) and is covered; the second line alone
+    // says "45 bits" of every circuit, which no regime publishes.
+    for (name, text) in [
+        (
+            "two table rows",
+            "<tr><td>The unconditional floor sits at 41</td></tr>\n<tr><td>- 45 bits unconditional soundness</td></tr>",
+        ),
+        ("two cells", "<td>41</td>\n<td>- 45 bits unconditional</td>"),
+        ("a rule", "The unconditional floor sits at 41\n<hr>- 45 bits unconditional soundness"),
+        ("a line break at the end of the first line", "The unconditional floor sits at 41<br>\n- 45 bits unconditional"),
+        ("a self-closed break", "The unconditional floor sits at 41<br/>\n– 45 bits unconditional soundness"),
+        ("a paragraph", "<p>The unconditional floor sits at 41</p>\n<p>- 45 bits unconditional soundness</p>"),
+        ("a closing cell first", "The unconditional floor sits at 41\n</td><td>- 45 bits unconditional soundness</td>"),
+        ("a heading", "The unconditional floor sits at 41\n<h3>- 45 bits unconditional</h3>"),
+        ("upper case", "<TD>41</TD>\n<TD>- 45 bits unconditional</TD>"),
+    ] {
+        assert_eq!(figures(text), [(2, 45.0, 45.0)], "{name}: the second line is a figure of its own");
+        assert_eq!(uncovered(text), 1, "{name}: and it is not a published one");
+    }
+
+    // What must still join: an INLINE tag is not a boundary, and neither is a
+    // block tag that is not at the break.
+    assert_eq!(
+        figures("The floor is 41 to\n<strong>45 bits</strong> unconditional."),
+        [(1, 41.0, 45.0)],
+        "an inline tag at the start of the second line"
+    );
+    assert_eq!(
+        figures("The floor is <em>41 to</em>\n45 bits unconditional."),
+        [(1, 41.0, 45.0)],
+        "an inline tag at the end of the first line"
+    );
+    assert_eq!(
+        figures("<p>The floor is 41 to\n45 bits unconditional.</p>"),
+        [(1, 41.0, 45.0)],
+        "a paragraph wrapped in its source"
+    );
+    assert_eq!(figures("<td>C1 has 45\nbits unconditional soundness.</td>"), [(1, 45.0, 45.0)], "Z3: inside one cell");
+    // `<path>`, `<pre-x>`, `<param>` are not `<p>`: the tag NAME is compared.
+    assert_eq!(
+        figures("The floor is 41 to\n<param-x>45 bits</param-x> unconditional."),
+        [(1, 41.0, 45.0)],
+        "a tag whose name only starts like a block tag"
+    );
+}
+
+/// Gate v2 r1, R3 (wp1-break missed 5): the preimage tag was set only when the
+/// word FOLLOWS "bit(s)". "preimage resistance is 128 bits; collision ..." and
+/// "~128-bit (preimage), collision" were read as collision figures, and 128 is
+/// SHA-256's published classical collision figure, so they matched.
+#[test]
+fn a_preimage_figure_is_read_in_either_word_order() {
+    let published = prose::parse_published(
+        "<!-- published-figures:begin -->\nsha256 collision 128\nsha256 collision-quantum 85\n<!-- published-figures:end -->",
+    );
+    for line in [
+        "SHA-256 preimage resistance is 128 bits; collision in the other column",
+        "SHA-256: ~128-bit (preimage), collision",
+        "SHA-256 collision figures aside, the pre-image bound is 128 bits",
+        "SHA-256 : la résistance à la préimage est de 128 bits (collision à côté)",
+    ] {
+        let hits = prose::scan_text("x.md", line);
+        assert_eq!(hits.len(), 1, "{line:?}: {hits:?}");
+        assert!(hits[0].figure.preimage, "{line:?}: a preimage figure");
+        assert!(!prose::figure_matches(&hits[0].figure, &hits[0].families, &published), "{line:?}: must not match");
+    }
+    // The word belongs to ONE figure: the clause it sits in. A collision figure
+    // next to a preimage one keeps matching, in both orders.
+    let hits = prose::scan_text("x.md", "SHA-256: preimage 128 bits, collision 128 bits");
+    assert_eq!(hits.iter().map(|h| h.figure.preimage).collect::<Vec<_>>(), [true, false]);
+    assert!(prose::figure_matches(&hits[1].figure, &hits[1].families, &published), "the collision figure matches");
+    let hits = prose::scan_text("x.md", "SHA-256: collision 128 bits, preimage 128 bits");
+    assert_eq!(hits.iter().map(|h| h.figure.preimage).collect::<Vec<_>>(), [false, true]);
+    let hits = prose::scan_text("x.md", "| SHA-256 | 128-bit collision resistance |");
+    assert!(!hits[0].figure.preimage && prose::figure_matches(&hits[0].figure, &hits[0].families, &published));
+    // The clause ends at the previous figure, so the word tags one figure only.
+    let hits = prose::scan_text("x.md", "SHA-256 preimage resistance is 128 bits and the tag keeps 32 bits of it");
+    assert_eq!(hits.iter().map(|h| h.figure.preimage).collect::<Vec<_>>(), [true, false]);
+    // Both words in ONE clause before the number: the order does not say which
+    // bound it is, so the figure stays what it was always read as. Pinned so
+    // that the rule is a choice and not an accident.
+    let hits = prose::scan_text("x.md", "SHA-256 collision and preimage resistance both sit at 128 bits");
+    assert!(!hits[0].figure.preimage, "an ambiguous clause is not tagged");
+}
+
 /// Round 1: the scanner skipped any figure without a security word on its
 /// line or a neighbouring one, and every "bits per query" / "bits of grinding"
 /// figure. A stale level or parameter written plainly walked past it.

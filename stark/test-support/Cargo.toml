@@ -15,11 +15,17 @@
 # `wasm-pack build stark -- --features wasm`) builds it WITHOUT.
 #
 # Why not a dev-dependency of `p01-stark` on ITSELF, which is the usual trick:
-# cargo then passes `--extern p01_stark=<rlib>` twice and rustc 1.98.1
-# segfaults (STATUS_ACCESS_VIOLATION) intermittently while compiling
-# `stark/tests/mask_api.rs`; renaming the self-dependency instead makes
-# `trybuild`'s generated manifest refuse with "depends on crate `p01-stark`
-# multiple times with different names". This crate has neither problem.
+# `trybuild` has to write a manifest for the `tests/ui` programs from this
+# package's dependency list, and with a renamed self-dependency in it cargo
+# refuses that manifest: "depends on crate `p01-stark` multiple times with
+# different names". That is the reproducible reason, and the only one claimed.
+#
+# An earlier version of this comment also blamed the un-renamed shape for
+# intermittent rustc crashes (STATUS_ACCESS_VIOLATION) through a doubled
+# `--extern`. Not shown: the WP0b verifiers saw the same crash class on this
+# machine with no self-dependency at all (on `syn`, on `trybuild`, on
+# `p01-stark` with default features), so it says nothing about that shape.
+# Whether the plain shape works on a quiet machine has not been re-tested.
 [package]
 name = "p01-stark-test-support"
 version = "0.0.0"

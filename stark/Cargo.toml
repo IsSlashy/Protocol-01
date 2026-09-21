@@ -86,8 +86,9 @@ rand = "0.8"
 hex = "0.4"
 
 # [A8] Turns on `deterministic-mask-for-tests` while THIS crate's own
-# integration tests build, without the crate dev-depending on itself.
-# The reasons that matters are in stark/test-support/Cargo.toml.
+# integration tests build, without the crate dev-depending on itself
+# (`trybuild` cannot write a manifest around a renamed self-dependency; see
+# stark/test-support/Cargo.toml).
 p01-stark-test-support = { path = "test-support" }
 
 # [A8] The compile-fail evidence: tests/ui/*.rs must not compile.
