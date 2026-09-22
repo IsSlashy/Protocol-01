@@ -395,9 +395,9 @@ describe('configuration from the environment', () => {
   it('falls back on anything malformed rather than to zero', () => {
     // ⛔ 0 is the value that turns each of these rules off.
     for (const bad of ['', '0', '-1', 'abc', '2.5', undefined]) {
-      expect(envInt('X', 7, { X: bad } as NodeJS.ProcessEnv)).toBe(7);
+      expect(envInt('X', 7, { X: bad } as unknown as NodeJS.ProcessEnv)).toBe(7);
     }
-    expect(envInt('X', 7, { X: '12' } as NodeJS.ProcessEnv)).toBe(12);
+    expect(envInt('X', 7, { X: '12' } as unknown as NodeJS.ProcessEnv)).toBe(12);
   });
 
   it('reads every field, so no bound is silently unconfigurable', () => {
@@ -406,7 +406,7 @@ describe('configuration from the environment', () => {
       P01_SETTLE_MIN_QUIET_SECONDS: '11',
       P01_SETTLE_HOLD_SPREAD_SECONDS: '13',
       P01_FLOAT_ALARM_DEPOSITS: '4',
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     expect(c).toEqual({
       minPurchases: 9,
       minQuietSeconds: 11,
@@ -416,7 +416,7 @@ describe('configuration from the environment', () => {
   });
 
   it('an empty environment is the documented default, not an off switch', () => {
-    expect(settlementConfigFromEnv({} as NodeJS.ProcessEnv)).toEqual(DEFAULT_SETTLEMENT_CONFIG);
+    expect(settlementConfigFromEnv({} as unknown as NodeJS.ProcessEnv)).toEqual(DEFAULT_SETTLEMENT_CONFIG);
     expect(DEFAULT_SETTLEMENT_CONFIG.minPurchases).toBeGreaterThanOrEqual(2);
     expect(DEFAULT_SETTLEMENT_CONFIG.minQuietSeconds).toBeGreaterThan(0);
   });

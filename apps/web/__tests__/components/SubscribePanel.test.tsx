@@ -393,3 +393,73 @@ describe("the success card (UI-1 fix round 1)", () => {
     expect(view.container.innerHTML).toContain(`https://explorer.solana.com/tx/${EXCHANGE_SIG}?cluster=devnet`);
   });
 });
+
+/**
+ * [SWEEP round 1 of run logs8, screen lens] The success card names the circuit
+ * that ran.
+ *
+ * The cost box on this same page promises it (`pay.subscribe.costCommitment`:
+ * "the screen after the purchase names which one ran"), and `subscribeFromPool`
+ * reports it (`shieldClient.ts`, `version: prep.version`, under "any screen
+ * that says 'private' must read it first"). A pre-blinding note confirmed onto
+ * the C1 + C3 pair republishes its commitment in the opening transaction, so
+ * anyone reading the chain walks from the vault to the deposit; the card then
+ * read word for word like a circuit-7 purchase, and so did a screenshot of it.
+ * Round 1 gave PoolPanel the `version` branch and left this panel without one
+ * (`logs8/r1-screen/probe-sub-circuit.log`).
+ *
+ * Read on the CARD, not on the page: the `lg:hidden` cost box under the card
+ * mentions the pair and the commitment on every render, which is what made the
+ * sweep's own regex answer true.
+ */
+describe("the success card names the circuit that ran (sweep r1, screen)", () => {
+  async function cardTextFor(version: "v3" | "v4" | undefined): Promise<string> {
+    m.subscribeFromPool.mockResolvedValue({
+      txSig: OPEN_TX_SIG,
+      vaultPDA: VAULT,
+      licenseKey: LICENSE_KEY,
+      licenseScheme: "v2",
+      fundedBy: "funder",
+      reachableViaDeposit: false,
+      reachableViaSpendFunder: false,
+      noteProvenance: "received",
+      ...(version ? { version } : {}),
+    });
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await user.click(await screen.findByRole("button", { name: /1 SOL note/ }));
+    await user.click(screen.getByRole("button", { name: /^Lock 1 SOL with Test VPN$/ }));
+    const heading = await screen.findByText(/License key/);
+    const card = heading.closest(".card");
+    if (!card) throw new Error("the success card was not found: the harness, not the panel, is broken");
+    const text = card.textContent ?? "";
+    view.unmount();
+    return text;
+  }
+
+  it("the page promises it, so the card owes it", async () => {
+    const view = renderPanel();
+    await screen.findAllByText(/the screen after the purchase names which one ran/);
+    view.unmount();
+  });
+
+  it("a C1 + C3 subscription does not read like a circuit-7 one, and says the commitment was republished", async () => {
+    const v4 = await cardTextFor("v4");
+    const v3 = await cardTextFor("v3");
+    expect(v3, "the C1 + C3 card reads exactly like the circuit-7 card").not.toBe(v4);
+    expect(v3).toMatch(/C1 \+ C3/);
+    expect(v3).toMatch(/republish/);
+    expect(v3).toMatch(/commitment/);
+    expect(v4).toMatch(/[Cc]ircuit 7/);
+    expect(v4).not.toMatch(/C1 \+ C3/);
+  });
+
+  it("a result that reports no circuit is never read as circuit 7", async () => {
+    const v4 = await cardTextFor("v4");
+    const unknown = await cardTextFor(undefined);
+    expect(unknown, "an absent version earned the circuit-7 sentence").not.toBe(v4);
+    expect(unknown).not.toMatch(/[Cc]ircuit 7 ran/);
+    expect(unknown).toMatch(/commitment/);
+  });
+});

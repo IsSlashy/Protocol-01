@@ -506,7 +506,15 @@ describe('the client learns this relay’s ceilings from this relay', () => {
     // so a group test on one connection burned the fourth tester's denomination.
     // Reporting it here is what lets the client refuse before the signature.
     expect(body.relaysPerHour).toBe(3);
-    expect(body.relaysRemaining).toBe(3);
+    // ⚠️ 1, NOT 3, SINCE SWEEP ROUND 1 (r1-fix3). This asserted the exact count,
+    // and the exact count was the leak: it moves on every POST from the
+    // address, so anyone sharing the buyer's egress address could poll this GET
+    // and read the second somebody there bought. The client only tests
+    // `<= 0`, so the route answers 1 for "at least one left" and 0 for none.
+    // What the old assertion protected — a fresh address is told it may relay,
+    // and at exhaustion it reads 0 — is pinned, against the real limiter, in
+    // `relayToBuyerAllowanceOracle.test.ts`.
+    expect(body.relaysRemaining).toBe(1);
     // Reading it must NOT consume one: `rateLimitExceeded` answers by
     // incrementing, which is right where the limit bites and wrong here.
     expect(mockIncr).not.toHaveBeenCalled();

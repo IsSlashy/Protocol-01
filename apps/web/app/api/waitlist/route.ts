@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { after, NextRequest, NextResponse } from 'next/server';
 import {
   normalizeEmail,
   sanitizeCountry,
@@ -65,59 +65,93 @@ export async function POST(req: NextRequest) {
     const existing = await readRecord(kv, email);
     const now = new Date().toISOString();
 
-    // Already confirmed: nothing to do, and no signal that reveals membership.
-    if (existing?.status === 'confirmed') {
-      return NextResponse.json({ ok: true });
-    }
+    // [SWEEP round 1 of run logs8, server lens] EVERYTHING BELOW THIS LINE RUNS
+    // AFTER THE ANSWER.
+    //
+    // The status and the bytes were already the same for everyone. The WORK was
+    // not: a confirmed address answered after the three store commands above and
+    // no mail, a pending one past its cooldown after six and a mail, an unknown
+    // one after nine to twelve and a mail. Each is a network round trip, so one
+    // request told anyone holding a candidate address whether a record exists,
+    // and a second one ten minutes later whether it was confirmed. Now every
+    // branch answers after the same rate-limit write and the same record read,
+    // and the branch itself runs in `after()`
+    // (`__tests__/api/waitlistMembershipWork.test.ts`, "same answer, same store
+    // commands and no mail before it, in all five worlds").
+    //
+    // What it costs: a store failure while signing up is no longer a 500 to the
+    // visitor, because the answer has left. It is logged, by event and class
+    // only (`logFailure`), and the visitor can submit again. A failure of the
+    // READ above is still a 500.
+    const work = async (): Promise<void> => {
+      try {
+        // Already confirmed: nothing to do.
+        if (existing?.status === 'confirmed') return;
 
-    // Pending: resend the confirmation, but only within the cooldown and cap.
-    if (existing) {
-      const lastSent = Date.parse(existing.lastSentAt);
-      const cooled = Date.now() - (Number.isFinite(lastSent) ? lastSent : 0) >= RESEND_INTERVAL_MS;
-      if (cooled && existing.resendCount < MAX_RESENDS) {
-        const newToken = generateToken();
-        const newHash = tokenHash(newToken);
-        await deleteTokenIndex(kv, existing.tokenHash);
-        await setTokenIndex(kv, newHash, email);
-        const updated: WaitlistRecord = {
-          ...existing,
-          tokenHash: newHash,
-          lastSentAt: now,
-          resendCount: existing.resendCount + 1,
-        };
-        await writeRecord(kv, updated);
-        const sent = await sendConfirmationEmail({
+        // Pending: resend the confirmation, but only within the cooldown and cap.
+        if (existing) {
+          const lastSent = Date.parse(existing.lastSentAt);
+          const cooled = Date.now() - (Number.isFinite(lastSent) ? lastSent : 0) >= RESEND_INTERVAL_MS;
+          if (cooled && existing.resendCount < MAX_RESENDS) {
+            const newToken = generateToken();
+            const newHash = tokenHash(newToken);
+            await deleteTokenIndex(kv, existing.tokenHash);
+            await setTokenIndex(kv, newHash, email);
+            const updated: WaitlistRecord = {
+              ...existing,
+              tokenHash: newHash,
+              lastSentAt: now,
+              resendCount: existing.resendCount + 1,
+            };
+            await writeRecord(kv, updated);
+            const sent = await sendConfirmationEmail({
+              email,
+              token: newToken,
+              locale: existing.locale,
+            });
+            if (!sent) await incrMailFailures(kv);
+          }
+          return;
+        }
+
+        // New signup: store first so a mail failure never loses the lead.
+        const token = generateToken();
+        const record: WaitlistRecord = {
           email,
-          token: newToken,
-          locale: existing.locale,
-        });
+          status: 'pending',
+          tokenHash: tokenHash(token),
+          interest,
+          locale,
+          source,
+          country,
+          createdAt: now,
+          lastSentAt: now,
+          resendCount: 0,
+        };
+        await writeRecord(kv, record);
+        await setTokenIndex(kv, record.tokenHash, email);
+        await addEmailToSet(kv, email);
+        await recordSignupCounters(kv, record);
+
+        const sent = await sendConfirmationEmail({ email, token, locale });
         if (!sent) await incrMailFailures(kv);
+      } catch (err) {
+        // Caught HERE: a rejection that escapes an `after()` task is written by
+        // Next's own logger, raw, and a store error carries the record.
+        logFailure('[waitlist] POST (after the answer)', err);
       }
-      return NextResponse.json({ ok: true });
-    }
-
-    // New signup: store first so a mail failure never loses the lead.
-    const token = generateToken();
-    const record: WaitlistRecord = {
-      email,
-      status: 'pending',
-      tokenHash: tokenHash(token),
-      interest,
-      locale,
-      source,
-      country,
-      createdAt: now,
-      lastSentAt: now,
-      resendCount: 0,
     };
-    await writeRecord(kv, record);
-    await setTokenIndex(kv, record.tokenHash, email);
-    await addEmailToSet(kv, email);
-    await recordSignupCounters(kv, record);
 
-    const sent = await sendConfirmationEmail({ email, token, locale });
-    if (!sent) await incrMailFailures(kv);
-
+    try {
+      after(work);
+    } catch {
+      // Outside a request scope `after()` throws. Losing the signup would be
+      // worse than the timing, so the work is done before the answer there
+      // ("outside a request scope `after()` throws: the signup is done before
+      // the answer instead of being lost"). A deployed route handler is always
+      // inside one.
+      await work();
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     logFailure('[waitlist] POST', err);

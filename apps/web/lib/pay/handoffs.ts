@@ -39,6 +39,23 @@
  * subscription store — is one click: a handoff can always be re-declared with
  * "Mark as handed over", which exists precisely because handoffs made
  * elsewhere can only be declared.
+ *
+ * [SWEEP round 1 of run logs8, storage lens] THAT FALLBACK ROW NAMES NO WALLET
+ * AND NO MOMENT. It used to be `p01_pay_handoffs_v1[<wallet pubkey>] = [{pool,
+ * leafIndex, sealedAt}]`: the wallet, the note it handed over and the
+ * millisecond it did so, in clear, which is the row this store exists to
+ * remove. The live route to it is a store at its quota, where the ~3,000
+ * character sealed write is refused and the ~120 character clear row still
+ * fits (`logs8/r1-storage/probe-B.log`). It is now filed under this DEVICE's
+ * random label — the one DEV-1 drew for the note fallback, 16 random bytes per
+ * browser profile, derived from nothing — with `sealedAt: 0`, and the first
+ * call that can seal again seals it and deletes it (`migrateHandoffStore`).
+ * Pinned by `pool/storeEncryption.test.ts`, "with NO session, the record falls
+ * back to v1" and "the sealed write is refused for quota".
+ *
+ * WHAT IS LEFT, stated: while the store stays full, the row still says that
+ * this browser profile handed over leaf N of pool P. Nothing reads `sealedAt`
+ * but the newest-wins merge, so zeroing it costs nothing.
  */
 
 import {
@@ -64,6 +81,44 @@ const HANDOFF_STORE_KEY = 'p01_pay_handoffs_v2';
  *  written only when the sealed write fails. */
 const HANDOFF_STORE_KEY_V1 = 'p01_pay_handoffs_v1';
 
+/**
+ * Where this DEVICE's random fallback label lives. The same key and the same
+ * shape as `shieldClient.ts` (`DEVICE_NOTE_BUCKET_KEY`, DEV-1), on purpose: one
+ * label per browser profile, shared by every identity and every store on it, so
+ * a second label cannot become a second thing to correlate. Spelled here rather
+ * than imported because `shieldClient` imports this module's neighbours.
+ */
+const DEVICE_BUCKET_KEY = 'p01_pay_device_note_bucket_v1';
+
+/** This device's fallback label, or null when none was ever drawn. A read never draws one. */
+function deviceBucket(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const label = localStorage.getItem(DEVICE_BUCKET_KEY);
+    return label && /^[0-9a-f]{32}$/.test(label) ? label : null;
+  } catch {
+    return null;
+  }
+}
+
+/** This device's fallback label, drawn and persisted on first use. */
+function ensureDeviceBucket(): string {
+  const existing = deviceBucket();
+  if (existing) return existing;
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  const label = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  localStorage.setItem(DEVICE_BUCKET_KEY, label);
+  return label;
+}
+
+/** The clear rows a read must union: this wallet's pre-L5c bucket, plus this device's fallback bucket. */
+function clearHandoffRows(walletPubkey: string): HandoffRecord[] {
+  const old = readMap<HandoffRecord>(HANDOFF_STORE_KEY_V1);
+  const device = deviceBucket();
+  return [...(old[walletPubkey] ?? []), ...(device ? old[device] ?? [] : [])];
+}
+
 /** Raised on write so an already-rendered list catches up. See subscriptions.ts. */
 export const HANDOFFS_CHANGED_EVENT = 'p01:handoffs-changed';
 
@@ -85,13 +140,21 @@ function announce(): void {
  * Same fund-safety order as every other migration: v2 write lands BEFORE the
  * v1 delete, in the same synchronous turn, so a throw leaves v1 intact and the
  * union reads below still serve it.
+ *
+ * The DEVICE bucket goes with it. Its rows are fallback writes that could not
+ * be sealed at the time; whichever identity can seal first takes them, so a
+ * clear row lives only as long as the store stays full. A row sealed under an
+ * identity that did not write it is harmless: this store is only ever read as a
+ * set of `pool:leafIndex` keys to WITHHOLD, and a key for a note the identity
+ * does not hold withholds nothing.
  */
 function migrateHandoffStore(session: StoreSession, walletPubkey: string): void {
   if (typeof localStorage === 'undefined') return;
   try {
     const old = readMap<HandoffRecord>(HANDOFF_STORE_KEY_V1);
-    const mine = old[walletPubkey];
-    if (!mine || mine.length === 0) return;
+    const device = deviceBucket();
+    const mine = [...(old[walletPubkey] ?? []), ...(device ? old[device] ?? [] : [])];
+    if (mine.length === 0) return;
     const all = readMap<string>(HANDOFF_STORE_KEY);
     const list = all[session.label] ?? [];
     for (const rec of mine) {
@@ -108,6 +171,7 @@ function migrateHandoffStore(session: StoreSession, walletPubkey: string): void 
     all[session.label] = list;
     writeMap(HANDOFF_STORE_KEY, all);
     delete old[walletPubkey];
+    if (device) delete old[device];
     writeMap(HANDOFF_STORE_KEY_V1, old);
   } catch {
     // Quota or private-mode failure: the fallback read below still serves v1.
@@ -178,14 +242,18 @@ export async function recordHandoff(
     // No session or quota failure. This record is the double-promise guard, so
     // dropping it silently would let the same coin be promised twice; the v1
     // store is the last resort, and every read path still unions it.
+    //
+    // Under the DEVICE label and with no clock, never under the wallet: see the
+    // header, "THAT FALLBACK ROW NAMES NO WALLET AND NO MOMENT".
     try {
+      const bucket = ensureDeviceBucket();
       const all = readMap<HandoffRecord>(HANDOFF_STORE_KEY_V1);
       const key = handoffKey(rec.pool, rec.leafIndex);
-      const list = (all[walletPubkey] ?? []).filter(
+      const list = (all[bucket] ?? []).filter(
         (r) => handoffKey(r.pool, r.leafIndex) !== key,
       );
-      list.push({ pool: rec.pool, leafIndex: rec.leafIndex, sealedAt: rec.sealedAt });
-      all[walletPubkey] = list;
+      list.push({ pool: rec.pool, leafIndex: rec.leafIndex, sealedAt: 0 });
+      all[bucket] = list;
       writeMap(HANDOFF_STORE_KEY_V1, all);
     } catch {
       // Quota failure on both: only the badge is lost, and it can be
@@ -216,13 +284,16 @@ export async function forgetHandoff(
   const key = handoffKey(pool, leafIndex);
   try {
     const old = readMap<HandoffRecord>(HANDOFF_STORE_KEY_V1);
-    if (old[walletPubkey]?.length) {
-      old[walletPubkey] = old[walletPubkey]!.filter(
-        (r) => handoffKey(r.pool, r.leafIndex) !== key,
-      );
-      if (old[walletPubkey]!.length === 0) delete old[walletPubkey];
-      writeMap(HANDOFF_STORE_KEY_V1, old);
+    let touched = false;
+    // The wallet's pre-L5c bucket AND this device's fallback bucket: a row left
+    // in either would resurrect the badge.
+    for (const bucket of [walletPubkey, deviceBucket()]) {
+      if (!bucket || !old[bucket]?.length) continue;
+      old[bucket] = old[bucket]!.filter((r) => handoffKey(r.pool, r.leafIndex) !== key);
+      if (old[bucket]!.length === 0) delete old[bucket];
+      touched = true;
     }
+    if (touched) writeMap(HANDOFF_STORE_KEY_V1, old);
   } catch {
     // Same contract as recordHandoff.
   }
@@ -309,7 +380,7 @@ export async function loadHandoffs(
   // copy, so rows sealed by this very call keep serving on this call's
   // answer, whatever the worker turns out to be able to read. The by-key map
   // deduplicates, so nothing is counted twice.
-  const left = readMap<HandoffRecord>(HANDOFF_STORE_KEY_V1)[walletPubkey] ?? [];
+  const left = clearHandoffRows(walletPubkey);
   if (meta) {
     let session: StoreSession | null = null;
     try {

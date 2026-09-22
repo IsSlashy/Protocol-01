@@ -212,6 +212,10 @@ function bad(status: number, error: string, extra: Record<string, unknown> = {})
   return NextResponse.json({ ok: false, error, ...extra }, { status });
 }
 
+/** The one answer to a chain READ that failed before anything was sent. Fixed
+ *  words: the RPC's own text names the account it was asked about. */
+const RPC_UNREADABLE = 'the configured RPC could not be read; nothing was sent';
+
 /**
  * Who the funder is, without spending anything.
  *
@@ -541,7 +545,22 @@ export async function POST(request: NextRequest) {
   // Devnet guard, checked against the chain rather than against the URL string.
   // An env var pointing at a mainnet RPC named "devnet" would otherwise spend
   // real money, and this endpoint has no anti-abuse story that survives that.
-  const genesis = await connection.getGenesisHash();
+  //
+  // ⛔ NO CHAIN ERROR LEAVES THIS HANDLER, HERE OR BELOW. What leaves a handler
+  // is logged by the framework (`console.error(err)`), and web3.js words its
+  // failures with the identifier in them: `failed to get balance of account
+  // <ephemeral>`, `Signature <funding signature> has expired`. That line sits
+  // in the runtime log beside the platform's record of this request, which
+  // holds the caller's IP and the second — an exact join from an IP to the key
+  // that signs a spend. So each chain call is caught, the answer is fixed
+  // words, and the error's text goes nowhere. Pinned by
+  // `__tests__/api/fundEphemeralChainErrors.test.ts`.
+  let genesis: string;
+  try {
+    genesis = await connection.getGenesisHash();
+  } catch {
+    return bad(502, RPC_UNREADABLE);
+  }
   if (genesis !== DEVNET_GENESIS) {
     return bad(403, 'this funder is devnet-only and the configured RPC is not devnet', { genesis });
   }
@@ -601,7 +620,13 @@ export async function POST(request: NextRequest) {
   // legitimate caller nothing — and it stops the endpoint being used to top up
   // an address that already holds a balance. It does NOT stop an attacker
   // generating unlimited fresh keys; see the faucet note in the header.
-  const existing = await connection.getBalance(target, 'confirmed');
+  let existing: number;
+  try {
+    existing = await connection.getBalance(target, 'confirmed');
+  } catch {
+    // web3.js names the account in this error. Fixed words, nothing logged.
+    return bad(502, RPC_UNREADABLE);
+  }
   if (existing > 0) {
     return bad(409, 'target already holds lamports; this endpoint only funds a fresh ephemeral', {
       balance: existing,
@@ -634,12 +659,45 @@ export async function POST(request: NextRequest) {
     return bad(502, `funding transaction was rejected: ${(e as Error).message}`);
   }
 
-  const conf = await connection.confirmTransaction(
-    { signature, blockhash, lastValidBlockHeight },
-    'confirmed',
-  );
-  if (conf.value.err) {
-    return bad(502, `funding transaction failed: ${JSON.stringify(conf.value.err)}`);
+  // The send succeeded, so from here the lamports MAY be on the wire whatever
+  // the confirmation says. Two consequences, both measured missing before
+  // (scratchpad/web-run/logs8/r1-logs/probe-next-start-fund-ephemeral.log):
+  //
+  //  - a confirmation that THROWS (an expired blockhash, a missed websocket
+  //    notice on serverless) carries the funding signature in its message. It
+  //    is caught, and the signature is asked for once more by status: a
+  //    transfer that landed is served as the grant it is, because refusing it
+  //    strands the lamports and sends the retry into the 409 above;
+  //  - an outcome nobody could read still counts against the instance ceiling.
+  //    A ceiling that counts only what it saw confirmed undercounts exactly
+  //    when the RPC is failing.
+  let confirmedErr: unknown = null;
+  let outcomeKnown = true;
+  try {
+    const conf = await connection.confirmTransaction(
+      { signature, blockhash, lastValidBlockHeight },
+      'confirmed',
+    );
+    confirmedErr = conf.value.err;
+  } catch {
+    outcomeKnown = false;
+    try {
+      const status = (await connection.getSignatureStatuses([signature])).value[0];
+      const level = status?.confirmationStatus;
+      if (status && (level === 'confirmed' || level === 'finalized')) {
+        outcomeKnown = true;
+        confirmedErr = status.err;
+      }
+    } catch {
+      // Still unknown. This error names the signature too; it goes nowhere.
+    }
+  }
+  if (!outcomeKnown) {
+    spentThisInstance += lamports;
+    return bad(502, 'the funding transaction could not be confirmed');
+  }
+  if (confirmedErr) {
+    return bad(502, `funding transaction failed: ${JSON.stringify(confirmedErr)}`);
   }
 
   // Counted only after confirmation, so a rejected send does not eat the budget.

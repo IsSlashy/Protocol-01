@@ -540,13 +540,114 @@ describe('handoff store', () => {
   it('with NO session, the record falls back to v1 — the double-promise guard survives', async () => {
     const noSeeds = 'meta-without-seeds-handoff';
     await handoffs.recordHandoff(noSeeds, WALLET, HREC);
-    // Written in the old cleartext shape rather than dropped: withholding the
-    // note from the pickers is what stops the same coin being promised twice.
+    const afterWrite = ls.dump();
+    // Written rather than dropped: withholding the note from the pickers is
+    // what stops the same coin being promised twice.
+    //
+    // [SWEEP round 1 of run logs8, storage lens] This used to assert
+    // `v1[WALLET]` equals `[HREC]`: the row was filed under the WALLET PUBKEY
+    // with the millisecond of the handoff, which is the (wallet, note, time) row
+    // the sealed store exists to remove. It is held to MORE now, not less: the
+    // record still survives and both reads still serve it (below), and the dump
+    // names neither the wallet nor the clock. The bucket is this device's random
+    // label, the one DEV-1 gave the note fallback.
     const v1 = JSON.parse(ls.getItem('p01_pay_handoffs_v1')!) as Record<string, unknown[]>;
-    expect(v1[WALLET]).toEqual([HREC]);
+    expect(Object.keys(v1)).toHaveLength(1);
+    expect(Object.keys(v1)[0]).toMatch(/^[0-9a-f]{32}$/);
+    expect(Object.values(v1)[0]).toEqual([{ pool: HREC.pool, leafIndex: HREC.leafIndex, sealedAt: 0 }]);
+    const names = (needle: string) => afterWrite.some(([k, v]) => k.includes(needle) || v.includes(needle));
+    expect(names(HREC.pool), 'nothing was stored, so the scan below proves nothing').toBe(true);
+    expect(names(WALLET), 'the fallback row names the wallet').toBe(false);
+    expect(names(String(HREC.sealedAt)), 'the fallback row dates the handoff').toBe(false);
     // And both the session-less and the sessioned read serve it.
     expect((await handoffs.handoffKeys(null, WALLET)).keys.has(HKEY)).toBe(true);
     expect((await handoffs.handoffKeys(META, WALLET)).keys.has(HKEY)).toBe(true);
+  });
+
+  /**
+   * [SWEEP round 1 of run logs8, storage lens] The route a user can actually
+   * reach: a session exists, and the store is so full that the ~3,000-character
+   * sealed write is refused while the ~120-character clear row still fits
+   * (`logs8/r1-storage/probe-B.log`, case B2).
+   */
+  describe('the sealed write is refused for quota (sweep r1, storage)', () => {
+    /** Refuses every write to the sealed handoff store, as a full quota does; everything else lands. */
+    function sealedStoreIsFull(): () => void {
+      const real = ls.setItem;
+      const spy = vi.spyOn(ls, 'setItem').mockImplementation((k: string, v: string) => {
+        if (k === 'p01_pay_handoffs_v2') throw new DOMException('quota', 'QuotaExceededError');
+        real(k, v);
+      });
+      return () => spy.mockRestore();
+    }
+
+    /** Every `crypto.getRandomValues` draw from a seeded LCG, so a world replays byte for byte. */
+    function seedRandom(seed: number): () => void {
+      let st = seed >>> 0;
+      const spy = vi
+        .spyOn(globalThis.crypto, 'getRandomValues')
+        .mockImplementation(<T extends ArrayBufferView | null>(arr: T): T => {
+          const view = arr as unknown as ArrayBufferView;
+          const u8 = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+          for (let i = 0; i < u8.length; i++) {
+            st = (Math.imul(st, 1664525) + 1013904223) >>> 0;
+            u8[i] = st >>> 24;
+          }
+          return arr;
+        });
+      return () => spy.mockRestore();
+    }
+
+    it('keeps the guard and stores the same bytes whatever the wallet and whatever the moment', async () => {
+      const OTHER_WALLET = '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin';
+      async function world(wallet: string, sealedAt: number): Promise<string> {
+        ls.clear();
+        const restoreRandom = seedRandom(0xd1ce);
+        const restoreQuota = sealedStoreIsFull();
+        try {
+          await handoffs.recordHandoff(META, wallet, { ...HREC, sealedAt });
+          // The guard holds while the store is full.
+          expect((await handoffs.handoffKeys(META, wallet)).keys.has(HKEY)).toBe(true);
+        } finally {
+          restoreQuota();
+          restoreRandom();
+        }
+        return JSON.stringify(ls.dump().sort());
+      }
+      const base = await world(WALLET, HREC.sealedAt);
+      expect(base, 'nothing was stored, so the equalities below prove nothing').toContain(HREC.pool);
+      expect(await world(WALLET, HREC.sealedAt), 'the world does not replay').toBe(base);
+      expect(await world(OTHER_WALLET, HREC.sealedAt), 'the stored state moved with the wallet').toBe(base);
+      expect(await world(WALLET, HREC.sealedAt + 86_400_000), 'the stored state moved with the clock').toBe(base);
+    });
+
+    it('once the sealed store takes writes again, the clear row is sealed and deleted', async () => {
+      const restoreQuota = sealedStoreIsFull();
+      try {
+        await handoffs.recordHandoff(META, WALLET, HREC);
+      } finally {
+        restoreQuota();
+      }
+      expect(ls.getItem('p01_pay_handoffs_v1'), 'the fallback wrote nothing, so this case proves nothing').not.toBeNull();
+
+      expect((await handoffs.handoffKeys(META, WALLET)).keys.has(HKEY)).toBe(true);
+      expect(ls.getItem('p01_pay_handoffs_v1'), 'the clear row outlived a read that could seal it').toBeNull();
+      expect(storesContain(`"leafIndex":${HREC.leafIndex}`)).toBe(false);
+      // Served from the ciphertext alone now.
+      expect((await handoffs.handoffKeys(META, WALLET)).keys.has(HKEY)).toBe(true);
+    });
+
+    it('forget purges the device row too, so it cannot resurrect the badge', async () => {
+      const restoreQuota = sealedStoreIsFull();
+      try {
+        await handoffs.recordHandoff(META, WALLET, HREC);
+        await handoffs.forgetHandoff(META, WALLET, HREC.pool, HREC.leafIndex);
+      } finally {
+        restoreQuota();
+      }
+      expect((await handoffs.handoffKeys(META, WALLET)).keys.size).toBe(0);
+      expect(ls.getItem('p01_pay_handoffs_v1')).toBeNull();
+    });
   });
 });
 

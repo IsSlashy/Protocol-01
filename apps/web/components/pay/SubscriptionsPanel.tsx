@@ -202,28 +202,29 @@ function ClosedBadge() {
  * the read accepts. Pinned by `__tests__/components/SubscriptionsPanel.test.tsx`,
  * "takes the license key back off the clipboard" and "offers a Clear the
  * clipboard button beside Copy key".
+ *
+ * ⚠️ THE TIMER IS NOT THIS BUTTON'S TO HOLD (sweep round 1 of logs8, fix lane
+ * 2). This button is on screen only while the key is, and it used to own the
+ * take-back and cancel it on unmount — so Reveal, Copy, then HIDE, the most
+ * careful sequence there is, left the key on the clipboard for good, and so did
+ * "All subscriptions" and picking another row. The panel owns the copy and the
+ * clear now and hands them in as `bearer`; see `copyKey` there.
  */
 function CopyButton({
   text,
   label,
-  bearer = false,
+  bearer,
 }: {
   text: string;
   label: string;
-  bearer?: boolean;
+  bearer?: { copy: (text: string) => void; clearNow: () => void };
 }) {
   const t = useT();
   const [copied, setCopied] = useState(false);
-  const cancelClipboardClear = useRef<(() => void) | null>(null);
-
-  // A stale timer must not erase a newer copy, and an unmounted screen must not
-  // keep one running.
-  useEffect(() => () => cancelClipboardClear.current?.(), []);
 
   function copy() {
     if (bearer) {
-      cancelClipboardClear.current?.();
-      cancelClipboardClear.current = copyBearerAndScheduleClear(text);
+      bearer.copy(text);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
       return;
@@ -238,9 +239,7 @@ function CopyButton({
   }
 
   function clearNow() {
-    cancelClipboardClear.current?.();
-    cancelClipboardClear.current = null;
-    void clearBearerNow();
+    bearer?.clearNow();
     setCopied(false);
   }
 
@@ -396,6 +395,39 @@ export default function SubscriptionsPanel({
     };
   }, [connection]);
 
+  /**
+   * Every live SubscriptionVault of the program, by address: THE ONLY ACCOUNT
+   * READ THIS PANEL MAKES.
+   *
+   * One discriminator-filtered `getProgramAccounts`, the same question for
+   * every user, with the lookup done here. The list took this route in sweep 1
+   * (record 33, the long comment in `refresh` below); Reveal key and Track
+   * still made one `getAccountInfo(vault)` each, and they take it now (sweep
+   * round 1 of logs8, fix lane 2). A vault PDA is seeded on the paying note's
+   * secret, so naming one says "this IP holds the key to vault V" from Reveal —
+   * new to the provider for a vault recovered from another device or revealed
+   * from another network — and "this IP is interested in vault V" from Track.
+   * Each press still reads NOW rather than trusting the list's snapshot; it
+   * just asks the uniform question. Pinned by `SubscriptionsPanel.test.tsx`,
+   * "Reveal key reads the vault from a fresh enumeration, never by its address"
+   * and "Track looks the pasted address up in the enumeration, never by its
+   * address".
+   *
+   * Throws when the read fails; an address that is simply absent is not a live
+   * vault of this program (closed by the final claim, owned by something else,
+   * or not an account at all — one answer, which is the cost of not asking
+   * about the address).
+   */
+  const readLiveVaults = useCallback(async (): Promise<Map<string, Uint8Array>> => {
+    const accounts = await connection.getProgramAccounts(
+      new PublicKey(ZK_SHIELDED_PROGRAM_ID_BASE58),
+      { filters: [subscriptionVaultFilter()] },
+    );
+    const byPda = new Map<string, Uint8Array>();
+    for (const acc of accounts) byPda.set(acc.pubkey.toBase58(), acc.account.data);
+    return byPda;
+  }, [connection]);
+
   const refresh = useCallback(async () => {
     setRefreshing(true);
     // Async since L5b: the records are sealed and the worker opens them. With
@@ -461,14 +493,10 @@ export default function SubscriptionsPanel({
     // two or more rows got FASTER, not slower. At one row it is a wash, and at
     // ZERO rows this function has already returned above without asking
     // anything — which the sentence here used to get wrong.
-    const byPda = new Map<string, Uint8Array>();
+    let byPda = new Map<string, Uint8Array>();
     let enumerationError: string | null = null;
     try {
-      const accounts = await connection.getProgramAccounts(
-        new PublicKey(ZK_SHIELDED_PROGRAM_ID_BASE58),
-        { filters: [subscriptionVaultFilter()] },
-      );
-      for (const acc of accounts) byPda.set(acc.pubkey.toBase58(), acc.account.data);
+      byPda = await readLiveVaults();
     } catch (e) {
       enumerationError = (e as Error).message || "Read failed.";
     }
@@ -501,7 +529,7 @@ export default function SubscriptionsPanel({
     // change: the dictionary is picked once per session and a new identity for
     // it on every render would re-run the mount effect forever.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connection, meta, walletKey]);
+  }, [connection, meta, walletKey, readLiveVaults]);
 
   useEffect(() => {
     void refresh();
@@ -559,6 +587,52 @@ export default function SubscriptionsPanel({
    */
   const [showIds, setShowIds] = useState(false);
 
+  /**
+   * The key on the CLIPBOARD, which outlives the key on the screen.
+   *
+   * Sweep round 1 of logs8, fix lane 2. The 90 s take-back used to live in the
+   * copy button and die with it, and that button is on screen only while the
+   * key is: Hide, "All subscriptions" and picking another row each cancelled
+   * the timer and removed the Clear button in one move. Both belong to the
+   * panel now.
+   *
+   *  - NOTHING CANCELS THE TIMER EXCEPT A NEWER COPY OR THE CLEAR BUTTON. Not
+   *    Hide, not a selection change, not this panel unmounting (disconnect,
+   *    wallet switch). `clearBearerIfUnchanged` compares before it writes, so a
+   *    timer that outlives its screen cannot erase anything but this key.
+   *  - HIDE DOES NOT CLEAR AT ONCE. The key was copied to be pasted, and hiding
+   *    it before switching to the merchant's page is the careful order, not a
+   *    request to lose the copy. The promise is a minute and a half.
+   *  - THE CLEAR BUTTON STAYS WITHIN REACH while the copy may still be out: a
+   *    browser that refuses the clipboard read (Firefox, always) ends the timer
+   *    `unreadable`, and then the button is the only take-back there is.
+   *
+   * What none of this reaches: a clipboard HISTORY (Win+V) or a synced
+   * clipboard records the value at copy time, and writing "" later does not
+   * remove that entry. Pinned by `SubscriptionsPanel.test.tsx`, "still takes the
+   * key back after Hide" / "after going back to the list" / "after the whole
+   * panel unmounts", and "keeps Clear the clipboard within reach after Hide".
+   */
+  const cancelKeyClear = useRef<(() => void) | null>(null);
+  const [keyOnClipboard, setKeyOnClipboard] = useState(false);
+
+  function copyKey(text: string) {
+    cancelKeyClear.current?.();
+    cancelKeyClear.current = copyBearerAndScheduleClear(text, (outcome) => {
+      // `unreadable` = the browser refused the read and nothing was cleared:
+      // the key may still be out, so the button stays.
+      if (outcome !== "unreadable") setKeyOnClipboard(false);
+    });
+    setKeyOnClipboard(true);
+  }
+
+  function clearKeyNow() {
+    cancelKeyClear.current?.();
+    cancelKeyClear.current = null;
+    void clearBearerNow();
+    setKeyOnClipboard(false);
+  }
+
   // The key belongs to ONE subscription; switching selection drops it.
   useEffect(() => {
     setRevealedKey(null);
@@ -579,14 +653,17 @@ export default function SubscriptionsPanel({
       // is one no merchant accepts; the Worker tries the stored tag, every
       // registry slug on this (retailer, mint), then the retailer address,
       // and answers only with the one that reproduces the fingerprint.
-      const info = await connection.getAccountInfo(new PublicKey(rec.vaultPDA));
-      if (!info) {
+      //
+      // "Now" is a fresh enumeration, not a read of this vault by its address:
+      // see `readLiveVaults`. A vault the final claim closed is simply absent.
+      const data = (await readLiveVaults()).get(rec.vaultPDA);
+      if (!data) {
         throw new Error(
           `${KEY_NOT_RECOVERABLE}: the vault no longer exists on chain, so there is no ` +
             "license fingerprint left to check a key against.",
         );
       }
-      const decoded = decodeSubscriptionVault(info.data);
+      const decoded = decodeSubscriptionVault(data);
       const res = await deriveSubscriptionLicenseKey({
         meta,
         walletPubkey: walletKey,
@@ -640,18 +717,19 @@ export default function SubscriptionsPanel({
     }
     setTracking(true);
     try {
-      const info = await connection.getAccountInfo(new PublicKey(addr));
-      if (!info) {
-        setTrackError(
-          t("pay.subs.errNoAccount"),
-        );
+      // The pasted address is looked up HERE, in the program-wide enumeration,
+      // and never sent: see `readLiveVaults`. The enumeration is scoped to the
+      // program and to the vault discriminator, so it is also the owner check
+      // the pointed read used to make. What it cannot do is tell "no account"
+      // from "another program's account" from "a vault the final claim closed",
+      // so the three old messages are one: the sentence that is true of all
+      // three.
+      const data = (await readLiveVaults()).get(addr);
+      if (!data) {
+        setTrackError(t("pay.subs.errNotVault"));
         return;
       }
-      if (info.owner.toBase58() !== ZK_SHIELDED_PROGRAM_ID_BASE58) {
-        setTrackError(t("pay.subs.errNotProgram"));
-        return;
-      }
-      const decoded = decodeSubscriptionVault(info.data);
+      const decoded = decodeSubscriptionVault(data);
       // Already tracked: keep the record we have. It may know the paying note
       // and a tag verified against the chain; a record rebuilt from the
       // account alone knows neither, and `recordSubscription` replaces.
@@ -854,7 +932,11 @@ export default function SubscriptionsPanel({
                   {revealedKey}
                 </p>
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <CopyButton text={revealedKey} label={t("pay.subs.keyCopy")} bearer />
+                  <CopyButton
+                    text={revealedKey}
+                    label={t("pay.subs.keyCopy")}
+                    bearer={{ copy: copyKey, clearNow: clearKeyNow }}
+                  />
                   <button
                     onClick={() => setRevealedKey(null)}
                     className="text-xs text-p01-text-muted underline hover:text-p01-cyan"
@@ -1018,6 +1100,22 @@ export default function SubscriptionsPanel({
   // ── Master-detail frame ──────────────────────────────────────────────────
   return (
     <div className="lg:grid lg:grid-cols-5 lg:items-start lg:gap-4">
+      {/* A copied key may still be on the clipboard after it left the screen.
+          While the key is shown, the button beside Copy key does this; once it
+          is hidden this row is the only way left, on the list and on the
+          detail alike. See `copyKey`. */}
+      {keyOnClipboard && !revealedKey ? (
+        <div className="card mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 p-3 text-xs text-p01-text-muted lg:col-span-5 lg:mb-0">
+          <span>{t("pay.shared.clipboardNote")}</span>
+          <button
+            type="button"
+            onClick={clearKeyNow}
+            className="underline hover:text-p01-cyan"
+          >
+            {t("pay.shared.clipboardClear")}
+          </button>
+        </div>
+      ) : null}
       {/* Left: the list. Below lg it yields the screen to the detail. */}
       <div className={clsx("space-y-4 lg:col-span-2", selectedRec && "hidden lg:block")}>
         <div className="card p-4">

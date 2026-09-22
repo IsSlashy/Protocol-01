@@ -140,7 +140,7 @@ const SEALED_BODY_BYTES = 1024;
 
 /**
  * [SWEEP4 round 1, storage lane] How much of a PAID record's time the clear
- * index keeps: the day it was written, and nothing finer.
+ * index keeps: NONE. `at` is 0 from the moment money moves.
  *
  * A contribution's `at` falls seconds before the till payment that names the
  * wallet on chain, and an exchange's seconds before its note-in withdrawal to
@@ -148,23 +148,37 @@ const SEALED_BODY_BYTES = 1024;
  * device to that transaction — through a record whose every other field is
  * sealed (DEV-1). Ledger row D17.
  *
- * WHY THE DAY AND NOT NOTHING AT ALL: `collectable()` below reads `at` without
- * a key, and the cut-off it compares against (`PAYMENT_FIELD_SINCE_MS`) is a
- * UTC midnight, so a day-truncated value answers that question identically. An
- * UNPAID record keeps its exact time, because the 20-minute reclaim window is
- * what it decides and a reservation with no payment has no transaction to be
- * joined to.
+ * [SWEEP round 1 of run logs8, storage lens] Round 1 of the earlier sweep kept
+ * the UTC DAY, reasoning that `collectable()` reads `at` without a key. It
+ * does, but it answers `true` on `paid || claimed` BEFORE it looks at `at`, and
+ * `load` orders by the sealed time, so once money has moved NOTHING reads the
+ * clear value (`pendingContribution.test.ts`, "positive control: nothing reads
+ * the clear time of a paid record"). The day was not free: at 3-4 till payments
+ * a day (the founder's figure, not measured here) the day plus `kind` narrowed
+ * a record that lingers — a stuck or abandoned collect, "owed forever" — to a
+ * handful of public payments, each naming a wallet. An UNPAID record keeps its
+ * exact time, because the 20-minute reclaim window is what it decides and a
+ * reservation with no payment has no transaction to be joined to.
  *
  * The exact time is not lost: it travels in the SEALED body, which is where
  * `load` reads the `at` it returns and orders by — the rule that a buyer's
  * oldest owed record is collected first. Measured by
  * `pendingContribution.test.ts`, "[SWEEP4-STORAGE] a paid record does not date
  * its own payment in the clear".
+ *
+ * `coarseDay` survives for ONE case: a row written before the time was sealed,
+ * whose body opened without an `at`, and whose re-seal then threw. The day is
+ * the only order that row has left, so it keeps it until a read can seal it.
  */
 const DAY_MS = 86_400_000;
 
 function coarseDay(at: number): number {
   return Number.isFinite(at) ? Math.floor(at / DAY_MS) * DAY_MS : at;
+}
+
+/** A value already reduced (0, or a day a failed re-seal left) stays as it is; anything finer becomes its day. */
+function keepOnlyUnsealedDay(at: number): number {
+  return at === 0 ? 0 : coarseDay(at);
 }
 
 function isEntry(e: unknown): e is PendingIndexEntry {
@@ -265,8 +279,9 @@ function indexEntry(
   return {
     id,
     label: session.label,
-    // Exact only while nothing on chain can be joined to it (`coarseDay`).
-    at: paid || claimed ? coarseDay(entry.at) : entry.at,
+    // Exact only while nothing on chain can be joined to it; then nothing at
+    // all. `baseBody` seals the exact time in the same call.
+    at: paid || claimed ? 0 : entry.at,
     kind: entry.kind ?? 'contribution',
     paid,
     claimed,
@@ -307,16 +322,35 @@ function appendDelta(
   const list = readIndex();
   const entry = list.find((e) => e.id === id);
   if (!entry) return;
+  // The FIRST time money moves, the index still holds the exact time, and this
+  // function cannot open the base body to see whether it holds one too (a row
+  // written before the storage sweep does not). So the delta carries it: the
+  // worker applies `delta.at` over the base, and for a row that already sealed
+  // its time the two values are the same number
+  // (`pendingContribution.test.ts`, "a reservation written before round 1 and
+  // PAID IN FLIGHT keeps its exact time, sealed").
+  const stillExact = !(entry.paid || entry.claimed) && Number.isFinite(entry.at) && entry.at > 0;
+  let sealedIt = false;
   try {
-    entry.sealed.push(sealPadded(session, { p01store: 1, kind: 'pendingDelta', id, ...delta }));
+    entry.sealed.push(
+      sealPadded(session, {
+        p01store: 1,
+        kind: 'pendingDelta',
+        id,
+        ...delta,
+        ...(stillExact ? { at: entry.at } : {}),
+      }),
+    );
+    sealedIt = true;
   } catch {
     // See above: the flag below still keeps the record.
   }
   if ('paymentSignature' in delta) entry.paid = true;
   else entry.claimed = true;
-  // Money has moved, so the clear index stops dating it (`coarseDay`). The
-  // exact time stays in the sealed base body this record was written with.
-  entry.at = coarseDay(entry.at);
+  // Money has moved, so the clear index stops dating it. If the delta could
+  // not be sealed the day stays, as the only order a pre-sweep row would have
+  // left (`coarseDay`); the next read that can seal takes it out.
+  entry.at = stillExact && sealedIt ? 0 : keepOnlyUnsealedDay(entry.at);
   writeIndex(list);
 }
 
@@ -446,27 +480,43 @@ async function load(meta: string, owner: string, prune: boolean): Promise<Pendin
 
   // [SWEEP4 round 1, storage lane] A row written before this change carries the
   // exact time in the CLEAR index and none in its sealed body. It is moved
-  // here, once, with the bodies already open: the exact time is appended as a
-  // sealed delta and the index keeps the day alone (`coarseDay`). Only this
-  // identity's paid or claimed rows are touched, and only while they still
-  // hold a finer time, so a second read rewrites nothing
-  // (`pendingContribution.test.ts`, "a row written before this change is
-  // coarsened on read, keeps its record, and is stable").
+  // here, once, with the bodies already open: the time is appended as a sealed
+  // delta and the index keeps NOTHING (0). Only this identity's paid or claimed
+  // rows are touched, and only while they still hold a time, so a second read
+  // rewrites nothing (`pendingContribution.test.ts`, "a row written before this
+  // change is coarsened on read, keeps its record, and is stable").
+  //
+  // [SWEEP round 1 of run logs8, storage lens] Three things changed with the
+  // move from "the day" to "nothing":
+  //   - a row a round-1 build left at its DAY is rewritten to 0 here ("the day
+  //     a round-1 build left in the index goes on the next read");
+  //   - the time is sealed for EVERY body that opens, whoever its owner is.
+  //     It used to be sealed for this `owner` only while every row of the
+  //     identity was coarsened, which at 0 would have cost another wallet's
+  //     legacy row its order for good ("another wallet's legacy row under the
+  //     same identity keeps its order");
+  //   - the one row that keeps a day is the one whose body opened WITHOUT a
+  //     time and whose re-seal threw: that day is the only order it has left.
+  //     A body that does not open at all orders nothing (it is never
+  //     returned), so it goes to 0.
   const exactAt = new Map<string, number>();
   let coarsened = false;
   for (const e of mine) {
-    if (!(e.paid || e.claimed) || e.at === coarseDay(e.at)) continue;
+    if (!(e.paid || e.claimed) || e.at === 0) continue;
     const body = bodies.get(e.id);
-    if (body && body.owner === owner && body.at === undefined) {
+    let next = 0;
+    if (body && body.at === undefined) {
       try {
         e.sealed.push(sealPadded(session, { p01store: 1, kind: 'pendingDelta', id: e.id, at: e.at }));
         exactAt.set(e.id, e.at);
       } catch {
-        // Sealing refused: the index is coarsened anyway. What is lost is the
-        // finer ORDER of this one record, never the record.
+        // Sealing refused: the day stays until a read can seal it. What is
+        // lost meanwhile is the finer ORDER of this one record, never the record.
+        next = coarseDay(e.at);
       }
     }
-    e.at = coarseDay(e.at);
+    if (next === e.at) continue;
+    e.at = next;
     coarsened = true;
   }
   if (coarsened) writeIndex(index);

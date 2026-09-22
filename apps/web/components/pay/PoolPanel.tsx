@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { PublicKey } from "@solana/web3.js";
 import type { Connection, Transaction } from "@solana/web3.js";
@@ -125,6 +125,15 @@ interface PayoutView extends PayoutRecord {
 function noteKey(n: PoolNoteView): string {
   return `${n.pool}:${n.leafIndex}`;
 }
+
+/**
+ * How long a revealed pool seed stays printed with nothing pressed. Long enough
+ * to select it and paste it into a server environment variable, short enough
+ * that it is gone before the next thing the operator does on this screen. Held
+ * by `PoolPanel.test.tsx`, "the seed clears itself within five minutes of the
+ * press" — the test bounds it from above and does not pin this number.
+ */
+const SEED_VISIBLE_MS = 60_000;
 
 /** A base58 run long enough to be a signature or an address. 32 is the
  *  shortest a Solana address prints as; a signature is longer still. */
@@ -359,6 +368,81 @@ export default function PoolPanel({
   const [seedHex, setSeedHex] = useState<string | null>(null);
   const [seedLegacy, setSeedLegacy] = useState(false);
   const [seedError, setSeedError] = useState<string | null>(null);
+  /**
+   * [sweep 2 round 1, screen lens] The revealed pool seed LEAVES the page.
+   *
+   * 🚨 `setSeedHex` HAD ONE CALL SITE, the reveal. Once printed, the 64 hex
+   * characters that derive every note of this identity stayed for the whole
+   * session: no Hide, no timeout, and PayApp keeps a visited tab mounted under
+   * `class="hidden"` (PayApp.tsx, `show(t)`), so they stayed in the DOM after
+   * the operator left the Shield tab. The reader is a LATER screenshot, screen
+   * share or recording, or a saved copy of the page; the operator records demos
+   * on this URL.
+   *
+   * What takes it off now, each held by `PoolPanel.test.tsx`, "the revealed
+   * pool seed leaves the page":
+   *   · the Hide button beside it;
+   *   · PayApp hiding the tab (an ancestor gaining `hidden`);
+   *   · the browser tab going to the background, or the page being left;
+   *   · `SEED_VISIBLE_MS` after the press, with nothing pressed;
+   *   · the identity changing under a mounted panel.
+   * A seed that arrives AFTER the tab was hidden is dropped before it is ever
+   * committed ("a seed that arrives after the tab was hidden is never printed").
+   *
+   * ⛔ WHAT THIS IS NOT. It does nothing against whoever can run script in this
+   * page or drive it remotely: they can press the button themselves. The
+   * one-press reveal is deliberate — the operator has to read the value — and
+   * pressing again prints it again.
+   */
+  const seedBoxRef = useRef<HTMLDivElement | null>(null);
+  const clearSeed = useCallback(() => {
+    setSeedHex(null);
+    setSeedLegacy(false);
+    setSeedError(null);
+  }, []);
+  /** True when nobody can be looking at the seed box: the page is in the
+   *  background, or an ancestor hides it the way PayApp's keep-alive does. */
+  const seedBoxHidden = useCallback((): boolean => {
+    if (typeof document === "undefined" || document.visibilityState === "hidden") return true;
+    for (let el: HTMLElement | null = seedBoxRef.current; el; el = el.parentElement) {
+      if (el.classList.contains("hidden") || el.hidden || el.style.display === "none") return true;
+    }
+    return false;
+  }, []);
+  useEffect(() => {
+    if (seedHex === null) return;
+    if (seedBoxHidden()) {
+      clearSeed();
+      return;
+    }
+    const timer = window.setTimeout(clearSeed, SEED_VISIBLE_MS);
+    const onVisibility = () => {
+      if (seedBoxHidden()) clearSeed();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", clearSeed);
+    // PayApp hides a tab by putting `hidden` on a wrapper this panel does not
+    // own and is not told about, so the ancestors are watched instead.
+    let observer: MutationObserver | null = null;
+    if (typeof MutationObserver !== "undefined") {
+      observer = new MutationObserver(onVisibility);
+      for (let el = seedBoxRef.current?.parentElement ?? null; el; el = el.parentElement) {
+        observer.observe(el, { attributes: true, attributeFilter: ["class", "hidden", "style"] });
+      }
+    }
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", clearSeed);
+      observer?.disconnect();
+    };
+  }, [seedHex, seedBoxHidden, clearSeed]);
+  // A seed belongs to one identity. PayApp unmounts this panel on disconnect;
+  // this covers an identity that changes while it stays mounted. Keyed on the
+  // address TEXT: `Keypair.publicKey` hands out a new object on every read, and
+  // an object dependency would clear the seed on every parent render.
+  const seedOwnerKey = owner.toBase58();
+  useEffect(() => clearSeed, [meta, seedOwnerKey, clearSeed]);
 
   // Open on the first visit, collapsed afterwards. The one-line summary stays
   // on screen either way, so nothing true ever leaves the page.
@@ -1699,7 +1783,7 @@ export default function PoolPanel({
             the worker, so it must never be one render away from a normal
             session. */}
         {treasuryMode && (
-          <div className="space-y-2 rounded-lg border border-p01-red/50 p-3">
+          <div ref={seedBoxRef} className="space-y-2 rounded-lg border border-p01-red/50 p-3">
             <p className="text-xs text-p01-red">
               <strong>{t("pay.pool.treasuryLead")}</strong>
               {t("pay.pool.treasuryBody")}
@@ -1710,6 +1794,10 @@ export default function PoolPanel({
                 setSeedError(null);
                 try {
                   const res = await exportPoolSeed(meta);
+                  // The export is a worker round trip. If the tab was hidden
+                  // while it ran, the value is dropped here, before a render
+                  // can carry it into a DOM nobody is looking at.
+                  if (seedBoxHidden()) return;
                   setSeedHex(res.seedHex);
                   setSeedLegacy(res.hasLegacySeed);
                 } catch (e) {
@@ -1725,6 +1813,15 @@ export default function PoolPanel({
                 <p className="break-all rounded-lg border border-p01-border bg-p01-void p-2 font-mono text-[11px] text-p01-text">
                   {seedHex}
                 </p>
+                {/* The generic "Hide" the license-key reveal already uses
+                    (SubscriptionsPanel), in both locales. */}
+                <button
+                  type="button"
+                  onClick={clearSeed}
+                  className="block text-xs text-p01-text-muted underline hover:text-p01-cyan"
+                >
+                  {t("pay.subs.keyHide")}
+                </button>
                 {seedLegacy && (
                   <p className="text-xs text-p01-yellow">
                     ⚠️ This wallet also has a legacy seed: notes shielded before it adopted a

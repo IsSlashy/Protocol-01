@@ -33,6 +33,8 @@ import {
   loadPoolHistory,
   poolHistoryKey,
   rememberGivenUpSignature,
+  rememberReadThisSession,
+  wasReadThisSession,
   MAX_HISTORY_GAPS,
   MAX_HISTORY_READ_ATTEMPTS,
   MAX_HISTORY_RETRY_ENTRIES,
@@ -2093,6 +2095,65 @@ function rememberLeafless(signature: string): void {
 
 
 
+/**
+ * [SWEEP round 1 of run logs8, network lens] How many leaves one anchor window
+ * holds. A device's walk lists from, and reads everything above, the leaf whose
+ * index is the largest multiple of this number that lies one WHOLE window
+ * behind the pool's newest leaf.
+ *
+ * What it buys: every browser that came at least once since that leaf was
+ * inserted (between 16 and 31 deposits ago) sends the RPC the same listing
+ * and the same reads. One that stayed away longer shows the window of its last
+ * visit and nothing finer. What it costs: the first walk of a page load reads
+ * 16 to 31 deposits again, plus the spends between them, in batches of 25.
+ * Raising it widens the crowd and the re-read together. FOUNDER: the number is
+ * a trade, not a measurement; `poolWalkPublicAnchor.test.ts` pins it so it
+ * cannot move quietly.
+ */
+export const PUBLIC_ANCHOR_LEAVES = 16;
+
+/**
+ * The signature a DEVICE's walk lists `until`, or null when the row holds no
+ * leaf that can serve.
+ *
+ * WHY NOT THE ROW'S OWN NEWEST SIGNATURE. It is the newest pool transaction at
+ * the end of this browser's previous visit, and the provider's log holds the
+ * same value as the newest signature it served that visit. `until == served
+ * newest` joined session N+1 to session N whatever the IP, so a user who
+ * deposited at home and came back through a VPN to withdraw was tied to the
+ * home session by the first request of the page. The transactions READ named
+ * the same cursor, which is why the walk also re-reads held leaves above the
+ * anchor (`take`). Measured: `poolWalkPublicAnchor.test.ts`.
+ *
+ * The anchor is computed from `next_leaf_index`, which every client reads from
+ * the same account, NOT from what this row holds: a client whose row ends at
+ * leaf 70 and one whose row ends at leaf 95 both resume at the same leaf. Only
+ * when the row does not hold that leaf (a longer absence) does it fall back to
+ * the largest multiple it does hold, and when the account cannot be read, to
+ * the same rule applied to the row's own top leaf. A row holding no multiple at
+ * all (a history still being backfilled) keeps the old cursor: finishing the
+ * walk comes first, and that state ends with the backfill.
+ *
+ * NOT CLOSED HERE, and rare: the `gaps` a budget-stopped delta leaves, the
+ * backfill's `before`, and the re-read list are still this device's own
+ * parameters. They exist only while a history longer than `maxSignatures` is
+ * being completed, under a griefer's padding, or while the RPC is failing.
+ */
+function publicAnchorSignature(entries: CachedCommitmentEntry[], nextLeafIndex: number | null): string | null {
+  let top = -1;
+  for (const e of entries) if (e.leafIndex > top) top = e.leafIndex;
+  const newestLeaf = nextLeafIndex !== null && nextLeafIndex > 0 ? nextLeafIndex - 1 : top;
+  if (newestLeaf < 0) return null;
+  const N = PUBLIC_ANCHOR_LEAVES;
+  const ceiling = Math.max(0, Math.floor(newestLeaf / N) * N - N);
+  let anchor: CachedCommitmentEntry | null = null;
+  for (const e of entries) {
+    if (e.leafIndex % N !== 0 || e.leafIndex > ceiling) continue;
+    if (!anchor || e.leafIndex > anchor.leafIndex) anchor = e;
+  }
+  return anchor?.signature ?? null;
+}
+
 export async function fetchPoolCommitments(
   connection: Connection,
   poolPDA: PublicKey,
@@ -2155,8 +2216,22 @@ export async function fetchPoolCommitments(
   // A v1 row left no resume point. When no deposit slot in it yields one, the
   // walk pays for a single cold pass instead of keeping the hole for ever.
   const resumable = !snapshot || snapshot.complete || snapshot.oldestSignature !== null;
-  const until = resumable ? snapshot?.newestSignature ?? undefined : undefined;
+  // [SWEEP round 1 of run logs8, network lens] A DEVICE's walk resumes at a
+  // PUBLIC anchor, not at its own newest signature; see `publicAnchorSignature`.
+  // The pool read is awaited first on that path only: the anchor is a function
+  // of `next_leaf_index`, and one round trip is the price of every returning
+  // browser asking the same question.
+  const perDevice = incremental && store.perDevice === true;
+  let until = resumable ? snapshot?.newestSignature ?? undefined : undefined;
+  if (perDevice && snapshot && until !== undefined) {
+    until = publicAnchorSignature(snapshot.entries, await nextLeafIndexPromise) ?? until;
+  }
   const coldWalk = until === undefined;
+  /** What the device's row held when the walk began: read again above the anchor, once a session. */
+  const heldSignatures = new Set<string>();
+  if (perDevice) for (const e of snapshot?.entries ?? []) heldSignatures.add(e.signature);
+  /** Held signatures this walk reads again. A read of one that fails costs nothing: the leaf is in hand. */
+  const rereads = new Set<string>();
 
   /** Signatures the RPC listed as successful: only these are worth re-reading. */
   const succeeded = new Set<string>();
@@ -2206,7 +2281,7 @@ export async function fetchPoolCommitments(
     seen.add(signature);
   }
 
-  const take = (page: Array<{ signature: string; err?: unknown }>): void => {
+  const take = (page: Array<{ signature: string; err?: unknown }>, abovePublicAnchor = false): void => {
     for (const s of page) {
       // A transaction the chain rejected rolled its insert back, so it holds
       // no leaf even when its logs still carry a LeafInserted event. It is
@@ -2216,7 +2291,24 @@ export async function fetchPoolCommitments(
       // real deposit does not hide the deposit"; "a transaction the chain
       // rejected is not retried, an identical one that succeeded is").
       if (s.err !== null && s.err !== undefined) continue;
-      if (seen.has(s.signature)) continue;
+      if (seen.has(s.signature)) {
+        // [SWEEP round 1 of run logs8, network lens] On a device, a leaf the
+        // row already held is read AGAIN when it sits above the public anchor,
+        // once per page load. Skipping it made the set of reads exactly "what
+        // is new since this device last came", which names the last visit as
+        // surely as `until` did (`poolWalkPublicAnchor.test.ts`, "two profiles
+        // that last came at different moments send the SAME requests").
+        if (
+          abovePublicAnchor &&
+          heldSignatures.has(s.signature) &&
+          !rereads.has(s.signature) &&
+          !wasReadThisSession(s.signature)
+        ) {
+          rereads.add(s.signature);
+          sigs.push({ signature: s.signature });
+        }
+        continue;
+      }
       // Read once this session, carried no leaf, and never will: listing it
       // again costs nothing, reading it again costs a round trip. See
       // `leaflessSignatures`.
@@ -2258,7 +2350,7 @@ export async function fetchPoolCommitments(
       deltaFinished = true;
       break;
     }
-    take(page);
+    take(page, perDevice);
     for (const s of page) deltaSignatures.push(s.signature);
     listed += page.length;
     if (deltaNewest === null) deltaNewest = page[0].signature;
@@ -2376,10 +2468,15 @@ export async function fetchPoolCommitments(
         // being skipped for ever, which is how a leaf used to be lost for good
         // (`poolHistoryBackfill.test.ts`, "a rejected or null getTransaction
         // is retried").
-        if (succeeded.has(signature)) noteUnread(signature);
+        // Not a re-read of a leaf the row already holds: that read was made
+        // for the provider's eyes, and losing it loses nothing
+        // (`poolWalkPublicAnchor.test.ts`, "a failed re-read of a leaf already
+        // held costs nothing").
+        if (succeeded.has(signature) && !rereads.has(signature)) noteUnread(signature);
         continue;
       }
       retry.delete(signature);
+      if (perDevice) rememberReadThisSession(signature);
       // A rolled-back transaction inserted nothing, whatever its logs say
       // (`poolHistoryBackfill.test.ts`, "a failed transaction that emitted a
       // leaf event is not a leaf").

@@ -574,15 +574,17 @@ describe('DEV-1: no wallet, signature, code or leaf in clear; every money-safety
     // quota failure). Its index still says a payment was recorded, so the
     // pruning keeps it, whatever its age.
     const { label } = await storeSession('meta-alice');
-    const corpse = { id: '0'.repeat(32), label, at: 1, kind: 'contribution', paid: true, claimed: false, sealed: ['p01enc1:AAAA'] };
+    // A real moment, not `1`: with `at: 1` the day it is truncated to is also 0,
+    // and the case could not tell "no time kept" from "the day kept" (sweep
+    // round 1 of run logs8, storage lens).
+    const corpse = { id: '0'.repeat(32), label, at: Date.parse('2026-09-15T14:23:45.678Z'), kind: 'contribution', paid: true, claimed: false, sealed: ['p01enc1:AAAA'] };
     localStorage.setItem('p01:pending-contribution:v2', JSON.stringify([corpse]));
     expect(await pending(ALICE)).toBeNull();
     // Kept whole — the id, the label, the flags and the sealed body it was
-    // written with. Its `at` is the one field the sweep-round-1 storage fix
-    // coarsens for a record that says money moved (`coarseDay`): the exact
-    // time of an unopenable record orders nothing, since the record cannot be
-    // returned at all, and a dump would otherwise still read the day and the
-    // millisecond of the payment beside it.
+    // written with. Its `at` is the one field the storage fixes take away from
+    // a record that says money moved: the time of an unopenable record orders
+    // nothing, since the record cannot be returned at all, and a dump would
+    // otherwise still read the day of the payment beside it.
     expect(JSON.parse(localStorage.getItem('p01:pending-contribution:v2') ?? '[]')).toEqual([
       { ...corpse, at: 0 },
     ]);
@@ -636,7 +638,7 @@ describe('[SWEEP4-STORAGE] a paid record does not date its own payment in the cl
     await payment(ref, 'PAY-SIG-XYZ');
     const row = indexRows()[0]!;
     expect(row.paid).toBe(true);
-    expect(row.at, 'the index still dates the till payment to the millisecond').toBe(dayOf(AT));
+    expect(row.at, 'the index still dates the till payment, to the day or finer').toBe(0);
 
     // ...and nothing is lost: the resume still reads the exact time, from the
     // sealed body, so the oldest owed record is still the oldest.
@@ -649,7 +651,7 @@ describe('[SWEEP4-STORAGE] a paid record does not date its own payment in the cl
     const ref = await remember(record({ leafIndex: 9, at: AT }));
     await claim(ref, 'CLAIM-CODE');
     expect(indexRows()[0]!.claimed).toBe(true);
-    expect(indexRows()[0]!.at).toBe(dayOf(AT));
+    expect(indexRows()[0]!.at).toBe(0);
     expect((await pendingRecords('meta-alice', ALICE))[0]!.at).toBe(AT);
   });
 
@@ -687,7 +689,7 @@ describe('[SWEEP4-STORAGE] a paid record does not date its own payment in the cl
     const first = await pendingRecords('meta-alice', ALICE);
     expect(first.map((r) => r.leafIndex)).toEqual([11, 12]);
     expect(first.map((r) => r.at)).toEqual([older.at, newer.at]);
-    expect(indexRows().map((r) => r.at)).toEqual([dayOf(newer.at), dayOf(older.at)]);
+    expect(indexRows().map((r) => r.at)).toEqual([0, 0]);
 
     // Read again: the same answer, and nothing keeps being rewritten.
     const before = localStorage.getItem(V2);
@@ -699,5 +701,95 @@ describe('[SWEEP4-STORAGE] a paid record does not date its own payment in the cl
     // And the money-safety rule is untouched: a paid record is collectable
     // whatever its age.
     expect((await pendingFor('meta-alice', ALICE))!.leafIndex).toBe(11);
+  });
+
+  /**
+   * [SWEEP round 1 of run logs8, storage lens] THE DAY SERVED NOTHING.
+   *
+   * Round 1 kept the UTC day "because `collectable()` reads `at` without a
+   * key". It does, but it answers `true` on `paid || claimed` BEFORE it looks at
+   * `at`, and `load` orders by the SEALED time. So once money has moved nothing
+   * reads the clear value, and at 3-4 till payments a day the day plus `kind`
+   * narrowed a lingering record to a handful of public payments, each naming a
+   * wallet (`logs8/r1-storage/probe-E.log`). The cases above now pin 0; these
+   * pin what 0 must not cost.
+   */
+  it('positive control: nothing reads the clear time of a paid record', async () => {
+    const ref = await remember(record({ leafIndex: 77, at: AT }));
+    await payment(ref, 'PAY-SIG-77');
+    for (const forged of [0, Date.parse('2100-01-01T00:00:00Z'), null]) {
+      const rows = indexRows().map((r) => ({ ...r, at: forged }));
+      localStorage.setItem(V2, JSON.stringify(rows));
+      const rec = await pendingFor('meta-alice', ALICE);
+      expect(rec?.leafIndex, `clear at := ${forged}: the record was lost`).toBe(77);
+      expect(rec?.at, `clear at := ${forged}: the order moved`).toBe(AT);
+    }
+  });
+
+  it('the day a round-1 build left in the index goes on the next read', async () => {
+    const ref = await remember(record({ leafIndex: 21, at: AT }));
+    await payment(ref, 'PAY-SIG-21');
+    // Exactly what the round-1 code wrote: the sealed time, and the day in clear.
+    localStorage.setItem(V2, JSON.stringify(indexRows().map((r) => ({ ...r, at: dayOf(AT) }))));
+    expect((await pendingRecords('meta-alice', ALICE))[0]!.at).toBe(AT);
+    expect(indexRows()[0]!.at, 'the index still names the day of the payment').toBe(0);
+    expect(JSON.stringify(rawDump())).not.toContain(String(dayOf(AT)));
+  });
+
+  it('a reservation written before round 1 and PAID IN FLIGHT keeps its exact time, sealed', async () => {
+    // Before round 1 the sealed body carried no time: the clear index was the
+    // only copy. `attachPayment` cannot open a body, so it has to seal the time
+    // it is about to take out of the index, or the resume order is gone for good.
+    const s = await storeSession('meta-alice');
+    const id = '3'.repeat(32);
+    localStorage.setItem(V2, JSON.stringify([{
+      id,
+      label: s.label,
+      at: AT,
+      kind: 'contribution',
+      paid: false,
+      claimed: false,
+      sealed: [sealRecord(s.legacyAddress, {
+        p01store: 1, kind: 'pending', id, owner: ALICE, leafIndex: 31, token: 'SOL', denomination: 1, pendingKind: 'contribution',
+      })],
+    }]));
+    await payment({ owner: ALICE, id }, 'PAY-SIG-31');
+    expect(indexRows()[0]!.at).toBe(0);
+    const [rec] = await pendingRecords('meta-alice', ALICE);
+    expect(rec!.paymentSignature).toBe('PAY-SIG-31');
+    expect(rec!.at, 'the exact time left the index and was sealed nowhere').toBe(AT);
+  });
+
+  it('another wallet\u2019s legacy row under the same identity keeps its order when this wallet\u2019s read empties the index', async () => {
+    // `load` opens every body of the identity and returns only the owner's. A
+    // read for ALICE used to coarsen BOB's pre-round-1 row without sealing its
+    // time first; at 0 that would lose BOB's order for good.
+    const s = await storeSession('meta-alice');
+    const mk = (id: string, owner: string, at: number, leafIndex: number) => ({
+      id,
+      label: s.label,
+      at,
+      kind: 'contribution',
+      paid: true,
+      claimed: false,
+      sealed: [sealRecord(s.legacyAddress, {
+        p01store: 1, kind: 'pending', id, owner, leafIndex, token: 'SOL', denomination: 1, pendingKind: 'contribution', paymentSignature: `PAY-${leafIndex}`,
+      })],
+    });
+    localStorage.setItem(V2, JSON.stringify([
+      mk('4'.repeat(32), BOB, AT, 42),
+      mk('5'.repeat(32), BOB, AT - 90_000, 41),
+      mk('6'.repeat(32), ALICE, AT - 30_000, 43),
+    ]));
+    expect((await pendingRecords('meta-alice', ALICE)).map((r) => r.leafIndex)).toEqual([43]);
+    expect(indexRows().map((r) => r.at)).toEqual([0, 0, 0]);
+    const bobs = await pendingRecords('meta-alice', BOB);
+    expect(bobs.map((r) => r.leafIndex)).toEqual([41, 42]);
+    expect(bobs.map((r) => r.at)).toEqual([AT - 90_000, AT]);
+  });
+
+  it('an unpaid reservation keeps its exact time: the 20-minute window is what it decides', async () => {
+    await remember(record({ leafIndex: 51, at: AT }));
+    expect(indexRows()[0]!.at).toBe(AT);
   });
 });

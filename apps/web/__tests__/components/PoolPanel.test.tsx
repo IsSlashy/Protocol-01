@@ -35,8 +35,10 @@
  * console line is read for the payment signature and the leaf its error quotes.
  * NOT REACHED here, left to `__tests__/lib/noteIdentifierTripwire.test.ts`: the
  * progress and error strings built in `lib/` (the scan step, a worker refusal,
- * a failed contribution's message), and the treasury seed export (it names no
- * note). The relayed-withdrawal button needs a relayer URL at build time; one
+ * a failed contribution's message). The treasury seed export names no note,
+ * but since sweep 2 round 1 it IS reached here, for a different question: that
+ * the revealed seed leaves the page ("the revealed pool seed leaves the page").
+ * The relayed-withdrawal button needs a relayer URL at build time; one
  * case in state 8 stubs it, for who-paid on its card (FUND-1).
  */
 
@@ -1081,6 +1083,150 @@ describe("sweep 1, record 34: ?treasury=1 and the Deposit button", () => {
     await waitFor(() => expect(m.contributeToPool).toHaveBeenCalledTimes(1));
     expect(screen.queryAllByRole("button", { name: CONFIRM }).length).toBe(0);
     expect(m.shieldToPool).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Sweep 2 round 1 (screen lens, low): under `?treasury=1` one labelled press
+ * prints the identity's pool seed, and nothing ever took it back. `setSeedHex`
+ * had one call site, so the value stayed on the page for the whole session: no
+ * Hide, no timeout, and PayApp keeps a visited tab mounted under
+ * `class="hidden"`, so it stayed in the DOM after the operator left the tab.
+ * The adversary is a later screenshot, screen share or recording (the operator
+ * records demos on this URL) or a saved copy of the page.
+ *
+ * The one-press reveal itself is deliberate and stays: the operator has to read
+ * the value to set P01_TREASURY_POOL_SEED. What these cases hold is that the
+ * value LEAVES: on Hide, when the tab is hidden, when the browser tab goes to
+ * the background, and on its own after a while. Each case first proves the
+ * seed was on the page, so a reveal that silently stopped working cannot pass
+ * for "it left".
+ */
+describe("sweep 2 round 1: the revealed pool seed leaves the page", () => {
+  const SEED = "5eed".repeat(16);
+  const REVEAL = /^Reveal pool seed/;
+  const LEGACY = /legacy seed/;
+
+  beforeEach(() => {
+    window.history.replaceState({}, "", "/pay?treasury=1");
+    m.exportPoolSeed.mockResolvedValue({
+      kind: "poolExportSeed",
+      seedHex: SEED,
+      derivation: 2,
+      hasLegacySeed: true,
+    });
+  });
+
+  afterEach(() => {
+    window.history.replaceState({}, "", "/pay");
+  });
+
+  /** Render the panel the way PayApp does: inside the div it hides. */
+  function renderInTab() {
+    const view = render(
+      <div data-testid="pool-tab">
+        <PoolPanel
+          token="SOL"
+          meta="meta-1"
+          owner={OWNER}
+          connection={connection()}
+          signOne={signOne as never}
+          signMessage={signMessage}
+        />
+      </div>,
+    );
+    return view;
+  }
+
+  async function reveal(user: ReturnType<typeof userEvent.setup>, container: HTMLElement) {
+    await user.click(await screen.findByRole("button", { name: REVEAL }));
+    await waitFor(() => expect(container.innerHTML.includes(SEED), "the reveal printed nothing").toBe(true));
+  }
+
+  it("a Hide control takes the seed and its legacy warning out of the DOM, and Reveal still works after", async () => {
+    const user = userEvent.setup();
+    const view = renderInTab();
+    await waitForRows(1);
+    expect(view.container.innerHTML.includes(SEED), "the seed is on the page before any press").toBe(false);
+    await reveal(user, view.container);
+    expect(view.container.textContent).toMatch(LEGACY);
+
+    const hide = screen.queryAllByRole("button", { name: /^Hide$/ });
+    expect(hide.length, "the seed has no control that takes it off the screen").toBe(1);
+    await user.click(hide[0]!);
+    expect(view.container.innerHTML.includes(SEED), "the seed is still in the DOM after Hide").toBe(false);
+    expect(view.container.textContent).not.toMatch(LEGACY);
+    expect(screen.queryAllByRole("button", { name: /^Hide$/ }).length).toBe(0);
+
+    // The operator flow survives: a second press prints it again.
+    await reveal(user, view.container);
+    expect(m.exportPoolSeed).toHaveBeenCalledTimes(2);
+  });
+
+  it("the seed leaves the DOM when PayApp hides the tab", async () => {
+    const user = userEvent.setup();
+    const view = renderInTab();
+    await waitForRows(1);
+    await reveal(user, view.container);
+
+    // What PayApp's keep-alive does on a tab switch (PayApp.tsx, `show(t)`).
+    screen.getByTestId("pool-tab").className = "hidden";
+    await waitFor(() =>
+      expect(view.container.innerHTML.includes(SEED), "the hidden tab still carries the seed").toBe(false),
+    );
+  });
+
+  it("the seed leaves the DOM when the browser tab goes to the background", async () => {
+    const user = userEvent.setup();
+    const view = renderInTab();
+    await waitForRows(1);
+    await reveal(user, view.container);
+
+    const state = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await waitFor(() =>
+        expect(view.container.innerHTML.includes(SEED), "a backgrounded page still carries the seed").toBe(false),
+      );
+    } finally {
+      state.mockRestore();
+    }
+  });
+
+  it("the seed clears itself within five minutes of the press, with nothing pressed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const view = renderInTab();
+      await waitForRows(1);
+      await reveal(user, view.container);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      await waitFor(() =>
+        expect(view.container.innerHTML.includes(SEED), "the seed is still printed five minutes later").toBe(false),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a seed that arrives after the tab was hidden is never printed", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    m.exportPoolSeed.mockReturnValue(new Promise((r) => (release = r)));
+    const user = userEvent.setup();
+    const view = renderInTab();
+    await waitForRows(1);
+    await user.click(await screen.findByRole("button", { name: REVEAL }));
+    await waitFor(() => expect(m.exportPoolSeed).toHaveBeenCalledTimes(1));
+
+    screen.getByTestId("pool-tab").className = "hidden";
+    const seen: boolean[] = [];
+    const watch = new MutationObserver(() => seen.push(view.container.innerHTML.includes(SEED)));
+    watch.observe(view.container, { childList: true, subtree: true, characterData: true });
+    release({ kind: "poolExportSeed", seedHex: SEED, derivation: 2, hasLegacySeed: false });
+    await new Promise((r) => setTimeout(r, 150));
+    watch.disconnect();
+    expect(seen.includes(true), "the late seed was committed to the hidden DOM").toBe(false);
+    expect(view.container.innerHTML.includes(SEED)).toBe(false);
   });
 });
 

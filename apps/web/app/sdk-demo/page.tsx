@@ -14,9 +14,11 @@
  *    re-checks + the FROZEN "protocol01#initialized" event)
  *  - the trusted-only eager reconnect, which is what restores the
  *    "already subscribed" button state on reload
- *  - the three direct calls to https://api.devnet.solana.com (balance poll every
- *    10s, requestAirdrop, the uncancelled post-airdrop refresh) and the real
- *    0.001 SOL devnet self-transfer signed through window.protocol01
+ *  - the direct calls to https://api.devnet.solana.com (the balance read,
+ *    requestAirdrop, the post-airdrop refresh) and the real 0.001 SOL devnet
+ *    self-transfer signed through window.protocol01. The balance read is no
+ *    longer a 10 s poll, and no longer follows the silent reconnect: see
+ *    "THE WALLET IS NAMED ON A PRESS" in DevnetSection.
  *  - GET /api/whitelist?wallet=… , POST /api/whitelist (three fields only:
  *    wallet, email, projectName. Website and description are deliberately NOT
  *    posted to the API) and the NEXT_PUBLIC_DISCORD_WEBHOOK mirror
@@ -92,7 +94,7 @@
  * says "no server".
  */
 
-import React, { useState, useEffect, useCallback, createContext, useContext } from "react";
+import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { Connection, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
 import { useT } from "@/i18n";
 import {
@@ -157,6 +159,13 @@ interface P01WalletContextType {
   connecting: boolean;
   publicKey: string | null;
   walletAvailable: boolean;
+  /**
+   * How many times Connect was PRESSED and answered, on this page load. The
+   * trusted-only reconnect on load never counts: it is the page acting, not the
+   * visitor. DevnetSection reads the balance once per press and never for the
+   * silent reconnect (SDKDemoPageNetwork.test.tsx).
+   */
+  connectPresses: number;
   connect: () => Promise<void>;
   disconnect: () => Promise<void>;
   signMessage: (message: string) => Promise<string | null>;
@@ -170,6 +179,7 @@ const P01WalletContext = createContext<P01WalletContextType>({
   connecting: false,
   publicKey: null,
   walletAvailable: false,
+  connectPresses: 0,
   connect: async () => {},
   disconnect: async () => {},
   signMessage: async () => null,
@@ -227,6 +237,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
   const [connecting, setConnecting] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [walletAvailable, setWalletAvailable] = useState(false);
+  const [connectPresses, setConnectPresses] = useState(0);
 
   // Check if P-01 wallet is available
   useEffect(() => {
@@ -335,6 +346,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
       const result = await window.protocol01.connect();
       setConnected(true);
       setPublicKey(result.publicKey.toBase58());
+      setConnectPresses((n) => n + 1);
     } catch (error) {
       console.error("Failed to connect:", error);
       throw error;
@@ -421,6 +433,7 @@ function P01WalletProvider({ children }: { children: React.ReactNode }) {
         connecting,
         publicKey,
         walletAvailable,
+        connectPresses,
         connect,
         disconnect,
         signMessage,
@@ -817,45 +830,79 @@ pnpm add @protocol-01/auth-sdk`}
 // ============ Devnet Section ============
 function DevnetSection() {
   const t = useT();
-  const { publicKey, connected, walletAvailable } = useP01Wallet();
+  const { publicKey, connected, walletAvailable, connectPresses } = useP01Wallet();
   const [balance, setBalance] = useState<number | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(false);
   const [airdropLoading, setAirdropLoading] = useState(false);
   const [airdropStatus, setAirdropStatus] = useState<string | null>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
 
-  // Fetch balance when connected
-  useEffect(() => {
-    if (!connected || !publicKey) {
-      setBalance(null);
-      return;
-    }
+  /**
+   * THE WALLET IS NAMED ON A PRESS, ONCE PER PRESS, AND NEVER ON A TIMER.
+   *
+   * Sweep round 1 of logs8, fix lane 2. This section used to read the balance as
+   * soon as it saw a wallet and again every 10 s. The provider above reconnects
+   * silently when this origin was approved before — in the pay app, or by an
+   * earlier Connect here — so a visitor with the P01 extension who merely OPENED
+   * this page sent a `getBalance` naming their wallet, from their IP, to the
+   * public devnet RPC (a provider other than this deployment's own), and then
+   * sent it again every 10 s for as long as the tab stayed open: IP, wallet and
+   * dwell time, with no click at all (probe: logs8/r1-network/
+   * probes-run2-sdkdemo.log, requests at t = 1, 11, 21, 31 s).
+   *
+   * The silent reconnect stays: it sends nothing off the device by itself and it
+   * is what restores the "already subscribed" button state on a reload. What
+   * changed is who asks for the balance — a press of Connect, of Refresh beside
+   * the balance, of the airdrop or of the test payment; one read each. Pinned by
+   * `__tests__/pages/SDKDemoPageNetwork.test.tsx`.
+   */
+  const currentKey = useRef(publicKey);
+  currentKey.current = publicKey;
 
-    const fetchBalance = async () => {
-      try {
-        const response = await fetch(`https://api.devnet.solana.com`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'getBalance',
-            params: [publicKey],
-          }),
-        });
-        const data = await response.json();
-        if (data.result?.value !== undefined) {
-          setBalance(data.result.value / 1_000_000_000); // Convert lamports to SOL
-        }
-      } catch (error) {
-        console.error('Failed to fetch balance:', error);
+  const readBalance = useCallback(async () => {
+    const key = publicKey;
+    if (!key) return;
+    setBalanceLoading(true);
+    try {
+      const response = await fetch(`https://api.devnet.solana.com`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getBalance',
+          params: [key],
+        }),
+      });
+      const data = await response.json();
+      // The extension may have switched accounts while this was in flight: an
+      // answer about the old wallet is not this wallet's balance.
+      if (currentKey.current !== key) return;
+      if (data.result?.value !== undefined) {
+        setBalance(data.result.value / 1_000_000_000); // Convert lamports to SOL
       }
-    };
+    } catch {
+      // The row keeps its dash; Refresh asks again. Nothing is logged: the
+      // error object of a failed fetch carries the request, and the request
+      // names the wallet.
+    } finally {
+      setBalanceLoading(false);
+    }
+  }, [publicKey]);
 
-    fetchBalance();
-    const interval = setInterval(fetchBalance, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
-  }, [connected, publicKey]);
+  // One read per Connect PRESS. `servedPress` starts at zero and the silent
+  // reconnect never moves `connectPresses`, so a reload that reconnects by
+  // itself reads nothing; an account switched inside the extension blanks the
+  // row (a balance belongs to one wallet) and waits for a press too.
+  const servedPress = useRef(0);
+  useEffect(() => {
+    setBalance(null);
+    if (!connected || !publicKey) return;
+    if (connectPresses === servedPress.current) return;
+    servedPress.current = connectPresses;
+    void readBalance();
+  }, [connected, publicKey, connectPresses, readBalance]);
 
   const requestAirdrop = async () => {
     if (!publicKey) return;
@@ -882,23 +929,9 @@ function DevnetSection() {
 
       setAirdropStatus(`SUCCESS: Airdrop complete! TX: ${data.result?.slice(0, 16)}...`);
 
-      // Refresh balance after a delay
-      setTimeout(async () => {
-        const balanceResponse = await fetch(`https://api.devnet.solana.com`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'getBalance',
-            params: [publicKey],
-          }),
-        });
-        const balanceData = await balanceResponse.json();
-        if (balanceData.result?.value !== undefined) {
-          setBalance(balanceData.result.value / 1_000_000_000);
-        }
-      }, 3000);
+      // Refresh balance after a delay: one read, for the press that asked for
+      // the airdrop.
+      setTimeout(() => void readBalance(), 3000);
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       setAirdropStatus(`ERROR: ${msg}`);
@@ -931,6 +964,8 @@ function DevnetSection() {
 
       const { signature } = await window.protocol01.signAndSendTransaction(tx);
       setPaymentStatus(`SUCCESS: Sent on devnet. TX: ${signature.slice(0, 24)}...`);
+      // The 10 s poll used to pick the new balance up. One read, for this press.
+      setTimeout(() => void readBalance(), 3000);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Unknown error";
       setPaymentStatus(`ERROR: ${msg}`);
@@ -978,8 +1013,22 @@ function DevnetSection() {
                 <span className="styx-row-key">{t('sdkDemo.devnetBalance')}</span>
                 <span className="styx-row-leader" />
                 <span className="styx-row-value">
-                  {balance !== null ? `${balance.toFixed(4)} SOL` : '...'}
+                  {balance !== null ? `${balance.toFixed(4)} SOL` : balanceLoading ? '...' : '—'}
                 </span>
+                {/* The balance is asked for, not polled: see readBalance. Both
+                    halves of the label are existing dictionary keys (i18n/ is
+                    off limits to this file). */}
+                <button
+                  type="button"
+                  onClick={() => void readBalance()}
+                  disabled={balanceLoading}
+                  className="styx-btn-ghost"
+                  aria-label={`${t('sdkDemo.devnetBalance')}: ${t('pay.subs.refresh')}`}
+                  style={{ marginLeft: "0.6rem", padding: "0.15rem 0.5rem", fontSize: "0.7rem" }}
+                >
+                  <RefreshCw size={11} aria-hidden />
+                  {t('pay.subs.refresh')}
+                </button>
               </div>
               <p
                 className="styx-form-ok"

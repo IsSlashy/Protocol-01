@@ -506,3 +506,235 @@ describe('[SWEEP4-STORAGE] the pool-history row is a function of the chain, not 
     expect(h.getTransactionCalls, 'a leafless transaction is re-read every walk').toBe(0);
   });
 });
+
+/**
+ * [SWEEP round 1 of run logs8, storage lens] A row the DEPLOYED build wrote is
+ * healed or deleted whatever the current endpoint is.
+ *
+ * origin/master writes the key as `${rpcEndpoint}|${pool}`, and the HIST-1
+ * migration above only ever looks under the key it can RECOMPUTE from today's
+ * endpoint. The RPC credential is rotated before this build ships, so the
+ * recomputed legacy key stops matching on the first visit after the deploy and
+ * the row stays for the life of the profile: `newestSignature` (the device's
+ * own v4 withdrawal whenever the old build's last walk was the post-withdrawal
+ * rescan), `savedAt` (the millisecond of that walk), the entries in walk order,
+ * and the old endpoint spelled in the key. Measured by the sweep's probe
+ * `logs8/r1-storage/A-orphan-history-row.probe.ts`.
+ *
+ * The store below has the get / put / delete-by-key behaviour of the IndexedDB
+ * one, plus `keys()`, which is what the healing needs: it cannot depend on
+ * recomputing a key it no longer knows.
+ *
+ * The credential strings are placeholders. No real key is read or printed.
+ */
+describe('[SWEEP-R1-STORAGE] a row left under a key that spells an endpoint does not outlive one walk', () => {
+  const OLD_ENDPOINT = 'https://devnet.helius-rpc.com/?api-key=OLD-CREDENTIAL-PLACEHOLDER';
+  const NEW_ENDPOINT = 'https://devnet.helius-rpc.com/?api-key=NEW-CREDENTIAL-PLACEHOLDER';
+  const OWN_WITHDRAWAL = 'OWN_WITHDRAWAL_SIGNATURE_of_this_device';
+  const LAST_WALK_MS = 1_789_000_123_456;
+
+  function listingStore() {
+    const rows = new Map<string, unknown>();
+    const store = {
+      async load(key: string) {
+        return rows.get(key) ?? null;
+      },
+      async save(snapshot: { key: string }) {
+        rows.set(snapshot.key, snapshot);
+      },
+      async clear(key: string) {
+        rows.delete(key);
+      },
+      async keys() {
+        return [...rows.keys()];
+      },
+    } as unknown as PoolHistoryStore;
+    return { rows, store };
+  }
+
+  /** The row exactly as the build on origin/master writes it: version 1, key = the whole endpoint, walk order. */
+  function shippedRow(endpoint: string, pool: PublicKey, h: FakeHistory): [string, unknown] {
+    const key = `${endpoint}|${pool.toBase58()}`;
+    return [
+      key,
+      {
+        version: 1,
+        key,
+        newestSignature: OWN_WITHDRAWAL,
+        entries: h.txs.map((t) => ({
+          commitment: t.commitment.toString(),
+          leafIndex: t.leafIndex,
+          depositPayer: PAYER.toBase58(),
+          depositSlot: t.slot,
+          signature: t.signature,
+        })),
+        savedAt: LAST_WALK_MS,
+      },
+    ];
+  }
+
+  it('the credential was rotated: ONE walk under the new endpoint leaves no own withdrawal, no clock and no endpoint', async () => {
+    const { rows, store } = listingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    h.rpcEndpoint = NEW_ENDPOINT;
+    for (let i = 0; i < 4; i++) h.push(i, 6_000n + BigInt(i));
+    const [k, v] = shippedRow(OLD_ENDPOINT, POOL, h);
+    rows.set(k, v);
+    h.pushLeafless(OWN_WITHDRAWAL);
+
+    h.getTransactionCalls = 0;
+    const map = await fetchPoolCommitments(h.asConnection(), POOL);
+
+    const dump = JSON.stringify([...rows.entries()]);
+    expect(dump, 'the dump still names this device’s own withdrawal').not.toContain(OWN_WITHDRAWAL);
+    expect(dump, 'the dump still carries the clock of the old build’s last walk').not.toContain(String(LAST_WALK_MS));
+    expect(dump, 'a key still spells the old endpoint').not.toContain('OLD-CREDENTIAL-PLACEHOLDER');
+    expect(dump).not.toContain('api-key');
+    expect([...rows.keys()]).toEqual([poolHistoryKey(NEW_ENDPOINT, POOL.toBase58())]);
+    // Healed, not thrown away: the four decoded leaves are served from the old
+    // row, and the only read is the one transaction the row never decoded.
+    expect(map.size).toBe(4);
+    expect(h.getTransactionCalls).toBe(1);
+  });
+
+  it('nothing new on chain since the old build’s last walk: the migrated row still does not name the withdrawal', async () => {
+    // The resume point a v1 row carries is whatever was newest on the pool when
+    // the old build last walked. With nothing eligible in the next delta the
+    // walk keeps the resume point it was given, so the migration itself must
+    // not hand the withdrawal on.
+    const { rows, store } = listingStore();
+    setPoolHistoryStore(store);
+    const h = new FakeHistory();
+    h.rpcEndpoint = OLD_ENDPOINT;
+    for (let i = 0; i < 4; i++) h.push(i, 6_100n + BigInt(i));
+    const [k, v] = shippedRow(OLD_ENDPOINT, POOL, h);
+    rows.set(k, v);
+    h.pushLeafless(OWN_WITHDRAWAL);
+
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    const dump = JSON.stringify([...rows.entries()]);
+    expect(dump, 'nothing was stored at all').toContain('sig_3_');
+    expect(dump, 'the dump still names this device’s own withdrawal').not.toContain(OWN_WITHDRAWAL);
+  });
+
+  it('a row for a pool this walk never opens, and one that is not a snapshot at all, go in the same pass', async () => {
+    const { rows, store } = listingStore();
+    setPoolHistoryStore(store);
+    const retiredPool = Keypair.generate().publicKey;
+    const retired = new FakeHistory();
+    for (let i = 0; i < 3; i++) retired.push(i, 7_000n + BigInt(i));
+    const [k, v] = shippedRow(OLD_ENDPOINT, retiredPool, retired);
+    rows.set(k, v);
+    rows.set('https://devnet.helius-rpc.com/v0/rpc?api-key=OLD-CREDENTIAL-PLACEHOLDER|not-a-pool', { junk: LAST_WALK_MS });
+
+    const h = new FakeHistory();
+    h.rpcEndpoint = NEW_ENDPOINT;
+    for (let i = 0; i < 4; i++) h.push(i, 8_000n + BigInt(i));
+    await fetchPoolCommitments(h.asConnection(), POOL);
+
+    const dump = JSON.stringify([...rows.entries()]);
+    expect(dump).not.toContain(OWN_WITHDRAWAL);
+    expect(dump).not.toContain(String(LAST_WALK_MS));
+    expect(dump).not.toContain('OLD-CREDENTIAL-PLACEHOLDER');
+    for (const key of rows.keys()) expect(key, 'a key still spells a URL').not.toMatch(/[/?#@]|:\/\//);
+  });
+
+  it('a well-formed row is left alone: another pool’s cache survives the pass', async () => {
+    const { rows, store } = listingStore();
+    setPoolHistoryStore(store);
+    const other = Keypair.generate().publicKey;
+    const h = new FakeHistory();
+    h.rpcEndpoint = NEW_ENDPOINT;
+    for (let i = 0; i < 3; i++) h.push(i, 9_000n + BigInt(i));
+    await fetchPoolCommitments(h.asConnection(), other);
+    await fetchPoolCommitments(h.asConnection(), POOL);
+    expect([...rows.keys()].sort()).toEqual(
+      [poolHistoryKey(NEW_ENDPOINT, other.toBase58()), poolHistoryKey(NEW_ENDPOINT, POOL.toBase58())].sort(),
+    );
+  });
+});
+
+/**
+ * The same pass, through the store a BROWSER gets. The cases above use a map
+ * with `keys()`; what ships is `indexedDbPoolHistoryStore`, so the listing it
+ * is built on (`getAllKeys`) is exercised here against a hand-rolled
+ * IndexedDB: one object store, keyPath `key`, requests that answer on a later
+ * microtask as the real ones do.
+ */
+describe('[SWEEP-R1-STORAGE] the IndexedDB store lists its keys, so the pass reaches a browser’s rows', () => {
+  function fakeIndexedDb() {
+    const rows = new Map<string, { key: string }>();
+    const request = <T>(compute: () => T) => {
+      const req: { result?: T; error: unknown; onsuccess: null | (() => void); onerror: null | (() => void) } = {
+        error: null,
+        onsuccess: null,
+        onerror: null,
+      };
+      queueMicrotask(() => {
+        req.result = compute();
+        req.onsuccess?.();
+      });
+      return req;
+    };
+    const objectStore = {
+      get: (k: string) => request(() => rows.get(k)),
+      put: (v: { key: string }) => request(() => void rows.set(v.key, v)),
+      delete: (k: string) => request(() => void rows.delete(k)),
+      getAllKeys: () => request(() => [...rows.keys()]),
+    };
+    const db = { transaction: () => ({ objectStore: () => objectStore }), close: () => undefined, createObjectStore: () => objectStore };
+    const idb = {
+      open: () => {
+        const req = request(() => db) as ReturnType<typeof request> & { onupgradeneeded: null | (() => void) };
+        req.onupgradeneeded = null;
+        return req;
+      },
+    } as unknown as IDBFactory;
+    return { rows, idb };
+  }
+
+  it('heals a row the deployed build left under a rotated credential, through the real store', async () => {
+    const { indexedDbPoolHistoryStore } = await import('./poolHistoryCache');
+    const { rows, idb } = fakeIndexedDb();
+    const store = indexedDbPoolHistoryStore(idb);
+    setPoolHistoryStore(store);
+
+    const h = new FakeHistory();
+    h.rpcEndpoint = 'https://devnet.helius-rpc.com/?api-key=NEW-CREDENTIAL-PLACEHOLDER';
+    for (let i = 0; i < 4; i++) h.push(i, 6_500n + BigInt(i));
+    const legacyKey = `https://devnet.helius-rpc.com/?api-key=OLD-CREDENTIAL-PLACEHOLDER|${POOL.toBase58()}`;
+    rows.set(legacyKey, {
+      version: 1,
+      key: legacyKey,
+      newestSignature: 'OWN_WITHDRAWAL_SIGNATURE_of_this_device',
+      entries: h.txs.map((t) => ({
+        commitment: t.commitment.toString(),
+        leafIndex: t.leafIndex,
+        depositPayer: PAYER.toBase58(),
+        depositSlot: t.slot,
+        signature: t.signature,
+      })),
+      savedAt: 1_789_000_123_456,
+    } as unknown as { key: string });
+
+    expect(await store.keys!()).toEqual([legacyKey]);
+    h.getTransactionCalls = 0;
+    const map = await fetchPoolCommitments(h.asConnection(), POOL);
+
+    const dump = JSON.stringify([...rows.entries()]);
+    expect([...rows.keys()]).toEqual([`devnet.helius-rpc.com|${POOL.toBase58()}`]);
+    expect(dump).not.toContain('OWN_WITHDRAWAL_SIGNATURE_of_this_device');
+    expect(dump).not.toContain('1789000123456');
+    expect(dump).not.toContain('OLD-CREDENTIAL-PLACEHOLDER');
+    expect(map.size).toBe(4);
+    // Not 0, and on purpose: this store is a DEVICE's row (`perDevice`), so the
+    // walk resumes at the public anchor (leaf 0 in a four-leaf pool) and reads
+    // the three leaves above it again, whatever the row already held
+    // (`poolWalkPublicAnchor.test.ts`). The healed row is what served the map.
+    expect(h.getTransactionCalls).toBe(3);
+    expect(h.signatureCalls[0]?.until).toBe(h.txs[3]!.signature);
+  });
+});

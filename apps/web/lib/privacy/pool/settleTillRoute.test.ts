@@ -201,6 +201,84 @@ describe('who may make it act', () => {
     const body = await (await GET(req())).json();
     expect(body).not.toHaveProperty('holdUntilSeconds');
     expect(JSON.stringify(body)).not.toContain(String(kv!.map.get('p01:settle:hold-until')));
+    // [sweep 2 round 1] The digits were never the only spelling. `decideSettlement`
+    // writes the hold into `reason` as an ISO instant, so the two lines above
+    // passed while the value was public. Hold the body to the instant too.
+    const hold = kv!.map.get('p01:settle:hold-until') as number;
+    expect(body.verdict).toBe('holding-off');
+    expect(JSON.stringify(body)).not.toContain(new Date(hold * 1000).toISOString());
+  });
+
+  /**
+   * [sweep 2 round 1, server lens] A list of spellings is dodged by one more
+   * spelling, so this case does not list any. Two worlds, one frozen clock, and
+   * the ONLY thing that differs between them is the stored hold. Whatever the
+   * anonymous body is made of, it has to come out the same in both — a body the
+   * hold can move is a body the hold can be read from.
+   *
+   * The determinism leg (`base` twice) is what keeps it honest: if something
+   * unfrozen moved the body on its own, every comparison here would differ for
+   * that reason and prove nothing about the hold.
+   */
+  describe('the anonymous view, measured against the hold', () => {
+    const NOW_MS = Date.UTC(2026, 8, 20, 9, 0, 0);
+    const NOW_S = NOW_MS / 1000;
+
+    async function anonymousBodyWithHold(holdUntil: number): Promise<string> {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+      try {
+        tillHolds(9, 30 * 86400);
+        kv!.map.set('p01:settle:hold-until', holdUntil);
+        const res = await GET(req());
+        expect(res.status).toBe(200);
+        return JSON.stringify(await res.json());
+      } finally {
+        clock.mockRestore();
+      }
+    }
+
+    it('is byte-identical whatever hold is stored, while a hold is running', async () => {
+      const base = await anonymousBodyWithHold(NOW_S + 1 * 3600 + 17);
+      const again = await anonymousBodyWithHold(NOW_S + 1 * 3600 + 17);
+      const other = await anonymousBodyWithHold(NOW_S + 5 * 3600 + 43 * 60 + 9);
+      expect(again, 'the same world twice differs: something is not frozen').toBe(base);
+      // Anti-vacuity: both worlds really are holding, and say so.
+      expect(JSON.parse(base).verdict).toBe('holding-off');
+      expect(JSON.parse(other).verdict).toBe('holding-off');
+      expect(other, 'the stored hold moves the anonymous body').toBe(base);
+    });
+
+    it('carries no instant at all while holding, and still says a hold is running', async () => {
+      const body = await anonymousBodyWithHold(NOW_S + 4 * 3600 + 17 * 60);
+      expect(JSON.parse(body).verdict).toBe('holding-off');
+      expect(JSON.parse(body).reason).toBeTypeOf('string');
+      expect(JSON.parse(body).reason.length).toBeGreaterThan(0);
+      expect(body).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+      expect(body).not.toMatch(/\b\d{1,2}:\d{2}(:\d{2})?\b/);
+    });
+
+    it('does not answer "settle" to the public while the scheduler is holding', async () => {
+      // The cheap fix — deciding the public view with no hold — would publish a
+      // false status: "Settling 9 purchase(s)" on a tick that settles nothing.
+      const body = JSON.parse(await anonymousBodyWithHold(NOW_S + 2 * 3600));
+      expect(body.verdict).toBe('holding-off');
+      expect(body.reason).not.toMatch(/Settling/);
+    });
+
+    it('the scheduler still gets the full reason and the hold, so the operator can read it', async () => {
+      const hold = NOW_S + 3 * 3600 + 5;
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
+      try {
+        tillHolds(9, 30 * 86400);
+        kv!.map.set('p01:settle:hold-until', hold);
+        const body = await (await GET(cron())).json();
+        expect(body.verdict).toBe('holding-off');
+        expect(body.holdUntilSeconds).toBe(hold);
+        expect(body.reason).toContain(new Date(hold * 1000).toISOString());
+      } finally {
+        clock.mockRestore();
+      }
+    });
   });
 
   it('treats a wrong bearer as unauthenticated rather than as the scheduler', async () => {
@@ -516,7 +594,7 @@ describe('the float alarm', () => {
     expect(body.floatAlarm).toBe(true);
     expect(body.alarm).toBe('sent');
     expect(mockSendReportEmail).toHaveBeenCalledTimes(1);
-    const sent = mockSendReportEmail.mock.calls[0][0] as unknown as { text: string };
+    const sent = (mockSendReportEmail.mock.calls as unknown as Array<[{ text: string }]>)[0][0];
     expect(sent.text).toMatch(/deposits remaining/);
     expect(sent.text).toMatch(/Do not lower P01_SETTLE_MIN_PURCHASES/);
   });

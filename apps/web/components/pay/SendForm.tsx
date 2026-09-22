@@ -318,9 +318,22 @@ export default function SendForm({
   const [sealError, setSealError] = useState<string | null>(null);
   const [sealed, setSealed] = useState<SealedNoteHandoff | null>(null);
   const [copied, setCopied] = useState(false);
-  /** Cancels the pending clipboard clear (see `copySealed`). */
+  /**
+   * Cancels the pending clipboard clear (see `copySealed`) — for a NEWER copy
+   * and for the Clear button, and for nothing else.
+   *
+   * ⚠️ NOT ON UNMOUNT (sweep round 1 of logs8, fix lane 2). This used to cancel
+   * the timer when the form unmounted, and PayApp unmounts the panels on
+   * disconnect, on a wallet switch and on the identity chip's reset — so any of
+   * those inside the minute and a half left the sealed note on the clipboard
+   * for good. The cancel protected nothing: `clearBearerIfUnchanged` compares
+   * before it writes, so a timer that outlives this form cannot erase anything
+   * but this exact string. The clear is not brought forward to the unmount
+   * either, because the string was copied to be pasted. Pinned by
+   * `SendForm.test.tsx`, "still takes the sealed note back after the panel
+   * unmounts".
+   */
   const cancelClipboardClear = useRef<null | (() => void)>(null);
-  useEffect(() => () => cancelClipboardClear.current?.(), []);
 
   // On a stacked (sub-lg) screen the result lands in the context block below
   // the form, i.e. possibly below the fold. A success the user has to find is
@@ -899,11 +912,26 @@ export default function SendForm({
                 >
                   {t("pay.send.recipientLabel")}
                 </label>
+                {/* The one value on this tab that says WHO is being paid, so
+                    it is kept away from the browser's writing helpers, like the
+                    app's other free-text fields (ReceivePanel, PoolPanel,
+                    SubscriptionsPanel). A cloud spellchecker — Microsoft Editor
+                    in Edge, Chrome's Enhanced spell check when switched on —
+                    may send a spellchecked field's text to the browser vendor.
+                    Nobody measured that it does for a 1,630-character token;
+                    the opt-out costs nothing either way. `autoComplete` is
+                    hygiene: there is no <form> here for autofill to save from.
+                    Pinned by `SendForm.test.tsx`, "keeps the recipient's
+                    address away from the browser's writing helpers". */}
                 <input
                   id="p01-note-address"
                   value={noteAddress}
                   onChange={(e) => setNoteAddress(e.target.value)}
                   placeholder="p01pq:…"
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   className="card w-full bg-p01-void px-4 py-3 font-mono text-sm text-p01-text outline-none placeholder:text-p01-text-dim focus:border-p01-cyan"
                 />
                 {noteAddress.trim().length > 0 &&
@@ -1006,6 +1034,12 @@ export default function SendForm({
                   }}
                   onBlur={handleResolve}
                   placeholder={t("pay.send.stealthPlaceholder")}
+                  // Parked, and opted out already so that unparking it does not
+                  // reopen what the note-address field above just closed.
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
                   className="card w-full bg-p01-void px-4 py-3 font-mono text-sm text-p01-text outline-none placeholder:text-p01-text-dim focus:border-p01-cyan"
                 />
                 <button

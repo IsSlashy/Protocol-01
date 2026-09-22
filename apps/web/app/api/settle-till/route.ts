@@ -372,7 +372,44 @@ async function maybeAlarm(
   return sent ? 'sent' : 'unconfigured';
 }
 
-/** The public, side-effect-free view. Never includes the drawn hold. */
+/**
+ * What an unauthenticated caller is told while a hold is running. Fixed words.
+ *
+ * 🚨 `decideSettlement` WRITES THE HOLD INTO ITS `reason`, as an ISO instant
+ * ("Eligible, holding until 2026-09-20T13:16:53.000Z …"). The public view left
+ * `holdUntilSeconds` out and then served that sentence, so anyone could read,
+ * to the second and hours ahead, which hourly tick sends the till → float
+ * settlement. The test that guarded it searched the body for the unix digits
+ * only, which the ISO spelling does not contain, so it was green throughout
+ * (sweep 2 round 1, server lens).
+ *
+ * ⛔ DO NOT "FIX" THIS BY DECIDING THE PUBLIC VIEW WITH NO HOLD. The verdict
+ * would then read `settle`, with "Settling N purchase(s)", on a tick that
+ * settles nothing: a false public status. The verdict stays `holding-off` —
+ * that a hold is running is not the secret, WHEN it ends is — and only the
+ * sentence changes.
+ *
+ * Held by `lib/privacy/pool/settleTillRoute.test.ts`, "is byte-identical
+ * whatever hold is stored, while a hold is running": two worlds that differ in
+ * the stored hold alone must produce the same anonymous body, so a future field
+ * that spells the hold some other way turns it red too.
+ */
+const PUBLIC_HOLDING_REASON =
+  'Eligible. A randomised hold is running, so the delay between the last purchase and the ' +
+  'settlement is not a constant an observer can subtract. When it ends is not published.';
+
+/** The decision as the public may see it: the same verdict, no drawn instant. */
+function publicDecision(d: SettlementDecision): SettlementDecision {
+  return d.verdict === 'holding-off' ? { ...d, reason: PUBLIC_HOLDING_REASON } : d;
+}
+
+/**
+ * The status shape, shared by the public view and the scheduler's.
+ *
+ * ⚠️ IT DOES NOT REDACT ANYTHING ITSELF. The unauthenticated caller must be
+ * handed `publicDecision(d)`, never `d`; the scheduler gets the full reason and
+ * `holdUntilSeconds` on purpose, so the operator can read the tick.
+ */
 function statusBody(
   p: Principals | null,
   reasons: string[],
@@ -444,9 +481,10 @@ export async function GET(req: NextRequest) {
     // "the settlement fires at 04:17" hands an observer the exact transaction to
     // watch and undoes the randomisation it describes. Balances are already
     // public on chain; the future timestamp is not, and it is the only field
-    // here that is genuinely secret.
+    // here that is genuinely secret. That includes the sentence in
+    // `decision.reason`, which spells it out: see `PUBLIC_HOLDING_REASON`.
     return NextResponse.json(
-      statusBody(p, [], decision, {
+      statusBody(p, [], publicDecision(decision), {
         tillLamports: obs.tillLamports,
         floatLamports: obs.floatLamports,
         lastCreditSecondsAgo: obs.secondsSinceLastTillCredit,

@@ -421,9 +421,13 @@ describe("track a vault", () => {
     render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
     await userEvent.type(screen.getByPlaceholderText("Vault address"), VAULT_ADDR);
     await userEvent.click(screen.getByRole("button", { name: /Track/ }));
-    expect(
-      await screen.findByText(/not owned by the subscription program/i),
-    ).toBeInTheDocument();
+    // The sentence changed with the read (sweep round 1 of logs8, fix lane 2).
+    // Track no longer names the pasted address to the RPC: it looks it up in
+    // the program-wide enumeration, which cannot tell "another program owns
+    // it" from "no account" from "closed by the final claim". So the three old
+    // messages are one, the sentence true of all three. The refusal itself,
+    // and the empty store, are asserted exactly as before.
+    expect(await screen.findByText("This account is not a subscription vault.")).toBeInTheDocument();
     expect((await loadSubscriptions(null, "wallet1")).records).toHaveLength(0);
   });
 
@@ -606,6 +610,136 @@ describe("license key reveal", () => {
       () => "",
     );
     expect(after, "Clear the clipboard left the key on it").toBe("");
+  });
+
+  /**
+   * Sweep round 1 (logs8), fix lane 2: THE TAKE-BACK DIED WITH THE BUTTON.
+   *
+   * The 90 s timer lived inside `CopyButton` and was cancelled when that button
+   * unmounted — and the button is rendered only while the key is on screen. So
+   * the most careful sequence there is, Reveal, Copy, then HIDE, was the one
+   * that left the key on the clipboard for good; "All subscriptions" and
+   * picking another row did the same. The compare in `clearBearerIfUnchanged`
+   * already protects a newer copy, so nothing needed that cancel.
+   *
+   * Hide does NOT clear at once, on purpose: the key was copied to be pasted
+   * somewhere, and the person hides it before switching to the merchant's page.
+   * The promise is "gone after a minute and a half", and that is what is pinned.
+   */
+  type User = ReturnType<typeof userEvent.setup>;
+  const fakeTimerUser = () => userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+  async function copyThen(user: User, leave: (user: User) => Promise<void>) {
+    mockDeriveKey.mockResolvedValue({
+      licenseKey: "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+      serviceTag: "bitwarden-test",
+    });
+    await openDetailWithNote();
+    await user.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    await user.click(await screen.findByRole("button", { name: /Copy key/ }));
+    // Positive control: the key really is on the clipboard before leaving.
+    await expect(navigator.clipboard.readText()).resolves.toBe(
+      "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+    );
+    await leave(user);
+    expect(screen.queryByText("P01-000G-40R4-0M30-E209-185G-R38E-1W")).not.toBeInTheDocument();
+  }
+
+  async function clipboardNow(): Promise<string> {
+    return navigator.clipboard.readText().then(
+      (t) => t,
+      () => "",
+    );
+  }
+
+  it("still takes the key back after Hide", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await copyThen(fakeTimerUser(), (user) =>
+        user.click(screen.getByRole("button", { name: /^Hide$/ })),
+      );
+      // Still pasteable right after Hide: hiding is not a reason to lose the copy.
+      expect(await clipboardNow()).toBe("P01-000G-40R4-0M30-E209-185G-R38E-1W");
+      await vi.advanceTimersByTimeAsync(BEARER_CLIPBOARD_CLEAR_MS + 1_000);
+      expect(await clipboardNow(), "the license key is still on the clipboard after Hide").toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still takes the key back after going back to the list", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      await copyThen(fakeTimerUser(), (user) =>
+        user.click(screen.getByRole("button", { name: /All subscriptions/ })),
+      );
+      await vi.advanceTimersByTimeAsync(BEARER_CLIPBOARD_CLEAR_MS + 1_000);
+      expect(
+        await clipboardNow(),
+        "the license key is still on the clipboard after leaving the detail",
+      ).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still takes the key back after the whole panel unmounts", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { cleanup } = await import("@testing-library/react");
+      await copyThen(fakeTimerUser(), async () => cleanup());
+      await vi.advanceTimersByTimeAsync(BEARER_CLIPBOARD_CLEAR_MS + 1_000);
+      expect(
+        await clipboardNow(),
+        "the license key is still on the clipboard after the panel unmounted",
+      ).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The half no timer covers. Firefox never lets a page read the clipboard, so
+   * the scheduled clear ends `unreadable` there and the button is the only
+   * take-back — and it used to leave the screen with the key. It stays for as
+   * long as the copy may still be out, on the detail page and on the list.
+   */
+  it("keeps Clear the clipboard within reach after Hide, and it works", async () => {
+    await copyThen(userEvent.setup(), (user) =>
+      user.click(screen.getByRole("button", { name: /^Hide$/ })),
+    );
+    const clear = screen.queryByRole("button", { name: /Clear the clipboard/ });
+    expect(clear === null ? "no Clear button after Hide" : "Clear button after Hide").toBe(
+      "Clear button after Hide",
+    );
+    await userEvent.click(clear!);
+    expect(await clipboardNow(), "Clear the clipboard left the key on it").toBe("");
+    // Once cleared there is nothing left to offer.
+    expect(screen.queryByRole("button", { name: /Clear the clipboard/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps Clear the clipboard within reach on the list too", async () => {
+    await copyThen(userEvent.setup(), (user) =>
+      user.click(screen.getByRole("button", { name: /All subscriptions/ })),
+    );
+    const clear = screen.queryByRole("button", { name: /Clear the clipboard/ });
+    expect(clear === null ? "no Clear button on the list" : "Clear button on the list").toBe(
+      "Clear button on the list",
+    );
+    await userEvent.click(clear!);
+    expect(await clipboardNow(), "Clear the clipboard left the key on it").toBe("");
+  });
+
+  it("does not offer Clear the clipboard before anything was copied", async () => {
+    mockDeriveKey.mockResolvedValue({
+      licenseKey: "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+      serviceTag: "bitwarden-test",
+    });
+    await openDetailWithNote();
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    await screen.findByText("P01-000G-40R4-0M30-E209-185G-R38E-1W");
+    await userEvent.click(screen.getByRole("button", { name: /^Hide$/ }));
+    expect(screen.queryByRole("button", { name: /Clear the clipboard/ })).not.toBeInTheDocument();
   });
 
   it("two registry slugs on one (retailer, mint): every slug is a candidate, and the tag the chain confirmed replaces a wrong stored one", async () => {
@@ -1015,5 +1149,88 @@ describe("sweep 1, record 33: how the list reads vault state", () => {
     // One catch-up for the burst, not one per event.
     await waitFor(() => expect(reads.length - afterMount).toBeLessThanOrEqual(1));
     expect(reads.filter((r) => r !== "getProgramAccounts")).toEqual([]);
+  });
+});
+
+/**
+ * Sweep round 1 (logs8), fix lane 2: THE TWO PRESSES RECORD 33 LEFT POINTED.
+ *
+ * The list stopped naming vault PDAs; Reveal key and Track still made one
+ * `getAccountInfo(vault)` each. A vault PDA is seeded on the paying note's
+ * secret, so from Reveal that read says "this IP holds the key to vault V" —
+ * a new link for a vault recovered from another device or revealed from another
+ * network — and from Track it says "this IP is interested in vault V", about a
+ * vault that by construction was opened elsewhere. A fresh enumeration serves
+ * the same bytes, read now and not from the list's snapshot, and names nothing.
+ */
+describe("sweep round 1, fix lane 2: Reveal and Track name no vault to the RPC", () => {
+  it("Reveal key reads the vault from a fresh enumeration, never by its address", async () => {
+    mockDeriveKey.mockResolvedValue({
+      licenseKey: "P01-000G-40R4-0M30-E209-185G-R38E-1W",
+      serviceTag: "bitwarden-test",
+    });
+    await seedRecord({ pool: "PoolPda11111111111111111111111111111111111", leafIndex: 19 });
+    const reads: string[] = [];
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+      reads,
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    await userEvent.click(await screen.findByText("Bitwarden Test"));
+    const before = reads.length;
+
+    await userEvent.click(await screen.findByRole("button", { name: /Reveal key/ }));
+    // Positive control: the press really ran, to the end.
+    expect(await screen.findByText("P01-000G-40R4-0M30-E209-185G-R38E-1W")).toBeInTheDocument();
+
+    const byReveal = reads.slice(before);
+    expect(byReveal.filter((r) => r !== "getProgramAccounts"), "Reveal named a vault PDA").toEqual(
+      [],
+    );
+    // "Read the account now rather than trust the list's snapshot" still holds:
+    // the press asks again, it just asks the uniform question.
+    expect(byReveal).toContain("getProgramAccounts");
+    // And the bytes are the same ones: the Worker still gets the on-chain
+    // fingerprint to check the key against.
+    expect(mockDeriveKey).toHaveBeenCalledWith(
+      expect.objectContaining({ licenseCommitment: FIXTURE_LICENSE_HEX }),
+    );
+  });
+
+  it("Track looks the pasted address up in the enumeration, never by its address", async () => {
+    const reads: string[] = [];
+    const conn = fakeConnection({
+      slot: START_SLOT + 1_500,
+      accounts: { [VAULT_ADDR]: hexToBytes(DEVNET_VAULT_HEX) },
+      reads,
+    });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    await userEvent.type(screen.getByPlaceholderText("Vault address"), VAULT_ADDR);
+    await userEvent.click(screen.getByRole("button", { name: /Track/ }));
+
+    // Positive control: the press really recorded the vault.
+    await waitFor(async () =>
+      expect((await loadSubscriptions(null, "wallet1")).records).toHaveLength(1),
+    );
+    expect(await screen.findByText("No cancel, no refund")).toBeInTheDocument();
+    expect(reads.filter((r) => r !== "getProgramAccounts"), "Track named the pasted address").toEqual(
+      [],
+    );
+    expect(reads).toContain("getProgramAccounts");
+  });
+
+  it("Track refuses an address that is not among the program's live vaults, without naming it", async () => {
+    const reads: string[] = [];
+    const conn = fakeConnection({ slot: START_SLOT + 1_500, accounts: {}, reads });
+    render(<SubscriptionsPanel meta="meta-test" owner={OWNER} connection={conn} />);
+    await userEvent.type(screen.getByPlaceholderText("Vault address"), VAULT_ADDR);
+    await userEvent.click(screen.getByRole("button", { name: /Track/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Track/ })).not.toBeDisabled());
+    await waitFor(() => expect(reads.length).toBeGreaterThan(0));
+    expect(reads.filter((r) => r !== "getProgramAccounts"), "Track named the pasted address").toEqual(
+      [],
+    );
+    expect((await loadSubscriptions(null, "wallet1")).records).toHaveLength(0);
   });
 });

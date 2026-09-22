@@ -149,6 +149,19 @@ export interface SubscribeFromPoolResult {
   reachableViaSpendFunder?: boolean;
   /** Where the spent note came from, decided on this device; see `reachableViaDeposit`. */
   noteProvenance?: 'own-deposit' | 'received' | 'unknown';
+  /**
+   * The circuit the subscription opened on, as `subscribeFromPool` reports it
+   * (`shieldClient.ts`, `version: prep.version`). `'v3'` is the C1 + C3 pair a
+   * pre-blinding note is confirmed onto; its opening transaction republishes
+   * the note's commitment.
+   *
+   * Optional so an older caller still typechecks, and ABSENT IS NEVER READ AS
+   * `'v4'`: the card's test is positive, as in PoolPanel, so a result that
+   * names no circuit cannot earn the sentence that says no commitment was
+   * published (`SubscribePanel.test.tsx`, "a result that reports no circuit is
+   * never read as circuit 7").
+   */
+  version?: 'v3' | 'v4';
 }
 
 interface SubscribeModule {
@@ -1699,6 +1712,41 @@ const ISSUANCE_UI = true;
                   <span>
                     <strong className="text-p01-text">{t('pay.subscribe.paidWalletLead')}</strong>
                     {t('pay.subscribe.paidWalletBody')}
+                  </span>
+                </p>
+              )}
+              {/* Which circuit ran. The cost box on this page promises that
+                this screen names it (`pay.subscribe.costCommitment`), and the
+                C1 + C3 pair republishes the note's commitment, so a card that
+                read the same either way left a screenshot saying nothing about
+                the one fact that lets a chain reader walk from the vault to
+                the deposit. Positive test: only `'v4'` earns the circuit-7
+                sentence (SubscribePanel.test.tsx, "a C1 + C3 subscription does
+                not read like a circuit-7 one"). */}
+              {result.version === 'v4' ? (
+                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-cyan" />
+                  <span>
+                    <strong className="text-p01-text">{t('pay.subscribe.ranC7Lead')}</strong>
+                    {t('pay.subscribe.ranC7Body')}
+                  </span>
+                </p>
+              ) : (
+                <p className="flex items-start gap-2 text-xs text-p01-text-muted">
+                  <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-p01-yellow" />
+                  <span>
+                    <strong className="text-p01-text">
+                      {t(
+                        result.version === 'v3'
+                          ? 'pay.subscribe.ranPairLead'
+                          : 'pay.subscribe.ranUnknownLead',
+                      )}
+                    </strong>
+                    {t(
+                      result.version === 'v3'
+                        ? 'pay.subscribe.ranPairBody'
+                        : 'pay.subscribe.ranUnknownBody',
+                    )}
                   </span>
                 </p>
               )}

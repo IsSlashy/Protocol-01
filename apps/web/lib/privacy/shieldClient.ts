@@ -1370,10 +1370,22 @@ export class SelfDepositedNoteError extends Error {
    * is read as an own deposit and says so. No address and no signature: the
    * verdict is decided on this device and names nothing on chain
    * (`selfDepositedNote.test.ts`, "deposit verdict local and pessimistic").
+   *
+   * `'handed-over'` = a peer sealed this note to the buyer and kept its secrets
+   * (`SubscribeOutcome.reachableBySender`). It rides on THIS error, and on this
+   * name, on purpose: the panel's recovery for the name is to exchange the note
+   * through the till first, and that exchange is the cure here too — after it,
+   * the sender's lookup ends at "spent to the till"
+   * (`selfDepositedNote.test.ts`, "a note a peer handed over").
    */
-  constructor(readonly provenance: 'own-deposit' | 'unknown') {
+  constructor(readonly provenance: 'own-deposit' | 'unknown' | 'handed-over') {
     super(
-      provenance === 'unknown'
+      provenance === 'handed-over'
+        ? 'Stopped before spending anything: this note was handed to you, and whoever handed it ' +
+            'over still holds its secrets. From them they can work out where the note is spent, ' +
+            'so they would find this subscription: the merchant, the vault, the rate. Exchange ' +
+            'the note first, or use one this deployment issued.'
+        : provenance === 'unknown'
         ? 'Stopped before spending anything: this device cannot tell where this note came from, ' +
             'so it is treated as a note your own wallet deposited. Spending it would let anyone ' +
             'reading the subscription reach the deposit, and an unknown origin is not the same ' +
@@ -1471,6 +1483,33 @@ export interface SubscribeOutcome {
    *  deposit, whoever paid for the subscription itself. Decided with no RPC
    *  (`selfDepositedNote.test.ts`, "deposit verdict local and pessimistic"). */
   reachableViaDeposit: boolean;
+  /**
+   * True when the spent note was HANDED OVER by a peer, who can therefore find
+   * this subscription. A different adversary from the two fields around it:
+   * those ask what a public observer reaches, this asks what the note's sender
+   * reaches, and the answer can be yes while `reachableViaDeposit` is no.
+   *
+   * A hand-over seals `secret` and `nullifier_preimage` to the recipient and
+   * the sender keeps both. The nullifier is a pure function of the two, the
+   * NullifierRecord address a pure function of the nullifier, and that record
+   * is a NAMED account of the spend: one `getSignaturesForAddress` on an
+   * address the sender computes offline returns the transaction that opened
+   * the vault — merchant, vault, rate and interval (web-run/logs8/r1-chain/
+   * probe2-handoff-sender-trace-subscribe.log, against a real devnet
+   * subscribe). The sender knows who they handed the note to.
+   *
+   * ⚠️ TRUE ONLY WHEN THE WORKER SAYS `'handed-over'`, which it does once
+   * `poolImportNote` files a hand-over apart from an issued note. Until then
+   * both read `'received'` and this is false for both — so false means "not
+   * known to be a hand-over", NOT "no sender". An issued note has the same
+   * shape with the DEPLOYMENT as the sender, which the founder accepted (ledger
+   * D5) and `IssuedNoteOutcome.disclosure` states.
+   *
+   * The reported `noteProvenance` of a hand-over stays `'received'`: it was
+   * received, and that union is mirrored by the panel's own type
+   * (`selfDepositedNote.test.ts`, "a note a peer handed over").
+   */
+  reachableBySender: boolean;
   /**
    * True when the address that PAID for this subscription is co-named with the
    * wallet on chain, or when that could not be established.
@@ -1672,15 +1711,33 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
   // unreachable (`selfDepositedNote.test.ts`, "deposit verdict local and
   // pessimistic"; `noPointedNullifierRead.test.ts`, "subscribe prepare never
   // names the depositing ephemeral").
+  //
+  // ── And who HANDED IT OVER, which is a different adversary ────────────────
+  //
+  // "Received" used to be the whole clean case. It is clean against the walk
+  // above — the buyer did not deposit it — and it says nothing about the peer
+  // who sealed the note to the buyer and kept its secrets: they compute the
+  // nullifier, and from it the named NullifierRecord account of THIS spend
+  // (`SubscribeOutcome.reachableBySender`). So a hand-over is reported apart,
+  // and refused under `neverExposeWallet` by the same error NAME as an own
+  // deposit, because the panel's recovery for that name — exchange the note
+  // through the till first — is exactly the cure. A client older than this read
+  // the worker's `'handed-over'` as `'unknown'` and blamed the buyer's own
+  // wallet (`selfDepositedNote.test.ts`, "a note a peer handed over").
+  const saidByWorker = (prep as { noteProvenance?: unknown }).noteProvenance;
+  const handedOver = saidByWorker === 'handed-over';
   const noteProvenance: SubscribeOutcome['noteProvenance'] =
-    (prep as { noteProvenance?: unknown }).noteProvenance === 'received'
+    saidByWorker === 'received' || handedOver
       ? 'received'
-      : (prep as { noteProvenance?: unknown }).noteProvenance === 'own-deposit'
+      : saidByWorker === 'own-deposit'
         ? 'own-deposit'
         : 'unknown';
   const selfDeposited = noteProvenance !== 'received';
   if (params.neverExposeWallet && selfDeposited) {
     throw new SelfDepositedNoteError(noteProvenance === 'unknown' ? 'unknown' : 'own-deposit');
+  }
+  if (params.neverExposeWallet && handedOver) {
+    throw new SelfDepositedNoteError('handed-over');
   }
 
   // ── Who pays for THIS transaction, which is the other half of the walk ────
@@ -1776,6 +1833,7 @@ export async function subscribeFromPool(params: SubscribeParams): Promise<Subscr
     funderFallbackReason,
     noteProvenance,
     reachableViaDeposit: selfDeposited,
+    reachableBySender: handedOver,
     reachableViaSpendFunder,
     // 🚨 REPORTED, NEVER ASSUMED. A caller that sent the terms asked for circuit
     // 7 and can still be answered with the C1 + C3 pair, which republishes this

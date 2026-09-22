@@ -272,6 +272,75 @@ describe('a worker that names no provenance', () => {
 });
 
 // ---------------------------------------------------------------------------
+// A HAND-OVER — sweep round 1 (logs8), fix lane 2
+// ---------------------------------------------------------------------------
+
+describe('a note a peer handed over', () => {
+  // 🚨 A DIFFERENT ADVERSARY, AND THE OLD VERDICT NEVER ASKED ABOUT THEM.
+  //
+  // `reachableViaDeposit` answers "can a public observer walk from this
+  // subscription to the buyer through the deposit". For a hand-over the answer
+  // is still no. But whoever handed the note over sealed `secret` and
+  // `nullifier_preimage` into it and kept both, and the nullifier is a pure
+  // function of the two: they compute the NullifierRecord address offline, and
+  // one `getSignaturesForAddress` on it returns the transaction that opened
+  // THIS vault, naming the merchant, the vault, the rate and the interval
+  // (logs8/r1-chain/probe2-handoff-sender-trace-subscribe.log, against a real
+  // devnet subscribe). They know who they handed the note to, so that is a
+  // person-to-subscription link, held by a peer the founder never accepted the
+  // way D5 accepts the issuer.
+  //
+  // The worker says `'handed-over'` once `poolImportNote` files a hand-over
+  // apart from an issued note (handoff to the owner of worker/poolHandlers.ts;
+  // today both are filed `'received'`, so until then this is reachable only
+  // through this test). A client older than this change read that answer as
+  // `'unknown'` and told the buyer their OWN wallet deposited the note.
+  beforeEach(() => {
+    prepareAnswer.noteProvenance = 'handed-over';
+  });
+
+  it('is reported as findable by its sender when the caller proceeds', async () => {
+    const out = await subscribeFromPool(params({ neverExposeWallet: false }));
+    expect(executeCalled).toBe(true);
+    expect((out as { reachableBySender?: boolean }).reachableBySender).toBe(true);
+    // In its own terms the deposit verdict stands: the buyer did not deposit it.
+    expect(out.reachableViaDeposit).toBe(false);
+    expect(out.noteProvenance).toBe('received');
+  });
+
+  it('is refused, by the name the panel exchanges on, when the caller asked to stay unreachable', async () => {
+    // The cure already exists and hangs on this name: `SubscribePanel` catches
+    // `SelfDepositedNoteError` and exchanges the note through the till first,
+    // after which the sender's lookup ends at "spent to the till".
+    const outcome = await subscribeFromPool(params({ neverExposeWallet: true })).then(
+      () => 'proceeded',
+      (e: Error & { provenance?: string }) => ({ name: e.name, provenance: e.provenance }),
+    );
+    expect(outcome).toEqual({ name: 'SelfDepositedNoteError', provenance: 'handed-over' });
+    expect(fundEphemeralForJob).not.toHaveBeenCalled();
+    expect(executeCalled).toBe(false);
+  });
+
+  it("says who can find the exit, and does not blame the buyer's own wallet", async () => {
+    const message = await subscribeFromPool(params({ neverExposeWallet: true })).then(
+      () => 'proceeded',
+      (e: Error) => e.message,
+    );
+    expect(message).toMatch(/whoever handed it over/);
+    expect(message).not.toMatch(/your own wallet/);
+  });
+
+  it('an issued note and an own deposit are NOT findable by a sender (controls)', async () => {
+    prepareAnswer.noteProvenance = 'received';
+    const issued = await subscribeFromPool(params({ neverExposeWallet: false }));
+    expect((issued as { reachableBySender?: boolean }).reachableBySender).toBe(false);
+    prepareAnswer.noteProvenance = 'own-deposit';
+    const own = await subscribeFromPool(params({ neverExposeWallet: false }));
+    expect((own as { reachableBySender?: boolean }).reachableBySender).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The SPEND leg — the funder surface this file did not read until 2026-08-18
 // ---------------------------------------------------------------------------
 

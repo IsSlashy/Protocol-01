@@ -1,5 +1,7 @@
 import { checkAdminAuth } from '@/lib/waitlist/auth';
 import { getStore, collectAllRecords } from '@/lib/waitlist/store';
+import type { WaitlistRecord } from '@/lib/waitlist/store';
+import { logFailure } from '@/lib/server/logSafely';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +22,23 @@ export async function GET(req: Request) {
     );
   }
 
-  const records = await collectAllRecords(getStore());
+  // A STORE ERROR MUST NOT LEAVE THIS HANDLER. What leaves a handler is logged
+  // by the framework (`console.error(err)`), and the store words a refused
+  // request as `<error>, command was: [...]`. `collectAllRecords` reads every
+  // subscriber in one auto-pipelined round trip, so that single line is
+  // `["get","wl:sub:<email>"]` for the whole list, in the Vercel runtime log.
+  // Fixed words out, and only the error's class name in the log. Pinned by
+  // `__tests__/api/waitlistExportLogHygiene.test.ts`.
+  let records: WaitlistRecord[];
+  try {
+    records = await collectAllRecords(getStore());
+  } catch (err) {
+    logFailure('[waitlist] export', err);
+    return new Response(JSON.stringify({ ok: false, error: 'server_error' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+    });
+  }
 
   // ?format=json feeds the /admin/waitlist dashboard; tokenHash stays private.
   const { searchParams } = new URL(req.url);

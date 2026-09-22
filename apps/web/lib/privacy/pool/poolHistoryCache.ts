@@ -112,6 +112,23 @@ export interface PoolHistoryStore {
   load(key: string): Promise<StoredPoolHistory | null>;
   save(snapshot: PoolHistorySnapshot): Promise<void>;
   clear(key: string): Promise<void>;
+  /**
+   * Every key the store holds. Optional, so a store written before it existed
+   * still satisfies the interface; a store that keeps rows on a USER'S DEVICE
+   * must have it, because `loadPoolHistory` can only delete a row left under a
+   * key it cannot recompute if it can list the keys. See `healForeignRows`.
+   */
+  keys?(): Promise<string[]>;
+  /**
+   * True for a store whose row belongs to ONE USER'S DEVICE and outlives the
+   * page (IndexedDB). The walk then resumes at a public anchor instead of this
+   * row's own newest signature, because what it asks the RPC would otherwise
+   * name the moment this device last came (`fetchPoolCommitments`,
+   * "[SWEEP round 1 of run logs8, network lens]"). A server's shared row (the
+   * KV twin) and a memory map that dies with the page leave it unset: neither
+   * is a person coming back.
+   */
+  readonly perDevice?: boolean;
 }
 
 export function memoryPoolHistoryStore(): PoolHistoryStore {
@@ -125,6 +142,9 @@ export function memoryPoolHistoryStore(): PoolHistoryStore {
     },
     async clear(key) {
       m.delete(key);
+    },
+    async keys() {
+      return [...m.keys()];
     },
   };
 }
@@ -158,6 +178,7 @@ export function indexedDbPoolHistoryStore(idb: IDBFactory): PoolHistoryStore {
     }
   };
   return {
+    perDevice: true,
     async load(key) {
       try {
         const v = await run<StoredPoolHistory | undefined>('readonly', (s) => s.get(key) as IDBRequest<StoredPoolHistory | undefined>);
@@ -179,6 +200,14 @@ export function indexedDbPoolHistoryStore(idb: IDBFactory): PoolHistoryStore {
         await run('readwrite', (s) => s.delete(key));
       } catch {
         await fallback.clear(key);
+      }
+    },
+    async keys() {
+      try {
+        const all = await run<IDBValidKey[]>('readonly', (s) => s.getAllKeys());
+        return all.filter((k): k is string => typeof k === 'string');
+      } catch {
+        return fallback.keys!();
       }
     },
   };
@@ -222,11 +251,38 @@ export function hasGivenUpOnSignature(signature: string): boolean {
   return gaveUpSignatures.has(signature);
 }
 
+/**
+ * [SWEEP round 1 of run logs8, network lens] Signatures whose transaction THIS
+ * PAGE LOAD has already read and decoded. In memory only, and beside the store
+ * for the reason `gaveUpSignatures` is.
+ *
+ * A device's walk re-reads every transaction above the public anchor, held or
+ * not, so that the set of reads says nothing about what the device held when
+ * it arrived (`poolWalkPublicAnchor.test.ts`). Within one page load the RPC
+ * already sees one connection from one address, so a second read of the same
+ * transaction would buy nothing: each is read once a session ("a session reads
+ * a transaction once").
+ */
+const readThisSession = new Set<string>();
+
+/** Same trade as `gaveUpSignatures`: forgetting costs one re-read. */
+const MAX_READ_REMEMBERED = 8192;
+
+export function rememberReadThisSession(signature: string): void {
+  if (readThisSession.size >= MAX_READ_REMEMBERED) readThisSession.clear();
+  readThisSession.add(signature);
+}
+
+export function wasReadThisSession(signature: string): boolean {
+  return readThisSession.has(signature);
+}
+
 export function setPoolHistoryStore(store: PoolHistoryStore | null): void {
   activeStore = store;
   // A new store is a new history: what the previous one gave up on says nothing
   // about this one. See `gaveUpSignatures`.
   gaveUpSignatures.clear();
+  readThisSession.clear();
 }
 
 export function getPoolHistoryStore(): PoolHistoryStore {
@@ -267,6 +323,16 @@ function legacyPoolHistoryKey(rpcEndpoint: string, poolPDA: string): string {
   return `${rpcEndpoint}|${poolPDA}`;
 }
 
+/** The signature that inserted the highest leaf the row holds, or null for a row with no leaf. */
+function newestLeafSignature(entries: CachedCommitmentEntry[]): string | null {
+  let top: CachedCommitmentEntry | null = null;
+  for (const e of entries) {
+    if (typeof e?.leafIndex !== 'number' || typeof e.signature !== 'string') continue;
+    if (!top || e.leafIndex > top.leafIndex) top = e;
+  }
+  return top?.signature ?? null;
+}
+
 /** Fill in the fields a v1 row never had, without inventing what it did not know. */
 function upgradeSnapshot(raw: StoredPoolHistory, key: string): PoolHistorySnapshot {
   if (raw.version === POOL_HISTORY_VERSION) {
@@ -296,7 +362,17 @@ function upgradeSnapshot(raw: StoredPoolHistory, key: string): PoolHistorySnapsh
   return {
     version: POOL_HISTORY_VERSION,
     key,
-    newestSignature: raw.newestSignature ?? null,
+    // NOT `raw.newestSignature`. The 2026-09-13 walk saved whatever was newest
+    // on the pool, and `PoolPanel` rescans the moment a withdrawal lands, so
+    // that field is routinely the device's OWN withdrawal. The walk keeps the
+    // resume point it is given whenever its delta holds nothing eligible, so a
+    // migration that handed it on kept the withdrawal in the new row for as
+    // long as the pool stayed quiet. The newest LEAF's signature is already in
+    // `entries`, so it adds nothing to a dump, and resuming there only re-lists
+    // the few leafless transactions above it (`poolHistoryCache.test.ts`,
+    // "[SWEEP-R1-STORAGE] … nothing new on chain since the old build's last
+    // walk").
+    newestSignature: newestLeafSignature(raw.entries ?? []),
     oldestSignature: oldest?.signature ?? null,
     reachedOldest: false,
     complete: false,
@@ -309,18 +385,90 @@ function upgradeSnapshot(raw: StoredPoolHistory, key: string): PoolHistorySnapsh
   };
 }
 
+/** `host|pool`: a host (a port is allowed), one bar, a base58 public key. Nothing a URL is made of. */
+const WELL_FORMED_KEY = /^[^\s|/?#@]+\|[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/** Stores already healed this session: the pass lists every key, so once per store is enough. */
+const healedStores = new WeakSet<PoolHistoryStore>();
+
+/**
+ * [SWEEP round 1 of run logs8, storage lens] Every row whose key is not
+ * `host|pool` is healed into one that is, or deleted — found by LISTING the
+ * store, never by recomputing the key it was written under.
+ *
+ * WHY. The build on origin/master keys the row `${rpcEndpoint}|${pool}`, and
+ * the HIST-1 migration in `loadPoolHistory` looks only under the legacy key it
+ * can rebuild from TODAY's endpoint. The day the RPC credential is rotated the
+ * rebuilt key stops matching, and the row the old build left — its
+ * `newestSignature` (the device's own withdrawal whenever its last walk was
+ * the post-withdrawal rescan), its `savedAt` millisecond, its walk-order
+ * entries, the old endpoint in the key — stays for the life of the profile. A
+ * row of a pool this client never opens again is orphaned the same way.
+ * Measured by `logs8/r1-storage/A-orphan-history-row.probe.ts`; pinned by
+ * `poolHistoryCache.test.ts`, "[SWEEP-R1-STORAGE] a row left under a key that
+ * spells an endpoint does not outlive one walk".
+ *
+ * Healed rather than dropped when the row parses: the leaves are public
+ * on-chain data and a cold walk costs a returning user the 90 s this cache
+ * exists to save. What is NOT carried over is what moved with the device — the
+ * resume point becomes the newest leaf's signature, the clock 0, the re-read
+ * list empty, the entries leaf order. A row already at the healed key wins.
+ *
+ * A store without `keys()` (the KV twin, a test literal) is left to the HIST-1
+ * path: the KV row was never keyed by an endpoint (`kvPoolHistory.ts`).
+ */
+async function healForeignRows(store: PoolHistoryStore): Promise<void> {
+  if (!store.keys || healedStores.has(store)) return;
+  let keys: string[];
+  try {
+    keys = await store.keys();
+  } catch {
+    return; // Not marked healed: the next walk tries again.
+  }
+  for (const foreign of keys) {
+    if (WELL_FORMED_KEY.test(foreign)) continue;
+    const bar = foreign.lastIndexOf('|');
+    const pool = bar >= 0 ? foreign.slice(bar + 1) : '';
+    const target = bar > 0 && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pool)
+      ? poolHistoryKey(foreign.slice(0, bar), pool)
+      : null;
+    if (target !== null && WELL_FORMED_KEY.test(target)) {
+      const raw = await store.load(foreign).catch(() => null);
+      if (raw && !(await store.load(target).catch(() => null))) {
+        const healed = upgradeSnapshot(raw, target);
+        const entries = healed.entries
+          .filter((e) => typeof e?.leafIndex === 'number' && typeof e.signature === 'string')
+          .sort((a, b) => a.leafIndex - b.leafIndex);
+        await store.save({
+          ...healed,
+          newestSignature: newestLeafSignature(entries),
+          retry: [],
+          entries,
+          savedAt: 0,
+        });
+      }
+    }
+    await store.clear(foreign);
+  }
+  healedStores.add(store);
+}
+
 /**
  * The snapshot for (host, pool), with any row left under a key that spelled
- * the endpoint migrated and DELETED — deleted whether or not it was needed, so
- * a row naming the credential cannot outlive one walk. Pinned by
+ * an endpoint healed and DELETED first — every such row in the store, whatever
+ * endpoint or pool it names (`healForeignRows`), so a row naming a credential
+ * or a device's own transaction does not outlive one walk even after the
+ * credential is rotated. A store that cannot list its keys gets the HIST-1
+ * path alone: the one legacy key today's endpoint rebuilds. Pinned by
  * `poolHistoryCache.test.ts`, "a legacy row keyed by the whole endpoint is
- * migrated and deleted".
+ * migrated and deleted" and the "[SWEEP-R1-STORAGE]" block.
  */
 export async function loadPoolHistory(
   store: PoolHistoryStore,
   rpcEndpoint: string,
   poolPDA: string,
 ): Promise<{ key: string; snapshot: PoolHistorySnapshot | null }> {
+  await healForeignRows(store);
   const key = poolHistoryKey(rpcEndpoint, poolPDA);
   let raw = await store.load(key);
   const legacyKey = legacyPoolHistoryKey(rpcEndpoint, poolPDA);

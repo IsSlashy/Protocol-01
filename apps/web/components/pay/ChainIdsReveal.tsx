@@ -22,6 +22,15 @@
  * It starts closed on every mount. Callers key it on the result it describes,
  * so a new result starts closed even where the card itself stays mounted
  * ("a second deposit starts with its transaction hidden again").
+ *
+ * [SWEEP round 1 of run logs8, storage lens] OPEN, IT SAYS WHAT A LINK COSTS.
+ * The children are explorer links, and opening one hands the id to two parties
+ * the screen rule says nothing about: explorer.solana.com, which sees the
+ * lookup from the user's network address, and the browser's own history, which
+ * keeps the exact URL with a visit time and syncs it. The sentence stands above
+ * the links and only while they are shown
+ * (`__tests__/components/ChainIdsReveal.test.tsx`). It is a warning, not a
+ * closure: the ids are public and the choice to look one up stays the user's.
  */
 
 import { useState, type ReactNode } from "react";
@@ -41,6 +50,7 @@ export default function ChainIdsReveal({
     <div className={className}>
       {shown ? (
         <>
+          <p className="mb-1 text-xs text-p01-text-dim">{t("pay.shared.chainIdsLinkWarning")}</p>
           {children}
           <button
             type="button"

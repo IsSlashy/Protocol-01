@@ -69,9 +69,9 @@ const RATE_SALT = 'p01:relay-to-buyer:v1';
  * 🚨 THE BUCKET IS PER IP, AND A GROUP TEST IS ONE IP BY DEFINITION. Several
  * people on one office wifi, one conference network or one VPN share a single
  * bucket, so at three the FOURTH tester is refused having done nothing. The GET
- * now publishes `relaysRemaining` and the client refuses before the wallet
- * signs, so that refusal no longer costs them a denomination — but it is still
- * a refusal, and on a public test day it is the difference between a demo and
+ * now publishes `relaysRemaining` (whether one is left, not how many: see the
+ * GET) and the client refuses before the wallet signs, so that refusal no
+ * longer costs them a denomination — but it is still a refusal, and on a public test day it is the difference between a demo and
  * an apology.
  *
  * ⚠️ SO IT IS OVERRIDABLE, AND THE DEFAULT STAYS THREE. Same posture as
@@ -530,12 +530,29 @@ export async function GET(request: NextRequest) {
   //
   // ⚠️ `null` is UNKNOWN, not zero — same rule as the float balance. A store
   // that cannot be read must not delete the only private path.
+  //
+  // ⛔ AND IT IS NOT THE COUNT. This GET needs no ticket, has no limiter of its
+  // own and spends nothing, and the bucket moves on every POST from the
+  // address, seconds after that buyer's public till payment. Answering the
+  // exact count let anyone sharing the buyer's egress address (a flat, an
+  // office, a campus) poll it and read "somebody here bought at this second",
+  // then find that second on chain. Measured: scratchpad/web-run/logs8/
+  // r1-server/probe-S2-relaysRemaining.log, `relaysRemaining 3 -> 2`.
+  //
+  // The client only tests `relaysRemaining <= 0` (ephemeralFunder.ts), so the
+  // answer is clamped to what that test needs: 1 = at least one relay is left,
+  // 0 = none. The field keeps its name so a cached bundle keeps working.
+  //
+  // What this does NOT close: the answer still flips at exhaustion, and the
+  // POST's 429 shows the same event. A per-IP budget is a count oracle by
+  // construction. Pinned by `__tests__/api/relayToBuyerAllowanceOracle.test.ts`.
   const ip = clientIp(request);
   let relaysRemaining: number | null = null;
   const store = getStore();
   if (store) {
     try {
-      relaysRemaining = await rateLimitRemaining(store, ip, RATE_SALT, RELAYS_PER_IP_PER_HOUR);
+      const exact = await rateLimitRemaining(store, ip, RATE_SALT, RELAYS_PER_IP_PER_HOUR);
+      relaysRemaining = exact > 0 ? 1 : 0;
     } catch {
       relaysRemaining = null;
     }

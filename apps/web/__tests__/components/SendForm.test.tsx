@@ -260,6 +260,31 @@ describe("the recipient address is checked before any work", () => {
     expect(screen.getByRole("button", { name: /Prepare the note/i })).toBeEnabled();
   });
 
+  /**
+   * Sweep round 1 (logs8), fix lane 2. The recipient's reusable `p01pq:` address
+   * is the one value on this tab that says who is being paid, and this was the
+   * one free-text field of the pay app that did not opt out of the browser's
+   * writing helpers. A cloud spellchecker (Microsoft Editor in Edge by default,
+   * Chrome's Enhanced spell check when switched on) may send a spellchecked
+   * field's text to the browser vendor. Nobody measured that it does for a
+   * 1,630-character token; the opt-out costs nothing either way.
+   */
+  it("keeps the recipient's address away from the browser's writing helpers", async () => {
+    const user = userEvent.setup();
+    renderForm();
+    const field = (await screen.findByLabelText(/Recipient.s address/i)) as HTMLInputElement;
+    await pasteAddress(user, RECIPIENT_ADDRESS);
+    // Positive control: this is the field that holds the address.
+    expect(field.value).toBe(RECIPIENT_ADDRESS);
+    expect(
+      field.getAttribute("spellcheck"),
+      "the address of the person being paid is left to the browser's spellchecker",
+    ).toBe("false");
+    expect(field.getAttribute("autocomplete")).toBe("off");
+    expect(field.getAttribute("autocorrect")).toBe("off");
+    expect(field.getAttribute("autocapitalize")).toBe("off");
+  });
+
   it("will not seal until a note is picked", async () => {
     const user = userEvent.setup();
     renderForm();
@@ -397,6 +422,40 @@ describe("sealing", () => {
       );
       expect(after).not.toBe(SEALED);
       expect(after).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * Sweep round 1 (logs8), fix lane 2. The take-back above died with the panel:
+   * the timer was cancelled on unmount, and PayApp unmounts the panels on
+   * disconnect, on a wallet switch and on the identity chip's reset. The
+   * compare in `clearBearerIfUnchanged` already protects a newer copy, so the
+   * cancel bought nothing. The clear is NOT brought forward to the unmount: the
+   * string was copied to be pasted, and the promise is a minute and a half.
+   */
+  it("still takes the sealed note back after the panel unmounts", async () => {
+    await seal();
+    await screen.findByTestId("sealed-note");
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole("button", { name: /Copy the note/i }));
+      await expect(navigator.clipboard.readText()).resolves.toBe(SEALED);
+      cleanup();
+      expect(document.body.textContent).not.toContain("p01enc1:");
+      // Still pasteable right after: leaving the panel is not the take-back.
+      await expect(navigator.clipboard.readText()).resolves.toBe(SEALED);
+      await vi.advanceTimersByTimeAsync(BEARER_CLIPBOARD_CLEAR_MS + 1_000);
+      const after = await navigator.clipboard.readText().then(
+        (t) => t,
+        () => "",
+      );
+      expect(
+        after === SEALED ? "the sealed note is still on the clipboard" : after,
+        "the sealed note outlived the panel on the clipboard",
+      ).toBe("");
     } finally {
       vi.useRealTimers();
     }
