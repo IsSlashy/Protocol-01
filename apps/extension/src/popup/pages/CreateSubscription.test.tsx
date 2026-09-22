@@ -397,7 +397,6 @@ function noteNamingCalls(calls: Call[], aliases: string[]): string[] {
  */
 async function settle() {
   for (let i = 0; i < 8; i++) {
-    // eslint-disable-next-line no-await-in-loop
     await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   }
 }
