@@ -389,7 +389,9 @@ describe('how the inventory is authorised', () => {
   });
 });
 
-describe('which note comes out of stock', () => {
+// The order test draws many purchases: 0.5 s here, over 5 s on a GitHub runner
+// (CI run 35769553676, 2026-09-22). The budget moves, not the sample size.
+describe('which note comes out of stock', { timeout: 60_000 }, () => {
   it('🚨 is not the configured order, so purchase order cannot be mapped to a leaf', async () => {
     // MEASURED shape of the bug: the loop walked `P01_TREASURY_NOTE_LEAVES` as
     // written, so the first buyer always got the first leaf. An analyst

@@ -188,7 +188,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('keyed bucket not reversible from a KV dump', () => {
+// Each case below walks a whole /16 (65,536 IPs x every public salt): about
+// 1 s here, over 5 s on a GitHub runner (CI run 35769553676, 2026-09-22),
+// where vitest's 5 s default failed them. The work is the point of the test,
+// so the budget moves, not the walk.
+describe('keyed bucket not reversible from a KV dump', { timeout: 60_000 }, () => {
   it('positive control: the /16 brute force recovers the IP from the public-salt formula', () => {
     const salts = publicSalts();
     // 5 route literals + 'salt' + ''. Fewer means the scan stopped reading them.
