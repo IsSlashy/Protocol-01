@@ -4,10 +4,11 @@
  * BE HONEST ABOUT WHAT THIS IS: these read the file as text. They cannot prove
  * the store behaves correctly and must never be cited as evidence that it does.
  * They exist because the store cannot be imported in this test environment —
- * its graph reaches `services/zkspl/index.ts:81`, which calls
+ * its graph reached `services/zkspl/index.ts:81`, which called
  * `SystemProgram.programId.toBase58()` at module scope, and the shared
- * `test/__mocks__/@solana/web3.js.ts` stub has no `programId`. Fixing that mock
- * would change a file shared with every other mobile suite.
+ * `test/__mocks__/@solana/web3.js.ts` stub has no `programId`. services/zkspl
+ * was deleted on 2026-09-23; whether the store now imports cleanly here has
+ * not been re-measured, so these stay text guards until someone does.
  *
  * So what these guard is narrow and specific: the three regressions that this
  * change exists to prevent, each of which is visible in the source and each of

@@ -4,9 +4,10 @@
  *
  * BE HONEST ABOUT WHAT THIS IS: it reads the store as text, exactly like its
  * sibling `storeWiring.test.ts`, and for the same reason — the store cannot be
- * imported in this environment (its graph reaches `services/zkspl/index.ts:81`,
- * which calls `SystemProgram.programId.toBase58()` at module scope, and the
- * shared web3.js mock has no `programId`). A green here does not prove the
+ * imported in this environment (its graph reached `services/zkspl/index.ts:81`,
+ * which called `SystemProgram.programId.toBase58()` at module scope, and the
+ * shared web3.js mock has no `programId`; services/zkspl was deleted on
+ * 2026-09-23 and the import has not been re-measured since). A green here does not prove the
  * store behaves; `spentSet.test.ts` measures the behaviour of what these bodies
  * now call, and this file measures that they call it AND use its answer.
  *

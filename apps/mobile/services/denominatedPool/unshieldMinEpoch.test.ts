@@ -13,8 +13,6 @@
  *     dynamic_delay, nullifier);` (unshield_denominated_stark_v3.rs:387)
  *   - v2: enforcement was deliberately removed
  *     (unshield_denominated_stark.rs:212-220)
- *   - p01_liquidity `prefund` only stores it on the record (prefund.rs:197);
- *     `settle` rebuilds the CPI with its own current_epoch (settle.rs:109-116)
  *
  * So anything note-derived written here is pure leakage. This client was
  * writing the CURRENT epoch (harmless — it is already public from the block
@@ -175,8 +173,7 @@ describe('buildUnshieldDenominatedStarkV3Ix — min_epoch@72 is always zero', ()
 });
 
 describe('buildUnshieldDenominatedStarkIx (v2) — min_epoch@72 is always zero', () => {
-  // Same contract on the v2 instruction, which the classic and instant
-  // (p01_liquidity prefund) paths both build.
+  // Same contract on the v2 instruction, which the unshield path builds.
   const ix = buildUnshieldDenominatedStarkIx(
     payer, recipient, pool, tree, nullifierPDA, bufA,
     nullifierBytes, merkleRootBytes, STARK_COMMITMENT,

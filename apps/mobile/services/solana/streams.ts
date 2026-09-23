@@ -83,13 +83,6 @@ export interface Stream {
    */
   licenseServiceTag?: string;
 
-  // On-chain subscription data (for automatic payments via relayer)
-  onChainSubscription?: {
-    merchant: string;         // Merchant/recipient public key
-    subscriptionId: string;   // Unique subscription ID on-chain
-    mint: string;             // Token mint (for delegation)
-  };
-
   // Set when this stream is backed by a ZK subscription vault (subscribe_private_stark).
   // Used to route pause/resume/cancel from the Streams UI to the STARK actions on-chain.
   vaultAddress?: string;
@@ -720,37 +713,6 @@ export async function pauseStream(streamId: string): Promise<Stream | null> {
   return updateStream(streamId, { status: 'paused' });
 }
 
-// Pause stream and publish to blockchain (for on-chain subscriptions)
-export async function pauseStreamOnChain(
-  streamId: string,
-  keypair: import('@solana/web3.js').Keypair
-): Promise<{ stream: Stream | null; signature: string | null }> {
-  const stream = await getStream(streamId);
-  if (!stream) return { stream: null, signature: null };
-
-  // Pause locally first
-  const updatedStream = await pauseStream(streamId);
-
-  // If this is an on-chain subscription, pause on blockchain too
-  let signature: string | null = null;
-  if (stream.onChainSubscription) {
-    try {
-      const { pauseSubscriptionOnChain } = await import('./subscriptionContract');
-      const { PublicKey } = await import('@solana/web3.js');
-      signature = await pauseSubscriptionOnChain(
-        keypair,
-        new PublicKey(stream.onChainSubscription.merchant),
-        stream.onChainSubscription.subscriptionId
-      );
-    } catch (error) {
-      console.warn('[Streams] Failed to pause on-chain:', error);
-      // Local pause still succeeded
-    }
-  }
-
-  return { stream: updatedStream, signature };
-}
-
 // Resume a stream (local only)
 export async function resumeStream(streamId: string): Promise<Stream | null> {
   const stream = await getStream(streamId);
@@ -781,37 +743,6 @@ export async function resumeStream(streamId: string): Promise<Stream | null> {
     nextPaymentDate,
     noisyPaymentDate,
   });
-}
-
-// Resume stream and publish to blockchain (for on-chain subscriptions)
-export async function resumeStreamOnChain(
-  streamId: string,
-  keypair: import('@solana/web3.js').Keypair
-): Promise<{ stream: Stream | null; signature: string | null }> {
-  const stream = await getStream(streamId);
-  if (!stream) return { stream: null, signature: null };
-
-  // Resume locally first
-  const updatedStream = await resumeStream(streamId);
-
-  // If this is an on-chain subscription, resume on blockchain too
-  let signature: string | null = null;
-  if (stream.onChainSubscription) {
-    try {
-      const { resumeSubscriptionOnChain } = await import('./subscriptionContract');
-      const { PublicKey } = await import('@solana/web3.js');
-      signature = await resumeSubscriptionOnChain(
-        keypair,
-        new PublicKey(stream.onChainSubscription.merchant),
-        stream.onChainSubscription.subscriptionId
-      );
-    } catch (error) {
-      console.warn('[Streams] Failed to resume on-chain:', error);
-      // Local resume still succeeded
-    }
-  }
-
-  return { stream: updatedStream, signature };
 }
 
 // Cancel a stream (adds to cancelled list - will show in History)

@@ -6,11 +6,9 @@
  *
  * RULE #1: NO private inputs are sent to the relayer. All proving is client-side.
  *
- * Proving strategy:
- *   - snarkjs WASM loaded from bundled assets (Expo Asset system)
- *   - Single-threaded (no Web Workers in React Native)
- *   - Proof time ~1-3s on modern devices (4,273 constraints)
- *   - If snarkjs WASM fails on RN, see PROVING_NOTES at bottom of file
+ * Proving strategy: STARK proofs from the p01-stark WASM prover, run in a
+ * hidden WebView (services/stark/StarkProver.tsx). The Groth16/snarkjs prover
+ * and its Circom artefacts were deleted on 2026-09-23.
  */
 
 import nacl from 'tweetnacl';
@@ -1519,7 +1517,7 @@ export interface WalletSigner {
 //
 // This ORPHANS one of the four accepted seed classes from the spec:
 //   (a) mobile `p01_note_seed_v1_*`   ← THIS ONE
-//   (b) mobile `p01_zk_seed`          (see services/zkspl + services/stark)
+//   (b) mobile `p01_zk_seed`          (see services/stark; services/zkspl was deleted 2026-09-23)
 //   (c) extension `p01_privy_zk_seed`
 //   (d) extension `p01_zkspl_privy_seed_*`
 //
@@ -1793,20 +1791,16 @@ export async function shield(
 
 /**
  * The ONLY value this client ever publishes in the `min_epoch` argument of an
- * unshield instruction — v2 (`unshield_denominated_stark`), v3
- * (`unshield_denominated_stark_v3`) and the p01_liquidity `prefund` record
- * alike. It lands at byte offset 72 of `ix.data` on every one of them, the
- * same offset the web client uses.
+ * unshield instruction — v2 (`unshield_denominated_stark`) and v3
+ * (`unshield_denominated_stark_v3`) alike. It lands at byte offset 72 of
+ * `ix.data` on both, the same offset the web client uses.
  *
  * Why a constant:
  *
  *  - It is dead on-chain on the unshield path. v3 consumes it as
  *    `let _ = (amount, unshield_fee, min_epoch, current_epoch, dynamic_delay,
  *    nullifier);` (unshield_denominated_stark_v3.rs:387) and v2 explicitly
- *    stopped enforcing it (unshield_denominated_stark.rs:212-220). p01_liquidity
- *    only stores it on the PrefundRecord (prefund.rs:197) and `settle` rebuilds
- *    the CPI with its own `current_epoch` (settle.rs:109-116), so nothing reads
- *    the stored value either.
+ *    stopped enforcing it (unshield_denominated_stark.rs:212-220).
  *  - Anything note-derived in this slot narrows the anonymity set. This client
  *    was writing the *current* epoch, which is already public from the block
  *    slot, so nothing leaked yet — but the extension was writing the note's
@@ -1878,7 +1872,7 @@ export function buildUnshieldDenominatedStarkIx(
     { pubkey: recipientTokenAccount || ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: !!recipientTokenAccount },
     // Protocol fee wallet (0.5% unshield fee)
     { pubkey: PROTOCOL_FEE_WALLET, isSigner: false, isWritable: true },
-    // Optional prefund_record — always None for user-driven unshield (prefund is used by p01_liquidity::settle only)
+    // Optional prefund_record — always None (this client never builds a prefund)
     { pubkey: ZK_SHIELDED_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
@@ -1903,7 +1897,6 @@ export async function unshieldStark(
   walletSigner?: WalletSigner,
   emergency?: boolean,
   overrideKeypair?: import('@solana/web3.js').Keypair,
-  instant?: boolean,
 ): Promise<string> {
   const { submitAndVerifyStarkProof, closeStarkProofBuffer, CIRCUIT_POOL_COMMITMENT, getProofBufferPDA } = await import('../stark');
 
@@ -1938,17 +1931,13 @@ export async function unshieldStark(
   const merkleRootBytes = bigintToLeBytes32(receipt.merkleRoot!);
   // min_epoch is ALWAYS 0 on the unshield path — never the current epoch and
   // never the note's deposit epoch. See the UNSHIELD_MIN_EPOCH doc comment.
-  // zk_shielded stopped enforcing it (unshield_denominated_stark.rs:212-220),
-  // and p01_liquidity only records it (prefund.rs:197) — settle rebuilds the
-  // CPI with its own current_epoch (settle.rs:109-116). Mature, emergency and
-  // prefund paths therefore stay byte-identical to each other AND to the web
-  // and extension clients.
+  // zk_shielded stopped enforcing it (unshield_denominated_stark.rs:212-220).
+  // Mature and emergency paths therefore stay byte-identical to each other AND
+  // to the web and extension clients. The v2 unshield builder pins min_epoch
+  // itself.
   void emergency;
   void poolInfo;
   void currentEpoch;
-  // The v2 unshield builder pins min_epoch itself; the p01_liquidity prefund
-  // record below still takes it as an argument, so name it explicitly here.
-  const minEpoch = UNSHIELD_MIN_EPOCH;
 
   // Step 1: Submit + verify STARK proof on-chain (buffer stays open)
   // Use stealth keypair if available (overrideKeypair), otherwise walletSigner
@@ -1988,39 +1977,7 @@ export async function unshieldStark(
       connection,
     );
 
-    // Step 2a: Instant path — route through p01_liquidity.prefund. The STARK
-    // proof buffer remains open; settle() (keeper or later UI action) will
-    // consume it via CPI into zk_shielded.unshield_denominated_stark.
-    if (instant) {
-      onProgress?.('Requesting instant liquidity prefund...');
-      const { buildPrefundIx } = await import('../liquidity');
-      const starkCommitmentForPrefund = starkProofData.publicInputs[1] ?? 0n;
-      const prefundIx = buildPrefundIx({
-        ephemeralSigner: starkSigner.publicKey,
-        recipient,
-        denominatedPool: poolConfig.poolPDA,
-        starkProofBuffer: proofBuffer,
-        nullifier: nullifierBytes,
-        merkleRoot: merkleRootBytes,
-        minEpoch,
-        starkCommitment: starkCommitmentForPrefund,
-        amount: poolConfig.denominationAtomic,
-      });
-
-      const prefundTx = new Transaction();
-      prefundTx.add(...buildComputeBudgetIxs(200_000));
-      prefundTx.add(prefundIx);
-
-      onProgress?.('Sending prefund transaction...');
-      const prefundSig = await signAndSend(connection, prefundTx, effectiveKeypair, effectiveWalletSigner);
-      onProgress?.('Prefunded!');
-      // Do NOT close the proof buffer — settle() needs it. Caller should
-      // surface the ephemeral signer + buffer PDA if they want to reclaim
-      // rent after settlement.
-      return prefundSig;
-    }
-
-    // Step 2b: Classic unshield — direct CPI-free call into zk_shielded.
+    // Step 2: Unshield — direct CPI-free call into zk_shielded.
     onProgress?.('Building unshield transaction...');
     const [nullifierPDA] = deriveNullifierPDA(poolConfig.poolPDA, nullifierBytes);
 
@@ -2106,16 +2063,12 @@ export async function unshieldStark(
     onProgress?.('Done!');
     return sig;
   } finally {
-    // Close proof buffer EXCEPT on the instant path, where settle() still
-    // needs to read it via CPI. Classic/emergency paths always close —
-    // refunds ~0.08-0.85 SOL rent to the signer.
-    if (!instant) {
-      try {
-        onProgress?.('Closing proof buffer...');
-        await closeStarkProofBuffer(proofBuffer, effectiveWalletSigner, connection);
-      } catch (closeErr: any) {
-        console.warn('[DenomPool] closeStarkProofBuffer failed (rent may be stranded):', closeErr.message);
-      }
+    // Always close the proof buffer — refunds ~0.08-0.85 SOL rent to the signer.
+    try {
+      onProgress?.('Closing proof buffer...');
+      await closeStarkProofBuffer(proofBuffer, effectiveWalletSigner, connection);
+    } catch (closeErr: any) {
+      console.warn('[DenomPool] closeStarkProofBuffer failed (rent may be stranded):', closeErr.message);
     }
   }
 }
@@ -3847,7 +3800,7 @@ function buildTransferDenominatedStarkV3Ix(
  * V3 shield — orchestrates (1) C6 proof submit + verify, (2) shield_denominated_v3.
  *
  * Caller must have already generated the C6 STARK proof via the StarkProver
- * provider (`generateMerkleUpdateProof` — already wired into ZkService).
+ * provider (`generateMerkleUpdateProof`, from `useStarkProver()`).
  * `c6ProofResult` is the GenericStarkProofResult for circuit 6:
  *   publicInputs = [old_leaf=0, new_leaf=commitment_u64, old_root_u64,
  *                   new_root_u64, depth_u64]
@@ -4526,8 +4479,6 @@ export async function transferDenominatedStarkV3(
 // were removed from the protocol; `cancel_private_stark` is deleted, so there
 // is nothing to port to V3. A subscription is a one-way prepaid envelope and
 // `claim_period` is its only exit.
-// TODO(v3-prefund): port the p01_liquidity prefund path with the C1/C3 buffer
-// pair (currently v2-only — see unshieldStark `instant` flag).
 
 // ---------------------------------------------------------------------------
 // Note import/export (backup & sharing)
@@ -4655,19 +4606,7 @@ export function receiptFromJSON(json: string): ShieldReceipt {
 // ---------------------------------------------------------------------------
 // PROVING ARCHITECTURE
 // ---------------------------------------------------------------------------
-// Proof generation uses a hidden WebView (DenominatedPoolProverProvider):
-//   - snarkjs loaded from CDN inside the WebView (browser environment)
-//   - Circuit files loaded from Expo assets → base64 → injected into WebView
-//   - Proof inputs sent via postMessage, proof returned via onMessage
-//   - ~1-3s proof time for 4,273 constraints on modern phones
-//
-// Why WebView, not direct snarkjs in React Native?
-//   snarkjs depends on fastfile, circom_runtime, etc. which use Node.js APIs.
-//   Metro shims these to empty modules. The WebView provides a proper browser
-//   environment where snarkjs works out of the box.
-//
-// Future improvement (Plan B): Rust native prover via Expo Modules (JSI bridge)
-//   - Build ark-circom as a native module → ~50ms proof time
-//   - Eliminates snarkjs CDN dependency
+// Proof generation uses a hidden WebView running the p01-stark WASM prover
+// (services/stark/StarkProver.tsx, providers/StarkProverProvider.tsx).
 //
 // RULE #1: Private inputs NEVER leave the device.

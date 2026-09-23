@@ -233,44 +233,6 @@ function buildClaimPeriodIx(
   return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
 }
 
-/**
- * Build pause_normal instruction.
- */
-function buildPauseNormalIx(
-  subscriber: PublicKey,
-  vaultPDA: PublicKey,
-): TransactionInstruction {
-  const disc = getDiscriminator('pause_normal');
-  const data = Buffer.alloc(8);
-  disc.copy(data, 0);
-
-  const keys = [
-    { pubkey: subscriber, isSigner: true, isWritable: false },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
-/**
- * Build resume_normal instruction.
- */
-function buildResumeNormalIx(
-  subscriber: PublicKey,
-  vaultPDA: PublicKey,
-): TransactionInstruction {
-  const disc = getDiscriminator('resume_normal');
-  const data = Buffer.alloc(8);
-  disc.copy(data, 0);
-
-  const keys = [
-    { pubkey: subscriber, isSigner: true, isWritable: false },
-    { pubkey: vaultPDA, isSigner: false, isWritable: true },
-  ];
-
-  return new TransactionInstruction({ programId: ZK_SHIELDED_PROGRAM_ID, keys, data });
-}
-
 // ---------------------------------------------------------------------------
 // Wallet Signer Helper
 // ---------------------------------------------------------------------------
@@ -342,58 +304,6 @@ export async function claimPeriod(
 
   onProgress?.('Done!');
   markPayComplete('vault-claim', { signature: sig, vault: vaultPDA.toBase58() });
-  return sig;
-}
-
-/**
- * Pause a normal subscription.
- */
-export async function pauseNormal(
-  vaultPDA: PublicKey,
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-): Promise<string> {
-  onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Building transaction...');
-  const ix = buildPauseNormalIx(walletPubkey, vaultPDA);
-
-  onProgress?.('Sending transaction...');
-  const tx = new Transaction().add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
-
-  onProgress?.('Done!');
-  return sig;
-}
-
-/**
- * Resume a normal subscription.
- */
-export async function resumeNormal(
-  vaultPDA: PublicKey,
-  onProgress?: (step: string) => void,
-  walletSigner?: WalletSigner,
-): Promise<string> {
-  onProgress?.('Reading wallet...');
-  const keypair = walletSigner ? null : await getKeypair();
-  if (!keypair && !walletSigner) throw new Error('Wallet not found');
-
-  const walletPubkey = keypair ? keypair.publicKey : walletSigner!.publicKey;
-  const connection = getConnection();
-
-  onProgress?.('Building transaction...');
-  const ix = buildResumeNormalIx(walletPubkey, vaultPDA);
-
-  onProgress?.('Sending transaction...');
-  const tx = new Transaction().add(ix);
-  const sig = await signAndSend(connection, tx, keypair, walletSigner);
-
-  onProgress?.('Done!');
   return sig;
 }
 

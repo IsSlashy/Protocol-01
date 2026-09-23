@@ -27,10 +27,6 @@ interface SettingsState {
   currency: Currency;
   initialized: boolean;
 
-  // Privacy feature toggles (off by default — legacy features)
-  shieldedWalletEnabled: boolean;
-  confidentialBalanceEnabled: boolean;
-
   // Phase A — route V3 shield/unshield/transfer through p01_relayer
   // (hides RPC IP + outer fee_payer). Default ON; off only for debugging.
   relayerV3Enabled: boolean;
@@ -45,8 +41,6 @@ interface SettingsState {
   // Actions
   initialize: () => Promise<void>;
   setCurrency: (currency: Currency) => Promise<void>;
-  setShieldedWalletEnabled: (enabled: boolean) => Promise<void>;
-  setConfidentialBalanceEnabled: (enabled: boolean) => Promise<void>;
   setRelayerV3Enabled: (enabled: boolean) => Promise<void>;
   setRelayerStrictMode: (enabled: boolean) => Promise<void>;
 
@@ -61,8 +55,6 @@ const PRIVACY_TOGGLES_KEY = 'p01_privacy_toggles';
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   currency: 'USD',
   initialized: false,
-  shieldedWalletEnabled: false,
-  confidentialBalanceEnabled: false,
   // OFF since 2026-08-28: both hosted p01_relayer nodes were retired (10 relay
   // jobs in 45 days, and their own /health reported lastPollCount 0 the whole
   // time). With no node registered, `signAndSendViaRelayer` can only fail — and
@@ -89,8 +81,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       if (togglesRaw) {
         try {
           const toggles = JSON.parse(togglesRaw);
-          updates.shieldedWalletEnabled = toggles.shieldedWalletEnabled ?? false;
-          updates.confidentialBalanceEnabled = toggles.confidentialBalanceEnabled ?? false;
           // Deliberately NOT read back from storage while no node is registered
           // on chain. Every install that ran before 2026-08-28 has `true`
           // persisted here, and with strict mode on that value fails the v3
@@ -113,30 +103,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ currency });
     } catch (error) {
       console.error('Failed to save currency setting:', error);
-    }
-  },
-
-  setShieldedWalletEnabled: async (enabled: boolean) => {
-    set({ shieldedWalletEnabled: enabled });
-    try {
-      const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
-      const toggles = raw ? JSON.parse(raw) : {};
-      toggles.shieldedWalletEnabled = enabled;
-      await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
-    } catch (error) {
-      console.error('Failed to save privacy toggle:', error);
-    }
-  },
-
-  setConfidentialBalanceEnabled: async (enabled: boolean) => {
-    set({ confidentialBalanceEnabled: enabled });
-    try {
-      const raw = await AsyncStorage.getItem(PRIVACY_TOGGLES_KEY);
-      const toggles = raw ? JSON.parse(raw) : {};
-      toggles.confidentialBalanceEnabled = enabled;
-      await AsyncStorage.setItem(PRIVACY_TOGGLES_KEY, JSON.stringify(toggles));
-    } catch (error) {
-      console.error('Failed to save privacy toggle:', error);
     }
   },
 

@@ -9,7 +9,7 @@
  *
  * Four orphaned seed classes are accepted (see spec R-12):
  *   (a) mobile  `p01_note_seed_v1_*`     (services/denominatedPool)
- *   (b) mobile  `p01_zk_seed`            (services/zkspl, services/stark)
+ *   (b) mobile  `p01_zk_seed`            (services/stark; services/zkspl deleted 2026-09-23)
  *   (c) ext.    `p01_privy_zk_seed`
  *   (d) ext.    `p01_zkspl_privy_seed_*`
  *

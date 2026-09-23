@@ -93,10 +93,8 @@ export class ShareService {
   /**
    * Wrap exported note data into a universal NotePayload.
    *
-   * @param noteType   - 'zk-shielded' or 'denominated-pool'
-   * @param exportedData - Raw output of exportNote() from the respective service
-   *   - ZK Shielded: string from ZkService.exportNote() (format: "p01note:<base64>")
-   *   - Denominated Pool: string from encodeShareableNote() (base64 JSON)
+   * @param noteType   - 'denominated-pool'
+   * @param exportedData - Raw output of encodeShareableNote() (base64 JSON)
    */
   prepareNote(noteType: NoteType, exportedData: string): NotePayload {
     return {

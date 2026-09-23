@@ -58,9 +58,10 @@ export interface PendingReceiveAddress {
   status: 'pending' | 'funded' | 'shielding' | 'shielded';
   /** Detected balance in lamports (set when funded) */
   balanceLamports?: number;
-  /** Source of funds — 'receive' (manual), 'moonpay'. The P2P fiat rail was
-   *  removed on 2026-08-19 along with the exchange it depended on. */
-  source?: 'receive' | 'moonpay';
+  /** Source of funds — 'receive' (manual). The P2P fiat rail was removed on
+   *  2026-08-19 along with the exchange it depended on, and the unreachable
+   *  MoonPay on-ramp on 2026-09-23. */
+  source?: 'receive';
   /** Expected amount in lamports (for buy tracking) */
   expectedLamports?: number;
 }

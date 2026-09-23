@@ -196,9 +196,10 @@ describe('the vault screens cannot say Active before the slot poll lands', () =>
     rate: 100_000n,
   });
 
-  it('both screens hold currentSlot null on first render and pass 0', () => {
-    // subscription-vaults.tsx and vault-detail.tsx both start at `null` and
-    // fetch the slot in an effect, so the first paint happens with no clock.
+  it('a screen that holds currentSlot null on first render passes 0', () => {
+    // A vault screen starts at `null` and fetches the slot in an effect, so the
+    // first paint happens with no clock (the retired subscription-vaults.tsx and
+    // vault-detail.tsx did exactly this).
     // The raw predicate is optimistic there; the badge helper is not.
     expect(subscriptionIsCurrent(v, 0)).toBe(true);
     expect(entitlementStatus(v, 0)).toBe('unknown');

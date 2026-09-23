@@ -1,6 +1,7 @@
 /**
- * What the mobile privacy screens and the old zk service are allowed to put on
- * a screen and into logcat.
+ * What the mobile privacy screens are allowed to put on a screen and into
+ * logcat. (The retired V1 zk service, services/zk/index.ts, had its own cases
+ * here; they were deleted with that file on 2026-09-23.)
  *
  * WHY LOGCAT IS A REAL READER, not a developer convenience. `babel.config.js`
  * strips `console.log` and `console.debug` from a production bundle
@@ -47,9 +48,8 @@ const code = (rel: string) => strip(raw(rel));
 const NOTES = 'app/(main)/(privacy)/denominated-notes.tsx';
 const UNSHIELD = 'app/(main)/(privacy)/denominated-unshield.tsx';
 const TRANSFER = 'app/(main)/(privacy)/denominated-transfer.tsx';
-const ZK = 'services/zk/index.ts';
 
-/** The three rows that used to print a deposit date, plus the zk service. */
+/** The three rows that used to print a deposit date. */
 const SCREENS = [NOTES, UNSHIELD, TRANSFER] as const;
 
 // ── the rules ────────────────────────────────────────────────────────────────
@@ -451,8 +451,6 @@ function renderedFindings(rel: string, src: string): string[] {
 
 /** Where a value becomes text somebody else can read. */
 const SCREEN_SINK = /\bconsole\.(?:log|warn|error|info|debug)\(|\bError\(|\bp01Alert\(/;
-/** In zk/index.ts: what ships to logcat, and what a screen shows via `err.message`. */
-const ZK_SINK = /\bconsole\.(?:warn|error)\(|\bError\(/;
 
 /** Every value `src` hands to `sink` that `allowed` does not name. */
 function sinkFindings(rel: string, src: string, sink: RegExp, allowed: readonly string[]): string[] {
@@ -469,8 +467,7 @@ function sinkFindings(rel: string, src: string, sink: RegExp, allowed: readonly 
  * The values the three screens may put into a message, an alert or a log.
  * Literal text is emptied (`''`), so `t('')` is any translation key.
  *
- * `err.message` / `(e as Error).message` forward a service error; what the zk
- * service may put in one is held by ZK_SINK_VALUES below. The unshield
+ * `err.message` / `(e as Error).message` forward a service error. The unshield
  * success alert shows the recipient the user typed and the transaction the
  * user just sent, both of which the user already has.
  */
@@ -513,34 +510,6 @@ const SCREEN_SINK_VALUES: Record<string, readonly string[]> = {
     "[ { text: t(''), onPress: () => { handleCopy(); } }, { text: t(''), style: '', onPress: go }, ]",
   ],
 };
-
-/**
- * The values zk/index.ts may put into a warn, an error, or a thrown Error.
- * Error objects (`e`, `err`, `error`) are forwarded as they are. `publicAmountField`/`pubAmtGl`
- * is the unshield's public amount, which the unshield instruction publishes.
- * No commitment, root or leaf position is on this list; `the allowlists name
- * no note` holds that.
- *
- * FIX ROUND 2: NO POOL COUNT EITHER. Round 1 allowed `data.leafCount`,
- * `expectedLeafCount`, `onChainLeafCount`, `cachedLeafCount` and
- * `this.merkleTree.leafCount` as "the pool's public counter". A count logged
- * at a given moment is not neutral: `loadLocalSubtrees` compared the stored
- * count, which `saveLocalSubtrees` writes as `onChainState.leafCount + 1`
- * right after the user's own shield (= that note's leaf + 1), with the count
- * the next note is about to take, and warned both. That linked two deposits of
- * one user (scratchpad/wp-logs/verify/MOB-UI-r2-mutants.log, r1). The same
- * goes for `missingCount`, the number of the user's OWN notes the tree rebuild
- * needed, and for `err.logs`, the program log lines of a rejected unshield.
- * `the allowlists name no note` now also refuses any of these names.
- */
-const ZK_SINK_VALUES: readonly string[] = [
-  'e', 'e.message', 'err', 'error',
-  'JSON.stringify(confirmation.value.err)',
-  'MAX_RETRIES', 'attempt',
-  'have', 'need', 'recovered', '(shieldAmount / 1e9).toFixed(4)',
-  'amount', 'totalValue',
-  'publicAmountField', 'pubAmtGl',
-];
 
 /** Counts whose value at the moment they are logged can place a note. */
 const POOL_COUNT = /leafcount|missingcount|cachehits|\.logs\b/i;
@@ -787,31 +756,19 @@ describe('the privacy screens name no note', () => {
   });
 });
 
-describe('the zk service names no note in a log that ships', () => {
-  it('no warn or error argument names a note', () => {
-    const bad = loggedNotes(code(ZK), SHIPS_TO_LOGCAT).map((f) => show(ZK, f));
-    expect(bad).toEqual([]);
-  });
-
-  it('the file still logs — this is not "delete every console"', () => {
-    // Without this, deleting every warn and error in the file would pass the
-    // case above, and a release build would go silent on real failures.
-    const ships = consoleCalls(code(ZK)).filter((c) =>
-      SHIPS_TO_LOGCAT.includes(c.method as (typeof SHIPS_TO_LOGCAT)[number]),
-    );
-    expect(ships.length).toBeGreaterThan(30);
-  });
-
+describe('the console walker reads every call to its end', () => {
   it('every console call is read to its closing parenthesis', () => {
     // The coverage guard for the walker: a call it could not close would have
     // its arguments truncated, and a note named in the tail would go unread.
     const unclosed: string[] = [];
-    for (const rel of [...SCREENS, ZK, 'babel.config.js']) {
+    for (const rel of [...SCREENS, 'babel.config.js']) {
       for (const c of consoleCalls(code(rel))) if (!c.closed) unclosed.push(show(rel, c));
     }
     expect(unclosed).toEqual([]);
-    // And it really did find the calls it claims to have read.
-    expect(consoleCalls(code(ZK)).length).toBeGreaterThan(80);
+    // And it really did find the calls it claims to have read (the unshield
+    // screen makes 3 on 2026-09-23; the retired zk service used to carry this
+    // guard with more than 80).
+    expect(SCREENS.flatMap((rel) => consoleCalls(code(rel))).length).toBeGreaterThanOrEqual(3);
   });
 });
 
@@ -831,17 +788,12 @@ describe('fix round 1: what reaches a row, a message or a log is named, not gues
     expect(bad).toEqual([]);
   });
 
-  it('every value zk/index.ts puts in a warn, an error or a thrown Error is one reviewed here', () => {
-    expect(sinkFindings(ZK, raw(ZK), ZK_SINK, ZK_SINK_VALUES)).toEqual([]);
-  });
-
   it('the allowlists name no note, no root and no deposit time', () => {
     // Without this, "fixing" a red above by adding `note.leafIndex` to a list
     // would be a one-line change. Upper-case constants (C3_SUBTREE_DEPTH) are
     // circuit shapes, not values of a note.
     const lists = [
       ...Object.values(SCREEN_SINK_VALUES).flat(),
-      ...ZK_SINK_VALUES,
       ...Object.values(RENDERED_VALUES).flat(),
     ];
     const named = lists.filter((v) => {
@@ -907,17 +859,6 @@ describe('fix round 1: the allowlists fire on the round-1 mutations', () => {
     ]);
   });
 
-  it('m5: a leaf index through a local variable in a warn that ships', () => {
-    const src = mutate(
-      raw(ZK),
-      "console.warn('[ZK] Duplicate tree position while loading notes; keeping the one already stored.');",
-      "const pos = note.leafIndex;\n            console.warn('[ZK] Duplicate tree position', pos);",
-    );
-    const before = new Set(sinkFindings(ZK, raw(ZK), ZK_SINK, ZK_SINK_VALUES));
-    const added = sinkFindings(ZK, src, ZK_SINK, ZK_SINK_VALUES).filter((f) => !before.has(f));
-    expect(added).toEqual([`${ZK} :: pos`]);
-  });
-
   it('m6: the original line-394 date', () => {
     const src = mutate(
       raw(NOTES),
@@ -929,7 +870,7 @@ describe('fix round 1: the allowlists fire on the round-1 mutations', () => {
   });
 
   it('the skeleton keeps apostrophes inside templates from hiding a value', () => {
-    // `two's complement` sits inside a template in zk/index.ts; a quote-naive
+    // `two's complement` sat inside a template in the retired zk/index.ts; a quote-naive
     // reader would pair that apostrophe with a later one and skip the value.
     expect(operands(skeleton("`it's ${a}` + 'b' + `c ${d.e(1, 2)} f`"))).toEqual(['a', 'd.e(1, 2)']);
     expect(operands(skeleton("'x', \"y\", `z`"))).toEqual([]);
@@ -940,7 +881,6 @@ describe('fix round 2: what a screen renders is parsed, and a log carries no poo
   // The mutations are the round-2 verifier's r1-r3
   // (scratchpad/wp-logs/verify/MOB-UI-r2-mutants.mjs), applied to the real files.
   const ROW2 = '{noteSubtitle(note, { lead: srcLabel(note), tag: tagOf(note) })}';
-  const W925 = "console.warn('[ZK Shield] Local leaf position disagreed with the chain; corrected from the chain.');";
 
   it('every value a screen renders as text is one reviewed here', () => {
     const bad = SCREENS.flatMap((rel) => renderedFindings(rel, raw(rel)));
@@ -955,30 +895,6 @@ describe('fix round 2: what a screen renders is parsed, and a log carries no poo
     for (const rel of SCREENS) {
       const src = raw(rel);
       expect(callsIn(skeleton(strip(jsxSafe(rel, src))), SCREEN_SINK).length, rel).toBe(parsedSinkCount(rel, src, SCREEN_SINK));
-    }
-    const zk = raw(ZK);
-    expect(callsIn(skeleton(strip(jsxSafe(ZK, zk))), ZK_SINK).length).toBe(parsedSinkCount(ZK, zk, ZK_SINK));
-  });
-
-  it('r1: a pool count back in a zk warn goes red, wherever it stands', () => {
-    const src = mutate(raw(ZK), W925, "console.warn('[ZK Shield] corrected from the chain:', onChainLeafCount);");
-    expect(sinkFindings(ZK, src, ZK_SINK, ZK_SINK_VALUES)).toContain(`${ZK} :: onChainLeafCount`);
-    // The pre-round-2 loadLocalSubtrees line, put back under its condition.
-    const stale = mutate(
-      raw(ZK),
-      'if (expectedLeafCount !== undefined && data.leafCount !== expectedLeafCount) {',
-      "if (expectedLeafCount !== undefined && data.leafCount !== expectedLeafCount) {\n        console.warn('[ZK Shield] Stale local subtrees:', data.leafCount, 'leaves, need', expectedLeafCount);",
-    );
-    const found = sinkFindings(ZK, stale, ZK_SINK, ZK_SINK_VALUES);
-    expect(found).toContain(`${ZK} :: data.leafCount`);
-    expect(found).toContain(`${ZK} :: expectedLeafCount`);
-    for (const line of [
-      "console.warn('[ZK] Had', missingCount, 'note fallbacks and', cacheHits, 'cache hits');",
-      "console.error('[ZK Unshield] Logs:', err.logs);",
-      "console.error('[ZK Unshield] Preflight error:', err.message);",
-      "console.error('[ZK Import] Note not found in merkle tree. Tree has', this.merkleTree.leafCount, 'leaves');",
-    ]) {
-      expect(sinkFindings(ZK, mutate(raw(ZK), W925, line), ZK_SINK, ZK_SINK_VALUES).length, line).toBeGreaterThan(0);
     }
   });
 

@@ -11,9 +11,7 @@ import {
   type WalletSigner,
   subscribePrivateStark,
   claimPeriod,
-  pauseNormal,
   pausePrivateStark,
-  resumeNormal,
   resumePrivateStark,
   fetchVault,
   computeClaimable,
@@ -170,13 +168,11 @@ interface SubscriptionVaultState {
     serviceId?: string,
   ) => Promise<{ signature: string; vaultAddress: string }>;
   claimPeriodAction: (vaultAddress: string) => Promise<string>;
-  pauseNormalAction: (vaultAddress: string) => Promise<string>;
   /** STARK variant: quantum-resistant pause_private using pre-verified proof buffer */
   pausePrivateStarkAction: (
     vaultAddress: string,
     starkProofData: { proofBytes: Uint8Array; commitment: bigint; proofSize: number },
   ) => Promise<string>;
-  resumeNormalAction: (vaultAddress: string) => Promise<string>;
   /** STARK variant: quantum-resistant resume_private using pre-verified proof buffer */
   resumePrivateStarkAction: (
     vaultAddress: string,
@@ -872,40 +868,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
       },
 
       // ------------------------------------------------------------------
-      // Pause Normal
-      // ------------------------------------------------------------------
-
-      pauseNormalAction: async (vaultAddress) => {
-        set({ isLoading: true, error: null, progress: 'Pausing...' });
-
-        try {
-          const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
-          const sig = await pauseNormal(
-            vaultPDA,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          set({ isLoading: false, progress: null });
-
-          notifySubscriptionEvent(
-            'Subscription Paused',
-            'Your subscription has been paused',
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] pauseNormal error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
-        }
-      },
-
-      // ------------------------------------------------------------------
       // Pause Private (STARK — quantum-resistant)
       // ------------------------------------------------------------------
 
@@ -937,40 +899,6 @@ export const useSubscriptionVaultStore = create<SubscriptionVaultState>()(
           throw err;
         } finally {
           set({ isLoading: false, progress: null });
-        }
-      },
-
-      // ------------------------------------------------------------------
-      // Resume Normal
-      // ------------------------------------------------------------------
-
-      resumeNormalAction: async (vaultAddress) => {
-        set({ isLoading: true, error: null, progress: 'Resuming...' });
-
-        try {
-          const vaultPDA = new PublicKey(vaultAddress);
-          const walletSigner: WalletSigner | undefined = undefined; // Privy removed — local keypair only
-          const sig = await resumeNormal(
-            vaultPDA,
-            (step) => {
-              set({ progress: step });
-            },
-            walletSigner,
-          );
-
-          set({ isLoading: false, progress: null });
-
-          notifySubscriptionEvent(
-            'Subscription Resumed',
-            'Your subscription has been resumed',
-            { transactionId: sig },
-          );
-
-          return sig;
-        } catch (err) {
-          console.error('[SubscriptionVault] resumeNormal error:', err);
-          set({ isLoading: false, progress: null, error: (err as Error).message });
-          throw err;
         }
       },
 

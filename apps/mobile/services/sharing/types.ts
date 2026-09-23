@@ -8,7 +8,9 @@
 // Enums
 // ---------------------------------------------------------------------------
 
-export type NoteType = 'zk-shielded' | 'denominated-pool';
+// 'zk-shielded' (the retired V1 shielded wallet) was removed 2026-09-23. A
+// payload of that type from an older build is refused on import.
+export type NoteType = 'denominated-pool';
 export type TransportType = 'ble' | 'nfc';
 
 export type ShareSessionState =
