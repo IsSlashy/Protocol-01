@@ -8,11 +8,31 @@ vi.stubEnv('DISCORD_WEBHOOK', '');
 // Mock the kv module before importing route handlers
 const mockKvGet = vi.fn();
 const mockKvSet = vi.fn();
+/**
+ * close-v1 (audit v1 F13, F64): the route now also counts (`incr` / `expire`)
+ * and serializes its writes with a lock (`set ... nx ex` / `del`). The counters
+ * get a plain in-memory map here, emptied before every case, and the lock's
+ * `set` is answered below, so `mockKvSet` still sees exactly the whitelist
+ * writes these assertions always did.
+ */
+const counters = new Map<string, number>();
 
 vi.mock('@vercel/kv', () => ({
   kv: {
     get: (...args: unknown[]) => mockKvGet(...args),
-    set: (...args: unknown[]) => mockKvSet(...args),
+    // The route's write lock (`SET whitelist:lock <owner> NX EX`, close-v1 F13)
+    // is not the whitelist write these cases assert on; it is always free here.
+    set: (...args: unknown[]) => (args[0] === 'whitelist:lock' ? Promise.resolve('OK') : mockKvSet(...args)),
+    incr: async (key: string) => {
+      const n = (counters.get(key) ?? 0) + 1;
+      counters.set(key, n);
+      return n;
+    },
+    expire: async () => 1,
+    del: async (key: string) => {
+      counters.delete(key);
+      return 1;
+    },
   },
 }));
 
@@ -56,6 +76,7 @@ describe('the wallet never travels in the request line', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    counters.clear();
     mockKvGet.mockResolvedValue({
       approved: [{ wallet: WALLET, approvedAt: '2026-01-01', approvedBy: 'admin' }],
       pending: [],
@@ -111,6 +132,7 @@ describe('the wallet never travels in the request line', () => {
 describe('Whitelist API -- Developer access management', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    counters.clear();
     mockKvGet.mockResolvedValue({ approved: [], pending: [] });
     mockKvSet.mockResolvedValue('OK');
   });

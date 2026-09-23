@@ -6,6 +6,9 @@ import {
   sanitizeLocale,
   sanitizeSource,
   tokenHash,
+  storedUnsubscribeHash,
+  unsubscribeHashFor,
+  type UnsubscribeIndexed,
 } from '@/lib/waitlist/validate';
 import {
   getStore,
@@ -95,15 +98,25 @@ export async function POST(req: NextRequest) {
           if (cooled && existing.resendCount < MAX_RESENDS) {
             const newToken = generateToken();
             const newHash = tokenHash(newToken);
-            await deleteTokenIndex(kv, existing.tokenHash);
+            // The new mail's unsubscribe link has its own index row (audit v1
+            // F41). The record names it, and the previous mail's two rows are
+            // deleted once the record points at the new ones (close-v1 verify
+            // r1): an index row holds the email, so none may outlive the
+            // record, and only the latest mail's links work.
+            const newUnsub = unsubscribeHashFor(newToken);
+            const oldUnsub = storedUnsubscribeHash(existing);
             await setTokenIndex(kv, newHash, email);
-            const updated: WaitlistRecord = {
+            await setTokenIndex(kv, newUnsub, email);
+            const updated: WaitlistRecord & UnsubscribeIndexed = {
               ...existing,
               tokenHash: newHash,
+              unsubscribeHash: newUnsub,
               lastSentAt: now,
               resendCount: existing.resendCount + 1,
             };
             await writeRecord(kv, updated);
+            if (existing.tokenHash !== newHash) await deleteTokenIndex(kv, existing.tokenHash);
+            if (oldUnsub && oldUnsub !== newUnsub) await deleteTokenIndex(kv, oldUnsub);
             const sent = await sendConfirmationEmail({
               email,
               token: newToken,
@@ -116,10 +129,14 @@ export async function POST(req: NextRequest) {
 
         // New signup: store first so a mail failure never loses the lead.
         const token = generateToken();
-        const record: WaitlistRecord = {
+        // The unsubscribe link has its own token and index row (audit v1
+        // F41); the record names that row so its removal deletes it.
+        const unsub = unsubscribeHashFor(token);
+        const record: WaitlistRecord & UnsubscribeIndexed = {
           email,
           status: 'pending',
           tokenHash: tokenHash(token),
+          unsubscribeHash: unsub,
           interest,
           locale,
           source,
@@ -130,6 +147,7 @@ export async function POST(req: NextRequest) {
         };
         await writeRecord(kv, record);
         await setTokenIndex(kv, record.tokenHash, email);
+        await setTokenIndex(kv, unsub, email);
         await addEmailToSet(kv, email);
         await recordSignupCounters(kv, record);
 

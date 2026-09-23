@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
-import { checkAdminAuth } from '@/lib/waitlist/auth';
-import { tokenHash } from '@/lib/waitlist/validate';
+import { authErrorWord, checkAdminAuth } from '@/lib/waitlist/auth';
+import {
+  tokenHash,
+  storedUnsubscribeHash,
+  unsubscribeHashFor,
+  type UnsubscribeIndexed,
+} from '@/lib/waitlist/validate';
 import {
   getStore,
   generateToken,
@@ -54,10 +59,10 @@ function isCronCall(req: NextRequest): boolean {
 
 export async function GET(req: NextRequest) {
   if (!isCronCall(req)) {
-    const auth = checkAdminAuth(req);
+    const auth = await checkAdminAuth(req, getStore());
     if (!auth.ok) {
       return NextResponse.json(
-        { ok: false, error: auth.status === 503 ? 'not_configured' : 'unauthorized' },
+        { ok: false, error: authErrorWord(auth.status) },
         { status: auth.status },
       );
     }
@@ -103,24 +108,35 @@ export async function GET(req: NextRequest) {
     // way to put a working confirm URL in the reminder.
     const token = generateToken();
     const newHash = tokenHash(token);
+    // The reminder's unsubscribe link (audit v1 F41), indexed BEFORE the mail
+    // leaves so the link in it works from the moment it arrives.
+    const newUnsub = unsubscribeHashFor(token);
+    await setTokenIndex(kv, newUnsub, record.email);
     const sent = await sendReminderEmail({ email: record.email, token, locale: record.locale });
     if (!sent) {
       // Leave the record untouched; tomorrow's run retries within the window.
+      // The row indexed for the mail that did not leave is deleted: it holds
+      // the email and nothing names it (close-v1 verify r1, F41 follow-up).
+      await deleteTokenIndex(kv, newUnsub);
       await incrMailFailures(kv);
       mailFailures++;
       continue;
     }
-    await deleteTokenIndex(kv, record.tokenHash);
     await setTokenIndex(kv, newHash, record.email);
     const nowIso = new Date(now).toISOString();
-    const updated: WaitlistRecord = {
+    const updated: WaitlistRecord & UnsubscribeIndexed = {
       ...record,
       tokenHash: newHash,
+      unsubscribeHash: newUnsub,
       lastSentAt: nowIso,
       remindedAt: nowIso,
       resendCount: record.resendCount + 1,
     };
     await writeRecord(kv, updated);
+    // The previous mail's two index rows go once the record names the new ones.
+    const oldUnsub = storedUnsubscribeHash(record);
+    if (record.tokenHash !== newHash) await deleteTokenIndex(kv, record.tokenHash);
+    if (oldUnsub && oldUnsub !== newUnsub) await deleteTokenIndex(kv, oldUnsub);
     reminded++;
   }
 
@@ -128,6 +144,9 @@ export async function GET(req: NextRequest) {
   for (const record of toPurge) {
     await deleteRecord(kv, record.email);
     await deleteTokenIndex(kv, record.tokenHash);
+    // Its unsubscribe index row holds the email too (close-v1 verify r1).
+    const unsub = storedUnsubscribeHash(record);
+    if (unsub) await deleteTokenIndex(kv, unsub);
     await removeEmailFromSet(kv, record.email);
     await incrUnsubscribed(kv);
     purged++;

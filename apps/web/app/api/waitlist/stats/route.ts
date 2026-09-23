@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
-import { checkAdminAuth } from '@/lib/waitlist/auth';
+import { authErrorWord, checkAdminAuth } from '@/lib/waitlist/auth';
 import { getStore, kvConfigured, collectStats } from '@/lib/waitlist/store';
 import { isResendConfigured } from '@/lib/waitlist/email';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
-  const auth = checkAdminAuth(req);
+  const auth = await checkAdminAuth(req, getStore());
   if (!auth.ok) {
     return NextResponse.json(
-      { ok: false, error: auth.status === 503 ? 'not_configured' : 'unauthorized' },
+      { ok: false, error: authErrorWord(auth.status) },
       { status: auth.status },
     );
   }

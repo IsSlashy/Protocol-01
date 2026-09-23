@@ -130,10 +130,25 @@ vi.mock('@/lib/waitlist/email', () => ({
 
 const mockKvGet = vi.fn();
 const mockKvSet = vi.fn();
+// close-v1 (audit v1 F64): the whitelist's admin check now counts attempts in
+// the same store (`incr` / `expire`, then `get` of the `:ok` counters) BEFORE
+// it compares, and refuses 503 when it cannot. Without these the admin case
+// below was refused at the door and never reached the read it is about.
+const kvCounters = new Map<string, number>();
 vi.mock('@vercel/kv', () => ({
   kv: {
     get: (...a: unknown[]) => mockKvGet(...a),
     set: (...a: unknown[]) => mockKvSet(...a),
+    incr: async (key: string) => {
+      const n = (kvCounters.get(key) ?? 0) + 1;
+      kvCounters.set(key, n);
+      return n;
+    },
+    expire: async () => 1,
+    del: async (key: string) => {
+      kvCounters.delete(key);
+      return 1;
+    },
   },
 }));
 
@@ -145,13 +160,14 @@ vi.mock('resend', () => ({
 
 import { POST as waitlistPost } from '@/app/api/waitlist/route';
 import { GET as confirmGet } from '@/app/api/waitlist/confirm/route';
-import { GET as unsubscribeGet } from '@/app/api/waitlist/unsubscribe/route';
+import { POST as unsubscribePost } from '@/app/api/waitlist/unsubscribe/route';
 import { POST as whitelistPost, DELETE as whitelistDelete } from '@/app/api/whitelist/route';
 
 const TOKEN = 'b'.repeat(64);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  kvCounters.clear();
   captureConsole();
   store.getStore.mockReturnValue({ incr: vi.fn(), expire: vi.fn() });
   store.rateLimitExceeded.mockResolvedValue(false);
@@ -193,13 +209,23 @@ describe('a waitlist route whose store fails', () => {
     // The route's own rule is "actually delete the record, do not tombstone".
     // A failure that logs the address undoes that in the one place a deletion
     // request must not leave a trace.
+    //
+    // close-v1 (audit v1 F41): a GET no longer deletes anything, it only leads
+    // to a page with one button, so it has no store failure to log. The
+    // deletion this case is about is now the POST (the page's button, or a
+    // mail client's RFC 8058 one-click), and a failure there answers the
+    // 303 to /waitlist/invalid.
     store.emailForToken.mockResolvedValue(SUBSCRIBER);
     store.deleteRecord.mockRejectedValue(upstashFailure());
-    const res = await unsubscribeGet(
-      new NextRequest(`http://localhost:3000/api/waitlist/unsubscribe?token=${TOKEN}`),
+    const res = await unsubscribePost(
+      new NextRequest(`http://localhost:3000/api/waitlist/unsubscribe?token=${TOKEN}`, {
+        method: 'POST',
+      } as unknown as ConstructorParameters<typeof NextRequest>[1]),
     );
 
-    expect(res.status, 'the route stopped redirecting').toBe(302);
+    expect(store.deleteRecord, 'the POST never reached the deletion').toHaveBeenCalled();
+    expect(res.status, 'the route stopped redirecting').toBe(303);
+    expect(res.headers.get('location') ?? '').toMatch(/\/waitlist\/invalid$/);
     expectNoTranscript('the unsubscribe');
   });
 });
@@ -220,7 +246,12 @@ describe('a whitelist route whose store fails', () => {
   });
 
   it('logs that the read failed, not the list the read was asking for', async () => {
-    mockKvGet.mockRejectedValue(whitelistFailure());
+    // Only the list's read fails. The admin check's own `get` of its match
+    // counters answers, so the request reaches the read this case is about.
+    mockKvGet.mockImplementation(async (key: string) => {
+      if (key === 'whitelist:data') throw whitelistFailure();
+      return null;
+    });
     vi.stubEnv('ADMIN_PASSWORD', 'test-admin-password');
     const res = await whitelistDelete(
       // ⚠️ THE WALLET MOVED OUT OF THE URL in the r1 gate repair (SWEEP4
@@ -237,7 +268,15 @@ describe('a whitelist route whose store fails', () => {
       } as unknown as ConstructorParameters<typeof NextRequest>[1]),
     );
 
-    expect(res.status, 'the route stopped answering').toBe(200);
+    // close-v1 (audit v1 F42): a read that fails is no longer taken as an
+    // empty list, which the removal then wrote back over every entry. The
+    // route answers 503 in fixed words and writes nothing.
+    expect(mockKvGet, 'the request never reached the read').toHaveBeenCalledWith('whitelist:data');
+    expect(res.status, 'the route stopped answering 503').toBe(503);
+    expect(
+      mockKvSet.mock.calls.filter((c) => c[0] === 'whitelist:data'),
+      'a failed read still wrote the list',
+    ).toEqual([]);
     expectNoTranscript('the whitelist read');
     vi.unstubAllEnvs();
   });

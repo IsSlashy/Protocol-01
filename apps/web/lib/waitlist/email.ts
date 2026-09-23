@@ -6,12 +6,15 @@
  * terminal details. Everything is inline-styled and table-based where it
  * matters (the CTA button) so Outlook and Gmail render it faithfully. Copy is
  * localized (en/fr) from the record's locale and follows the project voice:
- * no em-dashes, no arrows, no shouting. Every email carries a one-click
- * unsubscribe link (the same token, which stays valid after confirmation) and
- * a plain-text part with raw URLs as a fallback.
+ * no em-dashes, no arrows, no shouting. Every email carries an unsubscribe
+ * link with its OWN token (`unsubscribeToken`, audit v1 F41: the confirmation
+ * token used to double as it, on a GET that deleted the record), the RFC 8058
+ * `List-Unsubscribe` / `List-Unsubscribe-Post` headers so a mail client can
+ * unsubscribe in one click by POST, and a plain-text part with raw URLs as a
+ * fallback.
  */
 import { Resend } from 'resend';
-import type { Locale } from './validate';
+import { unsubscribeToken, type Locale } from './validate';
 
 const SITE_URL = process.env.SITE_URL ?? 'https://protocol-01.dev';
 const RESEND_PLACEHOLDER = 're_YOUR_API_KEY_HERE';
@@ -264,21 +267,28 @@ function reminderCopyFor(
 
 async function sendWaitlistEmail(
   copy: Copy,
-  params: { email: string; token: string },
+  params: { email: string; token: string; locale: string },
 ): Promise<boolean> {
   const client = getResend();
   if (!client) return false;
 
   const confirmUrl = `${SITE_URL}/api/waitlist/confirm?token=${params.token}`;
-  const unsubscribeUrl = `${SITE_URL}/api/waitlist/unsubscribe?token=${params.token}`;
+  // The page the GET shows is in the reader's language; `lang` picks it.
+  const lang = params.locale === 'fr' ? 'fr' : 'en';
+  const unsubscribeUrl =
+    `${SITE_URL}/api/waitlist/unsubscribe?token=${unsubscribeToken(params.token)}&lang=${lang}`;
 
   try {
     const { error } = await client.emails.send({
       from: emailFrom(),
       to: params.email,
       subject: copy.subject,
-      html: renderHtml(copy, confirmUrl, unsubscribeUrl),
+      html: renderHtml(copy, confirmUrl, unsubscribeUrl.replace(/&/g, '&amp;')),
       text: renderText(copy, confirmUrl, unsubscribeUrl),
+      headers: {
+        'List-Unsubscribe': `<${unsubscribeUrl}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
     });
     if (error) {
       console.error('[waitlist] Resend returned an error:', error);

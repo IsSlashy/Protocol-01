@@ -1,4 +1,4 @@
-import { checkAdminAuth } from '@/lib/waitlist/auth';
+import { authErrorWord, checkAdminAuth } from '@/lib/waitlist/auth';
 import { getStore, collectAllRecords } from '@/lib/waitlist/store';
 import type { WaitlistRecord } from '@/lib/waitlist/store';
 import { logFailure } from '@/lib/server/logSafely';
@@ -7,17 +7,33 @@ export const dynamic = 'force-dynamic';
 
 const HEADER = 'email,status,interest,locale,source,country,createdAt,confirmedAt';
 
+/**
+ * ⛔ NO CELL STARTS A FORMULA (audit v1 round 2, F40).
+ *
+ * The email field is typed by anyone on the public signup form, and the export
+ * is opened by an operator in a spreadsheet. A value that starts with `=`, `+`,
+ * `-`, `@`, a tab or a carriage return is evaluated there as a formula, so one
+ * signup could make the operator's spreadsheet fetch a URL carrying the rows
+ * around it (`audit-v1-opus/r2-server/probes/p4-waitlist-csv.probe.test.ts`).
+ * Such a cell gets a leading apostrophe (the OWASP CSV-injection rule), which a
+ * spreadsheet shows as text. Pinned by `__tests__/api/closeV1L3Waitlist.test.ts`,
+ * "F40".
+ */
+function neutraliseFormula(s: string): string {
+  return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+}
+
 /** Quote a field only when it contains a comma, quote, or newline. */
 function csvField(value: string | undefined): string {
-  const s = value ?? '';
+  const s = neutraliseFormula(value ?? '');
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export async function GET(req: Request) {
-  const auth = checkAdminAuth(req);
+  const auth = await checkAdminAuth(req, getStore());
   if (!auth.ok) {
     return new Response(
-      JSON.stringify({ ok: false, error: auth.status === 503 ? 'not_configured' : 'unauthorized' }),
+      JSON.stringify({ ok: false, error: authErrorWord(auth.status) }),
       { status: auth.status, headers: { 'Content-Type': 'application/json' } },
     );
   }

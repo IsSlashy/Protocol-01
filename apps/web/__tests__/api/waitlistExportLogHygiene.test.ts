@@ -45,6 +45,11 @@ const reads: string[] = [];
 
 const kv: KvLike = {
   async get<T>(key: string) {
+    // close-v1 (audit v1 F64): the export now reads the admin attempt counters
+    // (`adm:fail:*`) before it serves anything. Those reads are not the record
+    // batch this file is about, so they are answered (no failures counted) and
+    // left out of `reads`.
+    if (key.startsWith('adm:fail:')) return null;
     reads.push(key);
     if (recordReads === 'refused') throw refusedBatch();
     const email = key.replace(/^wl:sub:/, '');

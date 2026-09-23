@@ -6,7 +6,7 @@
  * reuse the exact same rules so the API contract stays consistent. Only
  * node:crypto (available in both the test and Node runtimes) is used here.
  */
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 export const INTERESTS = ['mobile', 'extension', 'sdk'] as const;
 export type Interest = (typeof INTERESTS)[number];
@@ -95,4 +95,68 @@ export function tokenHash(token: string): string {
 /** True when the value looks like a 32-byte hex token from randomBytes(32). */
 export function isTokenShape(raw: unknown): raw is string {
   return typeof raw === 'string' && /^[0-9a-f]{64}$/.test(raw);
+}
+
+/**
+ * ⛔ THE UNSUBSCRIBE LINK CARRIES ITS OWN TOKEN (audit v1 round 2, F41).
+ *
+ * The confirmation mail used to put the SAME token in two GET links, confirm
+ * and unsubscribe, and the unsubscribe GET deleted the record. A gateway or a
+ * preview that follows every link in a mail confirmed the reader and then
+ * removed them (`audit-v1-opus/r2-server/probes/p6-waitlist-oneclick.probe.test.ts`).
+ *
+ * The unsubscribe token is HMAC-SHA256 keyed by the confirmation token over a
+ * fixed domain, so it is a different 32-byte value, and it is indexed under a
+ * domain-separated hash (`unsubscribeTokenHash`), so presenting it to the
+ * confirm route finds nothing, and a confirmation token presented as an
+ * unsubscribe token finds nothing either. Anyone holding the mail holds both
+ * links; the separation is about which ACTION a link can trigger, not secrecy.
+ * The GET on the unsubscribe link only shows a confirmation page; the removal
+ * is a POST (RFC 8058 one-click). Pinned by
+ * `__tests__/api/closeV1L3Waitlist.test.ts`, "F41".
+ */
+const UNSUBSCRIBE_TOKEN_DOMAIN = 'p01:waitlist:unsubscribe-token:v1';
+const UNSUBSCRIBE_INDEX_DOMAIN = 'p01:waitlist:unsubscribe-index:v1';
+
+/** The unsubscribe token that goes with a confirmation token: 64 hex, like it. */
+export function unsubscribeToken(confirmToken: string): string {
+  return createHmac('sha256', confirmToken).update(UNSUBSCRIBE_TOKEN_DOMAIN).digest('hex');
+}
+
+/** Where an unsubscribe token is indexed. Never equal to `tokenHash` of anything. */
+export function unsubscribeTokenHash(token: string): string {
+  return sha256Hex(`${UNSUBSCRIBE_INDEX_DOMAIN}\u0000${token}`);
+}
+
+/**
+ * ⛔ THE UNSUBSCRIBE INDEX ROW IS DELETED WITH THE RECORD (close-v1 verify r1,
+ * F41 follow-up).
+ *
+ * The unsubscribe index row (`wl:tok:<unsubscribeTokenHash>`) holds the email in
+ * plaintext, like the confirmation index. The first F41 fix wrote one per mail
+ * and deleted none of them, so the address stayed in the store after its owner
+ * had unsubscribed or been purged (verify-r1/probe-unsub-leftover.log). The
+ * record now carries the hash of its CURRENT unsubscribe row, so every path that
+ * rotates the token (resend, reminder) replaces that row, and every path that
+ * removes the record (unsubscribe by either token, the purge of addresses that
+ * never confirmed) deletes it. Only the latest mail's unsubscribe link works,
+ * exactly like its confirm link.
+ *
+ * The field is read through this helper because `WaitlistRecord`
+ * (lib/waitlist/store.ts) does not declare it yet; records are stored whole, so
+ * it survives every read-spread-write.
+ */
+export interface UnsubscribeIndexed {
+  unsubscribeHash?: string;
+}
+
+/** The unsubscribe index hash a stored record names, or null (older records have none). */
+export function storedUnsubscribeHash(record: unknown): string | null {
+  const v = record && typeof record === 'object' ? (record as UnsubscribeIndexed).unsubscribeHash : undefined;
+  return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v) ? v : null;
+}
+
+/** The unsubscribe index hash that goes with a confirmation token. */
+export function unsubscribeHashFor(confirmToken: string): string {
+  return unsubscribeTokenHash(unsubscribeToken(confirmToken));
 }

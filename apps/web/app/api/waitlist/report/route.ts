@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { timingSafeEqual } from 'node:crypto';
-import { checkAdminAuth } from '@/lib/waitlist/auth';
+import { authErrorWord, checkAdminAuth } from '@/lib/waitlist/auth';
 import { getStore, collectStats, collectAllRecords } from '@/lib/waitlist/store';
 import { sendReportEmail } from '@/lib/waitlist/email';
 import { buildReport } from '@/lib/waitlist/report';
@@ -39,10 +39,10 @@ function isCronCall(req: NextRequest): boolean {
 
 export async function GET(req: NextRequest) {
   if (!isCronCall(req)) {
-    const auth = checkAdminAuth(req);
+    const auth = await checkAdminAuth(req, getStore());
     if (!auth.ok) {
       return NextResponse.json(
-        { ok: false, error: auth.status === 503 ? 'not_configured' : 'unauthorized' },
+        { ok: false, error: authErrorWord(auth.status) },
         { status: auth.status },
       );
     }
