@@ -56,8 +56,6 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 
-import { useShieldedStore } from '@/stores/shieldedStore';
-import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useDenominatedPoolStore, type StoredNote } from '@/stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '@/stores/subscriptionVaultStore';
 import { useSettingsStore } from '@/stores/settingsStore';
@@ -127,8 +125,6 @@ export default function PrivacyDashboard() {
   const denomination = option.amount;
   const [now, setNow] = useState(() => Date.now());
 
-  const { shieldedBalance, notes } = useShieldedStore();
-  const { balances: confidentialBalances, pendingCredits } = useConfidentialStore();
   const {
     getActiveNotes,
     poolCache,
@@ -187,15 +183,6 @@ export default function PrivacyDashboard() {
     },
     [poolCache, now],
   );
-
-  // Legacy funds detection. V1 money is real and it is NOT part of the
-  // headline: the two were summed into one "Shielded Balance" once, and the
-  // total was presented as spendable when half of it has no exit.
-  const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
-  const pendingCount = pendingCredits['11111111111111111111111111111111'] || 0;
-  const hasShieldedFunds = shieldedBalance > 0 || notes.filter(n => Number(n.amount) > 0).length > 0;
-  const hasConfidentialFunds = confidentialSolBalance > 0 || pendingCount > 0;
-  const hasLegacyFunds = hasShieldedFunds || hasConfidentialFunds;
 
   const onRefresh = useCallback(async () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -556,36 +543,6 @@ export default function PrivacyDashboard() {
           </View>
         )}
 
-        {/* ─── 5. Legacy funds. Shown, named, never summed above. ── */}
-        {hasLegacyFunds && (
-          <View style={s.legacy}>
-            <View style={s.legacyMain}>
-              <Text style={s.legacyTitle}>Money in the retired V1 modules</Text>
-              <Text style={s.legacyBody}>
-                {hasShieldedFunds && `${shieldedBalance.toFixed(4)} SOL in the shielded wallet`}
-                {hasShieldedFunds && hasConfidentialFunds && ' · '}
-                {hasConfidentialFunds && `${confidentialSolBalance.toFixed(4)} SOL in confidential balance`}
-                . It is not part of the balance above.
-              </Text>
-            </View>
-            <Button
-              variant="secondary"
-              size="sm"
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                router.push(
-                  hasShieldedFunds
-                    ? '/(main)/(privacy)/shielded'
-                    : '/(main)/(privacy)/confidential',
-                );
-              }}
-              accessibilityLabel="Withdraw legacy funds"
-            >
-              {t('privacy.withdraw')}
-            </Button>
-          </View>
-        )}
-
         {/*
           'No private data ever leaves your device' was false as written. The
           proof is uploaded to the chain along with its public inputs, and
@@ -870,32 +827,6 @@ const s = StyleSheet.create({
     lineHeight: 21,
     marginTop: Spacing.sm,
     maxWidth: 300,
-  },
-
-  // 5. Legacy
-  legacy: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.md,
-    padding: Spacing.lg,
-    marginBottom: Spacing['3xl'],
-    borderRadius: BorderRadius.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: Colors.yellow,
-    backgroundColor: Colors.warningDim,
-  },
-  legacyMain: { flex: 1, minWidth: 0 },
-  legacyTitle: {
-    fontSize: FontSize.md,
-    fontFamily: FontFamily.medium,
-    color: Colors.text,
-  },
-  legacyBody: {
-    fontSize: FontSize.xs,
-    fontFamily: FontFamily.regular,
-    color: Colors.textSecondary,
-    lineHeight: 16,
-    marginTop: 2,
   },
 
   footnote: {

@@ -75,7 +75,8 @@ config.resolver.extraNodeModules = {
   stream: require.resolve('readable-stream'),
   crypto: path.resolve(projectRoot, 'polyfills/crypto-shim.js'),
   buffer: require.resolve('buffer'),
-  // Shims for @coral-xyz/anchor (Node core modules unavailable in RN)
+  // Node core modules unavailable in RN (first added for @coral-xyz/anchor,
+  // which mobile no longer depends on since services/zkspl was deleted)
   path: path.resolve(projectRoot, 'polyfills/empty.js'),
   fs: path.resolve(projectRoot, 'polyfills/empty.js'),
   os: path.resolve(projectRoot, 'polyfills/empty.js'),
@@ -135,19 +136,11 @@ function findInNodeModules(subpath, nodeModulesPaths, originModulePath) {
   return null;
 }
 
-// Custom resolver for native/Node shims (snarkjs etc.).
-// (The former @privy-io zod resolver was removed with Privy — spec §3 Phase 1.)
+// Custom resolver for native/Node shims.
+// (The former @privy-io zod resolver was removed with Privy — spec §3 Phase 1,
+// and the snarkjs / circom_runtime shims with the Groth16 prover on 2026-09-23.)
 const originalResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  // Shim snarkjs and its Node.js dependencies for React Native.
-  // Mobile uses the remote Rust prover exclusively — snarkjs is never called.
-  if (['snarkjs', 'readline', 'fastfile', 'circom_runtime', 'ejs'].includes(moduleName)) {
-    return {
-      filePath: path.resolve(projectRoot, 'polyfills/empty.js'),
-      type: 'sourceFile',
-    };
-  }
-
   // Stub Node-only fs/promises and node:fs subpaths used by workspace
   // libraries that target Node (notably @protocol-01/stark-prover dist's
   // disk-based WASM loader). The runtime path uses the inlined base64 WASM
@@ -261,11 +254,11 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   return context.resolveRequest(context, moduleName, platform);
 };
 
-// Add asset extensions for ZK circuit files
+// Add the wasm asset extension (the Groth16 'zkey' extension went with the
+// Circom artefacts on 2026-09-23).
 config.resolver.assetExts = [
   ...config.resolver.assetExts,
   'wasm',
-  'zkey',
 ];
 
 module.exports = withNativeWind(config, { input: './global.css' });

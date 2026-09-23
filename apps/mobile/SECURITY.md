@@ -188,7 +188,6 @@ The SL3 (Security Level 3) encryption service provides:
 ### Key Files
 
 - `utils/crypto/encryption.ts` - Local data encryption
-- `services/crypto/encryption.ts` - SL3 message encryption
 - `utils/crypto/keys.ts` - Key derivation utilities
 
 ---
@@ -351,7 +350,7 @@ export const FEATURES = {
 1. **Encryption Keys in AsyncStorage**
    - **Issue**: Encryption keys were stored in AsyncStorage (unencrypted)
    - **Fix**: Migrated to SecureStore with proper keychain options
-   - **File**: `services/crypto/encryption.ts`
+   - **File**: `services/crypto/encryption.ts` (since removed; `services/crypto/` was deleted on 2026-09-23)
 
 2. **Weak Key Derivation**
    - **Issue**: Single hash iteration for password-based key derivation

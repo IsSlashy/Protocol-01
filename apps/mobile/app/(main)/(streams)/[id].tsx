@@ -50,7 +50,7 @@ import { useT } from '@/i18n';
 import OperationProgressBar from '@/components/ui/OperationProgressBar';
 import { LicenseKeyCard } from '@/components/LicenseKeyCard';
 
-/** Prefix used by vault-detail.tsx + subscriptionVaultStore to save the
+/** Prefix used by subscriptionVaultStore to save the
  * subscriber secret in SecureStore, keyed by vault PDA. Must match. */
 const SECURE_SECRET_PREFIX = 'p01_vault_secret_';
 

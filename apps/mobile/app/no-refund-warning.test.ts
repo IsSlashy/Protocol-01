@@ -48,8 +48,6 @@ const PAYING_SCREENS: readonly (readonly [string, string])[] = [
 /** Every mobile screen that talks about a subscription vault. */
 const SUBSCRIPTION_SCREENS: readonly string[] = [
   ...PAYING_SCREENS.map(([f]) => f),
-  'app/(main)/(privacy)/vault-detail.tsx',
-  'app/(main)/(privacy)/subscription-vaults.tsx',
   'app/(main)/(streams)/[id].tsx',
 ];
 

@@ -55,8 +55,6 @@ import * as Clipboard from 'expo-clipboard';
 
 import { useWalletStore } from '@/stores/walletStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { useShieldedStore } from '@/stores/shieldedStore';
-import { useConfidentialStore } from '@/stores/confidentialStore';
 import { useDenominatedPoolStore } from '@/stores/denominatedPoolStore';
 import { useStreamStore } from '@/stores/streamStore';
 import { useSecuritySettings } from '@/hooks/useSecuritySettings';
@@ -117,9 +115,6 @@ export default function WalletHomeScreen() {
   const fiatKnown = !!balance && ((balance.solUsd ?? 0) > 0 || balance.sol === 0);
   const formattedFiat = fiatKnown ? formatAmount(balance?.totalUsd || 0) : undefined;
 
-  const { shieldedBalance } = useShieldedStore();
-  const { balances: confidentialBalances } = useConfidentialStore();
-  const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
   const { getActiveNotes } = useDenominatedPoolStore();
   const denominatedSolBalance = getActiveNotes()
     .filter(n => n.token === 'SOL')
@@ -352,8 +347,6 @@ export default function WalletHomeScreen() {
         {/* ── The two strips: what is private, and what is recurring ───── */}
         <View style={styles.strips}>
           <PrivacySummaryPill
-            shieldedBalance={shieldedBalance}
-            confidentialBalance={confidentialSolBalance}
             denominatedBalance={denominatedSolBalance}
             onPress={() => router.push('/(main)/(privacy)')}
           />

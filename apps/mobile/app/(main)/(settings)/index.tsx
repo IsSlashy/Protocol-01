@@ -45,11 +45,9 @@ import Constants from 'expo-constants';
 
 import { Header } from '@/components/common';
 import { Button } from '@/components/ui';
-import { SettingsRow, SettingsSection, ToggleRow, CurrencyModal } from '../../../components/settings';
+import { SettingsRow, SettingsSection, CurrencyModal } from '../../../components/settings';
 import { useWalletStore } from '../../../stores/walletStore';
 import { useSettingsStore, Currency, CURRENCY_SYMBOLS } from '../../../stores/settingsStore';
-import { useShieldedStore } from '../../../stores/shieldedStore';
-import { useConfidentialStore } from '../../../stores/confidentialStore';
 import { useDenominatedPoolStore } from '../../../stores/denominatedPoolStore';
 import { useSubscriptionVaultStore } from '../../../stores/subscriptionVaultStore';
 import { useStreamStore } from '../../../stores/streamStore';
@@ -69,23 +67,13 @@ export default function SettingsScreen() {
     currency,
     setCurrency,
     initialize: initSettings,
-    shieldedWalletEnabled,
-    confidentialBalanceEnabled,
-    setShieldedWalletEnabled,
-    setConfidentialBalanceEnabled,
   } = useSettingsStore();
-  const { shieldedBalance, notes: shieldedNotes } = useShieldedStore();
-  const { balances: confidentialBalances, pendingCredits } = useConfidentialStore();
 
   const { getActiveNotes } = useDenominatedPoolStore();
   const denominatedNotes = getActiveNotes();
   const hasDenominatedFunds = denominatedNotes.length > 0;
-  const hasShieldedFunds = shieldedBalance > 0 || shieldedNotes.filter(n => Number(n.amount) > 0).length > 0;
-  const confidentialSolBalance = (confidentialBalances['11111111111111111111111111111111'] || 0) / 1e9;
-  const hasConfidentialFunds = confidentialSolBalance > 0 || (pendingCredits['11111111111111111111111111111111'] || 0) > 0;
-  const hasLegacyFunds = hasShieldedFunds || hasConfidentialFunds;
   const solBalance = balance?.sol ?? 0;
-  const hasAnyFunds = solBalance > 0.01 || hasLegacyFunds || hasDenominatedFunds;
+  const hasAnyFunds = solBalance > 0.01 || hasDenominatedFunds;
   const [copied, setCopied] = useState(false);
   const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -137,8 +125,6 @@ export default function SettingsScreen() {
     const stakes: string[] = [];
     if (solBalance > 0) stakes.push(`${solBalance.toFixed(4)} SOL`);
     if (hasDenominatedFunds) stakes.push(`${denominatedNotes.length} shielded note${denominatedNotes.length !== 1 ? 's' : ''}`);
-    if (hasShieldedFunds) stakes.push('shielded balance');
-    if (hasConfidentialFunds) stakes.push('confidential balance');
     if (activeVaults > 0) stakes.push(`${activeVaults} subscription${activeVaults !== 1 ? 's' : ''}`);
     if (activeStreams > 0) stakes.push(`${activeStreams} payment stream${activeStreams !== 1 ? 's' : ''}`);
 
@@ -188,8 +174,6 @@ export default function SettingsScreen() {
       const parts: string[] = [];
       if (solBalance > 0.01) parts.push(`${solBalance.toFixed(4)} SOL`);
       if (hasDenominatedFunds) parts.push(`${denominatedNotes.length} shielded note${denominatedNotes.length !== 1 ? 's' : ''}`);
-      if (hasShieldedFunds) parts.push('shielded balance');
-      if (hasConfidentialFunds) parts.push('confidential balance');
 
       p01Alert(
         t('common.warning'),
@@ -324,31 +308,6 @@ export default function SettingsScreen() {
             description="Decoys, stealth addresses and relay routing"
             leftIcon="eye-off-outline"
             onPress={() => router.push('/(main)/(settings)/privacy')}
-          />
-        </SettingsSection>
-
-        {/* ⚠️ Two retired modules, kept switchable because money can still be
-            sitting in them. The balance is stated on the row itself when there
-            is one — a toggle that quietly holds funds is how they get lost. */}
-        <SettingsSection
-          title={t('settings.privacyFeatures')}
-          footer="Both are superseded by the denominated privacy pool. Turn one on only to move money out of it."
-        >
-          <ToggleRow
-            label="Shielded wallet"
-            description={hasShieldedFunds
-              ? `Retired. ${shieldedBalance.toFixed(4)} SOL still in the pool — withdraw it.`
-              : 'Retired. Variable amounts, so a deposit and its withdrawal match on size.'}
-            value={shieldedWalletEnabled}
-            onValueChange={setShieldedWalletEnabled}
-          />
-          <ToggleRow
-            label="Confidential balance"
-            description={hasConfidentialFunds
-              ? `Retired. ${confidentialSolBalance.toFixed(4)} SOL still confidential — withdraw it.`
-              : 'Retired. Hides token amounts on chain; sender and recipient stay visible.'}
-            value={confidentialBalanceEnabled}
-            onValueChange={setConfidentialBalanceEnabled}
           />
         </SettingsSection>
 

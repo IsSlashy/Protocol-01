@@ -11,9 +11,10 @@
  *   - the whole row is one target and it is 56pt, so the amount and the label
  *     are both part of the same tap rather than decoration beside it.
  *
- * ⚠️ The prop names and the `onPress` destination are unchanged: the arithmetic
- * that produces these three numbers lives on the wallet screen and is not this
- * component's business.
+ * ⚠️ The `onPress` destination is unchanged: the arithmetic that produces the
+ * denominated balance lives on the wallet screen and is not this component's
+ * business. The retired V1 shielded and confidential balances were dropped
+ * from the total when those modules were deleted (2026-09-23).
  */
 
 import React from 'react';
@@ -24,20 +25,16 @@ import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants
 import { useT } from '@/i18n';
 
 interface PrivacySummaryPillProps {
-  shieldedBalance: number;
-  confidentialBalance: number;
   denominatedBalance?: number;
   onPress: () => void;
 }
 
 export default function PrivacySummaryPill({
-  shieldedBalance,
-  confidentialBalance,
   denominatedBalance = 0,
   onPress,
 }: PrivacySummaryPillProps) {
   const t = useT();
-  const total = shieldedBalance + confidentialBalance + denominatedBalance;
+  const total = denominatedBalance;
 
   return (
     <TouchableOpacity

@@ -20,7 +20,9 @@
  *
  * ⛔ Nothing about what a scanned code MEANS changed: the P01 auth branch, the
  * `zk:` and `st:01` prefixes, the Solana Pay stripping and every route this
- * screen pushes to are untouched.
+ * screen pushes to are untouched — except `zk:`, which pointed at the retired
+ * V1 shielded wallet: since 2026-09-23 it is refused with an error rather than
+ * routed (and it must never fall through to the Solana-address branch).
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -115,18 +117,12 @@ export default function ScanScreen() {
       address = parsed;
     }
 
-    // L6: Validate scanned data — route zk: addresses to shielded transfer
+    // L6: Validate scanned data. zk: addresses belonged to the retired V1
+    // shielded wallet, which has no send path any more: refuse them here so
+    // they never fall through to the Solana-address branch below.
     if (address.startsWith('zk:')) {
-      const zkAddr = address.slice(3);
-      if (zkAddr.length >= 32) {
-        router.push({
-          pathname: '/(main)/(privacy)/shielded-transfer',
-          params: { address: zkAddr },
-        } as any);
-      } else {
-        setError('Invalid ZK address format.');
-        setTimeout(() => { setError(''); setIsScanning(true); }, 3000);
-      }
+      setError('This is a retired V1 shielded address. It can no longer receive payments.');
+      setTimeout(() => { setError(''); setIsScanning(true); }, 3000);
     } else if (address.startsWith('st:01') || address.startsWith('st:02')) {
       // P01 stealth meta-address → route to Private Send
       router.push({

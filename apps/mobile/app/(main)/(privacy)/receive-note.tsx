@@ -29,7 +29,6 @@ import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown, FadeInUp, SlideInDown, SlideOutDown } from 'react-native-reanimated';
 
 import { useSharingStore } from '@/stores/sharingStore';
-import { useShieldedStore } from '@/stores/shieldedStore';
 import { useDenominatedPoolStore, type NoteSource } from '@/stores/denominatedPoolStore';
 import type { TransportType, NotePayload } from '@/services/sharing/types';
 import { Colors, FontFamily, FontSize, BorderRadius, Spacing } from '@/constants/theme';
@@ -50,7 +49,6 @@ export default function ReceiveNoteScreen() {
     checkAvailability, startBleReceiver, confirmFingerprintAndReceive,
     startNfcReceiver, cancelSession, clearPendingNote, clearError,
   } = useSharingStore();
-  const { importNote: importShielded } = useShieldedStore();
   const { importNote: importDenominated } = useDenominatedPoolStore();
 
   const [selectedTransport, setSelectedTransport] = useState<TransportType | null>(null);
@@ -64,15 +62,19 @@ export default function ReceiveNoteScreen() {
 
   const handleImport = useCallback(async (payload: NotePayload) => {
     try {
-      if (payload.type === 'zk-shielded') await importShielded(payload.data);
-      else if (payload.type === 'denominated-pool') importDenominated(payload.data, 'received' as NoteSource);
+      // Only denominated-pool notes exist now. An older build may still send a
+      // retired V1 'zk-shielded' note; refuse it instead of pretending to import.
+      if (payload.type !== 'denominated-pool') {
+        throw new Error('This note belongs to the retired V1 shielded wallet and cannot be imported.');
+      }
+      importDenominated(payload.data, 'received' as NoteSource);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setImported(true); setImportedNote(payload); clearPendingNote();
     } catch (err) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       p01Alert(t('nearby.importFailed'), (err as Error).message);
     }
-  }, [importShielded, importDenominated, clearPendingNote]);
+  }, [importDenominated, clearPendingNote]);
 
   useEffect(() => { if (pendingNote && !imported) handleImport(pendingNote); }, [pendingNote, imported, handleImport]);
 
@@ -149,7 +151,7 @@ export default function ReceiveNoteScreen() {
             <Ionicons name="checkmark-circle-outline" size={40} color={Colors.primary} />
             <Text style={s.successTitle}>{t('nearby.noteReceived')}</Text>
             <Text style={s.successDesc}>
-              {t('nearby.noteImported', { type: importedNote.type === 'zk-shielded' ? 'ZK Shielded' : 'Denominated Pool' })}
+              {t('nearby.noteImported', { type: 'Denominated Pool' })}
             </Text>
             <View style={s.centeredActions}>
               <Button
@@ -158,9 +160,7 @@ export default function ReceiveNoteScreen() {
                 fullWidth
                 onPress={() => {
                   cancelSession();
-                  router.push(importedNote.type === 'denominated-pool'
-                    ? '/(main)/(privacy)/denominated-notes' as any
-                    : '/(main)/(privacy)/shielded' as any);
+                  router.push('/(main)/(privacy)/denominated-notes' as any);
                 }}
               >
                 {t('nearby.viewNotes')}
