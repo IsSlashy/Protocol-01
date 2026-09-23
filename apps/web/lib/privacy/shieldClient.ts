@@ -48,6 +48,7 @@ import {
   funderTicket,
   fundEphemeralForJob,
   paymentOutcome,
+  prefetchRelayTerms,
 } from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
@@ -579,9 +580,9 @@ export async function claimForPayment(params: {
   );
 }
 
-async function contributeApi(
+async function contributeApiAnswer(
   body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+): Promise<{ ok: boolean; status: number; json: Record<string, unknown> }> {
   const ticket = process.env.NEXT_PUBLIC_P01_FUNDER_TICKET ?? '';
   const res = await fetch('/api/contribute-note', {
     method: 'POST',
@@ -589,14 +590,61 @@ async function contributeApi(
     body: JSON.stringify(body),
   });
   const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    throw new Error(
-      typeof json.error === 'string'
-        ? json.error
-        : `/api/contribute-note answered ${res.status}`,
-    );
-  }
+  return { ok: res.ok, status: res.status, json };
+}
+
+function contributeApiError(status: number, json: Record<string, unknown>): Error {
+  return new Error(
+    typeof json.error === 'string' ? json.error : `/api/contribute-note answered ${status}`,
+  );
+}
+
+async function contributeApi(
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const { ok, status, json } = await contributeApiAnswer(body);
+  if (!ok) throw contributeApiError(status, json);
   return json;
+}
+
+/**
+ * [shield-speed P0 (2) 2026-09-23] The confirm right after a deposit landed,
+ * asked again while the deployment has not seen the deposit yet.
+ *
+ * Only the route's own transient answer is retried: 409 "that contribution is
+ * not on the tree" WITH `leafIndex > highestOnTree`, which is the route saying
+ * the leaf is above anything it can see. At or below it, the same 409 is
+ * permanent ("No commitment derived from this treasury sits at that index")
+ * and goes straight to the fallback, as does every other refusal.
+ *
+ * AT MOST CONFIRM_RETRIES_NOT_ON_TREE MORE POSTS, AND THAT NUMBER IS A BUDGET.
+ * `/api/contribute-note` allows 5 requests per IP per hour, counted before the
+ * action branch and shared by reserve and confirm: reserve (1) + confirm (1) +
+ * 2 retries = 4, which leaves the next reserve of the hour its slot. A retry
+ * sequence can therefore never meet the 429 (`contributeFastPath.test.ts`,
+ * against the route's real limiter). The relay's own 404 is NOT retried here:
+ * its budget is 3 per IP per hour and a retry there locks the buyer out.
+ */
+const CONFIRM_RETRIES_NOT_ON_TREE = 2;
+const CONFIRM_RETRY_DELAY_MS = 1_000;
+
+async function confirmContribution(
+  body: { action: 'confirm'; token: PoolToken; leafIndex: number; paymentSignature: string; proof: string },
+): Promise<Record<string, unknown>> {
+  for (let attempt = 0; ; attempt += 1) {
+    const { ok, status, json } = await contributeApiAnswer(body);
+    if (ok) return json;
+    const notSeenYet =
+      status === 409 &&
+      json.error === 'that contribution is not on the tree' &&
+      typeof json.highestOnTree === 'number' &&
+      body.leafIndex > json.highestOnTree;
+    if (!notSeenYet || attempt >= CONFIRM_RETRIES_NOT_ON_TREE) throw contributeApiError(status, json);
+    // Silent on purpose: at most two seconds, under the step line the panel
+    // already shows ("Collecting what the contribution is owed..."), and no new
+    // sentence for the phase tables to learn or for a screen to carry.
+    await new Promise((r) => setTimeout(r, CONFIRM_RETRY_DELAY_MS));
+  }
 }
 
 /**
@@ -988,10 +1036,28 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     throw new Error(`${STORAGE_REFUSED} Nothing was paid. Free some space or allow site data, then retry.`);
   }
 
+  /**
+   * [shield-speed H 2026-09-23] THE RELAY TERMS ARE ASKED FOR NOW, beside the
+   * proof, and awaited where they always were: inside `fundEphemeralForJob`,
+   * before every cap, budget and float check and before the wallet is asked
+   * for anything. Started only here, after the refusals above and once the
+   * record is kept, so a refused flow sends no GET. The request is this
+   * call's own (never shared or kept), a prepare that fails first cancels it,
+   * and an answer older than 30 s by the time it is used is asked for again.
+   *
+   * What it does widen, said plainly (correctness skeptic H 3): the terms the
+   * payment is checked against are older by the length of the prepare. The
+   * route re-reads them in the relay POST, after the payment, and a refusal
+   * there stays recoverable through the kept receipt.
+   */
+  const termsPrefetch = prefetchRelayTerms();
   const prep = await poolRequest(
     { kind: 'poolContributePrepare', meta, token, denomination, commitment, leafIndex },
     onProgress,
-  );
+  ).catch((e: unknown) => {
+    termsPrefetch.abort();
+    throw e;
+  });
 
   // Identical to the shield's funding leg, deliberately: the wallet pays the
   // till and the float arms the ephemeral, two transfers with no address in
@@ -1039,7 +1105,28 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     // confirm and the fallback both check it, and neither can be pointed at
     // somebody else's reservation.
     contribution: { token, leafIndex },
+    relayTermsPrefetch: termsPrefetch,
+  }).finally(() => {
+    // Awaited inside, or never needed (a refusal came first): either way done.
+    termsPrefetch.abort();
   });
+
+  /**
+   * [shield-speed G 2026-09-23] Popup #2 already signed `claimChallenge` over
+   * this payment for the relay; the confirm (and the fallback) verify the same
+   * message against the same payer, so that signature is presented again
+   * instead of asking the wallet a second time. Reused ONLY when it was made
+   * over exactly `funding.paymentSignature`; otherwise the wallet is asked, as
+   * before. A LOCAL, and nothing else holds it: never the record
+   * (`attachPayment`), a worker message, the outcome, a progress line or an
+   * error (`contributeFastPath.test.ts`, TRIPWIRE).
+   */
+  const relayProof =
+    funding.claimProof &&
+    funding.paymentSignature &&
+    funding.claimProof.paymentSignature === funding.paymentSignature
+      ? funding.claimProof.proof
+      : undefined;
 
   // THE SECOND WRITE, the moment the money has moved. The first one (above,
   // before anything was paid) says "this buyer may have paid"; this one says
@@ -1069,12 +1156,12 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
           'confirm cannot prove who paid.',
       );
     }
-    const confirmed = await contributeApi({
+    const confirmed = await confirmContribution({
       action: 'confirm',
       token,
       leafIndex: done.leafIndex,
       paymentSignature: funding.paymentSignature,
-      proof: await walletClaimProof(signMessage, funding.paymentSignature),
+      proof: relayProof ?? (await walletClaimProof(signMessage, funding.paymentSignature)),
     });
     claimCode = String(confirmed.claimCode ?? '');
     if (!claimCode) {
@@ -1099,7 +1186,7 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     try {
       const claimed = await claimForPayment({
         signature: funding.paymentSignature,
-        proof: await walletClaimProof(signMessage, funding.paymentSignature),
+        proof: relayProof ?? (await walletClaimProof(signMessage, funding.paymentSignature)),
         contribution: { token, leafIndex },
         // [close-v1 F11] The route sells a relayed payment only once the key
         // the relay funded has given the float back.

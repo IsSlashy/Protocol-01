@@ -196,7 +196,22 @@ const seen = {
   prepareV4Receipts: [] as Array<{ source: unknown; commitment: string; leafIndex: number }>,
   /** The circuit levels handed to the prover, per proof; only a real prepare reaches it. */
   proofLevels: [] as unknown[],
+  /** [flow-speed W1] Every set the stubbed `fetchSpentNullifierSet` returned, in order. */
+  spentSetsRead: [] as unknown[],
+  /** [flow-speed W1] The spent set the circuit-7 withdrawal job was handed (its 9th argument). */
+  prepareV4SpentSet: [] as unknown[],
+  /** [flow-speed S1] The options the circuit-7 SUBSCRIPTION job was handed (its 9th argument). */
+  prepareSubscribeV4Opts: [] as unknown[],
+  /** [flow-speed X3] The order of prover warm-ups and history walks. */
+  order: [] as string[],
+  /** [flow-speed X1] The options every stubbed history walk was called with. */
+  walkOptions: [] as unknown[],
 };
+
+/** [flow-speed X3] Set to hold the stubbed history walk open until released. */
+let walkGate: Promise<void> | null = null;
+/** [flow-speed X3] When set, the next `starkProver.start()` rejects with it, once. */
+let proverStartFailOnce: Error | null = null;
 
 /**
  * A fake RPC. When set, the handler's walk and the circuit-7 prepare run for
@@ -276,8 +291,9 @@ vi.mock('../pool/subscribeEphemeral', () => ({
   // it was handed, then fails the way the case under test injects.
   prepareSubscribeJobV4: async (receipt: { leafIndex: number }, ...rest: unknown[]) => {
     seen.prepareSubscribeV4.push(receipt.leafIndex);
-    // (poolConfig, connection, walletSeed, terms, onProgress, spentSet, savedPath)
+    // (poolConfig, connection, walletSeed, terms, onProgress, spentSet, savedPath, opts)
     seen.prepareSubscribeV4Saved.push(rest[6]);
+    seen.prepareSubscribeV4Opts.push(rest[7]);
     throw subscribeV4PrepareFailure ?? new Error('not exercised');
   },
   executeSubscribe: async () => {
@@ -289,7 +305,14 @@ vi.mock('../pool/subscribeEphemeral', () => ({
 // prover before the circuit-7 prepare; only the subscription case reaches it.
 vi.mock('../pool/starkProver', () => ({
   starkProver: {
-    start: async () => undefined,
+    start: async () => {
+      seen.order.push('prover.start');
+      if (proverStartFailOnce) {
+        const err = proverStartFailOnce;
+        proverStartFailOnce = null;
+        throw err;
+      }
+    },
     computeCommitment: async () => '987654321',
     // Reached only by a REAL circuit-7 prepare (`realChain`). It publishes the
     // recipient limbs it was handed, as circuit 7 does, so the prepare accepts it.
@@ -335,7 +358,9 @@ vi.mock('../pool/unshieldEphemeral', () => ({
     _seed?: unknown,
     _onProgress?: unknown,
     opts?: { leaves?: Map<string, { leafIndex: number }>; savedPath?: unknown },
+    spentSet?: unknown,
   ) => {
+    seen.prepareV4SpentSet.push(spentSet);
     seen.prepareV4.push({
       leafIndex: receipt.leafIndex,
       recipient: recipient.toBase58(),
@@ -438,12 +463,19 @@ vi.mock('../pool/denominatedPool', async (importOriginal) => {
       _pda: unknown,
       options?: { onWalked?: (report: { unread: number }) => void },
     ) => {
+      seen.order.push('walk');
+      seen.walkOptions.push(options);
+      if (walkGate) await walkGate;
       // The REAL walk, on the fake RPC, when a case sets one.
       if (realChain) return actual.fetchPoolCommitments(realChain as never, _pda as never, options as never);
       if (walkUnread !== undefined) options?.onWalked?.({ unread: walkUnread });
       return walkedCommitments();
     },
-    fetchSpentNullifierSet: async () => new Set<string>(),
+    fetchSpentNullifierSet: async () => {
+      const set = new Set<string>();
+      seen.spentSetsRead.push(set);
+      return set;
+    },
     readPoolUnspentCount: async () => 7,
   };
 });
@@ -518,6 +550,13 @@ beforeEach(() => {
   seen.prepareV4Opts = [];
   seen.prepareV4Receipts = [];
   seen.proofLevels = [];
+  seen.spentSetsRead = [];
+  seen.prepareV4SpentSet = [];
+  seen.prepareSubscribeV4Opts = [];
+  seen.order = [];
+  seen.walkOptions = [];
+  walkGate = null;
+  proverStartFailOnce = null;
   realChain = null;
   v4PrepareFailure = null;
   subscribeV4PrepareFailure = null;
@@ -2051,5 +2090,131 @@ describe('signing the claim for a note-in withdrawal', () => {
       ownerPubkey: OWNER,
     }).catch((e: Error) => e);
     expect(String(again)).toContain('Unknown withdrawal job');
+  });
+});
+
+// ===========================================================================
+// [flow-speed 2026-09-23] W1, S1 and X3 at the handler
+// ===========================================================================
+
+describe('[flow-speed] one spent set, one walk, and a prover warmed beside the walk', () => {
+  /** The whole fixture walk, as `expectTheWholeWalk` above reads it. */
+  function expectWholeWalk(leaves: unknown): void {
+    expect(leaves, 'the handler walked the history and then dropped it').toBeInstanceOf(Map);
+    expect(leaves, 'the handler handed on something other than the walk it made').toEqual(walkedCommitments());
+  }
+
+  it('[W1] hands the circuit-7 withdrawal job the SAME spent set locateOwnedNote read', async () => {
+    // RED at HEAD: the handler passed no set and the job read the pool-wide set
+    // a second time. `toBe`, not `toEqual`: a handler that passed `new Set()`
+    // would behave identically here (locate has already refused a spent note)
+    // and skip the job's spent check for real.
+    await handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
+    expect(seen.spentSetsRead, 'the handler read the spent set more than once').toHaveLength(1);
+    expect(seen.prepareV4SpentSet).toHaveLength(1);
+    expect(seen.prepareV4SpentSet[0]).toBe(seen.spentSetsRead[0]);
+  });
+
+  it('[S1] hands the circuit-7 SUBSCRIPTION prepare the leaves it already walked', async () => {
+    // RED at HEAD: the subscription job got no leaves and the prepare walked the
+    // history a second time. Same shape as the withdrawal's "hands the circuit-7
+    // prepare the leaves it already walked".
+    await handlePoolRequest(subscribeReq()).catch(() => undefined);
+    expect(seen.prepareSubscribeV4).toEqual([LEAF]);
+    const opts = seen.prepareSubscribeV4Opts[0] as { leaves?: unknown } | undefined;
+    expectWholeWalk(opts?.leaves);
+  });
+
+  it('[S1] hands the circuit-7 SUBSCRIPTION prepare what its walk could not read, undefined kept undefined', async () => {
+    for (const unread of [2, 0, 5, undefined]) {
+      clearPoolState();
+      configurePoolHandlers('http://localhost:8899');
+      setPoolSeed(META, SIGNATURE);
+      seen.prepareSubscribeV4Opts = [];
+      walkUnread = unread;
+      await handlePoolRequest(subscribeReq()).catch(() => undefined);
+      const opts = seen.prepareSubscribeV4Opts[0] as { unread?: unknown; leaves?: unknown } | undefined;
+      expect(opts, `no options reached the job (unread ${unread ?? 'none'})`).toBeDefined();
+      // `toBe`: a 0 the walk did not report would show a lagging map clean.
+      expect(opts?.unread, `the walk reported ${unread ?? 'nothing'} unread`).toBe(unread);
+      expect('unread' in (opts ?? {}), "the key is always present, its value is the walk's").toBe(true);
+      expectWholeWalk(opts?.leaves);
+    }
+  });
+
+  it('[X3] the withdrawal prepare warms the prover while the history walk is still running', async () => {
+    // RED at HEAD: with the job stubbed, nothing started the prover at all; with
+    // the real job it started only after the walk and the pre-flight.
+    let release!: () => void;
+    walkGate = new Promise<void>((r) => {
+      release = r;
+    });
+    const done = handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
+    await vi.waitFor(() => expect(seen.order).toContain('prover.start'));
+    expect(seen.order, 'the walk had not started').toContain('walk');
+    release();
+    await done;
+    expect(seen.prepareV4).toHaveLength(1);
+  });
+
+  it('[X3] the direct/relayed-agnostic prepare warms the v3 route too, and a half request warms nothing', async () => {
+    await handlePoolRequest(prepareReq());
+    expect(seen.order.filter((o) => o === 'prover.start').length).toBe(1);
+    seen.order = [];
+    await expect(handlePoolRequest(prepareReq({ recipient: RECIPIENT }))).rejects.toThrow(/both/);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen.order, 'a malformed request started the prover or walked').toEqual([]);
+  });
+
+  it('[X3] a warm-up that fails changes nothing about the prepare', async () => {
+    proverStartFailOnce = new Error('wasm failed to load (warm-up)');
+    const res = await handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
+    expect(res.version).toBe('v4');
+    expect(seen.prepareV4).toHaveLength(1);
+    expect(seen.order.filter((o) => o === 'prover.start').length).toBe(1);
+  });
+
+  it('[X3] the subscription prepare warms the prover before its walk resolves', async () => {
+    let release!: () => void;
+    walkGate = new Promise<void>((r) => {
+      release = r;
+    });
+    const done = handlePoolRequest(subscribeReq()).catch(() => undefined);
+    await vi.waitFor(() => expect(seen.order).toContain('prover.start'));
+    expect(seen.order[0]).toBe('walk');
+    release();
+    await done;
+    // The warm-up, then `computeSubscriberCommitment`'s own start: one promise
+    // in the real prover, two calls here.
+    expect(seen.order.filter((o) => o === 'prover.start').length).toBe(2);
+  });
+
+  it('[X3] a half-specified subscription is refused before any walk and before the warm-up', async () => {
+    // The all-three-terms check now runs first, the shape the withdrawal uses.
+    const half = { ...subscribeReq(), intervalSlots: undefined };
+    await expect(handlePoolRequest(half as never)).rejects.toThrow(/all on the prepare/);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(seen.order).toEqual([]);
+  });
+
+  it('[X1] a spend locate joins a walk already in flight (opt-in), withdrawal and subscription alike', async () => {
+    // RED at HEAD: no option, so a click during the page-load scan walked the
+    // same history beside it. Same budget as the scan's walk (no maxSignatures).
+    await handlePoolRequest(prepareReq({ recipient: RECIPIENT, ownerPubkey: OWNER }));
+    await handlePoolRequest(subscribeReq()).catch(() => undefined);
+    expect(seen.walkOptions).toHaveLength(2);
+    for (const o of seen.walkOptions as Array<Record<string, unknown>>) {
+      expect(o.joinInFlight).toBe(true);
+      expect(o.maxSignatures).toBeUndefined();
+      expect(o.incremental).toBeUndefined();
+      expect(typeof o.onWalked).toBe('function');
+    }
+  });
+
+  it('[X3] a subscription warm-up that fails is retried by the commitment step, and nothing else changes', async () => {
+    proverStartFailOnce = new Error('wasm failed to load (warm-up)');
+    subscribeV4PrepareFailure = new Error('STOP after the commitment');
+    await expect(handlePoolRequest(subscribeReq())).rejects.toThrow('STOP after the commitment');
+    expect(seen.prepareSubscribeV4).toEqual([LEAF]);
   });
 });

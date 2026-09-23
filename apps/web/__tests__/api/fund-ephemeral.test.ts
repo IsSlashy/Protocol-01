@@ -67,8 +67,15 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       async sendRawTransaction() {
         return 'FUNDSIG';
       }
+      // [flow-speed X7] Polled, never subscribed: a call here is a regression.
       async confirmTransaction() {
-        return { value: { err: null } };
+        throw new Error('confirmTransaction must not be called (X7)');
+      }
+      async getSignatureStatuses() {
+        return { value: [{ confirmationStatus: 'confirmed', err: null }] };
+      }
+      async getBlockHeight() {
+        return 0;
       }
       async getSignaturesForAddress(key: { toBase58(): string }, o?: { limit?: number }) {
         return (signatureHistories[key.toBase58()] ?? []).slice(0, o?.limit ?? 1000);

@@ -423,6 +423,39 @@ function isUnknownInstruction(e: unknown): boolean {
 }
 
 /**
+ * [shield-speed E2 2026-09-23] The rent a proof buffer of `proofSize` needs, read
+ * once per Connection and size and reused, so the quote the shield priced its
+ * pre-fund with at prepare is the one the allocation pays (MEASURED 2026-09-22:
+ * the second read cost about 220 ms of a paced round trip for a value that had
+ * not changed).
+ *
+ * Why this cache is not the blockhash cache the privacy review refused (proposal
+ * E item 4): the value is a cluster constant, a pure function of the size, the
+ * same for every client and every identity, so two transactions carrying it are
+ * no more linked than any two proof buffers of the same size already are. It
+ * is keyed by Connection (no state crosses a Connection, or a test), by exact
+ * size (a different proof size reads again), and it expires, so a rent change
+ * is picked up. A quote that were ever short fails `createAccount` at preflight,
+ * before the buffer is assigned, and the caller's `finally` sweeps E.
+ */
+const RENT_QUOTE_TTL_MS = 10 * 60_000;
+const rentQuotes = new WeakMap<Connection, Map<number, { lamports: number; at: number }>>();
+
+export async function quoteProofBufferRent(connection: Connection, proofSize: number): Promise<number> {
+  const space = PROOF_DATA_OFFSET + proofSize;
+  let byConnection = rentQuotes.get(connection);
+  if (!byConnection) {
+    byConnection = new Map();
+    rentQuotes.set(connection, byConnection);
+  }
+  const hit = byConnection.get(space);
+  if (hit && Date.now() - hit.at <= RENT_QUOTE_TTL_MS) return hit.lamports;
+  const lamports = await connection.getMinimumBalanceForRentExemption(space);
+  byConnection.set(space, { lamports, at: Date.now() });
+  return lamports;
+}
+
+/**
  * Allocate and initialise a buffer sized for the WHOLE proof in one transaction
  * (`createAccount` + `init_proof_buffer_v3`), or rearm the one a previous run of
  * this authority left at the same derived address (`reset_proof_buffer`, also
@@ -470,7 +503,7 @@ async function allocateProofBuffer(
       const closeTx = new Transaction().add(buildCloseProofBufferIx(kp.publicKey, authority));
       await signSendConfirm(connection, closeTx, signer);
     }
-    const lamports = await connection.getMinimumBalanceForRentExemption(space);
+    const lamports = await quoteProofBufferRent(connection, proofSize);
     const createTx = new Transaction()
       .add(
         SystemProgram.createAccount({
@@ -812,11 +845,31 @@ async function confirmSignatures(
   timeoutMs = CHUNK_CONFIRM_WINDOW_MS,
   onProgress?: (step: string) => void,
   pollMs = 2500,
+  /**
+   * [shield-speed B 2026-09-23] `lastValidBlockHeight` of each signature's
+   * blockhash, index for index with `sigs`. When given, each poll reads the
+   * confirmed block height FIRST, then the statuses; a signature whose status
+   * is null while the height is past its lastValidBlockHeight on
+   * EXPIRY_CONSECUTIVE_POLLS polls in a row can never land, and once every
+   * pending signature is in that state the window ends early. `timeoutMs`
+   * stays the ceiling. A height that cannot be read is no verdict: that poll
+   * falls back to the window alone.
+   *
+   * Why the height rule is sound: the blockhash was taken at 'finalized' and the
+   * height is read at 'confirmed'. Once the confirmed tip is past lastValid, any
+   * block that could still hold the transaction is an ancestor of that tip and
+   * therefore already confirmed, so a null status can only come from a status
+   * node that lags, which the two-poll rule absorbs. The same test web3.js uses
+   * for its block-height-exceeded error.
+   */
+  lastValidBlockHeights?: number[],
 ): Promise<number[]> {
   const pending = new Map<string, number>();
   sigs.forEach((sig, i) => pending.set(sig, i));
+  const expiredPolls = new Map<string, number>();
   const deadline = Date.now() + timeoutMs;
   while (pending.size > 0 && Date.now() < deadline) {
+    const height = lastValidBlockHeights ? await readConfirmedBlockHeight(conn) : null;
     const arr = [...pending.keys()];
     for (let i = 0; i < arr.length; i += 256) {
       const slice = arr.slice(i, i + 256);
@@ -828,14 +881,44 @@ async function confirmSignatures(
           if (st.confirmationStatus === 'confirmed' || st.confirmationStatus === 'finalized') {
             pending.delete(sig);
           }
+          // Seen at all: it landed somewhere, so it is not expired-and-lost.
+          expiredPolls.delete(sig);
+          return;
+        }
+        const lastValid = lastValidBlockHeights?.[pending.get(sig) ?? -1];
+        if (height !== null && typeof lastValid === 'number' && height > lastValid) {
+          expiredPolls.set(sig, (expiredPolls.get(sig) ?? 0) + 1);
+        } else {
+          expiredPolls.delete(sig);
         }
       });
     }
     if (pending.size === 0) break;
+    if (
+      lastValidBlockHeights &&
+      [...pending.keys()].every((sig) => (expiredPolls.get(sig) ?? 0) >= EXPIRY_CONSECUTIVE_POLLS)
+    ) {
+      break;
+    }
     onProgress?.(`Confirming chunk uploads (${pending.size} pending)...`);
     await new Promise((r) => setTimeout(r, pollMs));
   }
   return [...pending.values()];
+}
+
+/**
+ * The confirmed block height, or null when it cannot be read (an RPC error, or
+ * a Connection without the method). Null is "no verdict", never "expired":
+ * a new read must not become a new way for an upload to abort.
+ */
+async function readConfirmedBlockHeight(conn: Connection): Promise<number | null> {
+  if (typeof (conn as { getBlockHeight?: unknown }).getBlockHeight !== 'function') return null;
+  try {
+    const height = await conn.getBlockHeight('confirmed');
+    return Number.isFinite(height) ? height : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -845,7 +928,37 @@ async function confirmSignatures(
 // A blockhash is valid for ~150 slots (60-90 s), but a ~140 KB proof takes
 // minutes to upload. One blockhash fetched up front expires mid-loop and every
 // remaining chunk dies with "Blockhash not found". Refresh it as we go.
-const CHUNK_BLOCKHASH_MAX_AGE_MS = 30_000;
+//
+// [shield-speed B 2026-09-23] 8 s, not 30 s. MEASURED 2026-09-22 on devnet
+// (shield-speed MEASURE.md): a FINALIZED blockhash has only 119 blocks, about
+// 19.6 s at 165 ms slots, left against the confirmed tip, and every chunk sent
+// 20.3 s or more after its blockhash was fetched was lost (4 per run), silently
+// (skipPreflight). The budget: 19.6 s of life, minus the paced transport's
+// worst retry ladder (300+600+1200+2400+4800 = 9.3 s before it gives up),
+// minus about 2 s of round trips and slot jitter, leaves about 8 s of age at
+// signing. Chunks are signed at send time on the paced Connection (see
+// PACED_CHUNK_SEND_CONCURRENCY), so this is also about their age when they
+// leave. If the finalized lag ever grows, the round-0 expiry verdict below
+// still catches the chunks it costs.
+const CHUNK_BLOCKHASH_MAX_AGE_MS = 8_000;
+
+/**
+ * [shield-speed B] How many polls in a row a signature must be null with the
+ * confirmed height past its lastValidBlockHeight before it is declared lost.
+ * Two, so one lagging status node behind a load balancer cannot cause a resend
+ * on its own; a false verdict would only cost one idempotent write of the same
+ * bytes at the same offset, and the readback still gates the verify.
+ */
+const EXPIRY_CONSECUTIVE_POLLS = 2;
+
+/**
+ * [shield-speed B] The resend rounds that may end at expiry instead of at their
+ * fixed window: round 0 only. The happy path needs nothing else, and rounds 1-3
+ * keep their full 90 s windows so an RPC that accepts sends but does not
+ * forward them is still ridden out over minutes, as before (correctness
+ * skeptic B, amendment A1; privacy skeptic B, condition (c)).
+ */
+const EARLY_EXPIRY_ROUNDS = 1;
 
 /**
  * How many times a send retries when the provider says the blockhash does not
@@ -864,7 +977,12 @@ const CHUNK_CONFIRM_WINDOW_MS = 90_000;
 // offset-addressed write is idempotent, so the first v1 round waits 20 s and
 // polls every second; the legacy round keeps its window.
 const V1_CHUNK_CONFIRM_WINDOW_MS = 20_000;
-const V1_CHUNK_CONFIRM_POLL_MS = 1_000;
+// [shield-speed C 2026-09-23] 500 ms, was 1 s: the same cadence change as
+// `worker/pollingConfirm.ts`. MEASURED 2026-09-22: a landed chunk's status was
+// never visible on the first read after the send and always on the next one.
+// The window is a Date.now() deadline, so polling faster changes only when the
+// reads happen, never the windows, the rounds or the readback.
+const V1_CHUNK_CONFIRM_POLL_MS = 500;
 
 // Resend budget. Round 0 sends everything; each later round re-signs ONLY the
 // unconfirmed chunks with a fresh blockhash and watches for one more full
@@ -873,6 +991,12 @@ const V1_CHUNK_CONFIRM_POLL_MS = 1_000;
 // run 63-554 s end to end, so a chunk that misses all four windows is an RPC
 // outage, not congestion, and more rounds would only spend more fees on a
 // dead link.
+//
+// [shield-speed B 2026-09-23] Round 0 now ends as soon as every chunk still
+// unconfirmed is provably expired (EARLY_EXPIRY_ROUNDS) instead of at its fixed
+// window; rounds 1-3 keep their 90 s windows. The resends therefore still go
+// out at about +20 s, +110 s and +200 s, and an outage is ridden out for about
+// as long as before (about 4.5 to 5 minutes counting the last window).
 const MAX_RESEND_ROUNDS = 3;
 // [L2-CLIENT 2026-09-12] Chunk transactions in flight at once. They are
 // independent (offset-addressed, idempotent, skipPreflight) and were sent one
@@ -880,6 +1004,23 @@ const MAX_RESEND_ROUNDS = 3;
 // public devnet endpoint under its per-IP rate limit; every caller signs with
 // a local ephemeral keypair, so concurrency costs no wallet prompts.
 const CHUNK_SEND_CONCURRENCY = 8;
+/**
+ * [shield-speed B 2026-09-23] Chunk sends in flight at once on the worker's
+ * PACED Connection: one. The paced transport already carries one request at a
+ * time, so eight senders bought no throughput there; what they did was sign
+ * eight chunks against the current blockhash and queue them behind each other's
+ * 429 retry ladders, which is how chunks reached the cluster 20 s after their
+ * blockhash (MEASURED 2026-09-22). With one, a chunk is signed just before it
+ * leaves. Every production upload runs on the paced Connection (the treasury
+ * restock too, through the same worker handlers), so this does not split the
+ * deposits into two shapes; an unpaced Connection (tests, tools) keeps eight.
+ *
+ * "Paced" is read off the `__p01Polling` marker `usePollingConfirmation` puts
+ * on the worker's Connection (`worker/poolHandlers.ts` configurePoolHandlers),
+ * the only Connection built with `createPacedFetch`. web3.js exposes no way to
+ * ask a Connection which fetch it was given, so the marker stands in for it.
+ */
+const PACED_CHUNK_SEND_CONCURRENCY = 1;
 
 /** One upload unit. Chunk writes are offset-addressed on-chain
  * (`write_proof_chunk(offset, data)`), so resending a chunk is idempotent —
@@ -988,8 +1129,16 @@ async function uploadProofChunks(
 
   // `sigs[k]` is the signature of `toSend[k]` whatever order the sends finish
   // in: `confirmSignatures` returns INDICES and the resend rounds index back.
-  const sendChunks = async (toSend: ProofChunk[], label: string): Promise<string[]> => {
+  // `lastValid[k]` is the lastValidBlockHeight of the blockhash `sigs[k]` was
+  // signed over, which is what lets round 0 call a chunk lost at its expiry.
+  const paced = (connection as { __p01Polling?: boolean }).__p01Polling === true;
+  const concurrency = paced ? PACED_CHUNK_SEND_CONCURRENCY : CHUNK_SEND_CONCURRENCY;
+  const sendChunks = async (
+    toSend: ProofChunk[],
+    label: string,
+  ): Promise<{ sigs: string[]; lastValid: number[] }> => {
     const sigs: string[] = new Array<string>(toSend.length);
+    const lastValid: number[] = new Array<number>(toSend.length);
     let next = 0;
     let sent = 0;
     const worker = async () => {
@@ -998,6 +1147,7 @@ async function uploadProofChunks(
         if (k >= toSend.length) return;
         const chunk = toSend[k];
         await freshBlockhash();
+        lastValid[k] = chunkLastValidBlockHeight;
         if (v1) {
           const { messageBytes, payer } = compileV1ChunkMessage({
             programId: STARK_VERIFIER_PROGRAM_ID,
@@ -1026,9 +1176,9 @@ async function uploadProofChunks(
       }
     };
     await Promise.all(
-      Array.from({ length: Math.min(CHUNK_SEND_CONCURRENCY, toSend.length) }, worker),
+      Array.from({ length: Math.min(concurrency, toSend.length) }, worker),
     );
-    return sigs;
+    return { sigs, lastValid };
   };
 
   // Round 0 sends everything; each later round resends ONLY what did not
@@ -1039,7 +1189,7 @@ async function uploadProofChunks(
       round === 0
         ? (v1 ? 'Uploading proof chunk (tx v1)' : 'Uploading proof chunk')
         : `Resending chunk (round ${round}/${MAX_RESEND_ROUNDS})`;
-    const sigs = await sendChunks(pendingChunks, label);
+    const { sigs, lastValid } = await sendChunks(pendingChunks, label);
     onProgress?.('Confirming chunk uploads...');
     const unconfirmed = await confirmSignatures(
       connection,
@@ -1047,6 +1197,7 @@ async function uploadProofChunks(
       v1 && round === 0 ? V1_CHUNK_CONFIRM_WINDOW_MS : CHUNK_CONFIRM_WINDOW_MS,
       onProgress,
       v1 ? V1_CHUNK_CONFIRM_POLL_MS : 2500,
+      round < EARLY_EXPIRY_ROUNDS ? lastValid : undefined,
     );
     if (unconfirmed.length === 0) break;
     if (round >= MAX_RESEND_ROUNDS) {
@@ -1087,7 +1238,7 @@ async function uploadProofChunks(
         if (start < c.offset + c.bytes.length && start + MAX_CHUNK_SIZE > c.offset) torn.add(k);
       });
     }
-    const repairSigs = await sendChunks(
+    const { sigs: repairSigs } = await sendChunks(
       [...torn].sort((a, b) => a - b).map((k) => chunks[k]),
       'Re-uploading torn chunk',
     );
@@ -1272,9 +1423,13 @@ export async function closeStarkProofBuffer(
   // close is sent instead and the caller's own sweep still finds the rent.
   if (opts.sweepTo && !opts.sweepTo.equals(signer.publicKey)) {
     try {
+      // [shield-speed E1 2026-09-23] Only the buffer's LAMPORTS are needed here,
+      // so no data comes back: MEASURED 2026-09-22, the full ~85-110 KB read
+      // left a 344-359 ms gap where a small read leaves about 125 ms. The
+      // byte-for-byte readback before the verify still reads the whole buffer.
       const [balance, info] = await Promise.all([
         connection.getBalance(signer.publicKey, 'confirmed'),
-        connection.getAccountInfo(proofBuffer),
+        connection.getAccountInfo(proofBuffer, { dataSlice: { offset: 0, length: 0 } }),
       ]);
       const rent = info?.lamports ?? 0;
       const FEE = 5_000;
@@ -1394,6 +1549,7 @@ export {
   allocateProofBuffer,
   readProofBufferState,
   CHUNK_SEND_CONCURRENCY,
+  PACED_CHUNK_SEND_CONCURRENCY,
   STARK_VERIFIER_PROGRAM_ID,
   PROOF_DATA_OFFSET,
   MAX_CHUNK_SIZE,

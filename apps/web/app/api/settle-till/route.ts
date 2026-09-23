@@ -318,6 +318,19 @@ const TILL_SCAN_LIMIT_PUBLIC = 10;
  * but its credit still resets the quiet period, since it may be a real buyer.
  * `floatFundedCredits` reports how many were set aside.
  *
+ * ⛔ EVERY DEBITED ACCOUNT, NOT THE FIRST THREE [close-v1 blockers, gate r1
+ * open item 1]. The check used to read only the first 3 accounts the credit
+ * debited, so K paid the till behind 3 clean decoys (one paying the network
+ * fee, two moving a lamport each to a sink) and was never read: the credit
+ * counted, and one real purchase settled as a batch of three
+ * (`close-v1/L1-server-money-verify-r3/probe-decoy.log`). Now every debited
+ * account is read, up to `PAYER_SOURCES_CHECKED` (8); a credit that debited
+ * more accounts than that is not a purchase (unknown), and like any credit
+ * that may be a buyer's it still resets the quiet period. An honest purchase
+ * debits one or two accounts (the buyer, and a separate fee payer if any), so
+ * it is read in full. Pinned by `lib/privacy/pool/settleTillRoute.test.ts`
+ * "F62 · decoy debited accounts do not hide a float-funded payer".
+ *
  * ⚠️ WHAT THIS DOES NOT CATCH, AND THE BOUND. It walks ONE hop: K -> K2 ->
  * till, or more than `PAYER_HISTORY_PAGE` transactions between the grant and
  * the payment, passes it for one more network fee each. What bounds the
@@ -331,8 +344,14 @@ const TILL_SCAN_LIMIT_PUBLIC = 10;
  */
 /** How many of a payer's transactions before its payment are read (F62). */
 const PAYER_HISTORY_PAGE = 10;
-/** How many debited accounts of one credit are checked (F62). */
-const PAYER_SOURCES_CHECKED = 3;
+/**
+ * How many debited accounts of one credit are checked (F62). A credit that
+ * debited more is not counted as a purchase (see "EVERY DEBITED ACCOUNT").
+ * Each check reads up to `PAYER_HISTORY_PAGE` + 1 RPC answers, and only the
+ * scheduler runs it, for at most `PAYER_CHECKS_PER_TICK` credits a tick, each
+ * of which moved at least `MIN_PURCHASE_CREDIT_LAMPORTS` into the till.
+ */
+const PAYER_SOURCES_CHECKED = 8;
 /** How many credits one tick checks; older ones are counted unchecked (F62). */
 const PAYER_CHECKS_PER_TICK = 20;
 
@@ -419,16 +438,22 @@ async function readTillHistory(
         if (floatKey && checked < PAYER_CHECKS_PER_TICK) {
           checked += 1;
           const meta = tx.meta;
-          const sources = keys
-            .filter((k, j) => k !== tillKey && (meta.postBalances[j] ?? 0) - (meta.preBalances[j] ?? 0) < 0)
-            .slice(0, PAYER_SOURCES_CHECKED);
-          for (const source of sources) {
-            const v = await floatFundedBefore(conn, source, floatKey, s.signature);
-            if (v === 'yes') {
-              verdict = 'yes';
-              break;
+          const sources = keys.filter(
+            (k, j) => k !== tillKey && (meta.postBalances[j] ?? 0) - (meta.preBalances[j] ?? 0) < 0,
+          );
+          // More debited accounts than the cap: the ones left unread could be
+          // the payer, so this is not a purchase (it still resets the clock).
+          if (sources.length > PAYER_SOURCES_CHECKED) {
+            verdict = 'unknown';
+          } else {
+            for (const source of sources) {
+              const v = await floatFundedBefore(conn, source, floatKey, s.signature);
+              if (v === 'yes') {
+                verdict = 'yes';
+                break;
+              }
+              if (v === 'unknown') verdict = 'unknown';
             }
-            if (v === 'unknown') verdict = 'unknown';
           }
         }
         if (verdict === 'yes') {

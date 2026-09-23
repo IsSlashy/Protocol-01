@@ -96,6 +96,15 @@ const chain = { spent: false, fail: false, reads: 0 };
 /** The pool's leaves as the RPC serves them, used by `locateOwnedNote`. */
 const chainLeaves = new Map<string, { commitment: bigint; leafIndex: number }>();
 
+/**
+ * [flow-speed X1] What each walk was asked for, and how many 10 s heartbeats the
+ * stub fires before it answers (a joiner waiting on a walk already in flight).
+ */
+const walk = {
+  options: [] as Array<Record<string, unknown> | undefined>,
+  joinWaits: 0,
+};
+
 vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
@@ -112,7 +121,15 @@ vi.mock('./denominatedPool', async (importOriginal) => {
       return new Set<string>();
     },
     isNullifierSpentInSet: () => chain.spent,
-    fetchPoolCommitments: async () => chainLeaves,
+    fetchPoolCommitments: async (
+      _conn: unknown,
+      _pda: unknown,
+      options?: { onJoinWait?: (seconds: number) => void } & Record<string, unknown>,
+    ) => {
+      walk.options.push(options);
+      for (let i = 1; i <= walk.joinWaits; i++) options?.onJoinWait?.(i * 10);
+      return chainLeaves;
+    },
   };
 });
 
@@ -215,6 +232,8 @@ beforeEach(() => {
   chain.spent = false;
   chain.fail = false;
   chain.reads = 0;
+  walk.options = [];
+  walk.joinWaits = 0;
   unshieldJobs.length = 0;
   subscribeJobs.length = 0;
   // By default the RPC serves the received note's leaf, sitting where the
@@ -346,6 +365,34 @@ describe('importing a received note', () => {
     expect(res.note.leafIndex).toBe(LEAF);
     // Re-encrypted to the ACTIVE address regardless of which one received it.
     expect(openOwnBlob(res.encryptedNote).commitment).toBe(shareable().commitment);
+  });
+});
+
+describe('[flow-speed X1] the tree check joins a walk already in flight', () => {
+  it('asks for joinInFlight on the scan budget, and re-emits its own line while it waits', async () => {
+    // RED without the opt-in: an import during the page-load scan walked the
+    // same history beside it, on the one paced connection.
+    walk.joinWaits = 2;
+    const steps: string[] = [];
+    const res = await handlePoolRequest(importReq(), (step: string) => steps.push(step));
+    expect(res.note).toMatchObject({ leafIndex: LEAF });
+
+    expect(walk.options).toHaveLength(1);
+    const o = walk.options[0]!;
+    expect(o.joinInFlight).toBe(true);
+    // Same budget as the scan's walk, so the two can be the same flight.
+    expect(o.maxSignatures).toBeUndefined();
+    expect(o.batchSize).toBeUndefined();
+    expect(o.incremental).toBeUndefined();
+    expect(typeof o.onJoinWait).toBe('function');
+
+    // Never silent while it waits: each heartbeat repeats the step the user
+    // already sees, and nothing new is said.
+    const line = "Checking the note against the pool's tree...";
+    const first = steps.indexOf(line);
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(steps.slice(first, first + 3)).toEqual([line, line, line]);
+    expect(steps.filter((s) => s === line)).toHaveLength(3);
   });
 });
 

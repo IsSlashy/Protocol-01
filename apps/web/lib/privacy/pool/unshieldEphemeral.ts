@@ -98,7 +98,8 @@ const UNSHIELD_EPHEMERAL_INFO = utf8ToBytes('p01:web:unshield-ephemeral:v1');
  * there is exactly how the disclosed figure and the transferred figure drift
  * apart in silence — which is the defect being repaired.
  */
-import { E_TX_FEE_BUDGET, NULLIFIER_RENT } from './subscribeFloat';
+import { E_TX_FEE_BUDGET, MEASURED_PROOF_BYTES, NULLIFIER_RENT } from './subscribeFloat';
+import { quoteProofBufferRent } from './stark';
 import nacl from 'tweetnacl';
 
 export { E_TX_FEE_BUDGET, NULLIFIER_RENT };
@@ -109,6 +110,61 @@ export { E_TX_FEE_BUDGET, NULLIFIER_RENT };
  * rent-paying, which the runtime rejects outright — that made every sweep fail.
  */
 const SWEEP_FEE = 5_000;
+
+/**
+ * [flow-speed X2 2026-09-23] How many times E's balance is read before a short
+ * one is believed, and how far apart. A COUNT, not a wall-clock deadline: the
+ * reads queue in the worker's paced transport behind whatever else it is doing
+ * (a page-load scan), and a deadline could cut the budget to a single read.
+ */
+export const PREFUND_READ_ATTEMPTS = 5;
+export const PREFUND_READ_INTERVAL_MS = 400;
+
+/**
+ * [flow-speed X2 2026-09-23] E's balance at 'confirmed', read again while it is
+ * short of `requiredLamports`, up to `PREFUND_READ_ATTEMPTS` reads; then the
+ * caller's own "underfunded" message, unchanged, if it is still short.
+ *
+ * WHY. The funder route answers only once ITS node saw the grant at 'confirmed'
+ * (`app/api/fund-ephemeral/route.ts`); this read goes through the browser's
+ * endpoint, a load-balanced provider whose node can lag that one. One lagging
+ * read used to throw the whole prepare (walks and proof) and the grant away:
+ * the caller's `finally` swept the grant back, the job was dropped, and the next
+ * click redid everything and drew the lamport budget again.
+ *
+ * WHAT DOES NOT MOVE (`prefundWait.test.ts`):
+ *   - the bar: `funded < requiredLamports`, the JITTERED figure the job carries,
+ *     never the raw floor; commitment 'confirmed', never 'processed';
+ *   - a funded E is read ONCE and no timer is scheduled;
+ *   - an RPC error is not caught here: it goes to the caller's `finally` as
+ *     before (the paced transport already retries a 429);
+ *   - nothing but `getBalance(E)` is sent, on the caller's connection: no second
+ *     grant, no call to our server, no other provider. The repeat names an
+ *     account the RPC already has, from the same IP.
+ *   - nothing is logged or stored.
+ * The caller keeps the call INSIDE its `try`, so a grant that lands after the
+ * last read is still swept by its `finally` to whoever paid.
+ *
+ * The shield's copy (`shieldEphemeral.ts executeShield`) is another run's file
+ * and keeps its own loop for now; see the flow-speed handoff.
+ */
+export async function awaitPrefund(
+  connection: Connection,
+  ephemeral: PublicKey,
+  requiredLamports: number,
+  underfunded: (funded: number) => string,
+  opts: { attempts?: number; intervalMs?: number } = {},
+): Promise<number> {
+  const attempts = Math.max(1, opts.attempts ?? PREFUND_READ_ATTEMPTS);
+  const intervalMs = opts.intervalMs ?? PREFUND_READ_INTERVAL_MS;
+  let funded = await connection.getBalance(ephemeral, 'confirmed');
+  for (let read = 1; funded < requiredLamports && read < attempts; read++) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    funded = await connection.getBalance(ephemeral, 'confirmed');
+  }
+  if (funded < requiredLamports) throw new Error(underfunded(funded));
+  return funded;
+}
 
 /**
  * Derive the withdrawal ephemeral from the pool seed and the note's leaf index.
@@ -312,14 +368,16 @@ export async function executeUnshield(
     // reasoning in shieldEphemeral.ts. Throwing before the try skips the
     // `finally` sweep below, so a merely-lagging RPC read (pre-fund confirmed
     // on chain but not yet visible here) strands the whole withdrawal float on
-    // an ephemeral instead of returning it.
-    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
-    if (funded < ctx.requiredLamports) {
-      throw new Error(
+    // an ephemeral instead of returning it. [flow-speed X2] A short read is
+    // read again before it is believed; see `awaitPrefund`.
+    await awaitPrefund(
+      connection,
+      ephemeral.publicKey,
+      ctx.requiredLamports,
+      (funded) =>
         `The withdrawal signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
-          'The pre-fund transaction may not have confirmed yet — retry in a moment.',
-      );
-    }
+        'The pre-fund transaction may not have confirmed yet — retry in a moment.',
+    );
 
     const txSig = await unshieldDenominatedStarkV3(
       receipt,
@@ -450,6 +508,16 @@ export async function prepareUnshieldJobV4(
   walletSeed: Uint8Array,
   onProgress?: (step: string) => void,
   opts: PrepareUnshieldV4Options = {},
+  /**
+   * [flow-speed W1 2026-09-23] The pool-wide spent set the caller already read
+   * in THIS request (`locateOwnedNote`), the same object. Absent, the set is
+   * read here, never defaulted to empty. A separate parameter, not a field of
+   * `opts`, so it can never ride into anything `prepareUnshieldV4` forwards.
+   * Either way the check is membership in the pool set, never a read of this
+   * note's nullifier PDA (`noPointedNullifierRead.test.ts`;
+   * `unshieldV4SpentSet.test.ts`).
+   */
+  spentSet?: ReadonlySet<string>,
 ): Promise<PreparedUnshieldV4> {
   // Same refusal as `executeUnshield`, same reason, moved to the first moment it
   // can be made. See the long note at that call site: paying the withdrawal back
@@ -531,20 +599,38 @@ export async function prepareUnshieldJobV4(
    * scan. The decision is then local, with no further network.
    */
   onProgress?.('Checking the note is unspent...');
-  const spentSet = await fetchSpentNullifierSet(connection, poolConfig.poolPDA);
-  if (isNullifierSpentInSet(spentSet, poolConfig.poolPDA, receipt.nullifierPreimage, receipt.secret)) {
+  // [flow-speed W1] The caller's set when it handed one (the same request's
+  // read), else one read here. Same local refusal, same words.
+  const spent = spentSet ?? (await fetchSpentNullifierSet(connection, poolConfig.poolPDA));
+  if (isNullifierSpentInSet(spent, poolConfig.poolPDA, receipt.nullifierPreimage, receipt.secret)) {
     throw new Error('This note has already been withdrawn.');
   }
 
-  const prepared = await prepareUnshieldV4(receipt, recipient, poolConfig, connection, onProgress, opts);
+  // [flow-speed X4 2026-09-23] QUOTED BESIDE THE PROOF, AND ONCE. The C7 wire
+  // length is a pure function of the circuit (`MEASURED_PROOF_BYTES.c7`, pinned
+  // against the shipped blob), so the buffer's rent is asked for the moment the
+  // prepare passes its last pre-proof refusal (`onProving`), through the SAME
+  // shared quote `allocateProofBuffer` uses at execute (`quoteProofBufferRent`,
+  // stark.ts): the same request on the same connection, a proof-length earlier,
+  // and the allocation then reads nothing. Relayed and direct prepares are one
+  // prepare, so both send it (R3). After the proof the quote is asked again at
+  // the REAL size: a hit when the sizes match, one read when they do not or the
+  // prefetch failed (`rentPrefetch.test.ts`).
+  let rentPrefetch: Promise<unknown> | null = null;
+  const prepared = await prepareUnshieldV4(receipt, recipient, poolConfig, connection, onProgress, {
+    ...opts,
+    onProving: () => {
+      opts.onProving?.();
+      rentPrefetch = quoteProofBufferRent(connection, MEASURED_PROOF_BYTES.c7).catch(() => undefined);
+    },
+  });
 
   onProgress?.('Pricing the withdrawal...');
   // ONE buffer. The v3 job adds two rent figures here because the handler reads
   // both proofs in one transaction and they are open at the same time; circuit 7
   // has nothing to pair with.
-  const r7 = await connection.getMinimumBalanceForRentExemption(
-    83 + prepared.c7ProofResult.proofSize,
-  );
+  if (rentPrefetch) await rentPrefetch;
+  const r7 = await quoteProofBufferRent(connection, prepared.c7ProofResult.proofSize);
   const rawRequiredLamports = r7 + NULLIFIER_RENT + E_TX_FEE_BUDGET;
   // Jittered for the same reason as the v3 job, and it matters MORE here: a
   // single-buffer float is an even cleaner fingerprint than the pair's sum,
@@ -610,13 +696,16 @@ export async function executeUnshieldV4(
 
     // INSIDE the try, like the v3 twin: the pre-fund has already landed by now,
     // so throwing before the `finally` would strand it on the ephemeral.
-    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
-    if (funded < ctx.requiredLamports) {
-      throw new Error(
+    // [flow-speed X2] After the payee refusal, as before; a short read is read
+    // again before it is believed (`awaitPrefund`).
+    await awaitPrefund(
+      connection,
+      ephemeral.publicKey,
+      ctx.requiredLamports,
+      (funded) =>
         `The withdrawal signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
-          'The pre-fund transaction may not have confirmed yet — retry in a moment.',
-      );
-    }
+        'The pre-fund transaction may not have confirmed yet — retry in a moment.',
+    );
 
     const txSig = await unshieldDenominatedStarkV4(
       poolConfig,

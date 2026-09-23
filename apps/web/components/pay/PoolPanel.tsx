@@ -58,7 +58,11 @@ import {
   type PoolToken,
   relayedWithdrawalAffordability,
 } from "@/lib/privacy/pool/denominatedPool";
-import { operatorFeeAtomic } from "@/lib/privacy/pool/ephemeralFunder";
+import {
+  WalletExposureRefusedError,
+  funderConfigured,
+  operatorFeeAtomic,
+} from "@/lib/privacy/pool/ephemeralFunder";
 import { clearContribution } from "@/lib/privacy/pendingContribution";
 import { StaleWorkerError } from "@/lib/privacy/sealedStore";
 import { SHIELD_PHASES, WITHDRAW_PHASES } from "@/lib/pay/flowProgress";
@@ -1157,6 +1161,16 @@ export default function PoolPanel({
         return;
       }
 
+      // [close-v1 F56] The relayed own deposit needs the wallet's message
+      // signer: `/api/relay-to-buyer` moves the float only on the payer's proof
+      // over the claim challenge, and `shieldToPool` refuses without it BEFORE
+      // the wallet pays. Checked here too, so the refusal is the panel's own
+      // sentence rather than a raw error. Treasury mode deposits in public and
+      // needs no relay proof.
+      if (!treasuryMode && !signMessage) {
+        setError(t("pay.pool.errNoSignerDeposit"));
+        return;
+      }
       const outcome = await shieldToPool({
         meta,
         token: "SOL",
@@ -1164,6 +1178,8 @@ export default function PoolPanel({
         owner,
         connection,
         signOne,
+        // Pinned by `__tests__/components/PoolPanel.test.tsx` "[close-v1 F56]".
+        signMessage: signMessage ?? undefined,
         onProgress: setStep,
         // ⛔ ONLY IN TREASURY MODE, AND ONLY BECAUSE THIS DEPOSIT IS SUPPOSED
         // TO BE NAMED.
@@ -1210,6 +1226,24 @@ export default function PoolPanel({
   async function handleUnshield(note: PoolNoteView, opts?: { relayed?: boolean }) {
     if (!signOne) {
       setError(t("pay.pool.errCannotSignTx"));
+      return;
+    }
+    // [flow-speed X8 2026-09-23] A DIRECT withdrawal on a build with no funder
+    // ticket can never be funded: FUND-1 refuses it after the prepare (walk,
+    // spent set, proof), every time. Refused here instead, from the build
+    // constant alone, before the payout signature, any worker request or any
+    // RPC read, and with the same FUND-1 words. Nothing is recorded. The
+    // relayed withdrawal funds nothing and stays open; the library check in
+    // `fundEphemeralForJob` stays as the backstop for the runtime refusals
+    // (drained float, KV outage, budget), which still surface after the prepare.
+    const relayed = !!(opts?.relayed && relayerUrl);
+    if (!relayed && !funderConfigured()) {
+      setError(
+        localizePoolError(
+          new WalletExposureRefusedError("this deployment has no funder configured.", false).message,
+          t,
+        ),
+      );
       return;
     }
     setError(null);

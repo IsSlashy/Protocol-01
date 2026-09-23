@@ -306,12 +306,15 @@ describe('the subscribe cost disclosure, read before signing', () => {
     const en = read(DICT_EN);
     expect(en).toMatch(/There is no cancel and no refund/);
     expect(en).toMatch(/circuit-7 subscription carries no note commitment/);
-    expect(en).toMatch(/C1 \+ C3 fallback does republish the commitment/);
+    // [close-v1 F05] The pair is switched off by default now, so the copy no
+    // longer calls it "the fallback"; the half that says it republishes the
+    // commitment stays pinned (closeV1CostCommitmentCopy.test.ts pins the rest).
+    expect(en).toMatch(/C1 \+ C3 pair republishes the commitment/);
 
     const fr = read(DICT_FR);
     expect(fr).toMatch(/ni annulation ni remboursement/);
     expect(fr).toMatch(/circuit 7 ne porte aucun engagement de note/);
-    expect(fr).toMatch(/repli C1 \+ C3, lui, republie l.engagement/);
+    expect(fr).toMatch(/paire C1 \+ C3 republie l.engagement/);
   });
 });
 

@@ -37,6 +37,13 @@ vi.mock('./ephemeralFunder', () => ({
   fundEphemeralForJob: (...args: unknown[]) => fundEphemeralForJob(...args),
   fetchFunderLookup: async () => ({ configured: true, funder: FUNDER }),
   funderTicket: () => 'test-ticket',
+  // [shield-speed H] contributeToPool now asks for the relay terms beside its
+  // prepare; the funder is mocked here, so the handle is never awaited.
+  prefetchRelayTerms: () => ({
+    terms: new Promise(() => undefined),
+    answeredAt: () => null,
+    abort: () => undefined,
+  }),
 }));
 
 vi.mock('./denominatedPool', async (importOriginal) => ({

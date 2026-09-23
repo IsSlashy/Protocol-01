@@ -66,6 +66,7 @@ import { sendWithFreshBlockhash } from './sendTx';
 
 import type { StoredMerklePath } from './unshieldFromPath';
 import {
+  awaitPrefund,
   deriveUnshieldEphemeral,
   prepareUnshieldJob,
   type PreparedUnshield,
@@ -74,6 +75,7 @@ import { deriveSubscriptionVaultPDA, subscribePrivateStark } from './subscribePr
 import {
   prepareSubscribeV4,
   subscribePrivateStarkV4,
+  type PrepareSubscribeV4Options,
   type PrepareSubscribeV4Result,
   type SubscribeBinding,
 } from './subscribePrivateStarkV4';
@@ -84,7 +86,8 @@ import {
   isNullifierSpentInSet,
 } from './denominatedPool';
 import { jitterPrefund } from './prefundAmount';
-import { SUBSCRIPTION_VAULT_LEN, subscribeFloorLamports } from './subscribeFloat';
+import { MEASURED_PROOF_BYTES, SUBSCRIPTION_VAULT_LEN, subscribeFloorLamports } from './subscribeFloat';
+import { quoteProofBufferRent } from './stark';
 import nacl from 'tweetnacl';
 import type {
   PoolConfig,
@@ -276,13 +279,16 @@ export async function executeSubscribe(
       throw new Error('The billing interval must be at least one slot.');
     }
 
-    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
-    if (funded < ctx.requiredLamports) {
-      throw new Error(
+    // [flow-speed X2] After the interval check, as before; a short read is read
+    // again before it is believed (`awaitPrefund`, unshieldEphemeral.ts).
+    await awaitPrefund(
+      connection,
+      ephemeral.publicKey,
+      ctx.requiredLamports,
+      (funded) =>
         `The subscription signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
-          'The pre-fund transaction may not have confirmed yet — retry in a moment.',
-      );
-    }
+        'The pre-fund transaction may not have confirmed yet — retry in a moment.',
+    );
 
     return await subscribePrivateStark(
       {
@@ -423,6 +429,13 @@ export async function prepareSubscribeJobV4(
    * SUBSCRIPTION applies the saved-root tie as the withdrawal does (m == k)").
    */
   savedPath?: StoredMerklePath,
+  /**
+   * [flow-speed S1 2026-09-23] The leaves `locateOwnedNote` walked in this
+   * request and what that walk could not read, handed to `prepareSubscribeV4`
+   * unchanged so it does not walk the history a second time. Last, and an
+   * object, so no positional argument before it moves.
+   */
+  walked: PrepareSubscribeV4Options = {},
 ): Promise<PreparedSubscribeV4> {
   // 🚨 A PRE-BLINDING NOTE GAINS NOTHING FROM CIRCUIT 7, AND SAYING OTHERWISE IS
   // THE LIE. The same refusal `prepareUnshieldJobV4` makes, for the same reason,
@@ -496,6 +509,17 @@ export async function prepareSubscribeJobV4(
     licenseCommitment: terms.licenseCommitment,
   };
 
+  // [flow-speed X4 2026-09-23] QUOTED BESIDE THE PROOF, buffer first then vault
+  // (today's order), from the moment the prepare passes its last pre-proof
+  // refusal (`onProving`). The buffer goes through the shared quote the
+  // allocation uses at execute (`quoteProofBufferRent`, stark.ts), so execute
+  // reads it no more; the vault quote is held here. The vault prefetch waits for
+  // the buffer's, so a failed buffer quote sends no vault quote ahead of it.
+  // After the proof: the buffer is asked again at the REAL size (a hit when it
+  // matches), and the vault re-read only if its prefetch failed
+  // (`rentPrefetch.test.ts`).
+  let bufferPrefetch: Promise<unknown> | null = null;
+  let vaultPrefetch: Promise<number | undefined> | null = null;
   const prepared = await prepareSubscribeV4(
     receipt,
     poolConfig,
@@ -505,18 +529,31 @@ export async function prepareSubscribeJobV4(
     terms.retailer,
     onProgress,
     savedPath,
+    {
+      ...walked,
+      onProving: () => {
+        walked.onProving?.();
+        const buffer = quoteProofBufferRent(connection, MEASURED_PROOF_BYTES.c7);
+        bufferPrefetch = buffer.catch(() => undefined);
+        vaultPrefetch = buffer.then(
+          () => connection.getMinimumBalanceForRentExemption(SUBSCRIPTION_VAULT_LEN).catch(() => undefined),
+          () => undefined,
+        );
+      },
+    },
   );
 
   onProgress?.('Pricing the subscription...');
   // ONE buffer. The v3 job adds two rent figures because the handler reads both
   // proofs in one transaction and they are open at the same time; circuit 7 has
   // nothing to pair with.
-  const r7 = await connection.getMinimumBalanceForRentExemption(
-    83 + prepared.c7ProofResult.proofSize,
-  );
+  if (bufferPrefetch) await bufferPrefetch;
+  const r7 = await quoteProofBufferRent(connection, prepared.c7ProofResult.proofSize);
   // The vault's rent does NOT come back: the vault is a real account that stays
   // open until `claim_period` closes it on the final claim.
-  const vaultRent = await connection.getMinimumBalanceForRentExemption(SUBSCRIPTION_VAULT_LEN);
+  const vaultQuoted = vaultPrefetch ? await vaultPrefetch : undefined;
+  const vaultRent =
+    vaultQuoted ?? (await connection.getMinimumBalanceForRentExemption(SUBSCRIPTION_VAULT_LEN));
   // ⛔ THE SAME FUNCTION THE COST DISCLOSURE QUOTES. `SUBSCRIBE_FLOAT_SOL` in
   // `subscribeFloat.ts` is this call over the MEASURED C7 wire size, so the
   // number the user reads before signing and the number transferred here cannot
@@ -596,14 +633,16 @@ export async function executeSubscribeV4(
   try {
     // INSIDE the try, like both twins: the pre-fund has already landed by now, so
     // throwing before the `finally` would strand the whole float on an ephemeral
-    // over a merely-lagging RPC read.
-    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
-    if (funded < ctx.requiredLamports) {
-      throw new Error(
+    // over a merely-lagging RPC read. [flow-speed X2] Which is also why a short
+    // read is read again before it is believed (`awaitPrefund`).
+    await awaitPrefund(
+      connection,
+      ephemeral.publicKey,
+      ctx.requiredLamports,
+      (funded) =>
         `The subscription signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
-          'The pre-fund transaction may not have confirmed yet — retry in a moment.',
-      );
-    }
+        'The pre-fund transaction may not have confirmed yet — retry in a moment.',
+    );
 
     return await subscribePrivateStarkV4(
       {

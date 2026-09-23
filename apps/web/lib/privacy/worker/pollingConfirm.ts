@@ -18,6 +18,22 @@
 
 import type { Connection } from '@solana/web3.js';
 
+/**
+ * [shield-speed C 2026-09-23] The poll schedule. MEASURED 2026-09-22 on devnet
+ * (shield-speed MEASURE.md): all 8 single-transaction confirmations took
+ * 1845-1941 ms from send to seen. The first read (~+230 ms) was ALWAYS null and
+ * the second, a flat 1.5 s later, always confirmed, while the same transaction
+ * type confirmed over a WebSocket in 537-632 ms. So: the first read at +400 ms
+ * (the immediate one never saw anything), then every 400 ms while the
+ * transaction is young, then the old 1.5 s. Only the timing of the reads
+ * changes: the ceiling, the history search after 20 s, the 'confirmed' rule
+ * and the throw on an on-chain error are exactly as before, and every read
+ * still goes through the worker's paced transport.
+ */
+const FIRST_POLL_MS = 400;
+const FAST_POLL_MS = 400;
+/** How long the fast cadence lasts, from the call. */
+const FAST_POLL_WINDOW_MS = 5_000;
 const POLL_INTERVAL_MS = 1_500;
 
 /** Ceiling per confirmation, in case a transaction is simply dropped. */
@@ -46,6 +62,7 @@ export function usePollingConfirmation(connection: Connection): Connection {
     const start = Date.now();
     const deadline = start + MAX_WAIT_MS;
 
+    await sleep(FIRST_POLL_MS);
     while (Date.now() < deadline) {
       // The status cache covers recent signatures; only pay for the history
       // search once the transaction is old enough to have fallen out of it.
@@ -80,7 +97,7 @@ export function usePollingConfirmation(connection: Connection): Connection {
           }
         }
       }
-      await sleep(POLL_INTERVAL_MS);
+      await sleep(Date.now() - start < FAST_POLL_WINDOW_MS ? FAST_POLL_MS : POLL_INTERVAL_MS);
     }
 
     throw new Error(

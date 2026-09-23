@@ -49,6 +49,10 @@ import {
   type GenericStarkProof,
   type CompactStarkProof,
 } from './stark';
+// A NAMESPACE import for the exports the shield-speed work adds, so a missing
+// export fails its own case instead of the whole file (see the same note in
+// fundEphemeralForJob.test.ts).
+import * as starkModule from './stark';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -139,7 +143,13 @@ class FakeConn {
     this.account = new Uint8Array(PROOF_DATA_OFFSET + proofSize);
   }
 
-  async getAccountInfo(_pk: PublicKey) {
+  /** The config argument of every getAccountInfo call, in call order. */
+  accountInfoConfigs: unknown[] = [];
+  /** How many times the rent-exemption minimum was read. */
+  rentCalls = 0;
+
+  async getAccountInfo(_pk: PublicKey, _config?: unknown) {
+    this.accountInfoConfigs.push(_config);
     if (_pk.equals(TX_V1_FEATURE_GATE)) {
       return this.v1Active
         ? { data: Buffer.from([1, 0, 0, 0, 0, 0, 0, 0, 0]), owner: PublicKey.default }
@@ -152,6 +162,7 @@ class FakeConn {
   }
 
   async getMinimumBalanceForRentExemption(_space: number) {
+    this.rentCalls++;
     return 1_000_000;
   }
   async getLatestBlockhash(_commitment?: unknown) {
@@ -1155,5 +1166,415 @@ describe('[AUDIT-V1 R1] a squatter cannot block the proof-buffer allocation', ()
     await expect(drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()))).rejects.toThrow(
       /prior credit/,
     );
+  });
+});
+
+// ===========================================================================
+// Shield-speed B / C / E (2026-09-23). MEASURED 2026-09-22 on devnet
+// (shield-speed MEASURE.md, rpc.jsonl): a finalized blockhash has 119 blocks,
+// about 19.6 s at 165 ms slots, left against the confirmed tip; the paced
+// send bucket refilled at about 0.6 sends/s after a burst of about 10; every
+// chunk sent 20.3 s or more after its blockhash was fetched was lost (4 per
+// run), and round 0 then waited its fixed 20 s window before resending them.
+// ===========================================================================
+
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** The recentBlockhash of a legacy OR a v1 wire transaction. */
+function decodeBlockhash(raw: Buffer | Uint8Array): string {
+  try {
+    return Transaction.from(raw).recentBlockhash ?? '';
+  } catch {
+    const tx = getTransactionDecoder().decode(raw);
+    return String(getCompiledTransactionMessageDecoder().decode(tx.messageBytes).lifetimeToken);
+  }
+}
+
+/** The write offset of a chunk transaction, or null for anything else. */
+function chunkOffset(raw: Buffer | Uint8Array): number | null {
+  for (const ix of decodeInstructions(raw)) {
+    if (ix.programId.equals(STARK_VERIFIER_PROGRAM_ID) && ix.data.subarray(0, 8).equals(DISC.write)) {
+      return ix.data.readUInt32LE(8);
+    }
+  }
+  return null;
+}
+
+/**
+ * A devnet-shaped cluster behind the worker's paced transport.
+ *
+ *  - Block height advances every 165 ms. A finalized blockhash is valid for
+ *    119 more blocks than the confirmed tip (lastValid = height + 119), and a
+ *    transaction lands only if it reaches the cluster at a height at or below
+ *    its blockhash's lastValid; after that it is silently dropped, exactly as a
+ *    skipPreflight send is.
+ *  - Every request goes through ONE lane: one in flight, a gap between them,
+ *    sends drawing from a token bucket (a burst of 10, then 0.6/s) with the
+ *    pacer's own 429 retry ladder (300, 600, 1200, 2400, 4800 ms).
+ *  - A landed transaction's status becomes visible 400 ms after it lands.
+ *  - `__p01Polling` is set, as `usePollingConfirmation` sets it on the
+ *    worker's paced Connection.
+ */
+class DevnetFakeConn extends FakeConn {
+  __p01Polling = true;
+  readonly t0 = Date.now();
+  slotMs = 165;
+  h0 = 1_000_000;
+  validityBlocks = 119;
+  capacity = 10;
+  refillPerSec = 0.6;
+  tokens = 10;
+  private lastRefill = Date.now();
+  sendGapMs = 120;
+  readGapMs = 120;
+  rttMs = 40;
+  confirmDelayMs = 400;
+  /** Extra visibility delay per chunk offset (a landing that is late but valid). */
+  extraDelayByOffset = new Map<number, number>();
+  /** A status node lagging for this offset: null until the time returned. */
+  statusLagByOffset = new Map<number, (landedAt: number, lastValid: number) => number>();
+  blockHeightMode: 'ok' | 'throw' = 'ok';
+  private laneChain: Promise<unknown> = Promise.resolve();
+  private laneEnd = Number.NEGATIVE_INFINITY;
+  private bhN = 0;
+  private lostN = 0;
+  blockhashLastValid = new Map<string, number>();
+  visibleAt = new Map<string, number>();
+  expiredSends = 0;
+  http429 = 0;
+  minBlocksLeftAtChunkSend = Number.POSITIVE_INFINITY;
+  /** offset -> every time a write for it reached the cluster. */
+  sendTimesByOffset = new Map<number, number[]>();
+  /** offset -> the blockhash expiry time (first block past lastValid) of each send. */
+  expiryTimesByOffset = new Map<number, number[]>();
+  statusReadTimes: number[] = [];
+  readbackTimes: number[] = [];
+  blockHeightCalls = 0;
+
+  height(): number {
+    return this.h0 + Math.floor((Date.now() - this.t0) / this.slotMs);
+  }
+  /** When the height first exceeds `lastValid`. */
+  expiryTime(lastValid: number): number {
+    return this.t0 + (lastValid - this.h0 + 1) * this.slotMs;
+  }
+  private refill() {
+    const now = Date.now();
+    this.tokens = Math.min(this.capacity, this.tokens + ((now - this.lastRefill) / 1000) * this.refillPerSec);
+    this.lastRefill = now;
+  }
+  private lane<T>(isSend: boolean, fn: () => Promise<T>): Promise<T> {
+    const run = async () => {
+      const wait = this.laneEnd + (isSend ? this.sendGapMs : this.readGapMs) - Date.now();
+      if (wait > 0) await sleepMs(wait);
+      try {
+        return await fn();
+      } finally {
+        this.laneEnd = Date.now();
+      }
+    };
+    const p = this.laneChain.then(run, run);
+    this.laneChain = p.then(
+      () => undefined,
+      () => undefined,
+    );
+    return p;
+  }
+  private read<T>(fn: () => T | Promise<T>): Promise<T> {
+    return this.lane(false, async () => {
+      await sleepMs(this.rttMs);
+      return fn();
+    });
+  }
+
+  async getBlockHeight() {
+    return this.read(() => {
+      this.blockHeightCalls++;
+      if (this.blockHeightMode === 'throw') throw new Error('getBlockHeight: node unavailable');
+      return this.height();
+    });
+  }
+  override async getLatestBlockhash() {
+    return this.read(() => {
+      const b = Buffer.alloc(32, 9);
+      b.writeUInt32LE(++this.bhN, 0);
+      const blockhash = new PublicKey(b).toBase58();
+      const lastValidBlockHeight = this.height() + this.validityBlocks;
+      this.blockhashLastValid.set(blockhash, lastValidBlockHeight);
+      return { blockhash, lastValidBlockHeight };
+    });
+  }
+  override async getAccountInfo(pk: PublicKey, config?: unknown) {
+    return this.read(() => {
+      if (!pk.equals(TX_V1_FEATURE_GATE)) this.readbackTimes.push(Date.now());
+      return super.getAccountInfo(pk, config);
+    });
+  }
+  override async getMinimumBalanceForRentExemption(space: number) {
+    return this.read(() => super.getMinimumBalanceForRentExemption(space));
+  }
+  override async getBalance(pk: PublicKey, c?: unknown) {
+    return this.read(() => super.getBalance(pk, c));
+  }
+  override async getSignatureStatuses(sigs: string[], opts?: unknown) {
+    return this.read(async () => {
+      this.statusReadTimes.push(Date.now());
+      const base = await super.getSignatureStatuses(sigs, opts);
+      const now = Date.now();
+      return {
+        context: base.context,
+        value: base.value.map((v, k) => (v && now >= (this.visibleAt.get(sigs[k]!) ?? 0) ? v : null)),
+      };
+    });
+  }
+  override async sendRawTransaction(raw: Buffer | Uint8Array, opts?: unknown) {
+    return this.lane(true, async () => {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        if (attempt > 0) await sleepMs(300 * 2 ** (attempt - 1));
+        await sleepMs(this.rttMs);
+        this.refill();
+        if (this.tokens >= 1) {
+          this.tokens -= 1;
+          return this.deliver(raw, opts);
+        }
+        this.http429++;
+      }
+      throw new Error('RPC rate limit (429)');
+    });
+  }
+  private async deliver(raw: Buffer | Uint8Array, opts?: unknown): Promise<string> {
+    const now = Date.now();
+    const h = this.height();
+    const lastValid = this.blockhashLastValid.get(decodeBlockhash(raw)) ?? Number.POSITIVE_INFINITY;
+    const offset = chunkOffset(raw);
+    if (offset !== null) {
+      this.minBlocksLeftAtChunkSend = Math.min(this.minBlocksLeftAtChunkSend, lastValid - h);
+      this.sendTimesByOffset.set(offset, [...(this.sendTimesByOffset.get(offset) ?? []), now]);
+      this.expiryTimesByOffset.set(offset, [
+        ...(this.expiryTimesByOffset.get(offset) ?? []),
+        this.expiryTime(lastValid),
+      ]);
+    }
+    if (h > lastValid) {
+      // Expired before it reached a leader: dropped, never confirms, never writes.
+      this.expiredSends++;
+      if (offset !== null) this.writesByOffset.set(offset, (this.writesByOffset.get(offset) ?? 0) + 1);
+      return `expired_${++this.lostN}`;
+    }
+    const sig = await super.sendRawTransaction(raw, opts);
+    let visible = now + this.confirmDelayMs + (offset !== null ? (this.extraDelayByOffset.get(offset) ?? 0) : 0);
+    const lag = offset !== null ? this.statusLagByOffset.get(offset) : undefined;
+    if (lag) visible = Math.max(visible, lag(now, lastValid));
+    this.visibleAt.set(sig, visible);
+    return sig;
+  }
+}
+
+/** 22 transaction-v1 chunks, the C6 shield's measured count. */
+const V1_22 = 21 * V1_CHUNK_SIZE + 1_000;
+const V1_22_BYTES = Uint8Array.from({ length: V1_22 }, (_, i) => ((i * 13) % 251) + 1);
+const v1Proof22 = (): GenericStarkProof => ({
+  proofBytes: V1_22_BYTES,
+  circuitId: CIRCUIT_MERKLE_UPDATE,
+  publicInputs: [5n, 6n],
+  proofSize: V1_22,
+});
+
+/** A devnet-shaped cluster with no send throttling (the timing cases). */
+function unthrottled(proofSize = V1_22, v1 = true): DevnetFakeConn {
+  const conn = new DevnetFakeConn(proofSize);
+  conn.v1Active = v1;
+  conn.capacity = Number.POSITIVE_INFINITY;
+  conn.tokens = Number.POSITIVE_INFINITY;
+  return conn;
+}
+
+/** When round 0 finished sending: the latest FIRST send of any offset. */
+function roundZeroEnd(conn: DevnetFakeConn): number {
+  return Math.max(...[...conn.sendTimesByOffset.values()].map((t) => t[0]!));
+}
+
+describe('[shield-speed B] expiry-aware chunk upload', () => {
+  it('RED: 22 v1 chunks behind a throttled paced transport all land, each with at least 30 blocks of validity left', async () => {
+    const conn = new DevnetFakeConn(V1_22);
+    conn.v1Active = true;
+    await drive(submitAndVerifyStarkProof(v1Proof22(), makeSigner(), conn.asConnection()));
+    const offsets = splitProofIntoChunks(V1_22_BYTES, V1_CHUNK_SIZE).map((c) => c.offset);
+    expect(offsets).toHaveLength(22);
+    // The measured failure: 4 chunks sent after their blockhash expired.
+    expect(conn.expiredSends).toBe(0);
+    expect(conn.minBlocksLeftAtChunkSend).toBeGreaterThanOrEqual(30);
+    for (const o of offsets) expect(conn.writesByOffset.get(o), `offset ${o}`).toBe(1);
+    expect(conn.verifySigs).toHaveLength(1);
+    expect(findBufferHoles(V1_22_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('RED: a chunk lost in flight is resent within two polls of its blockhash expiring, not after the fixed window', async () => {
+    const conn = unthrottled();
+    conn.drops.set(0, { times: 1 });
+    const progress: string[] = [];
+    await drive(
+      submitAndVerifyStarkProof(v1Proof22(), makeSigner(), conn.asConnection(), (s) => progress.push(s)),
+    );
+    const sends = conn.sendTimesByOffset.get(0)!;
+    expect(sends).toHaveLength(2);
+    const lostAt = Math.max(conn.expiryTimesByOffset.get(0)![0]!, roundZeroEnd(conn));
+    // Two polls at the v1 cadence (500 ms), their reads, and the fresh blockhash.
+    expect(sends[1]! - lostAt).toBeLessThanOrEqual(2_000);
+    expect(conn.verifySigs).toHaveLength(1);
+    expect(findBufferHoles(V1_22_BYTES, conn.account)).toEqual([]);
+    // Privacy condition (a): the progress line names no signature, blockhash or height.
+    const text = progress.join('\n');
+    expect(text).not.toMatch(/sig_|expired_/);
+    for (const bh of conn.blockhashLastValid.keys()) expect(text).not.toContain(bh.slice(0, 8));
+    expect(text).not.toMatch(/10\d{5}/);
+  });
+
+  it('RED: the same for legacy 1,000-byte chunks, whose fixed round-0 window is 90 s', async () => {
+    const conn = unthrottled(PROOF_SIZE, false);
+    conn.drops.set(2000, { times: 1 });
+    await drive(submitAndVerifyStarkProof(makeGenericProof(), makeSigner({ signBytes: false }), conn.asConnection()));
+    const sends = conn.sendTimesByOffset.get(2000)!;
+    expect(sends).toHaveLength(2);
+    const lostAt = Math.max(conn.expiryTimesByOffset.get(2000)![0]!, roundZeroEnd(conn));
+    // Two polls at the legacy cadence (2.5 s) and their reads.
+    expect(sends[1]! - lostAt).toBeLessThanOrEqual(6_000);
+    expect(conn.verifySigs).toHaveLength(1);
+  });
+
+  it('CONTROL: a chunk that lands late but inside its validity is never resent', async () => {
+    const conn = unthrottled();
+    // Seen 12 s after it landed: long after round 0's other chunks, well inside 19.6 s.
+    conn.extraDelayByOffset.set(V1_CHUNK_SIZE * 3, 12_000);
+    await drive(submitAndVerifyStarkProof(v1Proof22(), makeSigner(), conn.asConnection()));
+    expect(conn.writesByOffset.get(V1_CHUNK_SIZE * 3)).toBe(1);
+    expect(conn.verifySigs).toHaveLength(1);
+  });
+
+  it('CONTROL: a status node lagging one poll past expiry causes no resend (two consecutive polls are required)', async () => {
+    const conn = unthrottled();
+    // Landed in time, but the status node reports null until 300 ms after the
+    // blockhash expired: the first expired poll sees null, the next sees it.
+    conn.statusLagByOffset.set(0, (_landed, lastValid) => conn.expiryTime(lastValid) + 300);
+    await drive(submitAndVerifyStarkProof(v1Proof22(), makeSigner(), conn.asConnection()));
+    expect(conn.writesByOffset.get(0)).toBe(1);
+    expect(conn.verifySigs).toHaveLength(1);
+    expect(findBufferHoles(V1_22_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('CONTROL: a getBlockHeight that throws is no verdict — the fixed window still decides and the upload completes', async () => {
+    const conn = unthrottled();
+    conn.blockHeightMode = 'throw';
+    conn.drops.set(0, { times: 1 });
+    await drive(submitAndVerifyStarkProof(v1Proof22(), makeSigner(), conn.asConnection()));
+    const sends = conn.sendTimesByOffset.get(0)!;
+    expect(sends).toHaveLength(2);
+    // The 20 s v1 window, not the expiry shortcut.
+    expect(sends[1]! - roundZeroEnd(conn)).toBeGreaterThanOrEqual(19_000);
+    expect(conn.verifySigs).toHaveLength(1);
+  });
+
+  it('CONTROL: an outage keeps the resend rounds spread over minutes, then fails before the verify', async () => {
+    const conn = unthrottled();
+    conn.drops.set(0, { times: Number.POSITIVE_INFINITY });
+    const started = Date.now();
+    await expect(
+      drive(submitAndVerifyStarkProof(v1Proof22(), makeSigner(), conn.asConnection())),
+    ).rejects.toThrow(/unconfirmed after 3 resend round/);
+    const sends = conn.sendTimesByOffset.get(0)!;
+    expect(sends).toHaveLength(4);
+    // Rounds 1-3 keep their 90 s windows: the last resend goes out more than
+    // three minutes after the first send, and the abort comes a window later.
+    expect(sends[3]! - sends[0]!).toBeGreaterThanOrEqual(180_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(260_000);
+    expect(conn.verifySigs).toHaveLength(0);
+  });
+
+  it('RED: on the paced worker Connection chunks go out one at a time, so none ages in the pacer queue', async () => {
+    const conn = new FakeConn(30_000);
+    (conn as unknown as { __p01Polling: boolean }).__p01Polling = true;
+    const big = Uint8Array.from({ length: 30_000 }, (_, i) => (i * 7) % 253);
+    await drive(
+      submitAndVerifyStarkProof(
+        { proofBytes: big, circuitId: CIRCUIT_MERKLE_UPDATE, publicInputs: [5n, 6n], proofSize: 30_000 },
+        makeSigner(),
+        conn.asConnection(),
+      ),
+    );
+    expect(conn.peakInFlight).toBe(1);
+    expect(starkModule.PACED_CHUNK_SEND_CONCURRENCY).toBe(1);
+    for (const { offset } of splitProofIntoChunks(big)) expect(conn.writesByOffset.get(offset)).toBe(1);
+  });
+});
+
+describe('[shield-speed C] the v1 chunk confirmation polls every 500 ms', () => {
+  it('RED: the readback follows the last chunk within 950 ms when statuses show 400 ms after landing', async () => {
+    const conn = unthrottled();
+    // The read lane of proposal D.
+    conn.readGapMs = 25;
+    conn.rttMs = 20;
+    await drive(submitAndVerifyStarkProof(v1Proof22(), makeSigner(), conn.asConnection()));
+    const lastChunk = roundZeroEnd(conn);
+    const readback = conn.readbackTimes.find((t) => t > lastChunk)!;
+    expect(readback - lastChunk).toBeLessThan(950);
+    expect(conn.verifySigs).toHaveLength(1);
+  });
+});
+
+describe('[shield-speed E] fewer reads, same money', () => {
+  it('RED (E1): the close reads the buffer lamports with a zero-length data slice, and the sweep amount is unchanged', async () => {
+    const conn = new FakeConn(PROOF_SIZE);
+    conn.exists = true;
+    const signer = makeSigner();
+    const sweepTo = Keypair.generate().publicKey;
+    await drive(closeStarkProofBuffer(Keypair.generate().publicKey, signer, conn.asConnection(), { sweepTo }));
+    expect(conn.accountInfoConfigs).toHaveLength(1);
+    expect(conn.accountInfoConfigs[0]).toMatchObject({ dataSlice: { offset: 0, length: 0 } });
+    expect(conn.txs).toEqual([['close', 'transfer']]);
+    expect(conn.transferAmounts).toEqual([conn.balance + conn.bufferLamports - 5_000]);
+  });
+
+  it('CONTROL (E1): the readback before verify still reads the whole buffer', async () => {
+    const conn = new FakeConn(PROOF_SIZE);
+    await drive(submitAndVerifyStarkProof(makeGenericProof(), makeSigner(), conn.asConnection()));
+    const sliced = conn.accountInfoConfigs.filter(
+      (c) => c !== undefined && (c as { dataSlice?: unknown }).dataSlice !== undefined,
+    );
+    expect(sliced).toEqual([]);
+    expect(findBufferHoles(PROOF_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('RED (E2): the rent quoted at prepare is the one the allocation uses — one read per shield', async () => {
+    const quote = starkModule.quoteProofBufferRent;
+    expect(typeof quote).toBe('function');
+    const conn = new FakeConn(PROOF_SIZE);
+    const rent = await quote(conn.asConnection(), PROOF_SIZE);
+    expect(rent).toBe(1_000_000);
+    await drive(submitAndVerifyStarkProof(makeGenericProof(), makeSigner(), conn.asConnection()));
+    expect(conn.rentCalls).toBe(1);
+    expect(conn.txs[0]).toEqual(['createAccount', 'initV3']);
+  });
+
+  it('(E2) another size, or another Connection, reads again (no state crosses)', async () => {
+    const quote = starkModule.quoteProofBufferRent;
+    expect(typeof quote).toBe('function');
+    const a = new FakeConn(PROOF_SIZE);
+    await quote(a.asConnection(), PROOF_SIZE + 1);
+    await drive(submitAndVerifyStarkProof(makeGenericProof(), makeSigner(), a.asConnection()));
+    expect(a.rentCalls).toBe(2);
+    const b = new FakeConn(PROOF_SIZE);
+    await drive(submitAndVerifyStarkProof(makeGenericProof(), makeSigner(), b.asConnection()));
+    expect(b.rentCalls).toBe(1);
+  });
+
+  it('RED (E2): prepareShield and prepareContribution price the buffer through the shared quote', () => {
+    const src = readFileSync(join(import.meta.dirname, 'shieldEphemeral.ts'), 'utf8');
+    const prepare = src.slice(
+      src.indexOf('export async function prepareShield('),
+      src.indexOf('export async function executeContribution('),
+    );
+    expect(prepare.length).toBeGreaterThan(100);
+    expect(prepare.includes('getMinimumBalanceForRentExemption'), 'a second rent read in prepare').toBe(false);
+    expect(prepare.match(/quoteProofBufferRent\(/g)?.length ?? 0).toBe(2);
   });
 });

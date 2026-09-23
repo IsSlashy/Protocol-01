@@ -160,11 +160,16 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
           },
         };
       }
+      // [flow-speed X7] Polled, never subscribed: a call here is a regression.
       async confirmTransaction() {
-        return { value: { err: null } };
+        throw new Error('confirmTransaction must not be called (X7)');
       }
-      async getSignatureStatuses() {
-        return { value: [null] };
+      // A grant the send mock landed is confirmed; anything else is unseen.
+      async getSignatureStatuses(sigs: string[]) {
+        return { value: sigs.map((s) => (txs.has(s) ? { confirmationStatus: 'confirmed', err: null } : null)) };
+      }
+      async getBlockHeight() {
+        return 0;
       }
     },
   };

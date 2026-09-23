@@ -25,7 +25,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Connection, PublicKey } from "@solana/web3.js";
 
@@ -49,6 +49,9 @@ const m = vi.hoisted(() => ({
   recordSpentNote: vi.fn(),
   recordSubscription: vi.fn(),
   loadServiceRegistry: vi.fn(),
+  /** [flow-speed X8] What the bundle's funder ticket says; the server's own answer below. */
+  funderConfigured: true,
+  funderPubkey: null as string | null,
 }));
 
 vi.mock("@/lib/privacy/shieldClient", async (importOriginal) => {
@@ -79,8 +82,10 @@ vi.mock("@/lib/privacy/serviceRegistry", async (importOriginal) => ({
 
 vi.mock("@/lib/privacy/pool/ephemeralFunder", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/privacy/pool/ephemeralFunder")>()),
-  fetchFunderPubkey: async () => null,
-  funderConfigured: () => false,
+  fetchFunderPubkey: async () => m.funderPubkey,
+  // [flow-speed X8] A build WITH its ticket by default, as production must be:
+  // without one the subscription is refused at the click (the "X8" cases).
+  funderConfigured: () => m.funderConfigured,
 }));
 
 vi.mock("@/lib/pay/handoffs", () => ({
@@ -203,6 +208,8 @@ beforeEach(() => {
   // A case that installs a fake clock and then times out never reaches its own
   // restore, and every case after it would wait on a timer nothing advances.
   vi.useRealTimers();
+  m.funderConfigured = true;
+  m.funderPubkey = null;
   localStorage.clear();
   m.scanPoolLocal.mockResolvedValue({ kind: "poolScanLocal", notes: [], skipped: 0 });
   m.scanPool.mockResolvedValue({ notes: [noteView()], shieldedBalance: 1, poolSizes: [], complete: true });
@@ -401,8 +408,9 @@ describe("the success card (UI-1 fix round 1)", () => {
  * [SWEEP round 1 of run logs8, screen lens] The success card names the circuit
  * that ran.
  *
- * The cost box on this same page promises it (`pay.subscribe.costCommitment`:
- * "the screen after the purchase names which one ran"), and `subscribeFromPool`
+ * The cost box on this same page used to promise it
+ * (`pay.subscribe.costCommitment`; since close-v1 F05 it says the pair is
+ * switched off, which a deployment can still override), and `subscribeFromPool`
  * reports it (`shieldClient.ts`, `version: prep.version`, under "any screen
  * that says 'private' must read it first"). A pre-blinding note confirmed onto
  * the C1 + C3 pair republishes its commitment in the opening transaction, so
@@ -441,9 +449,17 @@ describe("the success card names the circuit that ran (sweep r1, screen)", () =>
     return text;
   }
 
-  it("the page promises it, so the card owes it", async () => {
+  // [close-v1 F05, gate r1 item 4] The cost box used to promise "the screen
+  // after the purchase names which one ran", which read as if this tab might
+  // run the pair. The pair is switched off by default now (C1C3_SPEND_DISABLED),
+  // so the box says that instead; the card keeps naming the circuit (the two
+  // cases below) because a deployment can still opt in with
+  // NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND=1. The copy itself is pinned in en and fr
+  // by `__tests__/lib/closeV1CostCommitmentCopy.test.ts`.
+  it("the page says the C1 + C3 pair is switched off, and no longer promises a pair run", async () => {
     const view = renderPanel();
-    await screen.findAllByText(/the screen after the purchase names which one ran/);
+    await screen.findAllByText(/this web app has it switched off/);
+    expect(view.container.textContent).not.toMatch(/the screen after the purchase names which one ran/);
     view.unmount();
   });
 
@@ -632,5 +648,105 @@ describe("close-v1: issued notes and refusal codes on the Subscribe tab", () => 
       ),
     );
     expect(view.container.textContent).not.toContain("C1C3_SPEND_DISABLED");
+  });
+});
+
+describe("[flow-speed X8] a build with no funder ticket refuses the subscription at the click", () => {
+  const FUND1 = /this deployment has no funder configured/;
+
+  it("T3: holding a note, the button is blocked with the reason, and nothing is sent", async () => {
+    // RED at HEAD: the button was open; the click walked, proved, then refused.
+    m.funderConfigured = false;
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await user.click(await screen.findByRole("button", { name: /1 SOL note/ }));
+    const button = screen.getByRole("button", { name: /^Lock 1 SOL with Test VPN$/ });
+    await waitFor(() => expect(view.container.textContent).toMatch(FUND1));
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(m.subscribeFromPool).not.toHaveBeenCalled();
+    expect(m.exchangeNoteForIssued).not.toHaveBeenCalled();
+  });
+
+  it("T4: holding no note but a claim code, the code is NOT redeemed at the click", async () => {
+    m.funderConfigured = false;
+    m.scanPool.mockResolvedValue({ notes: [], shieldedBalance: 0, poolSizes: [], complete: true });
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL" });
+    const user = userEvent.setup();
+    const view = renderPanel({ claimCode: "claimCodeEEEE0007" });
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await waitFor(() => expect(view.container.textContent).toMatch(FUND1));
+    const button = screen.getByRole("button", { name: /^Subscribe$/ });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(m.requestIssuedNote).not.toHaveBeenCalled();
+    expect(m.subscribeFromPool).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The handler's OWN re-check (correctness C3 / verdict T3): the button's gate
+   * is computed at render, so a click can reach `handleSubscribe` on a render
+   * that still said "ticket present". The ticket is read again at the click.
+   * Here the render says yes, then the ticket reads no before the click, and
+   * nothing re-renders in between, so the enabled button calls the handler.
+   */
+  it("T3b: the click handler refuses on its own, with a note, even when the button was open", async () => {
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await user.click(await screen.findByRole("button", { name: /1 SOL note/ }));
+    const button = screen.getByRole("button", { name: /^Lock 1 SOL with Test VPN$/ });
+    expect(button).toBeEnabled();
+    const issuableBefore = m.fetchIssuableNote.mock.calls.length;
+    m.funderConfigured = false;
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(view.container.querySelector("p.text-p01-red")?.textContent ?? "").toMatch(FUND1),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    // RED if the handler relied on the button: it went on to spend the note.
+    expect(m.subscribeFromPool).not.toHaveBeenCalled();
+    expect(m.exchangeNoteForIssued).not.toHaveBeenCalled();
+    expect(m.requestIssuedNote).not.toHaveBeenCalled();
+    expect(m.fetchIssuableNote.mock.calls.length).toBe(issuableBefore);
+    expect(m.recordSpentNote).not.toHaveBeenCalled();
+    expect(m.recordSubscription).not.toHaveBeenCalled();
+  });
+
+  it("T3c: the click handler refuses on its own before redeeming a claim code, even when the button was open", async () => {
+    m.scanPool.mockResolvedValue({ notes: [], shieldedBalance: 0, poolSizes: [], complete: true });
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL" });
+    const user = userEvent.setup();
+    const view = renderPanel({ claimCode: "claimCodeFFFF0008" });
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    const button = await screen.findByRole("button", { name: /^Subscribe$/ });
+    await waitFor(() => expect(button).toBeEnabled());
+    const issuableBefore = m.fetchIssuableNote.mock.calls.length;
+    m.funderConfigured = false;
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(view.container.querySelector("p.text-p01-red")?.textContent ?? "").toMatch(FUND1),
+    );
+    await new Promise((r) => setTimeout(r, 0));
+    // A claim is consumed on first redemption: RED if the click redeemed it.
+    expect(m.requestIssuedNote).not.toHaveBeenCalled();
+    expect(m.fetchIssuableNote.mock.calls.length).toBe(issuableBefore);
+    expect(m.exchangeNoteForIssued).not.toHaveBeenCalled();
+    expect(m.subscribeFromPool).not.toHaveBeenCalled();
+    expect(m.recordSpentNote).not.toHaveBeenCalled();
+    expect(m.recordSubscription).not.toHaveBeenCalled();
+  });
+
+  it("T5: a stale bundle (the server has a funder, the bundle has no ticket) is still blocked", async () => {
+    m.funderConfigured = false;
+    m.funderPubkey = "Funder1111111111111111111111111111111111111";
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await user.click(await screen.findByRole("button", { name: /1 SOL note/ }));
+    await waitFor(() => expect(view.container.textContent).toMatch(FUND1));
+    expect(screen.getByRole("button", { name: /^Lock 1 SOL with Test VPN$/ })).toBeDisabled();
+    expect(m.subscribeFromPool).not.toHaveBeenCalled();
   });
 });

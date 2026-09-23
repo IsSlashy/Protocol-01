@@ -275,6 +275,107 @@ function operatorAddresses(funder: string): Map<string, string> {
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 
 /**
+ * [flow-speed X6 2026-09-23] The last DEVNET answer the POST's genesis read got,
+ * and for which exact RPC string (`P01_FUNDER_RPC ?? default`, the one the
+ * Connection is built from). One public constant per instance, nothing from any
+ * request: no IP, no ticket, no target.
+ *
+ * Only a devnet answer is kept. A mainnet answer (the 403 and its `{ genesis }`)
+ * and a failed read (the fixed-words 502) are never kept, so each comes from a
+ * live read every time. GET readiness does not use this: an operator's
+ * diagnostic probes the chain live.
+ *
+ * ⚠️ THE RESIDUAL, NAMED. The guard is now "once per instance per URL per ten
+ * minutes", not once per grant. An env change redeploys, so a changed URL is
+ * read again; what is trusted for up to the TTL is a URL that stays the same
+ * while the cluster behind it changes (an operator's own proxy or DNS name
+ * repointed from devnet to mainnet without a redeploy). Default and Helius
+ * devnet hosts cannot be anything but devnet. Saves one round trip on
+ * `P01_FUNDER_RPC` for grants that follow each other on a warm instance, and
+ * nothing on a cold one: never quote it as a per-flow saving.
+ * Pinned by `__tests__/api/fundEphemeralGrantPath.test.ts`, "[X6]".
+ */
+const DEVNET_ANSWER_TTL_MS = 10 * 60_000;
+let devnetAnswer: { rpc: string; at: number } | null = null;
+
+function devnetAnswerHolds(rpc: string): boolean {
+  return devnetAnswer !== null && devnetAnswer.rpc === rpc && Date.now() - devnetAnswer.at < DEVNET_ANSWER_TTL_MS;
+}
+
+/**
+ * [flow-speed X7 2026-09-23] How the grant's confirmation is waited for.
+ * `getSignatureStatuses([signature])` every 400 ms, the first at +400 ms; the
+ * block height at 'confirmed', at most once a second, only while the status is
+ * not yet 'confirmed' or 'finalized'. The wall-clock bound is a backstop for a
+ * dead RPC and is never shorter than a blockhash's longest life.
+ */
+const GRANT_STATUS_POLL_MS = 400;
+const GRANT_HEIGHT_EVERY_MS = 1_000;
+const GRANT_CONFIRM_WALL_MS = 90_000;
+
+/**
+ * [flow-speed X7 2026-09-23] Wait for the grant at 'confirmed', by polling.
+ *
+ * WHY. `connection.confirmTransaction` subscribes over a WebSocket, and a
+ * serverless instance can miss the notice; web3.js then waits for the block
+ * height to pass the blockhash's last valid height (up to ~20 s at 165 ms
+ * slots), or the platform kills the function first. The same two HTTP reads
+ * web3.js itself makes are used instead, on the SAME connection, so no new
+ * party and no new method: `getSignatureStatuses` (the route's catch already
+ * sent it) and `getBlockHeight`.
+ *
+ * THE OUTCOMES DO NOT MOVE, and each is a fund-safety rule:
+ *   - only 'confirmed' or 'finalized' ends the wait; 'processed', with or
+ *     without an err, keeps polling (a dropped fork must not serve a grant);
+ *   - `known: false` ("could not be confirmed") is answered only after the
+ *     block height was SEEN past `lastValidBlockHeight`, at 'confirmed', and then
+ *     ONE more status read: the first transfer can no longer land, so a retry
+ *     cannot fund the same key twice; and one that landed in the last valid
+ *     slot is still served rather than stranded;
+ *   - a failed or throttled read is never taken for expiry: polling goes on;
+ *   - no read's error escapes or is kept: web3.js words them with the
+ *     signature in them ("NO CHAIN ERROR LEAVES THIS HANDLER" above).
+ * The wall-clock backstop (a dead RPC) also ends with one more status read.
+ */
+async function awaitGrantConfirmation(
+  connection: Connection,
+  signature: string,
+  lastValidBlockHeight: number,
+): Promise<{ known: true; err: unknown } | { known: false }> {
+  const final = (status: { confirmationStatus?: string; err: unknown } | null) =>
+    status && (status.confirmationStatus === 'confirmed' || status.confirmationStatus === 'finalized')
+      ? { known: true as const, err: status.err ?? null }
+      : null;
+  const readStatus = async () => {
+    try {
+      return (await connection.getSignatureStatuses([signature])).value[0] ?? null;
+    } catch {
+      return null; // names the signature; goes nowhere, and is not expiry
+    }
+  };
+  const startedAt = Date.now();
+  let heightReadAt = Number.NEGATIVE_INFINITY;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, GRANT_STATUS_POLL_MS));
+    const seen = final(await readStatus());
+    if (seen) return seen;
+    let expired = false;
+    const now = Date.now();
+    if (now - heightReadAt >= GRANT_HEIGHT_EVERY_MS) {
+      heightReadAt = now;
+      try {
+        expired = (await connection.getBlockHeight('confirmed')) > lastValidBlockHeight;
+      } catch {
+        // Unread is not expired: keep polling. The error names nothing kept.
+      }
+    }
+    if (expired || Date.now() - startedAt >= GRANT_CONFIRM_WALL_MS) {
+      return final(await readStatus()) ?? { known: false };
+    }
+  }
+}
+
+/**
  * R, THE TILL — the address buyers pay. Declared here so this deployment can
  * refuse to be the shape that leaked.
  *
@@ -724,14 +825,21 @@ export async function POST(request: NextRequest) {
   // that signs a spend. So each chain call is caught, the answer is fixed
   // words, and the error's text goes nowhere. Pinned by
   // `__tests__/api/fundEphemeralChainErrors.test.ts`.
-  let genesis: string;
-  try {
-    genesis = await connection.getGenesisHash();
-  } catch {
-    return bad(502, RPC_UNREADABLE);
-  }
-  if (genesis !== DEVNET_GENESIS) {
-    return bad(403, 'this funder is devnet-only and the configured RPC is not devnet', { genesis });
+  //
+  // [flow-speed X6 2026-09-23] Read once per instance and RPC URL, for
+  // DEVNET_ANSWER_TTL_MS; see `devnetAnswer`. A miss reads live, exactly as
+  // before, with the same fixed words and the same 403.
+  if (!devnetAnswerHolds(rpc)) {
+    let genesis: string;
+    try {
+      genesis = await connection.getGenesisHash();
+    } catch {
+      return bad(502, RPC_UNREADABLE);
+    }
+    if (genesis !== DEVNET_GENESIS) {
+      return bad(403, 'this funder is devnet-only and the configured RPC is not devnet', { genesis });
+    }
+    devnetAnswer = { rpc, at: Date.now() };
   }
 
   let funder: Keypair;
@@ -868,10 +976,9 @@ export async function POST(request: NextRequest) {
   );
 
   let signature: string;
-  let blockhash: string;
   let lastValidBlockHeight: number;
   try {
-    ({ signature, blockhash, lastValidBlockHeight } = await sendWithFreshBlockhash(
+    ({ signature, lastValidBlockHeight } = await sendWithFreshBlockhash(
       connection,
       tx,
       (t) => {
@@ -896,26 +1003,17 @@ export async function POST(request: NextRequest) {
   //  - an outcome nobody could read still counts against the instance ceiling.
   //    A ceiling that counts only what it saw confirmed undercounts exactly
   //    when the RPC is failing.
+  //
+  // [flow-speed X7 2026-09-23] Polled, not subscribed: see
+  // `awaitGrantConfirmation`. Same commitment, same outcomes; only the
+  // blockhash's last valid height is needed here.
   let confirmedErr: unknown = null;
   let outcomeKnown = true;
-  try {
-    const conf = await connection.confirmTransaction(
-      { signature, blockhash, lastValidBlockHeight },
-      'confirmed',
-    );
-    confirmedErr = conf.value.err;
-  } catch {
+  const outcome = await awaitGrantConfirmation(connection, signature, lastValidBlockHeight);
+  if (outcome.known) {
+    confirmedErr = outcome.err;
+  } else {
     outcomeKnown = false;
-    try {
-      const status = (await connection.getSignatureStatuses([signature])).value[0];
-      const level = status?.confirmationStatus;
-      if (status && (level === 'confirmed' || level === 'finalized')) {
-        outcomeKnown = true;
-        confirmedErr = status.err;
-      }
-    } catch {
-      // Still unknown. This error names the signature too; it goes nowhere.
-    }
   }
   if (!outcomeKnown) {
     spentThisInstance += lamports;

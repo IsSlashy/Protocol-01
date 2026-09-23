@@ -1867,7 +1867,18 @@ async function handlePoolScan(
   onInterim?: (partial: PoolScanResponse) => void,
 ): Promise<PoolScanResponse> {
   const conn = requireConnection();
-  const candidates = seedsInSearchOrder(requireSeeds(req.meta));
+  const seedSet = requireSeeds(req.meta);
+  const candidates = seedsInSearchOrder(seedSet);
+  // [flow-speed X1 2026-09-23] The legacy pass below now yields between leaves,
+  // which widens the window in which `setPoolSeed` / `clearPoolState` can wipe
+  // these seeds in place. The key set is live while it is still the one filed
+  // for this identity; otherwise the scan ends with an error, never with
+  // `complete: true` and notes missing (`poolScanProgressive.test.ts`, "keys
+  // wiped during the legacy pass").
+  const stillLive = (): boolean => poolSeeds.get(req.meta) === seedSet;
+  const refuseIfNotLive = (): void => {
+    if (!stillLive()) throw new Error('The wallet keys changed during the scan. Scan again.');
+  };
   // A named denomination is honoured exactly as before — 0.1 included, which is
   // closed to deposits and stays fully readable that way. Only the DEFAULT
   // narrows. ⚠️ That default now omits 53 unspent notes; see
@@ -1903,7 +1914,16 @@ async function handlePoolScan(
   // ── Phase 1: RPC reads + blinded single-hash matching, per pool ──────────
   for (const pool of pools) {
     onProgress?.(`Scanning the ${pool.denomination} ${pool.token} pool...`);
-    const commitments = await fetchPoolCommitments(conn, pool.poolPDA);
+    // [flow-speed X1] Joins a walk of this pool a click already started (and a
+    // click joins this one), then runs its own; same budget as the click's walk.
+    // Reports while it waits, so the main thread's silence watchdog does not
+    // kill a scan that is only queued. See `fetchPoolCommitments`.
+    const commitments = await fetchPoolCommitments(conn, pool.poolPDA, {
+      joinInFlight: true,
+      // The same line again, re-arming the watchdog; a line the pay flows
+      // already know (`flowProgress-labels.test.ts`).
+      onJoinWait: () => onProgress?.(`Scanning the ${pool.denomination} ${pool.token} pool...`),
+    });
     poolSizes.push({
       denomination: pool.denomination,
       totalNotes: await readTreeLeafCount(conn, pool),
@@ -1960,7 +1980,10 @@ async function handlePoolScan(
         commitments,
         spentSet,
         onProgress,
+        stillLive,
       });
+      // [flow-speed X1] Found under keys that are no longer live: not a result.
+      refuseIfNotLive();
       for (const n of found) {
         if (seenLeaves.has(n.receipt.leafIndex)) continue;
         seenLeaves.add(n.receipt.leafIndex);
@@ -1971,6 +1994,7 @@ async function handlePoolScan(
     emitInterim();
   }
 
+  refuseIfNotLive();
   return { kind: 'poolScan', notes, shieldedBalance, poolSizes, complete: true };
 }
 
@@ -2327,6 +2351,12 @@ export async function locateOwnedNote(
     onWalked: (report) => {
       walkReport.unread = report.unread;
     },
+    // [flow-speed X1 2026-09-23] A click during the page-load scan waits for
+    // the scan's walk of this pool, then runs its OWN full call: its map is
+    // never older than the click and `unread` above is its own walk's report,
+    // never the scan's (`poolWalkJoin.test.ts`). The heartbeat above covers
+    // the wait.
+    joinInFlight: true,
   });
   // Pool-wide and derivation-independent, like `commitments` above, so it is
   // fetched once and shared across the candidate loop for the same reason.
@@ -2579,6 +2609,36 @@ function confirmPreBlindingSpend(key: string, spend: SpendKind): void {
 }
 
 /**
+ * [flow-speed X3 2026-09-23] Start the STARK prover without waiting for it.
+ *
+ * Called at the top of the two user-initiated spend prepares only
+ * (`handlePoolUnshieldPrepare`, `handlePoolSubscribePrepare`), after their cheap
+ * argument checks and BEFORE `locateOwnedNote`, so the prover's cold start (a
+ * nested worker, the embedded wasm, its compile) runs on its own thread while
+ * the history walk waits on the paced RPC. It used to sit on the serial path:
+ * after the walk on a withdrawal, between walk #1 and walk #2 on a subscription.
+ *
+ * What it does NOT do, each a condition of the privacy and correctness reviews:
+ *   - no RPC, no progress line, no log, no server call. The only request it can
+ *     cause is the same-origin worker chunk, which the first proof loads anyway;
+ *   - no prover WORK: `start()` only, no commitment and no proof, so no secret
+ *     reaches the prover before today's point;
+ *   - it is never awaited and never branches on the route or on relayed vs
+ *     direct, so a failed warm-up cannot shorten or reorder the prepare's
+ *     requests; the proof path calls `start()` itself and awaits it there;
+ *   - never at panel mount, in the scan or in Recover (whose "zero prover
+ *     start-up with no private vaults" rule stands).
+ * `start()` is idempotent (one `ready` promise per prover). A rejected warm-up
+ * is swallowed here; `starkProver.ts` itself decides whether a later `start()`
+ * spawns again (see the flow-speed handoff for its reset-on-reject).
+ */
+function warmProver(): void {
+  void import('../pool/starkProver')
+    .then((m) => m.starkProver.start())
+    .catch(() => {});
+}
+
+/**
  * Prove and price ONE withdrawal, on whichever circuit the request supplies the
  * inputs for.
  *
@@ -2655,7 +2715,15 @@ async function handlePoolUnshieldPrepare(
     );
   }
 
-  const { conn, pool, candidate, note, storedPath, commitments, unread } = await locateOwnedNote(req, onProgress);
+  // [flow-speed X3] Warm the prover NOW, beside the walk below, instead of
+  // after it: its cold start (nested worker, wasm compile) runs on its own
+  // thread while the walk waits on the RPC. Fire and forget; see `warmProver`.
+  warmProver();
+
+  const { conn, pool, candidate, note, storedPath, commitments, unread, spentSet } = await locateOwnedNote(
+    req,
+    onProgress,
+  );
 
   if (req.recipient !== undefined && req.ownerPubkey !== undefined) {
     // `prepareUnshieldJobV4` is referenced ONLY inside this branch, and the
@@ -2693,6 +2761,13 @@ async function handlePoolUnshieldPrepare(
         // a walk that read all it listed (same test file, "hands the circuit-7
         // prepare what its walk could not read").
         { leaves: commitments, unread, savedPath: storedPath },
+        // [flow-speed W1] The pool-wide spent set `locateOwnedNote` read in THIS
+        // request, the same object, so the job asks it instead of sending a
+        // second, byte-identical getProgramAccounts a few hundred ms later.
+        // Never a set from another request or the page-load scan
+        // (`poolHandlersUnshieldV4.test.ts`, "[W1] hands the circuit-7
+        // withdrawal job the SAME spent set locateOwnedNote read").
+        spentSet,
       );
     } catch (err) {
       // ⛔ ONE NOTE STILL FALLS BACK, AND NEVER SILENTLY (V3-1).
@@ -3395,9 +3470,14 @@ async function handlePoolImportNote(
   let onTree: OnChainCommitment | undefined;
   try {
     onProgress?.("Checking the note against the pool's tree...");
-    onTree = (await fetchPoolCommitments(requireConnection(), pool.poolPDA)).get(
-      receipt.commitment.toString(),
-    );
+    // [flow-speed X1] Joins a walk of this pool already in flight in this
+    // worker, then runs its own; reports while it waits.
+    onTree = (
+      await fetchPoolCommitments(requireConnection(), pool.poolPDA, {
+        joinInFlight: true,
+        onJoinWait: () => onProgress?.("Checking the note against the pool's tree..."),
+      })
+    ).get(receipt.commitment.toString());
   } catch {
     throw new Error(
       "The pool's history could not be read, so this note could not be checked against the " +
@@ -3583,19 +3663,6 @@ async function handlePoolSubscribePrepare(
   req: PoolSubscribePrepareRequest,
   onProgress?: (step: string) => void,
 ): Promise<PoolSubscribePrepareResponse> {
-  const { conn, pool, candidate, note, storedPath, spentSet, provenance } = await locateOwnedNote(
-    req,
-    onProgress,
-  );
-
-  // Who deposited the note is NOT asked of the chain. The walk that did it (the
-  // deposit's fee payer, then that payer's funder) named the depositing
-  // ephemeral to the RPC from this IP, and still called a relayed own deposit
-  // clean. `provenance` comes from the local blob instead
-  // (`noPointedNullifierRead.test.ts`, "subscribe prepare never names the
-  // depositing ephemeral"; `selfDepositedNote.test.ts`, "deposit verdict local
-  // and pessimistic").
-
   // ── Circuit 7, when the caller supplied the terms it needs ────────────────
   //
   // ALL THREE, OR NONE. Checked here rather than treated as "as much as you
@@ -3605,6 +3672,10 @@ async function handlePoolSubscribePrepare(
   // republishes this note's commitment in cleartext and reports nothing, which
   // is the exact failure the pair exists to remove. Same shape, same reason, as
   // `handlePoolUnshieldPrepare`'s recipient/ownerPubkey check.
+  //
+  // [flow-speed X3 2026-09-23] And now in the same PLACE as that check: before
+  // the note is located, because a malformed request should not cost an event
+  // scan first, and so the prover warm-up below can sit before the walk.
   const termsPresent = [req.retailer, req.rate, req.intervalSlots].filter(
     (v) => v !== undefined,
   ).length;
@@ -3616,6 +3687,21 @@ async function handlePoolSubscribePrepare(
         "fall through to C1 + C3 silently: that republishes this note's commitment.",
     );
   }
+
+  // [flow-speed X3] Both routes need the prover (the subscriber commitment on
+  // either, the C7 proof on one), so it is warmed beside the walk, unconditionally.
+  warmProver();
+
+  const { conn, pool, candidate, note, storedPath, spentSet, provenance, commitments, unread } =
+    await locateOwnedNote(req, onProgress);
+
+  // Who deposited the note is NOT asked of the chain. The walk that did it (the
+  // deposit's fee payer, then that payer's funder) named the depositing
+  // ephemeral to the RPC from this IP, and still called a relayed own deposit
+  // clean. `provenance` comes from the local blob instead
+  // (`noPointedNullifierRead.test.ts`, "subscribe prepare never names the
+  // depositing ephemeral"; `selfDepositedNote.test.ts`, "deposit verdict local
+  // and pessimistic").
 
   if (req.retailer !== undefined && req.rate !== undefined && req.intervalSlots !== undefined) {
     const retailer = new PublicKey(req.retailer);
@@ -3672,6 +3758,15 @@ async function handlePoolSubscribePrepare(
         // (`poolHandlersUnshieldV4.test.ts`, "hands the circuit-7 SUBSCRIPTION
         // prepare the saved witness it read from the stored blob").
         storedPath,
+        // [flow-speed S1] The leaves `locateOwnedNote` already walked IN THIS
+        // REQUEST, and what that walk could not read, exactly as the
+        // withdrawal hands them on: the prepare builds from them instead of
+        // walking the history a second time. `unread` is passed as the walk
+        // reported it, undefined included (a 0 nobody reported would show a
+        // lagging map clean, ledger B11) (`poolHandlersUnshieldV4.test.ts`,
+        // "[S1] hands the circuit-7 SUBSCRIPTION prepare the leaves it already
+        // walked"; "... what its walk could not read, undefined kept undefined").
+        { leaves: commitments, unread },
       );
     } catch (err) {
       // ⛔ ONE NOTE STILL FALLS BACK, AND NEVER SILENTLY (V3-1), as on the

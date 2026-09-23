@@ -1098,3 +1098,98 @@ describe('F62 · the float-funding check reads direction, and an unknown payer s
     expect(chain.sent).toHaveLength(0);
   });
 });
+
+/**
+ * [close-v1 F62, gate r1 open item 1] DECOY DEBITED SOURCES.
+ *
+ * The check read only the first `PAYER_SOURCES_CHECKED` (then 3) accounts a
+ * credit debited. A float-funded key K paid the till in a transaction whose
+ * first three debited accounts were clean decoys (one pays the network fee,
+ * two move a lamport each to a sink), so K was never read and its credit
+ * counted: one real purchase became a batch. Measured by the L1 verifier:
+ * `close-v1/L1-server-money-verify-r3/probe-decoy.log` ("PROBE decoy
+ * {verdict: settle, settled: true, purchases: 3}"). The probe is ported here as
+ * the first case. Now every debited account is read up to a cap, and a credit
+ * debiting more accounts than the cap is not a purchase (unknown), though it
+ * still resets the quiet period like any credit that may be a buyer's.
+ */
+describe('F62 · decoy debited accounts do not hide a float-funded payer', () => {
+  function grantAndPay(decoys: number) {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    const k = Keypair.generate().publicKey.toBase58();
+    const f = float.publicKey.toBase58();
+    chain.txs.set('GRANT_TO_K', { keys: [f, k], pre: [20_000_000_000, 0], post: [17_999_995_000, 2_000_000_000] });
+    const t = till.publicKey.toBase58();
+    const d = Array.from({ length: decoys }, () => Keypair.generate().publicKey.toBase58());
+    const sink = Keypair.generate().publicKey.toBase58();
+    // d0 pays the network fee; every other decoy moves 1 lamport to a sink; K pays the till.
+    chain.txs.set('FAKE', {
+      keys: [...d, k, t, sink],
+      pre: [...d.map(() => 10_000_000), 2_000_000_000, 0, 0],
+      post: [
+        ...d.map((_, i) => 10_000_000 - (i === 0 ? 5000 : 1)),
+        2_000_000_000 - ONE_PURCHASE_LAMPORTS,
+        ONE_PURCHASE_LAMPORTS,
+        Math.max(0, decoys - 1),
+      ],
+    });
+    tillHistory([
+      { sig: 'FAKE', ago: 2 * 86400 },
+      ...realPurchases(2, 2 * 86400 + 60).map((p, i) => ({ ...p, sig: `REAL${i}` })),
+    ]);
+    const now = Math.floor(Date.now() / 1000);
+    chain.signatures.set(k, [
+      { signature: 'FAKE', blockTime: now - 2 * 86400 },
+      { signature: 'GRANT_TO_K', blockTime: now - 2 * 86400 - 10 },
+    ]);
+  }
+
+  it('🚨 the verifier probe: K behind three clean decoys is still set aside, and nothing settles', async () => {
+    grantAndPay(3);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).not.toBe(true);
+    expect(body.floatFundedCredits).toBe(1);
+    expect(chain.sent).toHaveLength(0);
+  });
+
+  it('🚨 K behind seven decoys (eight debited accounts, the cap) is still read and set aside', async () => {
+    grantAndPay(7);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).not.toBe(true);
+    expect(body.floatFundedCredits).toBe(1);
+    expect(chain.sent).toHaveLength(0);
+  });
+
+  it('a credit debiting more accounts than the cap is not a purchase, and nothing settles on it', async () => {
+    grantAndPay(12);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).not.toBe(true);
+    expect(chain.sent).toHaveLength(0);
+  });
+
+  it('control: a real purchase whose fee is paid by a second clean signer still counts, and the batch settles', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    const payer = Keypair.generate().publicKey.toBase58();
+    const buyer = Keypair.generate().publicKey.toBase58();
+    const t = till.publicKey.toBase58();
+    chain.txs.set('TWO_SIGNERS', {
+      keys: [payer, buyer, t],
+      pre: [10_000_000, 2_000_000_000, 0],
+      post: [10_000_000 - 5000, 2_000_000_000 - ONE_PURCHASE_LAMPORTS, ONE_PURCHASE_LAMPORTS],
+    });
+    tillHistory([
+      { sig: 'TWO_SIGNERS', ago: 2 * 86400 },
+      ...realPurchases(2, 2 * 86400 + 60).map((p, i) => ({ ...p, sig: `REAL${i}` })),
+    ]);
+    const now = Math.floor(Date.now() / 1000);
+    chain.signatures.set(payer, [{ signature: 'TWO_SIGNERS', blockTime: now - 2 * 86400 }]);
+    chain.signatures.set(buyer, [{ signature: 'TWO_SIGNERS', blockTime: now - 2 * 86400 }]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).toBe(true);
+    expect(body.purchases).toBe(3);
+  });
+});

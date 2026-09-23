@@ -39,9 +39,16 @@ const tEn = (k: string) => lookup(en, k);
 const tFr = (k: string) => lookup(fr, k);
 
 describe('the refusal codes map to a sentence in each language', () => {
-  it('knows the five codes of contract C2', () => {
+  it('knows the five codes of contract C2, and the payment and relay codes of gate r1 (F57)', () => {
+    // Every code a panel can receive is also read from the sources by
+    // `closeV1PayErrorCodesAll.test.ts`; this list pins the exact set.
     expect([...POOL_ERROR_CODES].sort()).toEqual(
-      ['C1C3_SPEND_DISABLED', 'EXCHANGE_DISABLED', 'IMPORT_NOT_ON_TREE', 'POOL_DEPOSITS_BRICKED', 'POOL_TREE_DIVERGED'].sort(),
+      [
+        'C1C3_SPEND_DISABLED', 'EXCHANGE_DISABLED', 'IMPORT_NOT_ON_TREE', 'POOL_DEPOSITS_BRICKED', 'POOL_TREE_DIVERGED',
+        'PAYMENT_EXPIRED', 'PAYMENT_FAILED_ON_CHAIN', 'PAYMENT_OUTSTANDING',
+        'RELAYED_EPHEMERAL_REQUIRED', 'RELAYED_EPHEMERAL_UNBOUND', 'RELAYED_FUNDING_UNSEEN', 'RELAYED_FLOAT_NOT_RETURNED',
+        'FUNDER_IP_BUDGET', 'FUNDER_GLOBAL_BUDGET', 'FUNDER_UNSWEPT_GRANT',
+      ].sort(),
     );
   });
 

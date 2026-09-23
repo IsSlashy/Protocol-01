@@ -5,6 +5,7 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { getStore, rateLimitExceeded, type KvLike } from '@/lib/waitlist/store';
 import { clientIp, rateLimitAdvisories } from '@/lib/net/clientIp';
 import { notePaidCodeKey, relayPaymentContributionKey } from '@/lib/privacy/paymentBinding';
+import { relayEphemeralTagKey } from '@/lib/privacy/claimChallenge';
 import { activeTreasurySeed, treasurySeeds } from '@/lib/privacy/treasurySeeds';
 import {
   createCommitmentV3,
@@ -184,7 +185,16 @@ async function forgetTheCodeToPaymentTrail(
   const signature = /payment:([1-9A-HJ-NP-Za-km-z]{32,90})/.exec(minted)?.[1];
   const sweep = async () => {
     const keys = [`p01:note:claim-minted:${claimCode}`];
-    if (signature) keys.push(notePaidCodeKey(signature), relayPaymentContributionKey(signature));
+    if (signature) {
+      keys.push(
+        notePaidCodeKey(signature),
+        relayPaymentContributionKey(signature),
+        // [close-v1 F11] The relay's keyed tag of the key it funded: whoever
+        // holds the float's secret can test a candidate deposit key against
+        // this payment with it. It lives as long as the binding, no longer.
+        relayEphemeralTagKey(signature),
+      );
+    }
     for (const key of keys) {
       try {
         await kv.del(key);

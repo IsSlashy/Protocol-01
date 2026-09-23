@@ -75,7 +75,9 @@ import {
   goldilocksToLeBytes32,
   goldilocksU64To32,
   hexToBytes,
+  leavesByIndexFromCommitments,
   parsePoolV3Account,
+  type OnChainCommitment,
   type PoolConfig,
   type ShieldReceipt,
   type WalletSigner,
@@ -356,6 +358,33 @@ export interface PrepareSubscribeV4Result {
 }
 
 /**
+ * [flow-speed S1 2026-09-23] What the caller already walked, as
+ * `PrepareUnshieldV4Options` carries it for the withdrawal.
+ */
+export interface PrepareSubscribeV4Options {
+  /**
+   * The pool commitments `locateOwnedNote` walked IN THIS REQUEST. Given, the
+   * prepare builds from them and does not walk the history a second time
+   * (`spendRootIsCurrent.test.ts`, "[S1] one walk per SUBSCRIPTION prepare").
+   * Never a map from another request or the page-load scan.
+   */
+  leaves?: Map<string, OnChainCommitment>;
+  /**
+   * What that walk could not read (`PoolWalkReport.unread`). Absent, the leaves
+   * are not shown to be read in full: a lagging ring root gets the refetch
+   * ("[S1] a map handed to the SUBSCRIPTION with no walk report is not shown
+   * clean"). Never defaulted to 0.
+   */
+  unread?: number;
+  /**
+   * [flow-speed X4 2026-09-23] Called once, synchronously, right before the
+   * prover starts, after every pre-proof refusal; the job quotes its rent beside
+   * the proof. Never called on a refused attempt; a throw from it is ignored.
+   */
+  onProving?: () => void;
+}
+
+/**
  * Fetch leaves, build the Merkle path, pre-flight the root, and generate ONE
  * circuit-7 proof bound to `binding`.
  *
@@ -391,6 +420,8 @@ export async function prepareSubscribeV4(
   onProgress?: (step: string) => void,
   /** The Merkle path saved with the note, as the withdrawal's `savedPath`; only its root is read. */
   savedPath?: StoredMerklePath,
+  /** [flow-speed S1] The leaves the caller already walked; see `PrepareSubscribeV4Options`. */
+  opts: PrepareSubscribeV4Options = {},
 ): Promise<PrepareSubscribeV4Result> {
   // The vault is a digest input AND account index 2, where Anchor re-derives it
   // from its three seeds. A binding built over any other vault produces a proof
@@ -412,23 +443,62 @@ export async function prepareSubscribeV4(
 
   const { starkProver: prover } = await import('./starkProver');
 
-  onProgress?.('Fetching pool leaves from on-chain events...');
-  const { leavesByIndex, missing, unread } = await fetchPoolLeavesByIndex(
-    connection,
-    poolConfig.poolPDA,
-    { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
-  );
-  if (missing.length > 0) {
-    // The count only: the missing positions are other people's deposits
-    // (`noteIdentifierTripwire.test.ts`).
-    console.warn(`[Subscribe/v4] prepareSubscribeV4: ${missing.length} missing leaf gap(s)`);
-  }
+  type MerkleResult = ReturnType<typeof buildMerkleProofFromLeavesV3>;
+  /**
+   * [flow-speed S1 2026-09-23] Handed the caller's walk, a map that does not
+   * hold the note yet (a purchased or issued note whose insert the walk was not
+   * served) is a path that cannot be built, and is treated like a root the pool
+   * does not know: the one refetch below, then the withdrawal's outcome. The
+   * builder's error is kept only to be rethrown when no pre-flight can run.
+   * On the prepare's OWN walk the builder still throws at once, as before
+   * (`spendRootIsCurrent.test.ts`, "a note that no leaf map read places ...":
+   * the own-walk subscription routes "refuse at their builder").
+   */
+  const handed = opts.leaves !== undefined;
+  let buildError: unknown = null;
+  const buildHanded = (leavesByIndex: bigint[]): MerkleResult | null => {
+    try {
+      return buildMerkleProofFromLeavesV3({ leavesByIndex, targetLeafIndex: receipt.leafIndex });
+    } catch (err) {
+      buildError = err;
+      return null;
+    }
+  };
 
-  onProgress?.('Building Merkle proof from leaf history...');
-  let merkleResult = buildMerkleProofFromLeavesV3({
-    leavesByIndex,
-    targetLeafIndex: receipt.leafIndex,
-  });
+  let merkleResult: MerkleResult | null;
+  /** The newest leaf index of the first map, and what the walk behind it could not read. */
+  let firstTop: number;
+  let unread: number | undefined;
+  if (opts.leaves) {
+    // [flow-speed S1] The map `locateOwnedNote` walked in THIS request, and its
+    // own report, exactly as `prepareUnshieldV4` takes them: no second walk.
+    // `unread` is read as handed, undefined included (not shown clean).
+    onProgress?.('Building Merkle proof from leaf history...');
+    const leavesByIndex = leavesByIndexFromCommitments(opts.leaves);
+    firstTop = leavesByIndex.length - 1;
+    unread = opts.unread;
+    merkleResult = buildHanded(leavesByIndex);
+  } else {
+    onProgress?.('Fetching pool leaves from on-chain events...');
+    const walk = await fetchPoolLeavesByIndex(
+      connection,
+      poolConfig.poolPDA,
+      { maxSignatures: 1000, onProgress: (s, t) => onProgress?.(`Scanning events ${s}/${t}...`) },
+    );
+    if (walk.missing.length > 0) {
+      // The count only: the missing positions are other people's deposits
+      // (`noteIdentifierTripwire.test.ts`).
+      console.warn(`[Subscribe/v4] prepareSubscribeV4: ${walk.missing.length} missing leaf gap(s)`);
+    }
+
+    onProgress?.('Building Merkle proof from leaf history...');
+    merkleResult = buildMerkleProofFromLeavesV3({
+      leavesByIndex: walk.leavesByIndex,
+      targetLeafIndex: receipt.leafIndex,
+    });
+    firstTop = walk.leavesByIndex.length - 1;
+    unread = walk.unread;
+  }
 
   // What ties a root the pool is not on NOW to this note, as in
   // `prepareUnshieldV4`: the walk behind the map left listed signatures unread
@@ -467,14 +537,18 @@ export async function prepareSubscribeV4(
     // either").
     const heldBack = (root: bigint, top: number, walkUnread: number | undefined): boolean =>
       known(root) && !isCurrent(root) && tiedToNote(root, top, walkUnread);
-    const firstHeldBack = heldBack(merkleResult.root, leavesByIndex.length - 1, unread);
-    if (firstHeldBack || !known(merkleResult.root)) {
+    const firstHeldBack = merkleResult !== null && heldBack(merkleResult.root, firstTop, unread);
+    if (!merkleResult || firstHeldBack || !known(merkleResult.root)) {
       onProgress?.('Root not in ring — retrying event scan with extended limit...');
       const retry = await fetchPoolLeavesByIndex(connection, poolConfig.poolPDA, { maxSignatures: 3000 });
-      merkleResult = buildMerkleProofFromLeavesV3({
-        leavesByIndex: retry.leavesByIndex,
-        targetLeafIndex: receipt.leafIndex,
-      });
+      // [flow-speed S1] Handed a map, a refetch that still does not place the
+      // note is an incomplete history, as on the withdrawal: refused with no
+      // v3 needle. On the own walk the builder throws as before.
+      const rebuilt = handed
+        ? buildHanded(retry.leavesByIndex)
+        : buildMerkleProofFromLeavesV3({ leavesByIndex: retry.leavesByIndex, targetLeafIndex: receipt.leafIndex });
+      if (!rebuilt) throw new HistoryIncompleteError('subscription');
+      merkleResult = rebuilt;
       // The REFETCHED map's own top and report (same file, "after the one
       // refetch, the tie rule reads the REFETCHED map, not the first one").
       const retryHeldBack = heldBack(merkleResult.root, retry.leavesByIndex.length - 1, retry.unread);
@@ -490,12 +564,18 @@ export async function prepareSubscribeV4(
         );
       }
     }
-  } else if (tiedToNote(merkleResult.root, leavesByIndex.length - 1, unread)) {
+  } else if (!merkleResult) {
+    // No readable pool account and a handed map without the note: nothing to
+    // pre-flight or refetch against, so the builder's own error, as the
+    // withdrawal rethrows it (no needle).
+    throw buildError;
+  } else if (tiedToNote(merkleResult.root, firstTop, unread)) {
     // No readable pool account: the root cannot be shown current, so it is
     // proved only when nothing ties it to the note, with no refetch (same
     // test, its unreadable-account worlds).
     throw new HistoryIncompleteError('subscription');
   }
+  if (!merkleResult) throw buildError;
 
   // 12 / 3 split. `buildMerkleProofFromLeavesV3` returns the full depth-15 path
   // and the two halves go to different verifiers: the first twelve levels are
@@ -527,6 +607,13 @@ export async function prepareSubscribeV4(
   let raw;
   try {
     onProgress?.('Proving ownership and membership in one trace...');
+    // [flow-speed X4] Past every pre-proof refusal (the pre-flight, its refetch,
+    // `HistoryIncompleteError`, the depth check): the job quotes its rent now.
+    try {
+      opts.onProving?.();
+    } catch {
+      // A quote hook must never change the proof or its errors.
+    }
     await prover.start();
     raw = await prover.generateSpendProof(
       receipt.nullifierPreimage.toString(),

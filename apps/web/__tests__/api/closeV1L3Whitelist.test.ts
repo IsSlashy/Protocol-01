@@ -426,3 +426,59 @@ describe('F13 log hygiene: a failed write is answered, and nothing is left half-
     expect(stored().pending.map((e) => e.wallet)).toEqual([WALLET]);
   });
 });
+
+/**
+ * [close-v1 F64, gate r1 open item 2] THE WHITELIST ANSWERS TO ADMIN_PASSWORD
+ * ONLY. `WAITLIST_STATS_TOKEN` is a read-only credential for the waitlist
+ * counters; it is handed to dashboards, and it must never approve, revoke or
+ * list developers. `checkAdminAuth(…, { statsToken: false })` is what says so,
+ * and until this block no test did: the mutant `statsToken: true` survived all
+ * 126 lane tests (close-v1 L3 verifier). Every case below goes red on it
+ * (close-v1/blockers/f64-mutant.log).
+ */
+describe('F64: the stats token is not an admin credential here', () => {
+  const STATS = 'test-stats-token-read-only';
+  const bearer = (method: 'GET' | 'POST' | 'DELETE', url: string, body?: object) => {
+    const r = req(method, { url, body });
+    r.headers.set('authorization', `Bearer ${STATS}`);
+    return r;
+  };
+
+  beforeEach(() => {
+    vi.stubEnv('WAITLIST_STATS_TOKEN', STATS);
+  });
+
+  it('the admin list is refused to the stats token, and nothing about it is served', async () => {
+    kvState.rows.set(KEY, APPROVED);
+    const res = await GET(bearer('GET', '/api/whitelist?admin=true'));
+    expect(res.status, 'the stats token read the developer list').toBe(401);
+    const text = JSON.stringify(await res.json());
+    expect(text).not.toContain('DevAAAA1111');
+    expect(text).not.toContain('a@dev.io');
+  });
+
+  it('approve and delete are refused to the stats token, and the list is not written', async () => {
+    kvState.rows.set(KEY, { approved: [], pending: [{ wallet: WALLET, requestedAt: '2026-09-20T00:00:00Z' }] });
+    const approve = await POST(bearer('POST', '/api/whitelist', { wallet: WALLET, action: 'approve' }));
+    expect(approve.status, 'the stats token approved a developer').toBe(401);
+    const del = await DELETE(bearer('DELETE', '/api/whitelist', { wallet: WALLET }));
+    expect(del.status, 'the stats token deleted a developer').toBe(401);
+    expect(kvState.writes.filter((w) => w.key === KEY), 'the list was written').toEqual([]);
+    expect(sent, 'an approval mail went out').toEqual([]);
+  });
+
+  it('with no ADMIN_PASSWORD set, a stats token does not make the whitelist configured', async () => {
+    vi.stubEnv('ADMIN_PASSWORD', '');
+    kvState.rows.set(KEY, APPROVED);
+    const res = await GET(bearer('GET', '/api/whitelist?admin=true'));
+    expect(res.status).toBe(503);
+    expect(JSON.stringify(await res.json())).not.toContain('DevAAAA1111');
+  });
+
+  it('control: with the stats token set too, the admin password still gets in', async () => {
+    kvState.rows.set(KEY, APPROVED);
+    const res = await GET(req('GET', { url: '/api/whitelist?admin=true', admin: ADMIN }));
+    expect(res.status).toBe(200);
+    expect(JSON.stringify(await res.json())).toContain('DevAAAA1111');
+  });
+});

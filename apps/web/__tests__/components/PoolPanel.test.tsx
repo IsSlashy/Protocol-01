@@ -291,6 +291,10 @@ function issued(note: PoolNoteView, leafIndex: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  // [flow-speed X8] A deployment built WITH its funder ticket, as production
+  // must be: a direct withdrawal is refused at the click without one (the
+  // "X8" cases at the end of this file). Nothing else in these cases changes.
+  vi.stubEnv("NEXT_PUBLIC_P01_FUNDER_TICKET", "test-ticket");
   m.scanPoolLocal.mockResolvedValue({ kind: "poolScanLocal", notes: [], skipped: 0 });
   m.scanPool.mockResolvedValue({ notes: [noteView()], shieldedBalance: 1, poolSizes: [], complete: true });
   m.loadPayouts.mockResolvedValue({ records: [], staleWorker: false, lostSession: false });
@@ -1517,6 +1521,30 @@ describe("READY-1: the Shield click never becomes an own deposit without a choic
     expect(m.contributeToPool).not.toHaveBeenCalled();
   });
 
+  it("🚨 [close-v1 F56] the own deposit hands shieldToPool the wallet's message signer, so the relay can prove the payer", async () => {
+    // `shieldToPool` refuses a relayed deposit with no `signMessage` BEFORE the
+    // wallet pays (`/api/relay-to-buyer` wants the payer's proof over the claim
+    // challenge). The panel used to leave it out, so "Deposit my own note"
+    // refused on every click, before any payment.
+    m.fetchIssuableNote.mockResolvedValue(null);
+    const { user } = await setup();
+    await clickShield(user);
+    await user.click(screen.getByRole("button", { name: OWN }));
+    await screen.findByText("Your 1 SOL note is in the pool");
+    expect(m.shieldToPool).toHaveBeenCalledTimes(1);
+    const params = m.shieldToPool.mock.calls[0]![0] as {
+      depositPublicly?: boolean;
+      signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+    };
+    expect(params.depositPublicly).toBe(false);
+    expect(typeof params.signMessage, "the relayed own deposit was sent without a message signer").toBe("function");
+    // And it is THIS wallet's signer, not a stand-in.
+    signMessage.mockClear();
+    const probe = new TextEncoder().encode("probe");
+    await params.signMessage!(probe);
+    expect(signMessage).toHaveBeenCalledWith(probe);
+  });
+
   it.each([
     ["a note issuable now", { denomination: 1, token: "SOL", issuableNow: true }],
     ["a bucket not sampled yet", { denomination: 1, token: "SOL", issuableNow: null }],
@@ -1832,5 +1860,57 @@ describe("close-v1: the resumed card and the refusal codes", () => {
     expect(screen.queryByRole("button", { name: SHOW_CODE })).toBeNull();
     expect(view.container.innerHTML).not.toContain(CODE_E);
     expect(m.contributeToPool).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("[flow-speed X8] a build with no funder ticket refuses a direct withdrawal at the click", () => {
+  it("T1: Withdraw sends nothing, asks for no signature, and says the FUND-1 refusal", async () => {
+    // RED at HEAD: the click walked the history, proved and only then refused.
+    vi.stubEnv("NEXT_PUBLIC_P01_FUNDER_TICKET", "");
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    signMessage.mockClear();
+    await user.click(screen.getByRole("button", { name: /^Withdraw$/ }));
+    await waitFor(() =>
+      expect(view.container.textContent).toMatch(/Stopped before spending anything/),
+    );
+    expect(view.container.textContent).toMatch(/this deployment has no funder configured/);
+    expect(view.container.textContent).toMatch(/Trying again will not change this/);
+    expect(m.unshieldFromPool).not.toHaveBeenCalled();
+    expect(signMessage).not.toHaveBeenCalled();
+    expect(m.recordPayout).not.toHaveBeenCalled();
+    expect(m.recordSpentNote).not.toHaveBeenCalled();
+  });
+
+  it("T2: the relayed withdrawal funds nothing and stays open without a ticket", async () => {
+    vi.stubEnv("NEXT_PUBLIC_P01_FUNDER_TICKET", "");
+    vi.stubEnv("NEXT_PUBLIC_P01_SPEND_RELAYER_URL", "https://relayer.test");
+    try {
+      m.unshieldFromPool.mockResolvedValue({
+        txSig: WITHDRAWAL_SIG,
+        denomination: 1,
+        fundedBy: "relayer",
+        version: "v4",
+      });
+      const user = userEvent.setup();
+      renderPanel();
+      await waitForRows(1);
+      await user.click(screen.getByRole("button", { name: /^Withdraw via relayer$/ }));
+      await screen.findByText("Withdrew 1 SOL");
+      expect(m.unshieldFromPool.mock.calls[0][0]).toMatchObject({ relayerUrl: "https://relayer.test" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("control: with the ticket, the same click reaches the withdrawal", async () => {
+    m.unshieldFromPool.mockResolvedValue({ txSig: WITHDRAWAL_SIG, denomination: 1, fundedBy: "funder", version: "v4" });
+    const user = userEvent.setup();
+    renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /^Withdraw$/ }));
+    await screen.findByText("Withdrew 1 SOL");
+    expect(m.unshieldFromPool).toHaveBeenCalledTimes(1);
   });
 });

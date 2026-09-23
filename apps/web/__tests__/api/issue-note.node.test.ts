@@ -1349,6 +1349,9 @@ describe('the rows that name a code and a payment together', () => {
     mintClaim('CODE-ONE-AAAAAAAA', 17, minted);
     await kv.set(notePaidCodeKey(sig), 'CODE-ONE-AAAAAAAA');
     await kv.set(relayPaymentContributionKey(sig), contributionBinding(POOL_KEY, 17));
+    // [close-v1 F11] The relay's keyed tag of the ephemeral it funded, written
+    // beside the binding (the value is opaque here: only its lifetime is tested).
+    await kv.set(`p01:relay:payment:${sig}:ephemeral-tag`, 'ab'.repeat(32));
     await kv.incr(notePaidKey(sig));
     return issue('CODE-ONE-AAAAAAAA');
   }
@@ -1361,6 +1364,12 @@ describe('the rows that name a code and a payment together', () => {
     expect(
       kv.has(relayPaymentContributionKey(sig)),
       `the relay binding survived redemption (${len})`,
+    ).toBe(false);
+    // With the float's secret, the tag tests a candidate deposit key against
+    // this payment: once the code is redeemed nothing reads it, so it goes too.
+    expect(
+      kv.has(`p01:relay:payment:${sig}:ephemeral-tag`),
+      `the relay's ephemeral tag survived redemption (${len})`,
     ).toBe(false);
     expect(kv.has(notePaidKey(sig)), `the payment gate was dropped (${len})`).toBe(true);
     expect(kv.has(claimKeyOf('CODE-ONE-AAAAAAAA')), 'the spent claim was dropped').toBe(true);
@@ -2874,6 +2883,10 @@ describe('the server-log check itself', () => {
     // imports are pinned; adding one is a decision this list makes visible.
     const ROUTE_IMPORTS = [
       '@/lib/net/clientIp',
+      // close-v1 F11: only `relayEphemeralTagKey`, a key-name helper, for the
+      // redemption sweep. The module imports nothing but '@noble/hashes' (it is
+      // bundled into the web worker): no console, fs or fetch of its own.
+      '@/lib/privacy/claimChallenge',
       '@/lib/privacy/paymentBinding',
       '@/lib/privacy/pool/denominatedPool',
       // CACHE-1: no console, fs or fetch of its own; it writes public chain

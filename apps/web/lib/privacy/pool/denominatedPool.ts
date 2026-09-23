@@ -30,6 +30,7 @@ import {
 import {
   getPoolHistoryStore,
   hasGivenUpOnSignature,
+  inFlightPoolWalks,
   loadPoolHistory,
   poolHistoryKey,
   rememberGivenUpSignature,
@@ -2317,18 +2318,92 @@ function publicAnchorSignature(entries: CachedCommitmentEntry[], nextLeafIndex: 
   return anchor?.signature ?? null;
 }
 
+export interface FetchPoolCommitmentsOptions {
+  maxSignatures?: number;
+  batchSize?: number;
+  onProgress?: (scanned: number, total: number) => void;
+  /** [HISTORY-CACHE] Reuse the cached walk and fetch only newer signatures. Default true. */
+  incremental?: boolean;
+  /** Told what the walk could not read, once it ends; see `PoolWalkReport`. */
+  onWalked?: (report: PoolWalkReport) => void;
+  /**
+   * [flow-speed X1 2026-09-23] Opt-in, for the BROWSER WORKER's callers only
+   * (the page-load scan, `locateOwnedNote`, the import check). While a walk of
+   * the same pool, on the same host, with the same `maxSignatures` and
+   * `batchSize`, is in flight in this worker, wait for it ONCE, then run this
+   * call's own full walk. See `fetchPoolCommitments`. The server routes never
+   * set it: one user's request must not wait for another user's walk inside a
+   * function's time limit.
+   */
+  joinInFlight?: boolean;
+  /** While waiting on a joined walk: called every 10 s with the seconds waited. */
+  onJoinWait?: (seconds: number) => void;
+}
+
+/**
+ * The pool's leaves, from the history cache plus a walk of what is newer.
+ *
+ * [flow-speed X1 2026-09-23] SINGLE FLIGHT, BY OPT-IN. The worker awaits each
+ * message concurrently, so a click on Withdraw or Subscribe while the page-load
+ * scan is walking the same pool used to start a SECOND walk beside it on the one
+ * paced connection, and on a first visit both were cold (the row is saved only
+ * when a walk ends). With `joinInFlight`, the later call waits for the running
+ * walk once, then runs its OWN full call, which starts from the row that walk
+ * just saved:
+ *   - its requests are exactly those of a click made after the scan finished
+ *     (the same public-anchor listing, the same re-read rule); none is added and
+ *     none is reshaped (`poolWalkJoin.test.ts`, "T1+T2");
+ *   - its map is never older than the click, and its `onWalked` report is its
+ *     own, so SPEND-1 reads a truthful `unread` ("T3");
+ *   - the leader's result and error are ignored ("T4"); the entry is removed
+ *     only by the walk that set it ("T5");
+ *   - only the same `incremental` / `maxSignatures` / `batchSize` joins: the
+ *     3000-signature refetch never joins a 1000 walk ("T6");
+ *   - a store change forgets every walk in flight ("T7"); a waiting joiner
+ *     reports every 10 s ("T8"); without the opt-in nothing joins ("T9").
+ * No pause point is placed inside the walk itself (a joiner waits on it).
+ */
 export async function fetchPoolCommitments(
   connection: Connection,
   poolPDA: PublicKey,
-  options: {
-    maxSignatures?: number;
-    batchSize?: number;
-    onProgress?: (scanned: number, total: number) => void;
-    /** [HISTORY-CACHE] Reuse the cached walk and fetch only newer signatures. Default true. */
-    incremental?: boolean;
-    /** Told what the walk could not read, once it ends; see `PoolWalkReport`. */
-    onWalked?: (report: PoolWalkReport) => void;
-  } = {},
+  options: FetchPoolCommitmentsOptions = {},
+): Promise<Map<string, OnChainCommitment>> {
+  if (options.joinInFlight !== true || (options.incremental ?? true) !== true) {
+    return walkPoolCommitments(connection, poolPDA, options);
+  }
+  const walks = inFlightPoolWalks();
+  const key =
+    `${poolHistoryKey(String(connection.rpcEndpoint ?? ''), poolPDA.toBase58())}` +
+    `|${options.maxSignatures ?? 1000}|${options.batchSize ?? 25}`;
+  const leader = walks.get(key);
+  if (leader) {
+    const waitStartedAt = Date.now();
+    const heartbeat = options.onJoinWait
+      ? setInterval(() => options.onJoinWait?.(Math.round((Date.now() - waitStartedAt) / 1000)), 10_000)
+      : null;
+    try {
+      // Once, and whatever it ends in: the result below is this call's own.
+      await leader.then(
+        () => undefined,
+        () => undefined,
+      );
+    } finally {
+      if (heartbeat) clearInterval(heartbeat);
+    }
+  }
+  const own = walkPoolCommitments(connection, poolPDA, options);
+  walks.set(key, own);
+  try {
+    return await own;
+  } finally {
+    if (walks.get(key) === own) walks.delete(key);
+  }
+}
+
+async function walkPoolCommitments(
+  connection: Connection,
+  poolPDA: PublicKey,
+  options: FetchPoolCommitmentsOptions,
 ): Promise<Map<string, OnChainCommitment>> {
   const maxSignatures = options.maxSignatures ?? 1000;
   const batchSize = options.batchSize ?? 25;
@@ -3895,10 +3970,22 @@ export interface PrepareUnshieldV4Options {
    * current root; see `prepareUnshieldV4`.
    */
   savedPath?: StoredMerklePath;
+  /**
+   * [flow-speed X4 2026-09-23] Called once, synchronously, right before the
+   * prover starts: after every refusal the prepare can make before proving (the
+   * pre-flight and its refetch, `HistoryIncompleteError`, the depth check). The
+   * job uses it to quote rent beside the proof. Never called on a refused
+   * attempt; a throw from it is ignored.
+   */
+  onProving?: () => void;
 }
 
-/** A commitment map as the dense leaf array `buildMerkleProofFromLeavesV3` takes. */
-function leavesByIndexFromCommitments(commitments: Map<string, OnChainCommitment>): bigint[] {
+/**
+ * A commitment map as the dense leaf array `buildMerkleProofFromLeavesV3` takes.
+ * Exported for the circuit-7 SUBSCRIPTION prepare, which builds from the same
+ * handed map the same way ([flow-speed S1]); one copy, not two.
+ */
+export function leavesByIndexFromCommitments(commitments: Map<string, OnChainCommitment>): bigint[] {
   const MAX_LEAVES = 1 << MERKLE_DEPTH;
   let maxIdx = -1;
   for (const e of commitments.values()) {
@@ -4131,6 +4218,13 @@ export async function prepareUnshieldV4(
   let raw;
   try {
     onProgress?.('Proving ownership and membership in one trace...');
+    // [flow-speed X4] Past every pre-proof refusal: the job may now quote its
+    // rent beside the proof (`PrepareUnshieldV4Options.onProving`).
+    try {
+      opts.onProving?.();
+    } catch {
+      // A quote hook must never change the proof or its errors.
+    }
     await prover.start();
     raw = await prover.generateSpendProof(
       receipt.nullifierPreimage.toString(),

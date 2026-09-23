@@ -184,6 +184,11 @@ vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
     ...actual,
+    // [flow-speed W1] The circuit-7 WITHDRAWAL job is real up to its prepare,
+    // which stops on a sentinel (no fallback needle, so the handler rethrows).
+    prepareUnshieldV4: async () => {
+      throw new Error('STOP: the circuit-7 withdrawal proof was reached');
+    },
     // The history walk is pool-keyed (HIST-1 / SPEND-1 own it). A map is served
     // here so the leaf carries a deposit payer, which is what the subscribe
     // prepare used to walk. The spent-set read and its membership test stay REAL.
@@ -331,6 +336,43 @@ describe('export, received withdrawal and subscribe prepare read no nullifier PD
     // set the handler already read. A job that re-reads it on its own sends a
     // second, heavier getProgramAccounts (fix round 1, mutant V1).
     expect(rpc.filter((c) => c.method === 'getProgramAccounts').length).toBe(1);
+  });
+
+  it('[flow-speed W1] circuit-7 withdrawal prepare reads the spent set ONCE, seed note and received note', async () => {
+    // RED at HEAD: 2 getProgramAccounts, the handler's and the job's own
+    // byte-identical second read.
+    for (const world of ['seed', 'received'] as const) {
+      rpc.length = 0;
+      seedNotes = world === 'seed' ? [SEED_NOTE] : [];
+      await expect(
+        handlePoolRequest({
+          kind: 'poolUnshieldPrepare' as const,
+          ...base,
+          recipient: RETAILER,
+          ownerPubkey: DEPOSIT_EPHEMERAL,
+          ...(world === 'received' ? { encryptedNotes: [blob()] } : {}),
+        }),
+      ).rejects.toThrow(/STOP: the circuit-7 withdrawal proof was reached/);
+      expect(rpc.length, world).toBeGreaterThan(0);
+      expect(rpcNames(NULLIFIER_PDA), world).toEqual([]);
+      expect(rpc.filter((c) => c.method === 'getProgramAccounts').length, world).toBe(1);
+    }
+  });
+
+  it('[flow-speed W1] the refusal of a spent note survives on the circuit-7 withdrawal', async () => {
+    spentPdas = [NULLIFIER_PDA];
+    seedNotes = [];
+    await expect(
+      handlePoolRequest({
+        kind: 'poolUnshieldPrepare' as const,
+        ...base,
+        recipient: RETAILER,
+        ownerPubkey: DEPOSIT_EPHEMERAL,
+        encryptedNotes: [blob()],
+      }),
+    ).rejects.toThrow(/already been withdrawn/);
+    expect(rpc.filter((c) => c.method === 'getProgramAccounts').length).toBe(1);
+    expect(rpcNames(NULLIFIER_PDA)).toEqual([]);
   });
 
   it('a spent received note is still refused, from the pool-wide set', async () => {

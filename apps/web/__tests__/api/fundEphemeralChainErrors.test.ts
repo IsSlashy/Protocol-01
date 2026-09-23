@@ -82,15 +82,17 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
         }
         return 0;
       }
+      // [flow-speed X7] The route polls instead of subscribing, so a call here
+      // is a regression; it fails loudly (and names the signature, as web3.js
+      // does, so a leak of it would show in the log assertions too).
       async confirmTransaction(strategy: { signature: string }) {
-        if (confirmation === 'throws') {
-          const err = new Error(
-            `Signature ${strategy.signature} has expired: block height exceeded.`,
-          );
-          err.name = 'TransactionExpiredBlockheightExceededError';
-          throw err;
-        }
-        return { value: { err: null } };
+        throw new Error(`confirmTransaction must not be called (X7): ${strategy.signature}`);
+      }
+      // [flow-speed X7] "The confirmation throws" is now what the poll sees:
+      // the status never turns confirmed and the block height is already past
+      // the blockhash's last valid height (1, from the send mock above).
+      async getBlockHeight() {
+        return 10;
       }
       async getSignaturesForAddress() {
         return [];
@@ -99,6 +101,8 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
         return null;
       }
       async getSignatureStatuses(sigs: string[]) {
+        // A funding that works: the poll sees it confirmed.
+        if (confirmation === 'ok') return { value: [{ confirmationStatus: 'confirmed', err: null }] };
         if (landed === 'unreadable') {
           throw new Error(`failed to get signature statuses for ${sigs.join(',')}: fetch failed`);
         }

@@ -112,20 +112,29 @@ const tx = await unshieldDenominatedStark({ proofBuffer, stealthRecipient });
     id: "poseidon-hash",
     i18nKey: "poseidonHash",
     detailCount: 5,
-    codeExample: `// Poseidon commitment in circuit
-template Commitment() {
-    signal input amount;
-    signal input ownerPubkey;
-    signal input randomness;
-    signal output commitment;
+    // [close-v1 F24/F53] The hash v1 runs, not the retired Circom
+    // `Poseidon(4)` (BN254, t = 5) this sample used to show as current.
+    // Pinned by `__tests__/pages/DocsPoseidonTopic.test.tsx`.
+    codeExample: `// Poseidon over Goldilocks (p = 2^64 - 2^32 + 1), width t = 3:
+// rate 2, capacity 1, x^7 S-box, 30 full rounds. Every live path
+// (circuits, on-chain verifier, clients) uses this permutation.
+// stark/src/poseidon/mod.rs
+pub fn hash2(a: BaseElement, b: BaseElement) -> BaseElement {
+    let mut state = [a, b, BaseElement::ZERO];
+    permutation_t3(&mut state);
+    state[0]
+}
 
-    component hash = Poseidon(4);
-    hash.inputs[0] <== amount;
-    hash.inputs[1] <== ownerPubkey;
-    hash.inputs[2] <== randomness;
-    hash.inputs[3] <== tokenMint;
-    commitment <== hash.out;
-}`,
+// The v3 note commitment is three of these 2-to-1 hashes
+// (apps/web/lib/privacy/pool/denominatedPool.ts, createCommitmentV3):
+//   nullifier  = hash2(nullifier_preimage, secret)
+//   epoch_hash = hash2(deposit_epoch, token_mint)
+//   commitment = hash2(nullifier, epoch_hash)
+// Since the blinding was randomised, deposit_epoch holds a 63-bit
+// blinding (noteBlinding.ts); older notes hold slot / 7200.
+// The output is one field element: a 64-bit digest in v1
+// (docs/SECURITY-LEVELS.md, finding F2).
+// The t = 5 permutation (same file) is unused, and its matrix is not MDS.`,
   },
   {
     id: "merkle-tree",

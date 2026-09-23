@@ -309,6 +309,55 @@ export function operatorFeeAtomic(basis: FeeBasis): bigint {
 }
 
 /**
+ * [shield-speed H 2026-09-23] The relay terms, asked for AHEAD of the place
+ * they are awaited: a contribution starts this beside its prepare (the proof),
+ * once its local refusals have passed, and hands the handle to
+ * `fundEphemeralForJob`, which awaits it exactly where it used to await
+ * `fetchRelayTerms()`, before every cap, budget and float check and before the
+ * wallet is asked for anything.
+ *
+ * It is still ONE request per deposit, never shared and never kept: the handle
+ * lives in the one call that made it. `terms` never rejects unhandled (a
+ * failure surfaces only where it is awaited, as the same typed error), and
+ * `abort()` cancels it when the flow fails first. An answer older than
+ * RELAY_TERMS_PREFETCH_MAX_AGE_MS is asked for again, so the no-cache rule
+ * above keeps its meaning: the till address a payment goes to is at most that
+ * old.
+ */
+export interface RelayTermsPrefetch {
+  /** The terms, or the error `fetchRelayTerms` threw. */
+  readonly terms: Promise<RelayTerms>;
+  /** When the deployment answered (ms since the epoch); null until it has. */
+  answeredAt(): number | null;
+  /** Cancel the request (the flow failed before it was needed). */
+  abort(): void;
+}
+
+/** How old prefetched terms may be when they are used (correctness skeptic H 3). */
+export const RELAY_TERMS_PREFETCH_MAX_AGE_MS = 30_000;
+
+export function prefetchRelayTerms(): RelayTermsPrefetch {
+  const controller = new AbortController();
+  let at: number | null = null;
+  const terms = fetchRelayTerms(controller.signal).then((t) => {
+    at = Date.now();
+    return t;
+  });
+  // Awaited later, at its own place; until then its failure is nobody's.
+  terms.catch(() => undefined);
+  return { terms, answeredAt: () => at, abort: () => controller.abort() };
+}
+
+/** The terms for this payment: the prefetched answer while it is fresh, else a new request. */
+async function takeRelayTerms(prefetch?: RelayTermsPrefetch): Promise<RelayTerms> {
+  if (!prefetch) return fetchRelayTerms();
+  const terms = await prefetch.terms;
+  const at = prefetch.answeredAt();
+  if (at !== null && Date.now() - at <= RELAY_TERMS_PREFETCH_MAX_AGE_MS) return terms;
+  return fetchRelayTerms();
+}
+
+/**
  * Ask the relay who to pay and what it will serve.
  *
  * ⚠️ DELIBERATELY NOT CACHED, unlike `fetchFunderLookup` below. This answer is
@@ -841,6 +890,14 @@ export interface JobFundingRequest {
    */
   onPaymentVoid?: (paymentSignature: string) => void;
   /**
+   * [shield-speed H] The relay terms, already requested by the caller (see
+   * `prefetchRelayTerms`). Used once, awaited where the terms are always
+   * awaited; absent, the terms are requested there as before. Carries no
+   * proof, no secret and no signature request: it is the deployment's public
+   * answer to a GET.
+   */
+  relayTermsPrefetch?: RelayTermsPrefetch;
+  /**
    * The identity whose sealed stores this job belongs to.
    *
    * [SWEEP4 round 1, confirmed item 5] REQUIRED on the relayed path: the
@@ -887,6 +944,22 @@ export interface JobFundingDecision {
    * it appears in no other total the user sees.
    */
   operatorFeeLamports?: number;
+  /**
+   * [shield-speed G 2026-09-23] The payer's proof the relay was shown — the
+   * wallet's signature over `claimChallenge(paymentSignature)`, base64 — paired
+   * with the payment it was made over. Set only on the relayed branch, only
+   * once the relay has moved the lamports.
+   *
+   * It exists so `contributeToPool` can present the same proof to the confirm
+   * (which verifies the identical message) instead of asking the wallet for it
+   * a second time. IN MEMORY ONLY: it goes to no record, no worker message, no
+   * outcome, no progress line and no log (privacy skeptic G (a),
+   * `contributeFastPath.test.ts` TRIPWIRE). It does not cross the boundary in
+   * this function's header: nothing here asks anyone else for a proof; the
+   * funder still gets an address and an amount, and the relay already holds
+   * these bytes.
+   */
+  claimProof?: { paymentSignature: string; proof: string };
 }
 
 /** Thrown when the ephemeral already holds lamports. Named so callers can
@@ -986,6 +1059,7 @@ export async function fundEphemeralForJob(
   let funderFallbackReason: string | undefined;
   let operatorFeeLamports: number | undefined;
   let paymentSignature: string | undefined;
+  let claimProof: { paymentSignature: string; proof: string } | undefined;
   let sweepTo = owner.toBase58();
   /** The funder was asked and did not serve: the one case a retry can fix. */
   let funderRefusedJob = false;
@@ -1091,7 +1165,9 @@ export async function fundEphemeralForJob(
     const feeLamports = Number(operatorFeeAtomic(basis));
 
     req.onProgress?.('Asking the deployment what it can serve...');
-    const terms = await fetchRelayTerms();
+    // [shield-speed H] Possibly asked for already, beside the prepare; awaited
+    // HERE either way, so every check below still runs before `signOne`.
+    const terms = await takeRelayTerms(req.relayTermsPrefetch);
 
     // PORTE 2's engine half. MEASURED FROM SOURCE 2026-08-20: the relay forwards
     // at most 2,500,000,000 lamports per call, so the ceiling binds at a
@@ -1420,6 +1496,9 @@ export async function fundEphemeralForJob(
     // Carried out, not forgotten: the caller's only handle on the money it
     // just moved, whatever the deposit does next.
     paymentSignature = paySig;
+    // [shield-speed G] The proof the relay just accepted, paired with THIS
+    // payment, for the confirm to reuse. Memory only (see `claimProof`).
+    claimProof = { paymentSignature: paySig, proof: relayProof };
     // ⛔ NOT `owner`, and NOT the till. The float fronted the rent, so the
     // residue is the float's. The relay names the address it actually sent
     // from; the terms are the fallback for a relay that does not say.
@@ -1529,6 +1608,7 @@ export async function fundEphemeralForJob(
     funderFallbackReason,
     operatorFeeLamports,
     ...(paymentSignature !== undefined ? { paymentSignature } : {}),
+    ...(claimProof !== undefined ? { claimProof } : {}),
   };
 }
 

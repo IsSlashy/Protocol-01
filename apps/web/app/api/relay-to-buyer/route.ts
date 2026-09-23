@@ -31,7 +31,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import nacl from 'tweetnacl';
 
-import { claimChallenge } from '@/lib/privacy/claimChallenge';
+import {
+  claimChallenge,
+  relayEphemeralTag,
+  relayEphemeralTagKey,
+} from '@/lib/privacy/claimChallenge';
 import bs58 from 'bs58';
 import { getStore, rateLimitExceeded, rateLimitRemaining } from '@/lib/waitlist/store';
 import { clientIp, rateLimitAdvisories } from '@/lib/net/clientIp';
@@ -862,7 +866,25 @@ export async function POST(request: NextRequest) {
       // lifetime is the redemption, not a clock: `issue-note` deletes it then.
       // Pinned by `__tests__/api/relay-to-buyer.test.ts` "the contribution
       // binding carries no expiry".
-      if (binding) await kv.set(relayPaymentContributionKey(signature), binding);
+      //
+      // ⛔ [close-v1 F11] THE TAG BEFORE THE BINDING. `/api/claim-for-payment`
+      // sells a relayed payment whose deposit never landed only for the key
+      // THIS relay funded, once that key gave the float its lamports back. It
+      // learns which key that is from this row and nowhere else, so a binding
+      // written without it locked every honest fallback out with 409
+      // RELAYED_EPHEMERAL_UNBOUND (close-v1 gate r1, open item 5). Written
+      // first for the reason the hold is: a failed write leaves no binding,
+      // never a binding the fallback cannot honour. The value is a keyed HMAC
+      // (`relayEphemeralTag`), never the ephemeral in clear, and it lives as
+      // long as the binding: `issue-note` deletes both at redemption.
+      // Pinned end to end by `__tests__/api/closeV1RelayFallbackHonest.test.ts`.
+      if (binding) {
+        await kv.set(
+          relayEphemeralTagKey(signature),
+          relayEphemeralTag(funder.secretKey, signature, buyer.toBase58()),
+        );
+        await kv.set(relayPaymentContributionKey(signature), binding);
+      }
       return true;
     } catch {
       return false;

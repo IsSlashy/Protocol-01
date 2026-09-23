@@ -36,6 +36,11 @@ const LEGACY_LEAF = 9;
 /** Call order across the stubbed scan passes and the interim emissions. */
 const events: string[] = [];
 
+/** [flow-speed X1] Run inside the stubbed legacy (full) pass, once, when set. */
+let duringLegacyPass: (() => void) | null = null;
+/** [flow-speed X1] The options every history walk of the scan was called with. */
+const walkOptions: Array<Record<string, unknown> | undefined> = [];
+
 function note(pool: PoolConfig, leafIndex: number): RecoveredNote {
   return {
     counter: leafIndex,
@@ -69,6 +74,11 @@ vi.mock('./poolNotes', () => ({
     opts?: { blindedOnly?: boolean },
   ) => {
     events.push(`scan:${pool.denomination}:${opts?.blindedOnly ? 'blinded' : 'full'}`);
+    if (!opts?.blindedOnly && duringLegacyPass) {
+      const run = duringLegacyPass;
+      duringLegacyPass = null;
+      run();
+    }
     return {
       notes: opts?.blindedOnly
         ? [note(pool, BLINDED_LEAF)]
@@ -116,7 +126,10 @@ vi.mock('./denominatedPool', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./denominatedPool')>();
   return {
     ...actual,
-    fetchPoolCommitments: async () => new Map(),
+    fetchPoolCommitments: async (_c: unknown, _p: unknown, options?: Record<string, unknown>) => {
+      walkOptions.push(options);
+      return new Map();
+    },
     fetchSpentNullifierSet: async () => new Set<string>(),
     readPoolUnspentCount: async () => 7,
     // ⚠️ The default scan was narrowed to 1 SOL on 2026-08-28, and this file
@@ -142,6 +155,8 @@ const { getPoolsForTokenV3 } = await import('./denominatedPool');
 beforeEach(() => {
   clearPoolState();
   events.length = 0;
+  walkOptions.length = 0;
+  duringLegacyPass = null;
   configurePoolHandlers('http://localhost:8899');
   setPoolSeed(META, SIGNATURE);
 });
@@ -233,5 +248,41 @@ describe('progressive scan: blinded results are emitted before the legacy pass',
     for (const p of interims) expect(p.complete).toBe(false);
     expect(res.complete).toBe(true);
     expect(res.notes.length).toBe(pools.length * 2);
+  });
+});
+
+describe('[flow-speed X1] the page-load scan and a click share one walk, and a wiped key set ends the scan', () => {
+  it('the scan opts in to join a walk already in flight (and reports while it waits)', async () => {
+    // RED at HEAD: the scan passed no options, so a click that started the
+    // same walk first made the scan run a second one beside it (or the reverse).
+    await handlePoolRequest({ kind: 'poolScan', meta: META, token: 'SOL', denomination: DENOM });
+    expect(walkOptions.length).toBeGreaterThan(0);
+    for (const o of walkOptions) {
+      expect(o?.joinInFlight).toBe(true);
+      expect(typeof o?.onJoinWait).toBe('function');
+      // Same budget as `locateOwnedNote`'s walk, or they could never join.
+      expect(o?.maxSignatures).toBeUndefined();
+      expect(o?.incremental).toBeUndefined();
+    }
+  });
+
+  it('keys wiped during the legacy pass: the scan rejects, never "complete" with notes missing', async () => {
+    // RED at HEAD: the scan went on with zeroed seeds and returned complete:
+    // true. The yield in the legacy pass widens that window, so the scan now
+    // checks its key set is still the live one after each legacy pass.
+    duringLegacyPass = () => clearPoolState();
+    const out = await handlePoolRequest({ kind: 'poolScan', meta: META, token: 'SOL', denomination: DENOM }).then(
+      (r) => `complete: ${(r as PoolScanResponse).complete}`,
+      (e: unknown) => `rejected: ${e instanceof Error ? e.message : String(e)}`,
+    );
+    expect(out).toMatch(/^rejected: /);
+    expect(out).not.toMatch(/\d{2,}/); // names no leaf, no count
+  });
+
+  it('keys re-derived during the legacy pass (a new sign-in) end the scan too', async () => {
+    duringLegacyPass = () => setPoolSeed(META, new Uint8Array(64).fill(9));
+    await expect(
+      handlePoolRequest({ kind: 'poolScan', meta: META, token: 'SOL', denomination: DENOM }),
+    ).rejects.toThrow();
   });
 });

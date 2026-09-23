@@ -1487,3 +1487,117 @@ describe('FUND-1 through the client: a refused spend never reaches execute', () 
     expect(signed).toHaveLength(0);
   });
 });
+
+// ===========================================================================
+// Shield-speed G and H (2026-09-23).
+// ===========================================================================
+
+describe('[shield-speed G] the relay proof comes back for the confirm, in memory only', () => {
+  // Popup #2 here and popup #3 in `contributeToPool` sign the same message,
+  // `claimChallenge(paySig)`, for the same deployment. The decision hands the
+  // relay proof back paired with the payment it was made over, set only once
+  // the relay has succeeded, so the caller can reuse it instead of asking the
+  // wallet again (correctness skeptic G (a)).
+
+  it('RED: a relayed deposit hands back the proof the relay was shown, paired with its payment', async () => {
+    stubDeployment();
+    const d = (await fundEphemeralForJob(deposit())) as unknown as Record<string, unknown>;
+    const body = relayedBody as unknown as { proof?: string; paymentSignature?: string };
+    expect(body.proof).toBeTruthy();
+    expect(d.claimProof).toEqual({ paymentSignature: body.paymentSignature, proof: body.proof });
+    expect(d.paymentSignature).toBe(body.paymentSignature);
+  });
+
+  it('RED: the same when a kept receipt is presented again', async () => {
+    stubDeployment({ relay: 'refuse' });
+    await refusal(fundEphemeralForJob(deposit()));
+    const first = relayedBody?.paymentSignature;
+    stubDeployment({ relay: 'ok' });
+    const d = (await fundEphemeralForJob(deposit())) as unknown as Record<string, unknown>;
+    expect((d.claimProof as { paymentSignature?: string })?.paymentSignature).toBe(first);
+    expect(signed).toHaveLength(1);
+  });
+
+  it('CONTROL: a float-only grant and a wallet-funded deposit hand back no proof', async () => {
+    stubFunder('ok');
+    const grant = (await fundEphemeralForJob(job())) as unknown as Record<string, unknown>;
+    expect(grant).not.toHaveProperty('claimProof');
+    stubDeployment();
+    const own = (await fundEphemeralForJob(deposit({ relayThroughDeployment: false }))) as unknown as Record<string, unknown>;
+    expect(own.fundedBy).toBe('wallet');
+    expect(own).not.toHaveProperty('claimProof');
+  });
+});
+
+describe('[shield-speed H] terms asked for ahead of time are used where they were awaited', () => {
+  /** A prefetch handle as `prefetchRelayTerms` returns it, answered `agoMs` ago. */
+  async function prefetchOf(agoMs = 0) {
+    const t = await funderModule.fetchRelayTerms();
+    return { terms: Promise.resolve(t), answeredAt: () => Date.now() - agoMs, abort: () => undefined };
+  }
+
+  it('RED: a fresh prefetch is used — no second terms request — and the wallet still signs after the checks', async () => {
+    stubDeployment();
+    const relayTermsPrefetch = await prefetchOf();
+    calls = [];
+    const d = await fundEphemeralForJob(deposit({ relayTermsPrefetch }));
+    expect(d.fundedBy).toBe('funder');
+    expect(calls.filter((c) => c === 'GET /api/relay-to-buyer')).toHaveLength(0);
+    expect(signed).toHaveLength(1);
+  });
+
+  it('CONTROL: terms answered more than 30 s ago are asked for again, before the wallet signs', async () => {
+    stubDeployment();
+    const relayTermsPrefetch = await prefetchOf(31_000);
+    calls = [];
+    await fundEphemeralForJob(deposit({ relayTermsPrefetch }));
+    const get = calls.indexOf('GET /api/relay-to-buyer');
+    expect(get).toBeGreaterThan(-1);
+    expect(get).toBeLessThan(calls.indexOf('signOne'));
+  });
+
+  it('a prefetch that shows a spent allowance still refuses before the wallet is asked', async () => {
+    stubDeployment({ terms: { ...RELAY_TERMS, relaysRemaining: 0 } });
+    const relayTermsPrefetch = await prefetchOf();
+    stubDeployment();
+    const e = await refusal(fundEphemeralForJob(deposit({ relayTermsPrefetch })));
+    expect(e.reason).toBe('relay-budget-spent');
+    expect(signed).toHaveLength(0);
+  });
+
+  it('RED: a prefetch that failed refuses at its old place, with its own typed error, and nothing is signed', async () => {
+    stubDeployment({ terms: null });
+    const failure = await funderModule.fetchRelayTerms().then(
+      () => null,
+      (err: unknown) => err as Error & { reason?: string },
+    );
+    expect(failure?.name).toBe('RelayCannotServeJobError');
+    // A healthy deployment now: the refusal can only come from the prefetch.
+    stubDeployment();
+    const terms = Promise.reject(failure);
+    terms.catch(() => undefined);
+    const e = await refusal(
+      fundEphemeralForJob(deposit({ relayTermsPrefetch: { terms, answeredAt: () => null, abort: () => undefined } })),
+    );
+    expect(e).toBe(failure);
+    expect(signed).toHaveLength(0);
+    expect(calls).not.toContain('sendRawTransaction');
+  });
+
+  it('prefetchRelayTerms: its failure is never unhandled, and abort() cancels the request', async () => {
+    const start = (funderModule as { prefetchRelayTerms?: () => { terms: Promise<unknown>; answeredAt: () => number | null; abort: () => void } }).prefetchRelayTerms;
+    expect(typeof start).toBe('function');
+    let seen: AbortSignal | undefined;
+    vi.stubGlobal('fetch', (_url: string, init?: { signal?: AbortSignal }) => {
+      seen = init?.signal;
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    });
+    const handle = start!();
+    handle.abort();
+    expect(seen?.aborted).toBe(true);
+    await expect(handle.terms).rejects.toBeTruthy();
+    expect(handle.answeredAt()).toBeNull();
+  });
+});

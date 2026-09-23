@@ -36,7 +36,11 @@ import {
 
 import * as shieldClient from '@/lib/privacy/shieldClient';
 import { licenseServiceTag } from '@/lib/privacy/license';
-import { fetchFunderPubkey, funderConfigured } from '@/lib/privacy/pool/ephemeralFunder';
+import {
+  WalletExposureRefusedError,
+  fetchFunderPubkey,
+  funderConfigured,
+} from '@/lib/privacy/pool/ephemeralFunder';
 import type { PoolToken } from '@/lib/privacy/pool/denominatedPool';
 import { SUBSCRIBE_FLOAT_SOL } from '@/lib/privacy/pool/subscribeFloat';
 import type { PoolNoteView } from '@/lib/privacy/worker/poolHandlers';
@@ -776,10 +780,18 @@ const ISSUANCE_UI = true;
     service && note ? periodsFunded(note.denomination, decimals, service.priceAtomic) : null;
 
   const usdcUnsupported = token !== 'SOL';
+  // [flow-speed X8 2026-09-23] The BUILD constant, never `funderAvailable`: a
+  // stale bundle (the server has a funder, this bundle has no ticket) still
+  // cannot fund a subscription (`fundEphemeralForJob` reads only the ticket),
+  // and it is the case where a doomed click used to name the float and the
+  // wallet to the RPC together before refusing. Same FUND-1 words.
+  const noFunderTicket = !funderConfigured();
   const blockedReason = usdcUnsupported
     ? t('pay.subscribe.errUsdcUnsupported').replaceAll('{token}', token)
     : !signOne
       ? t('pay.subscribe.errCannotSign')
+      : noFunderTicket
+        ? fund1NoTicketRefusal()
       : !service
         ? t('pay.subscribe.errPickService')
         : tokenMismatch
@@ -792,8 +804,25 @@ const ISSUANCE_UI = true;
               ? t('pay.subscribe.errTooSmall')
               : null;
 
+  /** The FUND-1 refusal a build with no funder ticket always ends in, in the same words. */
+  function fund1NoTicketRefusal(): string {
+    return localizePoolError(
+      new WalletExposureRefusedError('this deployment has no funder configured.', false).message,
+      t,
+    );
+  }
+
   async function handleSubscribe() {
     if (!signOne || !service) return;
+    // [flow-speed X8 2026-09-23] Refused at the click, before the claim code is
+    // redeemed (a claim is consumed on first redemption), before any issuance,
+    // exchange or worker request, and without recording anything: a
+    // subscription on a build with no funder ticket can never be funded. The
+    // handler checks on its own; it does not rely on the button being disabled.
+    if (!funderConfigured()) {
+      setError(fund1NoTicketRefusal());
+      return;
+    }
 
     // ── The note, fetched rather than demanded ────────────────────────────
     //
@@ -1757,9 +1786,11 @@ const ISSUANCE_UI = true;
                   </span>
                 </p>
               )}
-              {/* Which circuit ran. The cost box on this page promises that
-                this screen names it (`pay.subscribe.costCommitment`), and the
-                C1 + C3 pair republishes the note's commitment, so a card that
+              {/* Which circuit ran. The cost box no longer promises it: the
+                C1 + C3 pair is switched off by default (close-v1 F05,
+                `pay.subscribe.costCommitment`), but a deployment can opt in
+                with NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND=1, and the pair
+                republishes the note's commitment, so a card that
                 read the same either way left a screenshot saying nothing about
                 the one fact that lets a chain reader walk from the vault to
                 the deposit. Positive test: only `'v4'` earns the circuit-7

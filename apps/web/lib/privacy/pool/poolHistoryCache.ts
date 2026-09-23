@@ -295,12 +295,29 @@ export function wasReadThisSession(signature: string): boolean {
   return readThisSession.has(signature);
 }
 
+/**
+ * [flow-speed X1 2026-09-23] History walks in flight IN THIS WORKER, by
+ * `poolHistoryKey` plus the walk's budget (`fetchPoolCommitments`'
+ * `joinInFlight`). Memory only: never persisted, never sent to the main thread.
+ *
+ * Beside the store for the reason `gaveUpSignatures` is: a new store is a new
+ * history, so `setPoolHistoryStore` empties it, and a call made after a store
+ * change never waits on a walk of the old one (in a test, a walk left pending
+ * by one world would otherwise hang the next).
+ */
+const inFlightWalks = new Map<string, Promise<unknown>>();
+
+export function inFlightPoolWalks(): Map<string, Promise<unknown>> {
+  return inFlightWalks;
+}
+
 export function setPoolHistoryStore(store: PoolHistoryStore | null): void {
   activeStore = store;
   // A new store is a new history: what the previous one gave up on says nothing
   // about this one. See `gaveUpSignatures`.
   gaveUpSignatures.clear();
   readThisSession.clear();
+  inFlightWalks.clear();
 }
 
 export function getPoolHistoryStore(): PoolHistoryStore {

@@ -115,6 +115,42 @@ export interface RecoverNotesOptions {
    */
   onlyLeaf?: number;
   onProgress?: (step: string) => void;
+  /**
+   * [flow-speed X1 2026-09-23] Asked after every yield of the scan's legacy
+   * pass: is the key set this search runs on still the live one? `false` ends
+   * the pass with an error rather than a list that silently misses notes (the
+   * seeds are wiped in place by `setPoolSeed` / `clearPoolState`).
+   */
+  stillLive?: () => boolean;
+  /**
+   * [flow-speed X1 2026-09-23, correctness C9] How long one stretch of the
+   * scan's legacy search may hold the thread before it yields, in ms. Default
+   * `LEGACY_YIELD_SLICE_MS`. Tests set 0 (yield at every epoch) or Infinity
+   * (only the per-position yields).
+   */
+  yieldSliceMs?: number;
+}
+
+/** [flow-speed X1] See `RecoverNotesOptions.yieldSliceMs`: about one frame. */
+const LEGACY_YIELD_SLICE_MS = 16;
+
+/**
+ * [flow-speed X1] Give the worker's event loop one turn, and nothing else: no
+ * request, no timer that can be clamped (a MessageChannel round trip where it
+ * exists, a zero timeout otherwise).
+ */
+function yieldToEventLoop(): Promise<void> {
+  if (typeof MessageChannel === 'function') {
+    return new Promise<void>((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => {
+        channel.port1.close();
+        resolve();
+      };
+      channel.port2.postMessage(null);
+    });
+  }
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
 /**
@@ -188,7 +224,39 @@ export async function recoverNotes(
   const byLeaf = new Map<number, { depositSlot?: number | null }>();
   for (const c of commitments.values()) byLeaf.set(c.leafIndex, c as { depositSlot?: number | null });
 
+  // [flow-speed X1 2026-09-23] THE SCAN'S LEGACY PASS GIVES THE THREAD BACK.
+  // It is synchronous hashing, and the worker runs a click's prepare on this
+  // same thread: without a turn of the event loop between leaves, a Withdraw or
+  // Subscribe clicked during the page-load scan could not even take its RPC
+  // answers until the whole pass ended. Only here (the full pass over every
+  // leaf, `blindedOnly` false and no `onlyLeaf`): a spend's own locate and the
+  // blinded pass never yield. One yield per leaf POSITION, a public count, so
+  // the schedule says nothing about which leaf is ours, what matched or how far
+  // an epoch search went; nothing is sent (`poolNotesYield.test.ts`).
+  const yieldsInThisPass = !opts.blindedOnly && opts.onlyLeaf === undefined;
+  // [flow-speed X1, correctness C9] A leaf the walk carried no deposit slot for
+  // keeps the FULL epoch window: one such search alone is a long synchronous
+  // stretch (the ~41 s per derivation measured 2026-08-13). So the search also
+  // gives the thread back once it has held it for `yieldSliceMs`: by elapsed
+  // time, a function of the work already done, never of which epoch or leaf
+  // matched, and still nothing is sent. Without it, the stretch itself (and so
+  // the stall of a click's requests behind it) lasted exactly as long as the
+  // search did.
+  const sliceMs = opts.yieldSliceMs ?? LEGACY_YIELD_SLICE_MS;
+  let sliceStartedAt = performance.now();
+  const giveTheThreadBack = async (): Promise<void> => {
+    await yieldToEventLoop();
+    sliceStartedAt = performance.now();
+    // The seeds this search derives from are wiped IN PLACE when the wallet
+    // signs in again or locks; searching on after that would return a short
+    // list the caller then calls complete.
+    if (opts.stillLive && !opts.stillLive()) {
+      throw new Error('The wallet keys changed during the scan. Scan again.');
+    }
+  };
+
   for (const counter of candidates) {
+    if (yieldsInThisPass) await giveTheThreadBack();
     const { secret, nullifierPreimage } = deriveNoteMaterial(walletSeed, poolConfig.poolPDA, counter);
 
     let hit: { noteBlinding: bigint; commitment: bigint; leafIndex: number } | null = null;
@@ -227,6 +295,7 @@ export async function recoverNotes(
         loEpoch = e >= 2n ? e - 2n : 0n;
       }
       for (let epoch = hiEpoch; epoch >= loEpoch; epoch--) {
+        if (yieldsInThisPass && performance.now() - sliceStartedAt >= sliceMs) await giveTheThreadBack();
         const commitment = createCommitmentV3(nullifierPreimage, secret, epoch, tokenMintField);
         const onChain = commitments.get(commitment.toString());
         if (onChain && onChain.leafIndex === counter) {

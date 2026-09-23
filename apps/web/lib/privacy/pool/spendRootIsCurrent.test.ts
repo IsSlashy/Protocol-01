@@ -1767,7 +1767,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
             let walked: { leaves: Map<string, OnChainCommitment>; unread: number | undefined } | undefined;
             let account: (read: number) => Uint8Array | null;
             let wantReads: string;
-            if (route === 'withdrawal, walked leaves') {
+            if (walkedRoute(route)) {
               // The handler's walk, on its own connection; then read 1 is the
               // pre-flight and read 2 the refetch's walk.
               const walk = await walkAsTheHandlerDoes(
@@ -1794,7 +1794,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
                 `${counters.signatures} listing(s); account reads ${reads.join(',')}`,
             );
             // Held back at the first map, one refetch, held back again.
-            const listings = (route === 'withdrawal, walked leaves' ? 0 : 1) + 1;
+            const listings = (walkedRoute(route) ? 0 : 1) + 1;
             want.push(
               `${label} => refused: HistoryIncompleteError; 0 proof(s); ${listings} listing(s); account reads ${wantReads}`,
             );
@@ -1802,8 +1802,8 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
         }
       }
     }
-    // 3 schedules x 4 routes x 2 sources x 2 callbacks.
-    expect(want).toHaveLength(48);
+    // 3 schedules x 6 routes x 2 sources x 2 callbacks.
+    expect(want).toHaveLength(72);
     const wrong = got.flatMap((g, i) => (g === want[i] ? [] : [`${g}   <-- due: ${want[i].split(' => ')[1]}`]));
     expect(wrong, `${wrong.length} of ${want.length} worlds proved a short map or refused wrongly`).toEqual([]);
   }, 60_000);
@@ -1847,8 +1847,27 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
     }));
   }
 
-  type SpendRoute = 'withdrawal, walked leaves' | 'withdrawal, own walk' | 'subscription prepare' | 'subscription job';
-  const ALL_ROUTES: SpendRoute[] = ['withdrawal, walked leaves', 'withdrawal, own walk', 'subscription prepare', 'subscription job'];
+  type SpendRoute =
+    | 'withdrawal, walked leaves'
+    | 'withdrawal, own walk'
+    | 'subscription prepare'
+    | 'subscription job'
+    | 'subscription prepare, walked leaves'
+    | 'subscription job, walked leaves';
+  // [flow-speed S1 2026-09-23] The subscription now takes the leaves the
+  // handler walked, as the withdrawal does; both of its routes run every matrix
+  // below with the handler's walk too, beside the routes that walk themselves.
+  const ALL_ROUTES: SpendRoute[] = [
+    'withdrawal, walked leaves',
+    'withdrawal, own walk',
+    'subscription prepare',
+    'subscription job',
+    'subscription prepare, walked leaves',
+    'subscription job, walked leaves',
+  ];
+  /** A route that is handed the map the handler's walk produced (and its report). */
+  const walkedRoute = (r: SpendRoute): boolean => r.endsWith('walked leaves');
+  const subscriptionRoute = (r: SpendRoute): boolean => r.startsWith('subscription');
   /**
    * One circuit-7 spend of the note on `conn`: the withdrawal as the handler
    * calls it (the leaves and report of its own walk) or with no leaves, or the
@@ -1880,6 +1899,21 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
         } as never;
         return prepareSubscribeJobV4(
           rcpt, POOL, jobConn, new Uint8Array(32).fill(7), SUBSCRIBE_TERMS, onProgress, new Set<string>(), savedPath,
+        ).then((job) => job.prepared);
+      }
+      case 'subscription prepare, walked leaves':
+        return prepareSubscribeV4(
+          rcpt, POOL, conn, subscribeBinding(), SUBSCRIBER_COMMITMENT, RETAILER, onProgress, savedPath,
+          { leaves: walked!.leaves, unread: walked!.unread },
+        );
+      case 'subscription job, walked leaves': {
+        const jobConn = {
+          ...(conn as unknown as Record<string, unknown>),
+          getMinimumBalanceForRentExemption: async () => 1_000_000,
+        } as never;
+        return prepareSubscribeJobV4(
+          rcpt, POOL, jobConn, new Uint8Array(32).fill(7), SUBSCRIBE_TERMS, onProgress, new Set<string>(), savedPath,
+          { leaves: walked!.leaves, unread: walked!.unread },
         ).then((job) => job.prepared);
       }
     }
@@ -2006,7 +2040,13 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
       {
         t: 'T1 first map short of the note, the refetch ends at it',
         first: { listedUpTo: 2, servedUpTo: 7 }, then: { listedUpTo: 3, servedUpTo: 7 }, forget: false,
-        routes: ['withdrawal, walked leaves', 'withdrawal, own walk'] as SpendRoute[],
+        // [flow-speed S1] The subscription's walked-leaves routes too: a handed
+        // map without the note gets the refetch, as the withdrawal's does. Its
+        // own-walk routes still refuse at their builder, before any refetch.
+        routes: [
+          'withdrawal, walked leaves', 'withdrawal, own walk',
+          'subscription prepare, walked leaves', 'subscription job, walked leaves',
+        ] as SpendRoute[],
         walkedTop: 2, walkedUnread: 0, proves: null,
       },
       {
@@ -2043,7 +2083,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
             const counters = newCounters();
             let walked: { leaves: Map<string, OnChainCommitment>; unread: number | undefined } | undefined;
             let conn: never;
-            if (route === 'withdrawal, walked leaves') {
+            if (walkedRoute(route)) {
               // The handler's walk, then the RPC moves before the prepare runs.
               const walk = await walkAsTheHandlerDoes(historyRpc(state));
               expect(`${walk.top} / ${walk.unread}`, `${label}: the handler's walk`).toBe(`${w.walkedTop} / ${w.walkedUnread}`);
@@ -2060,7 +2100,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
             );
             got.push(`${label} => ${outcome}; ${h.generateSpendProof.mock.calls.length} proof(s); ${counters.signatures} listing(s)`);
             // The walk (own routes only) plus the one refetch.
-            const listings = (route === 'withdrawal, walked leaves' ? 0 : 1) + 1;
+            const listings = (walkedRoute(route) ? 0 : 1) + 1;
             want.push(
               w.proves === null
                 ? `${label} => refused: HistoryIncompleteError; 0 proof(s); ${listings} listing(s)`
@@ -2070,8 +2110,8 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
         }
       }
     }
-    // (2 + 4 + 4 + 4 + 4) routes x 2 sources x 2 callbacks.
-    expect(want).toHaveLength(72);
+    // (4 + 6 + 6 + 6 + 6) routes x 2 sources x 2 callbacks.
+    expect(want).toHaveLength(112);
     const wrong = got.flatMap((g, i) => (g === want[i] ? [] : [`${g}   <-- due: ${want[i].split(' => ')[1]}`]));
     expect(wrong, `${wrong.length} of ${want.length} worlds read the wrong map after the refetch`).toEqual([]);
   }, 60_000);
@@ -2119,7 +2159,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
             const counters = newCounters();
             let walked: { leaves: Map<string, OnChainCommitment>; unread: number | undefined } | undefined;
             let conn: never;
-            if (route === 'withdrawal, walked leaves') {
+            if (walkedRoute(route)) {
               // The handler's walk, then the RPC serves more before the prepare's refetch.
               const walk = await walkAsTheHandlerDoes(historyRpc(state));
               expect(`${walk.top} / ${walk.unread}`, `${label}: the handler's walk`).toBe(`${k} / ${7 - k}`);
@@ -2145,7 +2185,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
                 `${counters.signatures} listing(s); history then missing [${missing.join(',')}]`,
             );
             // The walk (own routes only) plus the one refetch.
-            const listings = (route === 'withdrawal, walked leaves' ? 0 : 1) + 1;
+            const listings = (walkedRoute(route) ? 0 : 1) + 1;
             want.push(
               `${label} => refused: HistoryIncompleteError; 0 proof(s); ${listings} listing(s); history then missing [${hole}]`,
             );
@@ -2153,8 +2193,8 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
         }
       }
     }
-    // 3 cache ends x 4 routes x 2 sources x 2 callbacks.
-    expect(want).toHaveLength(48);
+    // 3 cache ends x 6 routes x 2 sources x 2 callbacks.
+    expect(want).toHaveLength(72);
     const wrong = got.flatMap((g, i) => (g === want[i] ? [] : [`${g}   <-- due: ${want[i].split(' => ')[1]}`]));
     expect(wrong, `${wrong.length} of ${want.length} worlds did not refuse cleanly`).toEqual([]);
   }, 60_000);
@@ -2248,7 +2288,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
           vi.clearAllMocks();
           setPoolHistoryStore(memoryPoolHistoryStore());
           const state = { listedUpTo: NOTE_A, servedUpTo: NOTE_A };
-          const walked = route === 'withdrawal, walked leaves'
+          const walked = walkedRoute(route)
             ? await walkAsTheHandlerDoes(historyRpc(state, { account }))
             : undefined;
           const counters = newCounters();
@@ -2257,11 +2297,11 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
             needles,
           );
           got.push(`${label} => ${outcome}; ${h.generateSpendProof.mock.calls.length} proof(s); ${counters.signatures} listing(s)`);
-          want.push(`${label} => ${nameOf(current)}; 1 proof(s); ${route === 'withdrawal, walked leaves' ? 0 : 1} listing(s)`);
+          want.push(`${label} => ${nameOf(current)}; 1 proof(s); ${walkedRoute(route) ? 0 : 1} listing(s)`);
         }
       }
     }
-    expect(want).toHaveLength(16);
+    expect(want).toHaveLength(24);
     expect(got).toEqual(want);
   });
 
@@ -2356,7 +2396,7 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
                 setPoolHistoryStore(memoryPoolHistoryStore());
                 const { state, beforeList } = worldOf(g);
                 let walked: { leaves: Map<string, OnChainCommitment>; unread: number | undefined } | undefined;
-                if (route === 'withdrawal, walked leaves') {
+                if (walkedRoute(route)) {
                   // The handler's walk, on the same RPC and the same history store.
                   const walk = await walkAsTheHandlerDoes(historyRpc(state, { account, beforeList }));
                   expect([...walk.leaves.values()].some((e) => e.leafIndex === NOTE_A), `${label}: the handler's walk holds the note`).toBe(false);
@@ -2373,8 +2413,11 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
                   needles,
                 );
                 const proofs = h.generateSpendProof.mock.calls.length;
-                if (route === 'subscription prepare' || route === 'subscription job') {
-                  // The subscription builds before any refetch and never proves a saved path.
+                if (subscriptionRoute(route)) {
+                  // The subscription never proves a saved path. On its own walk it
+                  // refuses at its builder, before any refetch; handed the
+                  // handler's map it gets the one refetch, as the withdrawal does,
+                  // and refuses the same way when that map lacks the note too.
                   const clean = outcome.startsWith('refused: ') && !outcome.includes('needle');
                   got.push(`${label} => ${clean ? 'refused with no v3 needle' : outcome}; ${proofs} proof(s)`);
                   want.push(`${label} => refused with no v3 needle; 0 proof(s)`);
@@ -2397,13 +2440,156 @@ describe('the saved root\'s age and the note\'s source never pick the root', () 
         }
       }
     }
-    // 3 geometries x 3 accounts x 4 saved-path choices x 4 routes x 2 sources x 2 callbacks.
-    expect(want).toHaveLength(576);
+    // 3 geometries x 3 accounts x 4 saved-path choices x 6 routes x 2 sources x 2 callbacks.
+    expect(want).toHaveLength(864);
     const wrong = got.flatMap((g, i) => (g === want[i] ? [] : [`${g}   <-- due: ${want[i].split(' => ')[1]}`]));
     expect(wrong, `${wrong.length} of ${want.length} worlds of a note in no map proved it or refused wrongly`).toEqual([]);
     // What the handler's walk reported: the note's listed insert unread, or nothing listed to read.
     expect(reports).toEqual(wantReports);
   }, 60_000);
+
+  // -------------------------------------------------------------------------
+  // [flow-speed S1 2026-09-23] One walk per SUBSCRIPTION prepare
+  // -------------------------------------------------------------------------
+
+  it('[S1] one walk per SUBSCRIPTION prepare: handed the walked leaves, the real job walks nothing', async () => {
+    // RED at HEAD: `prepareSubscribeJobV4` took no leaves and `prepareSubscribeV4`
+    // walked the history again.
+    echoingProver();
+    for (const via of ['prepare', 'job'] as const) {
+      vi.clearAllMocks();
+      setPoolHistoryStore(memoryPoolHistoryStore());
+      const counters = newCounters();
+      const conn = {
+        ...(connection({ counters }) as unknown as Record<string, unknown>),
+        getMinimumBalanceForRentExemption: async () => 1_000_000,
+      } as never;
+      const walked = { leaves: walkedLeaves(), unread: 0 };
+      const result =
+        via === 'prepare'
+          ? await prepareSubscribeV4(
+              receipt(NOTE_A), POOL, conn, subscribeBinding(), SUBSCRIBER_COMMITMENT, RETAILER, undefined, undefined, walked,
+            )
+          : (
+              await prepareSubscribeJobV4(
+                receipt(NOTE_A), POOL, conn, new Uint8Array(32).fill(7), SUBSCRIBE_TERMS, undefined, new Set<string>(),
+                undefined, walked,
+              )
+            ).prepared;
+      expect(result.merkleRoot, via).toBe(R_CUR);
+      expect(counters.signatures, `${via}: the prepare walked the history again`).toBe(0);
+      expect(counters.transactions, `${via}: the prepare re-read insert transactions`).toBe(0);
+      expect(counters.accountInfo, `${via}: the root pre-flight cost more than one account read`).toBe(1);
+    }
+  });
+
+  it('[S1] a handed map that does not hold the note yet gets the refetch, and a refetch without it refuses with no v3 needle', async () => {
+    // The main subscription input is a purchased or issued note, which
+    // `locateOwnedNote` accepts from its blob even when the walk has not served
+    // its insert (a 429). Walk #2 used to place it; with the handed map the
+    // prepare must refetch once, as the withdrawal does, rather than refuse at
+    // its builder (the correctness review's condition 1).
+    echoingProver();
+    const needles = v4RebuildNeedles();
+    const beforeNote = new Map([...walkedLeaves()].filter(([, e]) => e.leafIndex < NOTE_A));
+    const got: string[] = [];
+    for (const world of ['the refetch places it', 'the refetch does not either'] as const) {
+      for (const source of ['shielded', 'received'] as const) {
+        vi.clearAllMocks();
+        setPoolHistoryStore(memoryPoolHistoryStore());
+        const counters = newCounters();
+        const conn = connection(world === 'the refetch places it' ? { counters } : { counters, hideFrom: NOTE_A });
+        const outcome = await spendOutcome(
+          prepareSubscribeV4(
+            receipt(NOTE_A, source), POOL, conn, subscribeBinding(), SUBSCRIBER_COMMITMENT, RETAILER, undefined, undefined,
+            { leaves: beforeNote, unread: 0 },
+          ),
+          needles,
+        );
+        got.push(`${world}, ${source} => ${outcome}; ${h.generateSpendProof.mock.calls.length} proof(s); ${counters.signatures} listing(s)`);
+      }
+    }
+    expect(got).toEqual([
+      'the refetch places it, shielded => R_CUR; 1 proof(s); 1 listing(s)',
+      'the refetch places it, received => R_CUR; 1 proof(s); 1 listing(s)',
+      'the refetch does not either, shielded => refused: HistoryIncompleteError; 0 proof(s); 1 listing(s)',
+      'the refetch does not either, received => refused: HistoryIncompleteError; 0 proof(s); 1 listing(s)',
+    ]);
+  });
+
+  it('[X4] onProving fires once, right before the prover starts, and never on a refused attempt', async () => {
+    // The rent prefetch rides on this hook, so where it fires is where the
+    // quote goes out: after every pre-proof refusal, before the proof. A quote
+    // sent on a refused attempt (HistoryIncompleteError here) would be a new
+    // request shape for an attempt that never reached the prover.
+    echoingProver();
+    const beforeNote = new Map([...walkedLeaves()].filter(([, e]) => e.leafIndex < NOTE_A));
+    const got: string[] = [];
+    for (const who of ['withdrawal', 'subscription'] as const) {
+      for (const world of ['proved', 'refused'] as const) {
+        vi.clearAllMocks();
+        setPoolHistoryStore(memoryPoolHistoryStore());
+        const onProving = vi.fn();
+        const conn = world === 'proved' ? connection() : connection({ hideFrom: NOTE_A });
+        const leaves = world === 'proved' ? walkedLeaves() : beforeNote;
+        const run =
+          who === 'withdrawal'
+            ? prepareUnshieldV4(receipt(NOTE_A), RECIPIENT, POOL, conn, undefined, { leaves, unread: 0, onProving })
+            : prepareSubscribeV4(
+                receipt(NOTE_A), POOL, conn, subscribeBinding(), SUBSCRIBER_COMMITMENT, RETAILER, undefined, undefined,
+                { leaves, unread: 0, onProving },
+              );
+        const outcome = await run.then(
+          () => 'proved',
+          (e: unknown) => `refused: ${e instanceof Error ? e.name : String(e)}`,
+        );
+        const hookAt = onProving.mock.invocationCallOrder[0];
+        const startAt = h.start.mock.invocationCallOrder[0];
+        const order =
+          hookAt === undefined ? 'hook never called' : startAt !== undefined && hookAt < startAt ? 'hook before the prover' : 'hook AFTER the prover';
+        got.push(`${who}, ${world} => ${outcome}; hook x${onProving.mock.calls.length}; ${order}`);
+      }
+    }
+    expect(got).toEqual([
+      'withdrawal, proved => proved; hook x1; hook before the prover',
+      'withdrawal, refused => refused: HistoryIncompleteError; hook x0; hook never called',
+      'subscription, proved => proved; hook x1; hook before the prover',
+      'subscription, refused => refused: HistoryIncompleteError; hook x0; hook never called',
+    ]);
+  });
+
+  it('[S1] a map handed to the SUBSCRIPTION with no walk report is not shown clean: a lagging root gets the refetch', async () => {
+    // The subscription twin of the withdrawal's case above. `unread` absent
+    // means nobody said the walk read all it listed; a job or handler that
+    // turned it into 0 would prove a lagging root tied to the note.
+    expectADiscriminatingRing();
+    echoingProver();
+    const got: string[] = [];
+    for (const report of [undefined, 0] as const) {
+      for (const source of ['shielded', 'received'] as const) {
+        vi.clearAllMocks();
+        setPoolHistoryStore(memoryPoolHistoryStore());
+        const counters = newCounters();
+        const jobConn = {
+          ...(historyRpc({ listedUpTo: 5, servedUpTo: 7 }, { counters }) as unknown as Record<string, unknown>),
+          getMinimumBalanceForRentExemption: async () => 1_000_000,
+        } as never;
+        const outcome = await outcomeOf(
+          prepareSubscribeJobV4(
+            receipt(NOTE_A, source), POOL, jobConn, new Uint8Array(32).fill(7), SUBSCRIBE_TERMS, undefined,
+            new Set<string>(), undefined, { leaves: mapUpTo(5), unread: report },
+          ).then((j) => j.prepared),
+        );
+        got.push(`walk report ${report === undefined ? 'absent' : report}, ${source} => ${outcome}; ${counters.signatures} listing(s)`);
+      }
+    }
+    expect(got).toEqual([
+      'walk report absent, shielded => R5; 1 listing(s)',
+      'walk report absent, received => R5; 1 listing(s)',
+      'walk report 0, shielded => R5; 0 listing(s)',
+      'walk report 0, received => R5; 0 listing(s)',
+    ]);
+  });
 });
 
 describe('the 255-root ring the program keeps', () => {

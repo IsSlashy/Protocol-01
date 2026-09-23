@@ -48,6 +48,7 @@ import {
   Transaction,
 } from '@solana/web3.js';
 import { sendWithFreshBlockhash } from './sendTx';
+import { quoteProofBufferRent } from './stark';
 
 import {
   parseFilledSubtrees,
@@ -147,6 +148,13 @@ const BPS_DENOMINATOR = 10_000n;
  * funding the close itself.
  */
 const SWEEP_FEE = 5_000;
+
+/**
+ * [shield-speed P0 (3)] How many times a short pre-fund balance is read again,
+ * and how far apart, before `executeShield` calls E underfunded. See there.
+ */
+const FUNDED_REREADS = 3;
+const FUNDED_REREAD_MS = 500;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -259,9 +267,9 @@ export async function prepareShield(
   // Price the pre-fund from the ACTUAL proof size (83-byte header + proof), the
   // same way the transfer path does — no hard-coded worst case.
   onProgress?.('Pricing the shield...');
-  const bufferRent = await connection.getMinimumBalanceForRentExemption(
-    83 + prepared.c6ProofResult.proofSize,
-  );
+  // [shield-speed E2] Through the shared quote, so the buffer allocation at
+  // execute pays this same number instead of reading it a second time.
+  const bufferRent = await quoteProofBufferRent(connection, prepared.c6ProofResult.proofSize);
   const protocolFee = Number(
     (poolConfig.denominationAtomic * SHIELD_FEE_BPS) / BPS_DENOMINATOR,
   );
@@ -370,9 +378,8 @@ export async function prepareContribution(
   }
 
   onProgress?.('Pricing the contribution...');
-  const bufferRent = await connection.getMinimumBalanceForRentExemption(
-    83 + prepared.c6ProofResult.proofSize,
-  );
+  // [shield-speed E2] The shared quote, as in `prepareShield`.
+  const bufferRent = await quoteProofBufferRent(connection, prepared.c6ProofResult.proofSize);
   const protocolFee = Number(
     (poolConfig.denominationAtomic * SHIELD_FEE_BPS) / BPS_DENOMINATOR,
   );
@@ -485,7 +492,21 @@ export async function executeShield(
     // INSIDE the try on purpose: a partially-landed pre-fund leaves lamports on
     // E, and throwing before the try would skip the sweep in `finally` and
     // strand exactly the funds the check is meant to protect.
-    const funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+    //
+    // [shield-speed P0 (3) 2026-09-23] A SHORT BALANCE IS READ AGAIN before it
+    // is believed: up to FUNDED_REREADS more reads, FUNDED_REREAD_MS apart. The
+    // pre-fund was confirmed on the page's connection, and this read goes to a
+    // load-balanced provider whose node can lag it by a few hundred ms; a false
+    // "underfunded" here throws into the `finally`, which sweeps E to `sweepTo`
+    // (the float on the relayed path), and a pre-fund landing between the check
+    // and the sweep then goes back to the float while the relay claim stays
+    // held. The re-reads are the same request to the same provider, from the
+    // same IP; a funded E is read once, as before.
+    let funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+    for (let reread = 0; funded < ctx.requiredLamports && reread < FUNDED_REREADS; reread++) {
+      await new Promise((r) => setTimeout(r, FUNDED_REREAD_MS));
+      funded = await connection.getBalance(ephemeral.publicKey, 'confirmed');
+    }
     if (funded < ctx.requiredLamports) {
       throw new Error(
         `The shield signer is underfunded (${funded} of ${ctx.requiredLamports} lamports). ` +
