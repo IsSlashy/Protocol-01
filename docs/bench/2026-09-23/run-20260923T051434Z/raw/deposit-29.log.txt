@@ -1,0 +1,135 @@
+
+ RUN  v3.2.4 D:/Protocol-01/apps/web
+
+stderr | lib/privacy/pool/liveDevnetShield.test.ts
+[bench-t 1790141516226.4] bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141516566.5] wallet 5ZyYaB8r29K1Mjm8nuEYy7AkNQREwyAsHpb8HSHLcoS9 — 10.10451992 SOL
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141516579.4]   prepare: Reading the pool tree...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141516677.7]   prepare: Reading on-chain tree state...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141516796.9]   prepare: Deriving note material...
+[bench-t 1790141516797.4]   prepare: Computing Merkle path...
+[bench-t 1790141516800.3]   prepare: Generating the deposit proof, this takes a minute...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141517272.9]   prepare: Pricing the shield...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141517308.2]   ephemeral 4JZSB35urd2sAqXw5QYydYscKadRUAuQdpMZRqhBJNi8 needs 1.44 SOL
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141517916.4]   funded: 4vhL5Y1p2RJr8WZB3oTSWFv5KQnxsX9p4QhCcr6UCcVRuxneQ4k6Ms4HUkzgKaGt9NEAUxew3deqx8juu8rEEcDg
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141518035.4]   execute: Submitting C6 (merkle_update) proof on-chain...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141518155.2]   execute: Allocating proof buffer...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141519209.5]   execute: Uploading proof chunk (tx v1) 1/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141519368.4]   execute: Uploading proof chunk (tx v1) 2/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141519522.7]   execute: Uploading proof chunk (tx v1) 3/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141519683.0]   execute: Uploading proof chunk (tx v1) 4/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141519835.5]   execute: Uploading proof chunk (tx v1) 5/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141524644.4]   execute: Uploading proof chunk (tx v1) 6/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141524806.2]   execute: Uploading proof chunk (tx v1) 7/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141524966.2]   execute: Uploading proof chunk (tx v1) 8/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141529774.0]   execute: Uploading proof chunk (tx v1) 9/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141529987.0]   execute: Uploading proof chunk (tx v1) 10/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141530145.2]   execute: Uploading proof chunk (tx v1) 11/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141534994.9]   execute: Uploading proof chunk (tx v1) 12/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141535216.6]   execute: Uploading proof chunk (tx v1) 13/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141535429.2]   execute: Uploading proof chunk (tx v1) 14/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141537887.0]   execute: Uploading proof chunk (tx v1) 15/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141538233.5]   execute: Uploading proof chunk (tx v1) 16/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141543037.8]   execute: Uploading proof chunk (tx v1) 17/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141543208.0]   execute: Uploading proof chunk (tx v1) 18/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141543374.5]   execute: Uploading proof chunk (tx v1) 19/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141545742.3]   execute: Uploading proof chunk (tx v1) 20/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141545897.0]   execute: Uploading proof chunk (tx v1) 21/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141550695.8]   execute: Uploading proof chunk (tx v1) 22/22...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141550695.8]   execute: Confirming chunk uploads...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141550889.9]   execute: Confirming chunk uploads (1 pending)...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141551556.8]   execute: Checking uploaded proof against the local bytes...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141551919.2]   execute: Verifying STARK proof (phase 1 + DEEP-ALI, one transaction)...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141552637.7]   execute: STARK proof verified (buffer retained for cross-program read)
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141552637.8]   execute: Building V3 shield transaction...
+[bench-t 1790141552638.5]   execute: Sending V3 shield transaction...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141553351.5]   execute: V3 shield confirmed!
+[bench-t 1790141553351.6]   execute: Closing C6 proof buffer...
+
+stdout | lib/privacy/pool/liveDevnetShield.test.ts > a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf
+[bench-t 1790141554450.6]   SHIELD LANDED: 2vByVVgZ3CdQScnT3NorPyLXG28fjuAudhLPWfjngKP1xxxhKieJ8b76NDyLYbM5DKM2MMqQWcsoe1RNMHdEdzTs leaf <omitted>
+
+ ✓ lib/privacy/pool/liveDevnetShield.test.ts (2 tests | 1 skipped) 38129ms
+   ✓ a shield that actually lands on devnet > deposits into the 1 SOL V3 pool and comes back with a leaf <omitted>ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 1 skipped (2)
+   Start at  07:31:55
+   Duration  38.69s (transform 203ms, setup 10ms, collect 415ms, tests 38.13s, environment 0ms, prepare 42ms)
+

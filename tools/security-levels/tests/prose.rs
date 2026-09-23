@@ -310,20 +310,71 @@ fn a_file_the_scan_does_not_read_is_checked_for_figures() {
 }
 
 /// The repository has no blind spot with a figure in it, apart from the
-/// local-only files, which are listed with a reason.
+/// local-only files and the listed non-level figures, each with a reason.
 #[test]
 fn no_unread_file_in_the_repository_states_an_unlisted_figure() {
-    let spots = prose::unread_files_with_figures(&repo_root());
-    let unexpected: Vec<String> = spots
-        .iter()
-        .filter(|s| !prose::LOCAL_ONLY_FILES.iter().any(|(p, _)| *p == s.path))
-        .map(|s| format!("  {} ({}): {:?}", s.path, s.reason, s.figures))
-        .collect();
+    let spots = prose::unlisted_blind_spots(prose::unread_files_with_figures(&repo_root()));
+    let unexpected: Vec<String> =
+        spots.iter().map(|s| format!("  {} ({}): {:?}", s.path, s.reason, s.figures)).collect();
     assert!(
         unexpected.is_empty(),
         "file(s) the scan does not read that state a figure: read them, or list them with a reason:\n{}",
         unexpected.join("\n")
     );
+}
+
+/// 2026-09-23: two committed benchmark manifests state the OS width as
+/// "64 bits". A listed figure excuses that figure in that file only: another
+/// figure in the same file, or the same figure in another file, still fails.
+#[test]
+fn a_listed_non_level_figure_is_excused_in_its_own_file_only() {
+    let root = std::env::temp_dir().join(format!("p01-security-levels-nonlevel-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let (listed_a, fig_a, _) = prose::UNREAD_NON_LEVELS[0];
+    let (listed_b, fig_b, _) = prose::UNREAD_NON_LEVELS[1];
+    for rel in [listed_a, listed_b] {
+        fs::create_dir_all(root.join(rel).parent().expect("a parent")).expect("temporary run folder");
+    }
+    // the listed figure, and a level beside it: the level must still fail
+    fs::write(root.join(listed_a), format!("{{\"OSArchitecture\": \"{fig_a}\",\n\"note\": \"41 bits unconditional\"}}\n"))
+        .expect("manifest a");
+    // the listed figure alone: excused
+    fs::write(root.join(listed_b), format!("{{\"OSArchitecture\": \"{fig_b}\"}}\n")).expect("manifest b");
+    // the same figure in a file that is not listed: not excused
+    fs::write(root.join("docs/other.json"), format!("{{\"OSArchitecture\": \"{fig_a}\"}}\n")).expect("other");
+    let raw = prose::unread_files_with_figures(&root);
+    let left = prose::unlisted_blind_spots(raw.clone());
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(raw.len(), 3, "all three files state a figure the scan does not read: {raw:?}");
+    let mut found: Vec<(String, Vec<String>)> = left.into_iter().map(|s| (s.path, s.figures)).collect();
+    found.sort();
+    assert_eq!(
+        found,
+        vec![
+            (listed_a.to_string(), vec!["41 bits".to_string()]),
+            ("docs/other.json".to_string(), vec![fig_a.to_string()]),
+        ]
+    );
+}
+
+/// A listed non-level figure is a claim about a file: the file must be one the
+/// scan does not read, tracked or about to be, and it must still state the
+/// figure, or the row is dead and hides nothing but itself.
+#[test]
+fn every_listed_non_level_figure_is_still_stated_by_an_unread_file() {
+    let spots = prose::unread_files_with_figures(&repo_root());
+    for (path, fig, why) in prose::UNREAD_NON_LEVELS {
+        assert!(!why.trim().is_empty(), "{path}: a reason");
+        assert!(!prose::is_scanned(path), "{path} is scanned: list its figure in the prose ledger instead");
+        assert!(
+            !prose::LOCAL_ONLY_FILES.iter().any(|(p, _)| p == path),
+            "{path} is local-only: it needs no listed figure"
+        );
+        assert!(
+            spots.iter().any(|s| s.path == *path && s.figures.iter().any(|f| f == fig)),
+            "{path} no longer states {fig:?}: remove its UNREAD_NON_LEVELS row"
+        );
+    }
 }
 
 /// Round 3, G-WP1-b: seven ledger rows sat on four files a clean checkout does

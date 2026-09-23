@@ -1,0 +1,125 @@
+{
+  "tool": "scripts/bench/run.mts",
+  "method": "docs/BENCHMARK-METHOD.md",
+  "started_at": "2026-09-23T05:14:34.258Z",
+  "dry_run": false,
+  "n": 30,
+  "cold_n": 30,
+  "circuits": [
+    0,
+    1,
+    3,
+    6,
+    7
+  ],
+  "flows": [
+    "deposit"
+  ],
+  "history_cache": "warm",
+  "cpu_busy_percent_before": 2.1808865189135145,
+  "protocol": {
+    "baseline": "pre-v2 (pre-WP10) baseline: v1 as deployed (verifier DGY37k3J…, blob 241caaab, v3 deposit pool, v4 spend routes). v2 is not deployed.",
+    "verifier_program_id": "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs",
+    "pool_program_id": "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c",
+    "pool": {
+      "token": "SOL",
+      "denomination_sol": 1,
+      "pool_pda": "6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS",
+      "tree_pda": "GGJQwEigkoSk3pzg6eiLtt1cu2kYfCtV5JewNJsMkNdi",
+      "pool_version": "v3"
+    },
+    "routes": {
+      "deposit": {
+        "instruction": "shield_denominated_v3",
+        "route_version": "v3",
+        "found_in": "apps/web/lib/privacy/pool/denominatedPool.ts",
+        "found": true
+      },
+      "withdrawal": {
+        "instruction": "unshield_denominated_stark_v4",
+        "route_version": "v4",
+        "found_in": "apps/web/lib/privacy/pool/denominatedPool.ts",
+        "found": true
+      },
+      "subscription": {
+        "instruction": "subscribe_private_stark_v4",
+        "route_version": "v4",
+        "found_in": "apps/web/lib/privacy/pool/subscribePrivateStarkV4.ts",
+        "found": true
+      },
+      "purchase": {
+        "instruction": "unshield_denominated_stark_v4",
+        "route_version": "v4 (to the till)",
+        "found_in": "apps/web/lib/privacy/pool/denominatedPool.ts",
+        "found": true
+      }
+    },
+    "errors": [],
+    "deploy_slots": {
+      "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs": {
+        "programdata": "Dmndh5d1SMr54vjGMHVcvsfC1Dy3LXHfAhn58RM1eWJi",
+        "last_deploy_slot": 497235406
+      },
+      "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c": {
+        "programdata": "E78GSWzQMh7g4Zqmug8yaJe5CkH6pDLADZSFKvgP2MQE",
+        "last_deploy_slot": 495686812
+      }
+    }
+  },
+  "founder_fields": {
+    "rpc_plan_tier": "Helius Free (the app's public key)",
+    "node_planned_major": 24,
+    "node_running": "v24.21.0",
+    "node_accepted_major": null
+  },
+  "live": {
+    "cluster": "devnet",
+    "rpc_host": "devnet.helius-rpc.com",
+    "key": "5ZyY…coS9",
+    "api_host": null,
+    "first_slot": 502788632
+  },
+  "environment": {
+    "captured_at": "2026-09-23T05:14:37.318Z",
+    "platform": {
+      "platform": "win32",
+      "arch": "x64",
+      "release": "10.0.26200"
+    },
+    "machine": {
+      "error": "WMI query failed"
+    },
+    "node_reported": {
+      "logical_cpus": 32,
+      "total_memory_bytes": 51288678400,
+      "free_memory_bytes": 6405554176
+    },
+    "toolchain": {
+      "node": "v24.21.0",
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+    },
+    "tree": {
+      "commit": "33b7888fec4040c6d8e7e3806e708504ffcf21dd",
+      "branch": "zk/uniform-masking-2026-09-11",
+      "tracked_files_modified": 21
+    },
+    "prover": {
+      "blob": "packages/stark-prover/wasm/p01_stark_bg.wasm",
+      "bytes": 240172,
+      "sha256": "241caaabb505b44c0d58c06a603cdc4f9ac6b338b93405dabf2048e7ed3a41e9"
+    },
+    "verifier_program_id": "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs"
+  },
+  "finished_at": "2026-09-23T05:33:17.098Z",
+  "cpu_busy_percent_whole_run": {
+    "mean": 6.279400064399969,
+    "max": 85.34410828517568,
+    "samples": 556
+  },
+  "probes": {
+    "spends_probed": 0,
+    "file": "probes.json"
+  },
+  "errors": []
+}

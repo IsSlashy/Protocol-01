@@ -1,0 +1,163 @@
+
+ RUN  v3.2.4 D:/Protocol-01/apps/web
+
+stderr | lib/privacy/pool/liveDevnetUnshieldV4.test.ts
+[bench-t 1790138238226.5] bigint: Failed to load bindings, pure JS will be used (try npm run rebuild?)
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138238571.7] wallet 5ZyYaB8r29K1Mjm8nuEYy7AkNQREwyAsHpb8HSHLcoS9 — 28.4471124 SOL
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138238586.3]   scan: Scanning the 1 SOL pool...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138239339.1]   scan: Reading spent markers for the 1 SOL pool...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138239612.7]   scan: Reading pool history...
+[bench-t 1790138239612.8]   scan: Matching notes...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138239638.8]   scan: Checking the 1 SOL pool for older notes...
+[bench-t 1790138239638.8]   scan: Reading pool history...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138239819.1]   scan: Matching notes...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138239878.3]   no unspent note for this identity — shielding one
+[bench-t 1790138239878.5]   shield-prepare: Reading the pool tree...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138239966.3]   shield-prepare: Reading on-chain tree state...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138240092.6]   shield-prepare: Deriving note material...
+[bench-t 1790138240092.7]   shield-prepare: Computing Merkle path...
+[bench-t 1790138240094.7]   shield-prepare: Generating the deposit proof, this takes a minute...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138240555.6]   shield-prepare: Pricing the shield...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138241301.0]   shield-execute: Submitting C6 (merkle_update) proof on-chain...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138241416.7]   shield-execute: Allocating proof buffer...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138242966.2]   shield-execute: Uploading proof chunk (tx v1) 1/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138243123.6]   shield-execute: Uploading proof chunk (tx v1) 2/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138243284.0]   shield-execute: Uploading proof chunk (tx v1) 3/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138243435.7]   shield-execute: Uploading proof chunk (tx v1) 4/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138243592.0]   shield-execute: Uploading proof chunk (tx v1) 5/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138243744.6]   shield-execute: Uploading proof chunk (tx v1) 6/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138248677.8]   shield-execute: Uploading proof chunk (tx v1) 7/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138248895.7]   shield-execute: Uploading proof chunk (tx v1) 8/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138249113.7]   shield-execute: Uploading proof chunk (tx v1) 9/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138254072.5]   shield-execute: Uploading proof chunk (tx v1) 10/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138254451.7]   shield-execute: Uploading proof chunk (tx v1) 11/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138254687.9]   shield-execute: Uploading proof chunk (tx v1) 12/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138254921.7]   shield-execute: Uploading proof chunk (tx v1) 13/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138259693.8]   shield-execute: Uploading proof chunk (tx v1) 14/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138259846.8]   shield-execute: Uploading proof chunk (tx v1) 15/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138259989.0]   shield-execute: Uploading proof chunk (tx v1) 16/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138264764.0]   shield-execute: Uploading proof chunk (tx v1) 17/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138264953.0]   shield-execute: Uploading proof chunk (tx v1) 18/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138265105.5]   shield-execute: Uploading proof chunk (tx v1) 19/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138269910.6]   shield-execute: Uploading proof chunk (tx v1) 20/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138270056.8]   shield-execute: Uploading proof chunk (tx v1) 21/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138270211.7]   shield-execute: Uploading proof chunk (tx v1) 22/22...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138270211.8]   shield-execute: Confirming chunk uploads...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138270403.4]   shield-execute: Confirming chunk uploads (2 pending)...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138271052.8]   shield-execute: Checking uploaded proof against the local bytes...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138271392.9]   shield-execute: Verifying STARK proof (phase 1 + DEEP-ALI, one transaction)...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138272622.2]   shield-execute: STARK proof verified (buffer retained for cross-program read)
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138272622.2]   shield-execute: Building V3 shield transaction...
+[bench-t 1790138272622.8]   shield-execute: Sending V3 shield transaction...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138273325.7]   shield-execute: V3 shield confirmed!
+[bench-t 1790138273325.7]   shield-execute: Closing C6 proof buffer...
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138274423.1]   SHIELD LANDED: 3wJR6MXMo9TS2pDvuci11q4xW5y71XbuMb4TeLq39EGGY9kX7E5tAZ48QB1mgP2RmP9ZsppJgByXL1oXqCJidm2N | leaf <omitted>
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138290261.9]   payee 3bvsmjw8R9F5LxyEYCpA27mNi6hWJq6rWq115wFUo7Gf (re-derivable — sweep it back when done)
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138291781.9]   route: v4 | job unshield-v4:6NUS4E5PhQLxnYca6mCVGs3HcwXcgF1qEZtzm392jrBS:138:3bvsmjw8R9F5LxyEYCpA27mNi6hWJq6rWq115wFUo7Gf | float 430000000
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138292443.1]   funded F2LWmH4frBANxDVMUkxA5GW9uex4jKApZZq9MDoMjW8q with 430000000
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138323527.5]   V4 WITHDRAWAL LANDED: 622oJrdRDPoFo1TcHESrJarkjoBXFP5xsyMpnTJKusKCUBWQXuHcvxgnCv3GBPfmKZtfzbbDnuEUgPeuv3kNaQGA
+
+stdout | lib/privacy/pool/liveDevnetUnshieldV4.test.ts > a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field
+[bench-t 1790138323701.0]   payee received 0.995 SOL
+[bench-t 1790138323710.0]   NO DEPOSIT FIELD APPEARS IN THE WITHDRAWAL.
+
+ ✓ lib/privacy/pool/liveDevnetUnshieldV4.test.ts (1 test) 85310ms
+   ✓ a v4 withdrawal that actually lands on devnet > shields a note, spends it on one circuit-7 proof, and publishes no deposit field  85310ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  06:37:17
+   Duration  85.85s (transform 189ms, setup 7ms, collect 399ms, tests 85.31s, environment 0ms, prepare 38ms)
+

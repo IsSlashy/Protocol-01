@@ -1,0 +1,8 @@
+{
+  "processes": 2,
+  "requests": 8382,
+  "rate_limited_answers": 2721,
+  "fetch_errors": 0,
+  "stall_ms_all_processes": 2906956,
+  "observed_wall_ms": 3691277
+}

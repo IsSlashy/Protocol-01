@@ -1,0 +1,43 @@
+   Compiling p01-stark v0.1.0 (D:\Protocol-01\stark)
+warning: unused variable: `is_boundary`
+   --> stark\src\air\transfer.rs:565:9
+    |
+565 |     let is_boundary = periodic[4];
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_boundary`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `alphas` is never read
+    --> stark\src\compact.rs:8001:9
+     |
+7991 | pub(crate) struct FriCommitData {
+     |                   ------------- field in this struct
+...
+8001 |     pub alphas: Vec<BaseElement>,
+     |         ^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `LegacyGeneric` is never constructed
+    --> stark\src\compact.rs:8611:5
+     |
+8610 | pub(crate) enum QuotientSpec {
+     |                 ------------ variant in this enum
+8611 |     LegacyGeneric,
+     |     ^^^^^^^^^^^^^
+     |
+     = note: `QuotientSpec` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: `p01-stark` (lib) generated 3 warnings (run `cargo fix --lib -p p01-stark` to apply 1 suggestion)
+   Compiling p01_stark_verifier v0.1.0 (D:\Protocol-01\programs\p01_stark_verifier)
+warning: unused import: `TRACE_WIDTH`
+   --> programs\p01_stark_verifier\tests\common\mod.rs:264:60
+    |
+264 |     use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_LEN, TRACE_WIDTH};
+    |                                                            ^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `p01_stark_verifier` (test "bench_all_circuits") generated 1 warning (run `cargo fix --test "bench_all_circuits" -p p01_stark_verifier` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 14.77s
+  Executable tests\bench_all_circuits.rs (target\release\deps\bench_all_circuits-d1cc09342ed97f24.exe)

@@ -191,3 +191,9 @@ historical	apps/web/app/parcours/page.tsx	et les 124 bits annoncés en valaient 
 verified	apps/web/app/parcours/page.tsx	et 4,000 bits par requête		log2(1/rho) = 4 at rho = 1/16, the per-query term of the conjectured regime (the term tables' 130.00 is 27 x 4 + 22)
 historical	apps/web/app/parcours/page.tsx	le terme de requête avait gagné 72 à 87 bits		a past measurement told in the past tense: a gain of the query term, not a level; not re-derived here
 historical	apps/web/app/updates/page.tsx	the 124-bit soundness figure is withdrawn		the withdrawn figure, said so
+not-a-level	docs/WHITEPAPER.md	is a single 64-bit number, so it can take only about 18 billion billion values		the width of a v1 commitment (one field element), not a level (finding F03)
+not-a-level	docs/WHITEPAPER.md	into single 64-bit numbers, where the design needs far larger ones		the width of v1's fingerprints and challenges, not a level (findings F03, F52)
+not-a-level	docs/WHITEPAPER.md	to use four 64-bit numbers instead of one for each fingerprint		the width of one limb of a v2 commitment (a v2 design), not a level
+not-a-level	docs/WHITEPAPER.md	the floor that the 64-bit challenge field sets		the width of v1's challenge field, not a level (finding F52)
+v2-candidate	docs/WHITEPAPER.md	with independent batching coefficients and 16-bit grinding		the proof-of-work parameter of the v2 transcript (WP3, not deployed), a design parameter, not a level
+v2-candidate	docs/CLAIMS.md	with independent batching coefficients and 16-bit grinding		the same v2 transcript parameter, in claims row K129

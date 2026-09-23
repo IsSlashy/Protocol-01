@@ -1,0 +1,727 @@
+{
+  "flow": "deposit",
+  "harness": "apps/web/lib/privacy/pool/liveDevnetShield.test.ts",
+  "rpc_host": "devnet.helius-rpc.com",
+  "key": "5ZyY…coS9",
+  "history_cache": "not applicable (the deposit harness does not read the history cache)",
+  "warmup_runs": 0,
+  "start_marker": "/^wallet \\S+ — /",
+  "stop_marker": "/SHIELD LANDED:/",
+  "publishable": false,
+  "why_not": [
+    "n = 28 < 30"
+  ],
+  "cpu_busy_percent_during": {
+    "mean": 6.301011169214834,
+    "max": 85.34410828517568,
+    "samples": 553
+  },
+  "failed_runs": 2,
+  "product": {
+    "n": 28,
+    "min": 30107.300048828125,
+    "median": 37851.90002441406,
+    "p90": 41753,
+    "max": 45039.199951171875,
+    "mean": 37701.92147391183,
+    "spread": 14931.89990234375,
+    "ratio": 1.4959561261928882
+  },
+  "phases": {
+    "identity_and_prepare": {
+      "n": 28,
+      "min": 418.800048828125,
+      "median": 696.25,
+      "p90": 1513,
+      "max": 2991.5,
+      "mean": 885.5678623744419,
+      "spread": 2572.699951171875,
+      "ratio": 7.143026865375815
+    },
+    "fund_ephemeral": {
+      "n": 28,
+      "min": 581.699951171875,
+      "median": 672.5999755859375,
+      "p90": 770.10009765625,
+      "max": 814.5,
+      "mean": 682.5285557338169,
+      "spread": 232.800048828125,
+      "ratio": 1.4002064094369153
+    },
+    "execute": {
+      "n": 28,
+      "min": 28724.60009765625,
+      "median": 36500.70007324219,
+      "p90": 40507.300048828125,
+      "max": 43484.699951171875,
+      "mean": 36133.82505580357,
+      "spread": 14760.099853515625,
+      "ratio": 1.5138487499681486
+    }
+  },
+  "extras": {},
+  "samples": [
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140481361.2,
+      "stop_epoch_ms": 1790140511468.5,
+      "product_ms": 30107.300048828125,
+      "phases": {
+        "identity_and_prepare": 651.800048828125,
+        "fund_ephemeral": 730.89990234375,
+        "execute": 28724.60009765625
+      },
+      "extras": {},
+      "signatures": [
+        "5wSNHiP6AiiYLkpZPUS9LNoKdYdVPQQ2gNpdCLHLeCb9iKwnNBVbiurPdGsJxZ5pRtyyvouBWdnb7ZMKTLB2zQ4c",
+        "3qUKr2sTARR3V8ay8H8DDSqvLjgLJJA6jtm4AxMKPAAoeQaCGzhQFbio9hRJRnSpgWa5krQzJ8s7uKkUUxCCnX5G"
+      ],
+      "spend_signature": null,
+      "run": 1,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-1.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140512591.9,
+      "stop_epoch_ms": 1790140552584.6,
+      "product_ms": 39992.7001953125,
+      "phases": {
+        "identity_and_prepare": 439.400146484375,
+        "fund_ephemeral": 734.89990234375,
+        "execute": 38818.400146484375
+      },
+      "extras": {},
+      "signatures": [
+        "4S96gphmfw5K9T1qcYYoxAqvGnpRKhGMeCBVAahbW2cCdJ7bpj4odTWA8XSsHnu6tdSp5FLx5QMAaety1M3SVmtP",
+        "fNw4J7D7uobmUsT4wG6ypFb39dEPoBZVUbkwTuHi7Stm8FPba7sa1feBSReFY4zLo8s8mH5rHo1BNmUJ8Z2sDAr"
+      ],
+      "spend_signature": null,
+      "run": 2,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-2.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140553830.9,
+      "stop_epoch_ms": 1790140592105.1,
+      "product_ms": 38274.2001953125,
+      "phases": {
+        "identity_and_prepare": 418.800048828125,
+        "fund_ephemeral": 623,
+        "execute": 37232.400146484375
+      },
+      "extras": {},
+      "signatures": [
+        "2ezfgRbqnthGXdxDamRKcgsptnDymiBod9KBfrzoUivirA4G89FstVpHGjcRMiAe26mBftZcdEFSCfc4Zz7mw3Gi",
+        "3hEua1qDAiszXMDpgmoUgAF2SRp6GtMGtxtdkGMtrY6xShRjsrJZFtgpXTWrMzihZLnNZ4VNLWPuzKUDByQkeSta"
+      ],
+      "spend_signature": null,
+      "run": 3,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-3.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140593230.7,
+      "stop_epoch_ms": 1790140630881.2,
+      "product_ms": 37650.5,
+      "phases": {
+        "identity_and_prepare": 690.300048828125,
+        "fund_ephemeral": 766.10009765625,
+        "execute": 36194.099853515625
+      },
+      "extras": {},
+      "signatures": [
+        "2LZykt3mdBXUho1ogVdfuSVY8XEsMUe6bBP97J4s9DKXJiK3p7mKaNiMeusjugK7qZsaRVXCStRx7ZR2NTQ5SrtJ",
+        "2BLrhLsXdmPpnNTQjnhsjrKkkMjo7kTGebkAMhhR9W181Emuaz5n5PYuyjzRZgTMHdHrpzCbD9mGt8Q6QjiuRLk5"
+      ],
+      "spend_signature": null,
+      "run": 4,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-4.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140632072.2,
+      "stop_epoch_ms": 1790140669919.7,
+      "product_ms": 37847.5,
+      "phases": {
+        "identity_and_prepare": 1091,
+        "fund_ephemeral": 683.300048828125,
+        "execute": 36073.199951171875
+      },
+      "extras": {},
+      "signatures": [
+        "Tj1xfztdAmStPEBPj1VVg1zQe9jt8GbWP8hWFJeHTwKje5NubuodKd4f8Gg3CKBcbfdv7L1KecgN8AZCymR2nqt",
+        "5wsXroF2M9Jw1cFa1Ahxkx4adfxVaFXJJNG7okV17NjgeHPNAiKWUokKKVzWVZ82Jr52GFejECTqksiSFnMKJvzb"
+      ],
+      "spend_signature": null,
+      "run": 5,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-5.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140671114.5,
+      "stop_epoch_ms": 1790140709904.8,
+      "product_ms": 38790.300048828125,
+      "phases": {
+        "identity_and_prepare": 779.89990234375,
+        "fund_ephemeral": 602.900146484375,
+        "execute": 37407.5
+      },
+      "extras": {},
+      "signatures": [
+        "2fdG2DtTSB7huC57vfeuG2kV4NpteYCrvfGywY1sdQiTbw4SFiVk2nz9eG325ynor9qmVKuXMrZjE8wD1ku1WW1i",
+        "5bc14T8Ft3cBsF14JRGtFQpQJ2P5FHoGt8o9b3e9P2qCt4ne1GFsiWMoTknE6Dr9221uEYHfHma5XkvLc7FPqjRC"
+      ],
+      "spend_signature": null,
+      "run": 6,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-6.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140711029.8,
+      "stop_epoch_ms": 1790140748056,
+      "product_ms": 37026.199951171875,
+      "phases": {
+        "identity_and_prepare": 1316.599853515625,
+        "fund_ephemeral": 648.300048828125,
+        "execute": 35061.300048828125
+      },
+      "extras": {},
+      "signatures": [
+        "4dwnshBUrx1peitw5YoQHeKh4T9nCL4Efv9ngAh3AxUDuKS1BqcphQe18NwtUtgP1K7dRBXWRmQJCPmH4yFdZzoP",
+        "2Em4hVsFiXmTz4mgiNixbK8k4H7dFsNvfMTXHpqof4kHXwqhi3F9QKQFoVAtsr2VT5WkRWNjFYiEfj1dkDmFSkdE"
+      ],
+      "spend_signature": null,
+      "run": 7,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-7.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140749212.3,
+      "stop_epoch_ms": 1790140783489.4,
+      "product_ms": 34277.099853515625,
+      "phases": {
+        "identity_and_prepare": 423.800048828125,
+        "fund_ephemeral": 752.2998046875,
+        "execute": 33101
+      },
+      "extras": {},
+      "signatures": [
+        "43UtEecyfRLxPRQNUYsFWjeHpXVcumMBB8fahM3sGdmEk9j3EwBJUMQkkN6rfJ3U3U3DcnYPyXGr6oAjZQAeBGSA",
+        "4qEgS77KikzUjWwrDYQHGm5fDeeM3LFT4wB4cGQuzzmqxantRP6Gp3Dcfmm6YK8jkwiNegdmd9nWk7V5jhrtFcAQ"
+      ],
+      "spend_signature": null,
+      "run": 8,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-8.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140784752,
+      "stop_epoch_ms": 1790140829791.2,
+      "product_ms": 45039.199951171875,
+      "phases": {
+        "identity_and_prepare": 794.300048828125,
+        "fund_ephemeral": 760.199951171875,
+        "execute": 43484.699951171875
+      },
+      "extras": {},
+      "signatures": [
+        "5aiJZnScj67ZwTmz3pJq7p1XUMYaoCxTJ4mgi1X8YNjHRMfkTpYfPfUic6n76tYKGR7fwGmcKAABZqi5QdPt4Jtj",
+        "3xGsPgtgzC9M587SoHDqqzKFMBM3pAXFQNpyjT3R528LAsthGMhLqWwjDiMmSfQCAQCDHobfAjzJaz38q6zEacrp"
+      ],
+      "spend_signature": null,
+      "run": 9,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-9.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140831138.8,
+      "stop_epoch_ms": 1790140864274.1,
+      "product_ms": 33135.300048828125,
+      "phases": {
+        "identity_and_prepare": 1260.199951171875,
+        "fund_ephemeral": 643,
+        "execute": 31232.10009765625
+      },
+      "extras": {},
+      "signatures": [
+        "65Z7XqPs5uyQeJwvS9zNo6vDKBsrY1EcFcVaxPkp1dYWbzEMbBhZB4ksiF5e7A4Um8ad1RgBoXwX4NCx3Hjb2JPV",
+        "3uNwDbccvNUcBHqtzdne5wmLDupsrMP9fK3mHT8r4gCc62dBQuPuRCGELmcxiyx2wGu7b3ULhNsqrxVLByoPiQ6b"
+      ],
+      "spend_signature": null,
+      "run": 10,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-10.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140865419.2,
+      "stop_epoch_ms": 1790140904502.9,
+      "product_ms": 39083.699951171875,
+      "phases": {
+        "identity_and_prepare": 558,
+        "fund_ephemeral": 700.199951171875,
+        "execute": 37825.5
+      },
+      "extras": {},
+      "signatures": [
+        "39mJS2iBjREysNRiyjuSXuiEocy6aj6YeRsnnGevhvnYtB7Va3dHtd48qaGxzfZCPfBbLWQREtfQx7mCfgBmGHfT",
+        "cirA9DmGFcMaaiGzq1TZ6C9WWMKyY1mvdXjKqasBeiT8tSWfRR4oXvYxkQpz9eETrCrPjyEDw4Kos6qxFLe2grK"
+      ],
+      "spend_signature": null,
+      "run": 11,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-11.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140905663.1,
+      "stop_epoch_ms": 1790140942346.7,
+      "product_ms": 36683.599853515625,
+      "phases": {
+        "identity_and_prepare": 715.89990234375,
+        "fund_ephemeral": 661.89990234375,
+        "execute": 35305.800048828125
+      },
+      "extras": {},
+      "signatures": [
+        "611NXD39mGGfJ88tjWrFjTxKnb8ufrUvNRh2qcuvE3tj7st8s6dCXBK28VJtQaeAQYBGBxcURU22XGYe3eXSTn1S",
+        "36xHcpgDAiX6nf7WUhXZ8L2GDS7tB8EYipM9gjFU8sLmMYBL4sQBw6qr3gDcaxH9qSxF4b3JU5ynQkBBpvBZfG5M"
+      ],
+      "spend_signature": null,
+      "run": 12,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-12.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140943471.5,
+      "stop_epoch_ms": 1790140983618.7,
+      "product_ms": 40147.199951171875,
+      "phases": {
+        "identity_and_prepare": 418.89990234375,
+        "fund_ephemeral": 615,
+        "execute": 39113.300048828125
+      },
+      "extras": {},
+      "signatures": [
+        "RCxkpYMW2AoqF9Zj1JD81vHkVDTdMnGrPtxPWsjjwbMVuX7voxZBRCKDXcNhE6KRPeVamwwRiPVTe2xmJNkvsfJ",
+        "3e5ThHuL8oSyZdra8RHgevPEu5LnCPwxseKgPHj5kgwXLVgnQ9m31kz4JJCL1FzaUGHqC1Diw7367wL81SeUHQdQ"
+      ],
+      "spend_signature": null,
+      "run": 13,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-13.log.txt"
+    },
+    {
+      "ok": false,
+      "missing": [
+        "stop /SHIELD LANDED:/",
+        "phase execute"
+      ],
+      "start_epoch_ms": 1790140984705.9,
+      "stop_epoch_ms": null,
+      "product_ms": null,
+      "phases": {
+        "identity_and_prepare": 383.10009765625,
+        "fund_ephemeral": 600.10009765625
+      },
+      "extras": {},
+      "signatures": [
+        "2j7HSMW6WfFXgw6fpPFVPuWHujjpp77ubsmSkoUzRSkkyh1JKn4QGq24V92cMrB6sgqtABrnZ958KMoeN7icK8ic"
+      ],
+      "spend_signature": null,
+      "run": 14,
+      "counted": false,
+      "exit": 1,
+      "log": "raw\\deposit-14.log.txt"
+    },
+    {
+      "ok": false,
+      "missing": [
+        "stop /SHIELD LANDED:/",
+        "phase execute"
+      ],
+      "start_epoch_ms": 1790140999160.6,
+      "stop_epoch_ms": null,
+      "product_ms": null,
+      "phases": {
+        "identity_and_prepare": 399.699951171875,
+        "fund_ephemeral": 619.800048828125
+      },
+      "extras": {},
+      "signatures": [
+        "365TzpPgvXYDiLosV1QTSeMCPTqfG6bGNKDdps6wqwM4N2XMgxy7WYyboowDVTT5GwRNxP65k1nkgg1Fba5y3ggd"
+      ],
+      "spend_signature": null,
+      "run": 15,
+      "counted": false,
+      "exit": 3221225477,
+      "log": "raw\\deposit-15.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141008021.3,
+      "stop_epoch_ms": 1790141045007.8,
+      "product_ms": 36986.5,
+      "phases": {
+        "identity_and_prepare": 2118.5,
+        "fund_ephemeral": 763.39990234375,
+        "execute": 34104.60009765625
+      },
+      "extras": {},
+      "signatures": [
+        "633Ka1BeR5PWyb91DrJrkgs8Y3ywTrFZPfvP1Jw7Lb4DCeUsWXYNUPaFQogsQDTQi5fYQJ7fbPDmkd8FXvMbZe55",
+        "2JWkoVUP8y9DE9xZV1kw8QRCusY54ooYvqAEZprh5Xd2M6Q7whhYuxiPMZFgEdE4FEHCbrYjBfQkTYKXhoU1NsBG"
+      ],
+      "spend_signature": null,
+      "run": 16,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-16.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141046115.7,
+      "stop_epoch_ms": 1790141079831.6,
+      "product_ms": 33715.900146484375,
+      "phases": {
+        "identity_and_prepare": 674,
+        "fund_ephemeral": 581.699951171875,
+        "execute": 32460.2001953125
+      },
+      "extras": {},
+      "signatures": [
+        "2BryGLM21rgNjgZdwoYCwKHpF7u4D5TBrPFFNwY79YNEvA6Eg5XuthGGdZedkkSecx23qpqrcmvA8PvxgcNp61Dq",
+        "4ut16ooiPGJ4GsfMj5uEzMccXfvck3E66zawHseGP6m7fPPFuvyYVn3F8KYpiCLXQBXGsbi8EvwEXEJDx8438av6"
+      ],
+      "spend_signature": null,
+      "run": 17,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-17.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141080922.7,
+      "stop_epoch_ms": 1790141122675.7,
+      "product_ms": 41753,
+      "phases": {
+        "identity_and_prepare": 631.300048828125,
+        "fund_ephemeral": 614.39990234375,
+        "execute": 40507.300048828125
+      },
+      "extras": {},
+      "signatures": [
+        "4pimGfwPN2eG2FXRY4sawfJhuaxfAEB8pq3iHVandWKS3xsnSyokumEbz98EFZgjwdeLzZkGtXzBwoskpLxN3TrD",
+        "dekN5Gp2MGZWGYiUZNiyE41bgLY962dv89KV6M5Zx2w8SvqX2UJrpUJ7wU7weLBwan5FaAiseV4rQtZpTmh9gUf"
+      ],
+      "spend_signature": null,
+      "run": 18,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-18.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141123777.7,
+      "stop_epoch_ms": 1790141161537.1,
+      "product_ms": 37759.400146484375,
+      "phases": {
+        "identity_and_prepare": 469.10009765625,
+        "fund_ephemeral": 610.39990234375,
+        "execute": 36679.900146484375
+      },
+      "extras": {},
+      "signatures": [
+        "37ZdPzDsqXh3JwM3P2kPiqCxrW33Cj7kEaAj7YRbN25v6Afm3UzMyuwDzwwB52JHBywcZQoKxt7qSg76SLuAWfkU",
+        "2QPxLRgcB82PfJ3qL1GigGQHjC9iDzUk8xaue3NCSTuJE1JNkTQjCoekwymR1XTBR5DAPLKvDt9oTfJRy3C7nPvZ"
+      ],
+      "spend_signature": null,
+      "run": 19,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-19.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141162715.5,
+      "stop_epoch_ms": 1790141198612,
+      "product_ms": 35896.5,
+      "phases": {
+        "identity_and_prepare": 633.10009765625,
+        "fund_ephemeral": 613,
+        "execute": 34650.39990234375
+      },
+      "extras": {},
+      "signatures": [
+        "2FiQBQp3yipSHsyd5cqDNDqUXmRwrhdA6drAv6f3JiwtMDKjzUmgoRTKQ35GsdXcDE841LVJaHpn6K2PbWdBxEdE",
+        "5dyTuW9z2b6uR3h32eqwFCL9gTMAjKGE4hqNvpHfudVfv3VjVfHviCgGaUW9j9xQ3FLQakCVoGLcairmE8ytVWcu"
+      ],
+      "spend_signature": null,
+      "run": 20,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-20.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141199696.7,
+      "stop_epoch_ms": 1790141239718.1,
+      "product_ms": 40021.400146484375,
+      "phases": {
+        "identity_and_prepare": 892.300048828125,
+        "fund_ephemeral": 770.10009765625,
+        "execute": 38359
+      },
+      "extras": {},
+      "signatures": [
+        "GHR1S8AffBwCpBE71d4GjfRfg2TYVMhS1FiwSSGKE8nBgSuEuSiokH9a8D93XFfLvwWXJWVJyn2HiA9MGDiWnQb",
+        "5T2pZdVieDVYd5sCrr9CMwMk8ZAVCH7nGecrU13foAM1yQh4icGf7zyUqzYLqzxzMHAxt79QeNXDQyNXZh8nX9mB"
+      ],
+      "spend_signature": null,
+      "run": 21,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-21.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141240869,
+      "stop_epoch_ms": 1790141284134.6,
+      "product_ms": 43265.60009765625,
+      "phases": {
+        "identity_and_prepare": 459.89990234375,
+        "fund_ephemeral": 618.900146484375,
+        "execute": 42186.800048828125
+      },
+      "extras": {},
+      "signatures": [
+        "5faLmtje4LM1ZLcWtA5ajYeVfUB5MqEDCSbS7YN8p1q6CbfndrLzZZv3BBDausvoLBEThFottMiYDd8qKvbttuzd",
+        "5ReEgoZwYyZCQ5PG5evwkensxBoWBs1ran8qjanr87GgZDjiLzRtq8fWbRsSUMKUvuaCyzsqjn5FXpJDJ9eJFFKc"
+      ],
+      "spend_signature": null,
+      "run": 22,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-22.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141285292.4,
+      "stop_epoch_ms": 1790141324233.1,
+      "product_ms": 38940.7001953125,
+      "phases": {
+        "identity_and_prepare": 1092.10009765625,
+        "fund_ephemeral": 615.199951171875,
+        "execute": 37233.400146484375
+      },
+      "extras": {},
+      "signatures": [
+        "2f1ZXfRUugZWVfvUw9Qo7u36Pc4cffeYWtYe77VUrkZUQktSeK5JxEzy8t42W2Q3CjEScAsM4XgnmCERCCS56uHs",
+        "5PTqfHC1gzGpGU9m6oLSXufkSGp2fCNUR7NB3RhVLzvqyPg2Uodn3ptsRgzTyo4E1jWiYZsDVogMXob9XNf4fBGK"
+      ],
+      "spend_signature": null,
+      "run": 23,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-23.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141325938.5,
+      "stop_epoch_ms": 1790141360747.6,
+      "product_ms": 34809.10009765625,
+      "phases": {
+        "identity_and_prepare": 611.60009765625,
+        "fund_ephemeral": 719.39990234375,
+        "execute": 33478.10009765625
+      },
+      "extras": {},
+      "signatures": [
+        "37tRe3x4q6bYVxMFvsoz4UsAYSugdh8U8aRL8Z7RJt8hA3c3VApjPoLLuo3a7hKUxqdegBM8awHDE7dhS3TpeGE7",
+        "5GJu52QQ6qBzHLYpSMHoK1JMzDV6ehi6TofeqS96rdPUjsNA66oYBPioDaJy6ph4AKttgQgjS7u29GFBsR7Z4LhJ"
+      ],
+      "spend_signature": null,
+      "run": 24,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-24.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141361838.5,
+      "stop_epoch_ms": 1790141397595.6,
+      "product_ms": 35757.10009765625,
+      "phases": {
+        "identity_and_prepare": 2991.5,
+        "fund_ephemeral": 814.5,
+        "execute": 31951.10009765625
+      },
+      "extras": {},
+      "signatures": [
+        "4dsgFZFBKeCuJ5UMBJggR6pGvUXPSLzkf8k34Uv9dUBx4i7md7asWNvCVnocz2ZnVdJxPfsBeoaojj5ZXaYskWLj",
+        "2Drccnt72qbWecf9cRoB1tfjLZfbPTJSRmc6tpxVUKqV4YFApeMBwFonhTPQyBkVtPBJwMtXpzy71jB62G7UGtX9"
+      ],
+      "spend_signature": null,
+      "run": 25,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-25.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141398762.2,
+      "stop_epoch_ms": 1790141437065.2,
+      "product_ms": 38303,
+      "phases": {
+        "identity_and_prepare": 1078.699951171875,
+        "fund_ephemeral": 713.5,
+        "execute": 36510.800048828125
+      },
+      "extras": {},
+      "signatures": [
+        "RwFzaKsK3B3jE1HbKyChgYB4jzs8YBPgdexjCsWGV35148kBHWd1MgfroKqPqWtiYxcMQGCiskvkKonXhFCHPXo",
+        "4uks9un9xUyh6m6i37p1GmjbmADL31wyYmEhGjgn8FFPFRMYorGj34Ypic5zDAfdxSQH7CLoG8PXk2G8b3GHzATN"
+      ],
+      "spend_signature": null,
+      "run": 26,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-26.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141438216.2,
+      "stop_epoch_ms": 1790141476453.7,
+      "product_ms": 38237.5,
+      "phases": {
+        "identity_and_prepare": 702.199951171875,
+        "fund_ephemeral": 786.300048828125,
+        "execute": 36749
+      },
+      "extras": {},
+      "signatures": [
+        "2CqWD6XABhbT7j8kVTkyjsJogbYjsDoqdxNq8oDfJS9hLBTNKJ9PpDBpmwcPmF99QMCLASGn65bfbcwbzxXnZCMV",
+        "4fpGwWhLRpTX2DVVJHaxhNvGWsPWYptdMMN2mdfmQZoAtpekcxgCzAdt5fuo13pyJ27PdMRHAbELCd6P1CgEuwg"
+      ],
+      "spend_signature": null,
+      "run": 27,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-27.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141477573.5,
+      "stop_epoch_ms": 1790141515429.8,
+      "product_ms": 37856.300048828125,
+      "phases": {
+        "identity_and_prepare": 628,
+        "fund_ephemeral": 737.699951171875,
+        "execute": 36490.60009765625
+      },
+      "extras": {},
+      "signatures": [
+        "4ahGtzNpoFjrj9UXE3ExKsftyXjsiVsekkTWk6CnhA25XDAADoBRnzCJHCmQY15sRNoenkZqk3zAU7eqmeHbN7xG",
+        "5LvtT5wSXRu8nuRdMRLmwP6QSA7Qio3hGcedNKrihnkTafqzREC7LL4Bsj5KRksW4P3rfmLu69bXpodT1fsoNrUW"
+      ],
+      "spend_signature": null,
+      "run": 28,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-28.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141516566.5,
+      "stop_epoch_ms": 1790141554450.6,
+      "product_ms": 37884.10009765625,
+      "phases": {
+        "identity_and_prepare": 741.699951171875,
+        "fund_ephemeral": 608.199951171875,
+        "execute": 36534.2001953125
+      },
+      "extras": {},
+      "signatures": [
+        "4vhL5Y1p2RJr8WZB3oTSWFv5KQnxsX9p4QhCcr6UCcVRuxneQ4k6Ms4HUkzgKaGt9NEAUxew3deqx8juu8rEEcDg",
+        "2vByVVgZ3CdQScnT3NorPyLXG28fjuAudhLPWfjngKP1xxxhKieJ8b76NDyLYbM5DKM2MMqQWcsoe1RNMHdEdzTs"
+      ],
+      "spend_signature": null,
+      "run": 29,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-29.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790141555590.9,
+      "stop_epoch_ms": 1790141592003.8,
+      "product_ms": 36412.900146484375,
+      "phases": {
+        "identity_and_prepare": 1513,
+        "fund_ephemeral": 622.10009765625,
+        "execute": 34277.800048828125
+      },
+      "extras": {},
+      "signatures": [
+        "3zAoiwhxFCkTLwjtPAs81dEC2M8og6Y1NFouGYW6792sFwYTwws1ACzxEbgoY7GqjzrMpFXJcWhYFRahXSRKhLpF",
+        "5PyKCFDn84rk6ufCLc4jAP4ENPMfRGmyyYJePcL47zZy4KtyusEyT2wWwnh2fPNZJA6HFrnYjCeKHkUSusDfHJpP"
+      ],
+      "spend_signature": null,
+      "run": 30,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\deposit-30.log.txt"
+    }
+  ]
+}

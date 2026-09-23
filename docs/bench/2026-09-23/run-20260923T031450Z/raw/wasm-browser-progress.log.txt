@@ -1,0 +1,300 @@
+C0 cold 1/30: init 1.0 ms + prove 538 ms
+C0 cold 2/30: init 0.5 ms + prove 203 ms
+C0 cold 3/30: init 0.6 ms + prove 877 ms
+C0 cold 4/30: init 0.5 ms + prove 103 ms
+C0 cold 5/30: init 0.6 ms + prove 1108 ms
+C0 cold 6/30: init 0.6 ms + prove 574 ms
+C0 cold 7/30: init 0.7 ms + prove 163 ms
+C0 cold 8/30: init 1.2 ms + prove 885 ms
+C0 cold 9/30: init 1.0 ms + prove 846 ms
+C0 cold 10/30: init 0.7 ms + prove 1070 ms
+C0 cold 11/30: init 0.9 ms + prove 398 ms
+C0 cold 12/30: init 0.6 ms + prove 49 ms
+C0 cold 13/30: init 0.9 ms + prove 1943 ms
+C0 cold 14/30: init 0.7 ms + prove 731 ms
+C0 cold 15/30: init 0.6 ms + prove 93 ms
+C0 cold 16/30: init 0.7 ms + prove 341 ms
+C0 cold 17/30: init 0.6 ms + prove 795 ms
+C0 cold 18/30: init 0.6 ms + prove 742 ms
+C0 cold 19/30: init 0.8 ms + prove 290 ms
+C0 cold 20/30: init 0.9 ms + prove 674 ms
+C0 cold 21/30: init 0.6 ms + prove 2239 ms
+C0 cold 22/30: init 0.7 ms + prove 914 ms
+C0 cold 23/30: init 0.4 ms + prove 53 ms
+C0 cold 24/30: init 0.6 ms + prove 725 ms
+C0 cold 25/30: init 0.5 ms + prove 200 ms
+C0 cold 26/30: init 0.4 ms + prove 744 ms
+C0 cold 27/30: init 0.5 ms + prove 125 ms
+C0 cold 28/30: init 0.6 ms + prove 55 ms
+C0 cold 29/30: init 0.6 ms + prove 410 ms
+C0 cold 30/30: init 0.5 ms + prove 1096 ms
+C0 warm 1/30: 158 ms
+C0 warm 2/30: 460 ms
+C0 warm 3/30: 40 ms
+C0 warm 4/30: 415 ms
+C0 warm 5/30: 552 ms
+C0 warm 6/30: 947 ms
+C0 warm 7/30: 346 ms
+C0 warm 8/30: 106 ms
+C0 warm 9/30: 323 ms
+C0 warm 10/30: 582 ms
+C0 warm 11/30: 137 ms
+C0 warm 12/30: 426 ms
+C0 warm 13/30: 274 ms
+C0 warm 14/30: 466 ms
+C0 warm 15/30: 1570 ms
+C0 warm 16/30: 199 ms
+C0 warm 17/30: 88 ms
+C0 warm 18/30: 915 ms
+C0 warm 19/30: 157 ms
+C0 warm 20/30: 301 ms
+C0 warm 21/30: 283 ms
+C0 warm 22/30: 558 ms
+C0 warm 23/30: 259 ms
+C0 warm 24/30: 507 ms
+C0 warm 25/30: 368 ms
+C0 warm 26/30: 946 ms
+C0 warm 27/30: 141 ms
+C0 warm 28/30: 57 ms
+C0 warm 29/30: 876 ms
+C0 warm 30/30: 45 ms
+C1 cold 1/30: init 0.6 ms + prove 609 ms
+C1 cold 2/30: init 0.6 ms + prove 57 ms
+C1 cold 3/30: init 0.5 ms + prove 503 ms
+C1 cold 4/30: init 0.5 ms + prove 575 ms
+C1 cold 5/30: init 0.5 ms + prove 78 ms
+C1 cold 6/30: init 0.6 ms + prove 65 ms
+C1 cold 7/30: init 0.6 ms + prove 444 ms
+C1 cold 8/30: init 0.4 ms + prove 364 ms
+C1 cold 9/30: init 0.5 ms + prove 514 ms
+C1 cold 10/30: init 0.5 ms + prove 87 ms
+C1 cold 11/30: init 0.6 ms + prove 390 ms
+C1 cold 12/30: init 0.5 ms + prove 300 ms
+C1 cold 13/30: init 0.5 ms + prove 218 ms
+C1 cold 14/30: init 0.5 ms + prove 1386 ms
+C1 cold 15/30: init 0.5 ms + prove 1134 ms
+C1 cold 16/30: init 0.5 ms + prove 2087 ms
+C1 cold 17/30: init 0.5 ms + prove 272 ms
+C1 cold 18/30: init 0.5 ms + prove 454 ms
+C1 cold 19/30: init 0.4 ms + prove 789 ms
+C1 cold 20/30: init 0.5 ms + prove 870 ms
+C1 cold 21/30: init 0.7 ms + prove 229 ms
+C1 cold 22/30: init 0.6 ms + prove 31 ms
+C1 cold 23/30: init 0.6 ms + prove 158 ms
+C1 cold 24/30: init 0.5 ms + prove 53 ms
+C1 cold 25/30: init 0.6 ms + prove 335 ms
+C1 cold 26/30: init 0.6 ms + prove 46 ms
+C1 cold 27/30: init 0.5 ms + prove 1977 ms
+C1 cold 28/30: init 0.7 ms + prove 151 ms
+C1 cold 29/30: init 0.6 ms + prove 76 ms
+C1 cold 30/30: init 0.5 ms + prove 234 ms
+C1 warm 1/30: 736 ms
+C1 warm 2/30: 1001 ms
+C1 warm 3/30: 126 ms
+C1 warm 4/30: 215 ms
+C1 warm 5/30: 111 ms
+C1 warm 6/30: 255 ms
+C1 warm 7/30: 34 ms
+C1 warm 8/30: 403 ms
+C1 warm 9/30: 533 ms
+C1 warm 10/30: 113 ms
+C1 warm 11/30: 47 ms
+C1 warm 12/30: 1092 ms
+C1 warm 13/30: 215 ms
+C1 warm 14/30: 534 ms
+C1 warm 15/30: 125 ms
+C1 warm 16/30: 848 ms
+C1 warm 17/30: 80 ms
+C1 warm 18/30: 226 ms
+C1 warm 19/30: 687 ms
+C1 warm 20/30: 211 ms
+C1 warm 21/30: 653 ms
+C1 warm 22/30: 272 ms
+C1 warm 23/30: 271 ms
+C1 warm 24/30: 978 ms
+C1 warm 25/30: 827 ms
+C1 warm 26/30: 376 ms
+C1 warm 27/30: 413 ms
+C1 warm 28/30: 968 ms
+C1 warm 29/30: 258 ms
+C1 warm 30/30: 397 ms
+C3 cold 1/30: init 0.6 ms + prove 55 ms
+C3 cold 2/30: init 0.5 ms + prove 254 ms
+C3 cold 3/30: init 0.6 ms + prove 624 ms
+C3 cold 4/30: init 0.6 ms + prove 595 ms
+C3 cold 5/30: init 0.4 ms + prove 251 ms
+C3 cold 6/30: init 0.5 ms + prove 952 ms
+C3 cold 7/30: init 0.5 ms + prove 996 ms
+C3 cold 8/30: init 0.6 ms + prove 59 ms
+C3 cold 9/30: init 0.5 ms + prove 1744 ms
+C3 cold 10/30: init 0.4 ms + prove 59 ms
+C3 cold 11/30: init 0.6 ms + prove 403 ms
+C3 cold 12/30: init 0.6 ms + prove 396 ms
+C3 cold 13/30: init 0.5 ms + prove 623 ms
+C3 cold 14/30: init 0.6 ms + prove 1144 ms
+C3 cold 15/30: init 0.5 ms + prove 188 ms
+C3 cold 16/30: init 0.4 ms + prove 522 ms
+C3 cold 17/30: init 0.5 ms + prove 725 ms
+C3 cold 18/30: init 0.4 ms + prove 220 ms
+C3 cold 19/30: init 0.6 ms + prove 593 ms
+C3 cold 20/30: init 0.6 ms + prove 407 ms
+C3 cold 21/30: init 0.5 ms + prove 246 ms
+C3 cold 22/30: init 0.5 ms + prove 781 ms
+C3 cold 23/30: init 0.5 ms + prove 860 ms
+C3 cold 24/30: init 0.5 ms + prove 346 ms
+C3 cold 25/30: init 0.5 ms + prove 70 ms
+C3 cold 26/30: init 0.3 ms + prove 923 ms
+C3 cold 27/30: init 0.5 ms + prove 102 ms
+C3 cold 28/30: init 0.5 ms + prove 481 ms
+C3 cold 29/30: init 0.6 ms + prove 64 ms
+C3 cold 30/30: init 0.5 ms + prove 191 ms
+C3 warm 1/30: 162 ms
+C3 warm 2/30: 270 ms
+C3 warm 3/30: 1821 ms
+C3 warm 4/30: 497 ms
+C3 warm 5/30: 638 ms
+C3 warm 6/30: 49 ms
+C3 warm 7/30: 180 ms
+C3 warm 8/30: 2002 ms
+C3 warm 9/30: 1108 ms
+C3 warm 10/30: 1388 ms
+C3 warm 11/30: 802 ms
+C3 warm 12/30: 290 ms
+C3 warm 13/30: 2337 ms
+C3 warm 14/30: 138 ms
+C3 warm 15/30: 88 ms
+C3 warm 16/30: 330 ms
+C3 warm 17/30: 148 ms
+C3 warm 18/30: 453 ms
+C3 warm 19/30: 144 ms
+C3 warm 20/30: 224 ms
+C3 warm 21/30: 278 ms
+C3 warm 22/30: 51 ms
+C3 warm 23/30: 922 ms
+C3 warm 24/30: 1005 ms
+C3 warm 25/30: 25 ms
+C3 warm 26/30: 475 ms
+C3 warm 27/30: 248 ms
+C3 warm 28/30: 808 ms
+C3 warm 29/30: 136 ms
+C3 warm 30/30: 1120 ms
+C6 cold 1/30: init 0.6 ms + prove 798 ms
+C6 cold 2/30: init 0.7 ms + prove 51 ms
+C6 cold 3/30: init 0.9 ms + prove 743 ms
+C6 cold 4/30: init 0.7 ms + prove 726 ms
+C6 cold 5/30: init 0.4 ms + prove 711 ms
+C6 cold 6/30: init 0.5 ms + prove 93 ms
+C6 cold 7/30: init 0.6 ms + prove 779 ms
+C6 cold 8/30: init 0.5 ms + prove 429 ms
+C6 cold 9/30: init 0.4 ms + prove 591 ms
+C6 cold 10/30: init 0.5 ms + prove 154 ms
+C6 cold 11/30: init 0.5 ms + prove 39 ms
+C6 cold 12/30: init 0.5 ms + prove 41 ms
+C6 cold 13/30: init 0.5 ms + prove 544 ms
+C6 cold 14/30: init 0.4 ms + prove 103 ms
+C6 cold 15/30: init 0.4 ms + prove 525 ms
+C6 cold 16/30: init 0.5 ms + prove 815 ms
+C6 cold 17/30: init 0.5 ms + prove 1551 ms
+C6 cold 18/30: init 0.5 ms + prove 997 ms
+C6 cold 19/30: init 0.5 ms + prove 248 ms
+C6 cold 20/30: init 0.5 ms + prove 94 ms
+C6 cold 21/30: init 0.4 ms + prove 314 ms
+C6 cold 22/30: init 0.5 ms + prove 328 ms
+C6 cold 23/30: init 0.6 ms + prove 108 ms
+C6 cold 24/30: init 0.5 ms + prove 166 ms
+C6 cold 25/30: init 0.4 ms + prove 1094 ms
+C6 cold 26/30: init 0.5 ms + prove 126 ms
+C6 cold 27/30: init 0.6 ms + prove 608 ms
+C6 cold 28/30: init 0.4 ms + prove 142 ms
+C6 cold 29/30: init 0.4 ms + prove 1513 ms
+C6 cold 30/30: init 0.6 ms + prove 1784 ms
+C6 warm 1/30: 382 ms
+C6 warm 2/30: 1666 ms
+C6 warm 3/30: 738 ms
+C6 warm 4/30: 1068 ms
+C6 warm 5/30: 138 ms
+C6 warm 6/30: 60 ms
+C6 warm 7/30: 610 ms
+C6 warm 8/30: 141 ms
+C6 warm 9/30: 315 ms
+C6 warm 10/30: 317 ms
+C6 warm 11/30: 587 ms
+C6 warm 12/30: 145 ms
+C6 warm 13/30: 228 ms
+C6 warm 14/30: 845 ms
+C6 warm 15/30: 213 ms
+C6 warm 16/30: 37 ms
+C6 warm 17/30: 143 ms
+C6 warm 18/30: 78 ms
+C6 warm 19/30: 573 ms
+C6 warm 20/30: 1420 ms
+C6 warm 21/30: 390 ms
+C6 warm 22/30: 103 ms
+C6 warm 23/30: 605 ms
+C6 warm 24/30: 269 ms
+C6 warm 25/30: 401 ms
+C6 warm 26/30: 161 ms
+C6 warm 27/30: 161 ms
+C6 warm 28/30: 363 ms
+C6 warm 29/30: 81 ms
+C6 warm 30/30: 203 ms
+C7 cold 1/30: init 0.6 ms + prove 960 ms
+C7 cold 2/30: init 0.4 ms + prove 198 ms
+C7 cold 3/30: init 0.4 ms + prove 371 ms
+C7 cold 4/30: init 0.5 ms + prove 1805 ms
+C7 cold 5/30: init 0.4 ms + prove 1765 ms
+C7 cold 6/30: init 0.5 ms + prove 397 ms
+C7 cold 7/30: init 0.4 ms + prove 419 ms
+C7 cold 8/30: init 0.4 ms + prove 420 ms
+C7 cold 9/30: init 0.5 ms + prove 467 ms
+C7 cold 10/30: init 0.5 ms + prove 1209 ms
+C7 cold 11/30: init 0.4 ms + prove 629 ms
+C7 cold 12/30: init 0.7 ms + prove 661 ms
+C7 cold 13/30: init 0.6 ms + prove 204 ms
+C7 cold 14/30: init 0.5 ms + prove 78 ms
+C7 cold 15/30: init 0.5 ms + prove 486 ms
+C7 cold 16/30: init 0.5 ms + prove 320 ms
+C7 cold 17/30: init 0.4 ms + prove 657 ms
+C7 cold 18/30: init 0.5 ms + prove 129 ms
+C7 cold 19/30: init 0.5 ms + prove 767 ms
+C7 cold 20/30: init 0.4 ms + prove 2048 ms
+C7 cold 21/30: init 0.5 ms + prove 620 ms
+C7 cold 22/30: init 0.6 ms + prove 1414 ms
+C7 cold 23/30: init 0.5 ms + prove 468 ms
+C7 cold 24/30: init 0.5 ms + prove 62 ms
+C7 cold 25/30: init 0.5 ms + prove 50 ms
+C7 cold 26/30: init 0.5 ms + prove 269 ms
+C7 cold 27/30: init 0.5 ms + prove 447 ms
+C7 cold 28/30: init 0.4 ms + prove 169 ms
+C7 cold 29/30: init 0.4 ms + prove 314 ms
+C7 cold 30/30: init 0.4 ms + prove 2595 ms
+C7 warm 1/30: 95 ms
+C7 warm 2/30: 810 ms
+C7 warm 3/30: 40 ms
+C7 warm 4/30: 477 ms
+C7 warm 5/30: 538 ms
+C7 warm 6/30: 185 ms
+C7 warm 7/30: 1152 ms
+C7 warm 8/30: 259 ms
+C7 warm 9/30: 1700 ms
+C7 warm 10/30: 1045 ms
+C7 warm 11/30: 153 ms
+C7 warm 12/30: 1676 ms
+C7 warm 13/30: 1256 ms
+C7 warm 14/30: 348 ms
+C7 warm 15/30: 499 ms
+C7 warm 16/30: 386 ms
+C7 warm 17/30: 1297 ms
+C7 warm 18/30: 60 ms
+C7 warm 19/30: 80 ms
+C7 warm 20/30: 408 ms
+C7 warm 21/30: 287 ms
+C7 warm 22/30: 1140 ms
+C7 warm 23/30: 932 ms
+C7 warm 24/30: 460 ms
+C7 warm 25/30: 525 ms
+C7 warm 26/30: 465 ms
+C7 warm 27/30: 57 ms
+C7 warm 28/30: 1476 ms
+C7 warm 29/30: 501 ms
+C7 warm 30/30: 1137 ms

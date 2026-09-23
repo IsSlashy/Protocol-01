@@ -59,7 +59,10 @@
 //! `docs/FACTS-2026-09-14.md`, suite green; until then this header promised
 //! the opposite). Nothing in such a file ships, and `tests/prose.rs` re-checks
 //! with git that none of them is tracked (it says so and passes where git
-//! cannot read the tree, as in an export with no `.git`). Dependency trees
+//! cannot read the tree, as in an export with no `.git`). A committed file the
+//! scan does not read may state a figure that is not a level only if that
+//! figure, in that file, is listed in `UNREAD_NON_LEVELS` with a reason; every
+//! other figure of the file still fails the test. Dependency trees
 //! (`DEPENDENCY_DIRECTORIES`), binary exports, the generated document itself
 //! and files that are not valid UTF-8 escape both as well.
 //!
@@ -196,21 +199,56 @@ pub const LOCAL_ONLY_FILES: &[(&str, &str)] = &[
         "untracked on 2026-09-20: a handoff note for the docs commit that has not been made yet (task A of \
          docs/HANDOFF-2026-09-14.md itself). Drop this row once it is committed",
     ),
+    // Keep a `docs/<file>.md` row LAST: tests/prose.rs
+    // `the_documents_do_not_promise_a_check_that_local_only_files_do_not_get`
+    // writes a figure into the last row's path under a temporary root that has
+    // only `docs/`, so a deeper path would fail it.
+    // docs/WHITEPAPER.md and docs/CLAIMS.md left this list on 2026-09-23, in
+    // the change that commits them: they are scanned, and their width figures
+    // are rows of the prose ledger. The two benchmark manifests of 2026-09-23
+    // that were listed here left it in the same change: they are committed,
+    // so their one figure is listed in `UNREAD_NON_LEVELS` instead.
     ("docs/FACTS-2026-09-14.md", "untracked on 2026-09-20, same commit as the handoff note above"),
+];
+
+/// Committed files the scan does not read (a `.json` has no extension in
+/// `TEXT_EXTENSIONS`) that state a figure which is not a security level:
+/// (path, the figure exactly as `unread_files_with_figures` reports it, why).
+/// Unlike a `LOCAL_ONLY_FILES` path, such a file ships, so nothing else in it
+/// is excused: `unlisted_blind_spots` keeps every other figure of the same
+/// file, and the same figure in any other file.
+pub const UNREAD_NON_LEVELS: &[(&str, &str, &str)] = &[
     (
-        "docs/WHITEPAPER.md",
-        "untracked on 2026-09-23: a white paper another session is still writing, not part of the audit-v1 \
-         close commits. Its four \"64-bit\" figures are widths (a v1 commitment, the challenge field), not \
-         levels; the close-v1 gate r1 measured that ledger rows on it are dead in a clean checkout \
-         (every_ledger_entry_still_covers_a_figure red). Drop this row, and add its not-a-level rows, in the \
-         commit that adds the file",
+        "docs/bench/2026-09-23/run-20260923T031450Z/manifest.json",
+        "64 bits",
+        "the machine's OS width, \"OSArchitecture\": \"64 bits\", as Win32_OperatingSystem reported it on a French \
+         Windows when this benchmark run was captured (2026-09-23), before scripts/bench/env.mts switched to the \
+         locale-free os_architecture (\"X64\"). Not a level. The run is a measurement record the white paper \
+         cites, so it stays as captured rather than being edited",
     ),
     (
-        "docs/CLAIMS.md",
-        "untracked on 2026-09-23, written by the same session as docs/WHITEPAPER.md and not part of the \
-         audit-v1 close commits. Drop this row in the commit that adds the file, with any ledger rows it needs",
+        "docs/bench/2026-09-23/run-20260923T032635Z/manifest.json",
+        "64 bits",
+        "the same OS width, written by the same pre-fix harness in the next run of 2026-09-23; kept as captured \
+         for the same reason",
     ),
 ];
+
+/// The blind spots that neither `LOCAL_ONLY_FILES` nor `UNREAD_NON_LEVELS`
+/// accounts for. A local-only file is dropped whole; a listed figure is
+/// dropped only in its own file; a file with any figure left stays in the
+/// result, with those figures.
+pub fn unlisted_blind_spots(spots: Vec<BlindSpot>) -> Vec<BlindSpot> {
+    spots
+        .into_iter()
+        .filter(|s| !LOCAL_ONLY_FILES.iter().any(|(p, _)| *p == s.path))
+        .filter_map(|mut s| {
+            let path = s.path.clone();
+            s.figures.retain(|f| !UNREAD_NON_LEVELS.iter().any(|(p, fig, _)| *p == path && *fig == f.as_str()));
+            (!s.figures.is_empty()).then_some(s)
+        })
+        .collect()
+}
 
 const SECURITY_WORDS: &[&str] = &[
     "secur", "sécur", "sound", "forg", "attack", "attaque", "margin", "marge", "quantum", "quantique", "grover",

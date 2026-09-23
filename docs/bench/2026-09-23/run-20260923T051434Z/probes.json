@@ -1,0 +1,13 @@
+{
+  "tools": [
+    "verify/p01-verify.mjs",
+    "verify/p01-crowd.mjs"
+  ],
+  "since_slot": 502788632,
+  "wallet_named": "5ZyY…coS9",
+  "note": "Verdicts are recorded as printed. The harnesses fund each ephemeral from the measurement wallet directly, so the funder-tracing probes are expected to name it; the relay path is not measured (docs/BENCHMARK-METHOD.md §11).",
+  "spends_probed": 0,
+  "spends_total": 0,
+  "pool_crowd_exit": 1,
+  "results": []
+}

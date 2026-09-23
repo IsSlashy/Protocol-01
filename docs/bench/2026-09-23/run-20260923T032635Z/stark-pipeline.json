@@ -1,0 +1,415 @@
+{
+  "flow": "stark-pipeline",
+  "rpc_host": "devnet.helius-rpc.com",
+  "key": "5ZyY…coS9",
+  "what_is_timed": "prove (wasm, Node) + allocate + upload (tx v1 chunks) + verify (phase 1 + 2) + close, each to confirmed commitment. The pool instruction that consumes the buffer is NOT included.",
+  "cold_warm": "warm prover: one Node process; one discarded warm-up proof per circuit, timed apart in warmup_prove_ms and never in the samples; every timed sample proves a fresh proof and uploads it to a new buffer. The network side has no cache to be cold or warm.",
+  "prover_state": "warm: 1 discarded proof(s) per circuit before the first timed proof",
+  "warmup_prove_ms": [
+    {
+      "circuit": 0,
+      "prove_ms": 41
+    },
+    {
+      "circuit": 1,
+      "prove_ms": 36
+    },
+    {
+      "circuit": 3,
+      "prove_ms": 721
+    },
+    {
+      "circuit": 6,
+      "prove_ms": 777
+    },
+    {
+      "circuit": 7,
+      "prove_ms": 166
+    }
+  ],
+  "publishable": true,
+  "why_not": [],
+  "cpu_busy_percent_during": {
+    "mean": 11.699598098171096,
+    "max": 98.11918372271911,
+    "samples": 1839
+  },
+  "circuits": {
+    "C0": {
+      "failed_runs": 0,
+      "prove": {
+        "n": 30,
+        "min": 45,
+        "median": 490,
+        "p90": 1216,
+        "max": 2087,
+        "mean": 540.0333333333333,
+        "spread": 2042,
+        "ratio": 46.37777777777778
+      },
+      "pipeline": {
+        "n": 30,
+        "min": 14478,
+        "median": 21668,
+        "p90": 23966,
+        "max": 50071,
+        "mean": 22132.6,
+        "spread": 35593,
+        "ratio": 3.4584196712253075
+      },
+      "total": {
+        "n": 30,
+        "min": 14539,
+        "median": 22165,
+        "p90": 24535,
+        "max": 50406,
+        "mean": 22672.633333333335,
+        "spread": 35867,
+        "ratio": 3.466950959488273
+      },
+      "stages": {
+        "allocate": {
+          "n": 30,
+          "min": 655,
+          "median": 892,
+          "p90": 1015,
+          "max": 4307,
+          "mean": 992.3,
+          "spread": 3652,
+          "ratio": 6.57557251908397
+        },
+        "upload": {
+          "n": 30,
+          "min": 11963,
+          "median": 19504,
+          "p90": 19667,
+          "max": 48016,
+          "mean": 19300.333333333332,
+          "spread": 36053,
+          "ratio": 4.0137089358856475
+        },
+        "verify": {
+          "n": 30,
+          "min": 580,
+          "median": 724,
+          "p90": 824,
+          "max": 4418,
+          "mean": 949.5,
+          "spread": 3838,
+          "ratio": 7.617241379310345
+        },
+        "close": {
+          "n": 30,
+          "min": 479,
+          "median": 663.5,
+          "p90": 792,
+          "max": 4270,
+          "mean": 890.6666666666666,
+          "spread": 3791,
+          "ratio": 8.914405010438413
+        }
+      }
+    },
+    "C1": {
+      "failed_runs": 0,
+      "prove": {
+        "n": 30,
+        "min": 30,
+        "median": 447,
+        "p90": 1019,
+        "max": 1470,
+        "mean": 546.2333333333333,
+        "spread": 1440,
+        "ratio": 49
+      },
+      "pipeline": {
+        "n": 30,
+        "min": 20601,
+        "median": 27651,
+        "p90": 28080,
+        "max": 32260,
+        "mean": 27562.666666666668,
+        "spread": 11659,
+        "ratio": 1.5659434008057862
+      },
+      "total": {
+        "n": 30,
+        "min": 20698,
+        "median": 28240.5,
+        "p90": 29249,
+        "max": 32432,
+        "mean": 28108.9,
+        "spread": 11734,
+        "ratio": 1.5669146777466423
+      },
+      "stages": {
+        "allocate": {
+          "n": 30,
+          "min": 618,
+          "median": 885.5,
+          "p90": 953,
+          "max": 4565,
+          "mean": 963.8,
+          "spread": 3947,
+          "ratio": 7.38673139158576
+        },
+        "upload": {
+          "n": 30,
+          "min": 14633,
+          "median": 24847.5,
+          "p90": 24982,
+          "max": 25093,
+          "mean": 24237.8,
+          "spread": 10460,
+          "ratio": 1.7148226611084536
+        },
+        "verify": {
+          "n": 30,
+          "min": 1157,
+          "median": 1354.5,
+          "p90": 1562,
+          "max": 5428,
+          "mean": 1602.1666666666667,
+          "spread": 4271,
+          "ratio": 4.691443388072601
+        },
+        "close": {
+          "n": 30,
+          "min": 436,
+          "median": 648,
+          "p90": 750,
+          "max": 4188,
+          "mean": 758.5666666666667,
+          "spread": 3752,
+          "ratio": 9.605504587155963
+        }
+      }
+    },
+    "C3": {
+      "failed_runs": 0,
+      "prove": {
+        "n": 30,
+        "min": 22,
+        "median": 300.5,
+        "p90": 1016,
+        "max": 1596,
+        "mean": 439.93333333333334,
+        "spread": 1574,
+        "ratio": 72.54545454545455
+      },
+      "pipeline": {
+        "n": 30,
+        "min": 16867,
+        "median": 21812.5,
+        "p90": 25376,
+        "max": 27060,
+        "mean": 22478.3,
+        "spread": 10193,
+        "ratio": 1.604316120234778
+      },
+      "total": {
+        "n": 30,
+        "min": 17497,
+        "median": 22262,
+        "p90": 26026,
+        "max": 27321,
+        "mean": 22918.233333333334,
+        "spread": 9824,
+        "ratio": 1.5614676801737442
+      },
+      "stages": {
+        "allocate": {
+          "n": 30,
+          "min": 647,
+          "median": 890,
+          "p90": 1087,
+          "max": 4499,
+          "mean": 1109.3,
+          "spread": 3852,
+          "ratio": 6.9536321483771255
+        },
+        "upload": {
+          "n": 30,
+          "min": 14544,
+          "median": 19523.5,
+          "p90": 19701,
+          "max": 24696,
+          "mean": 19541.166666666668,
+          "spread": 10152,
+          "ratio": 1.698019801980198
+        },
+        "verify": {
+          "n": 30,
+          "min": 578,
+          "median": 672,
+          "p90": 875,
+          "max": 4344,
+          "mean": 1038.9666666666667,
+          "spread": 3766,
+          "ratio": 7.515570934256055
+        },
+        "close": {
+          "n": 30,
+          "min": 519,
+          "median": 643.5,
+          "p90": 769,
+          "max": 4315,
+          "mean": 788.8,
+          "spread": 3796,
+          "ratio": 8.314065510597302
+        }
+      }
+    },
+    "C6": {
+      "failed_runs": 0,
+      "prove": {
+        "n": 30,
+        "min": 31,
+        "median": 402,
+        "p90": 1638,
+        "max": 2858,
+        "mean": 788.6,
+        "spread": 2827,
+        "ratio": 92.19354838709677
+      },
+      "pipeline": {
+        "n": 30,
+        "min": 21164,
+        "median": 26492,
+        "p90": 27103,
+        "max": 50332,
+        "mean": 25983.566666666666,
+        "spread": 29168,
+        "ratio": 2.3781893781893784
+      },
+      "total": {
+        "n": 30,
+        "min": 22056,
+        "median": 26816.5,
+        "p90": 28524,
+        "max": 50540,
+        "mean": 26772.166666666668,
+        "spread": 28484,
+        "ratio": 2.2914399709829523
+      },
+      "stages": {
+        "allocate": {
+          "n": 30,
+          "min": 694,
+          "median": 899,
+          "p90": 1054,
+          "max": 4603,
+          "mean": 1112.7,
+          "spread": 3909,
+          "ratio": 6.632564841498559
+        },
+        "upload": {
+          "n": 30,
+          "min": 19294,
+          "median": 23251.5,
+          "p90": 24671,
+          "max": 48032,
+          "mean": 22918.866666666665,
+          "spread": 28738,
+          "ratio": 2.489478594381673
+        },
+        "verify": {
+          "n": 30,
+          "min": 575,
+          "median": 662,
+          "p90": 756,
+          "max": 4272,
+          "mean": 907.9333333333333,
+          "spread": 3697,
+          "ratio": 7.429565217391304
+        },
+        "close": {
+          "n": 30,
+          "min": 458,
+          "median": 689.5,
+          "p90": 1231,
+          "max": 4318,
+          "mean": 1044.1333333333334,
+          "spread": 3860,
+          "ratio": 9.427947598253276
+        }
+      }
+    },
+    "C7": {
+      "failed_runs": 0,
+      "prove": {
+        "n": 30,
+        "min": 48,
+        "median": 415.5,
+        "p90": 1086,
+        "max": 1902,
+        "mean": 558.6333333333333,
+        "spread": 1854,
+        "ratio": 39.625
+      },
+      "pipeline": {
+        "n": 30,
+        "min": 16267,
+        "median": 21776,
+        "p90": 26837,
+        "max": 30561,
+        "mean": 21547.966666666667,
+        "spread": 14294,
+        "ratio": 1.8787115018134875
+      },
+      "total": {
+        "n": 30,
+        "min": 16725,
+        "median": 22062,
+        "p90": 27266,
+        "max": 30996,
+        "mean": 22106.6,
+        "spread": 14271,
+        "ratio": 1.8532735426008968
+      },
+      "stages": {
+        "allocate": {
+          "n": 30,
+          "min": 605,
+          "median": 846,
+          "p90": 968,
+          "max": 5404,
+          "mean": 1095.6333333333334,
+          "spread": 4799,
+          "ratio": 8.932231404958678
+        },
+        "upload": {
+          "n": 30,
+          "min": 14346,
+          "median": 19522.5,
+          "p90": 22098,
+          "max": 24706,
+          "mean": 18712,
+          "spread": 10360,
+          "ratio": 1.7221525163808726
+        },
+        "verify": {
+          "n": 30,
+          "min": 573,
+          "median": 688.5,
+          "p90": 759,
+          "max": 4223,
+          "mean": 804.4,
+          "spread": 3650,
+          "ratio": 7.369982547993019
+        },
+        "close": {
+          "n": 30,
+          "min": 527,
+          "median": 666.5,
+          "p90": 1049,
+          "max": 4314,
+          "mean": 935.7666666666667,
+          "spread": 3787,
+          "ratio": 8.18595825426945
+        }
+      }
+    }
+  },
+  "raw": "raw/stark-pipeline.json"
+}

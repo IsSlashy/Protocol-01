@@ -1,0 +1,1 @@
+BENCH_JSON {"mode":"cold","node":"v24.21.0","blob_sha256":"241caaabb505b44c0d58c06a603cdc4f9ac6b338b93405dabf2048e7ed3a41e9","blob_bytes":240172,"init_ms":0.6278999999999968,"circuits":{"C6":{"prove_ms":[408.5721],"bytes":82477,"digests":["bdf9d7dd3f5230e1"]}}}

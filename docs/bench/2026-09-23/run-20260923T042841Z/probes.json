@@ -1,0 +1,417 @@
+{
+  "tools": [
+    "verify/p01-verify.mjs",
+    "verify/p01-crowd.mjs"
+  ],
+  "since_slot": 502772008,
+  "wallet_named": "5ZyY…coS9",
+  "note": "Verdicts are recorded as printed. The harnesses fund each ephemeral from the measurement wallet directly, so the funder-tracing probes are expected to name it; the relay path is not measured (docs/BENCHMARK-METHOD.md §11).",
+  "spends_probed": 31,
+  "spends_total": 31,
+  "pool_crowd_exit": 1,
+  "results": [
+    {
+      "flow": "withdrawal",
+      "run": "warmup",
+      "counted": false,
+      "spend": "5NCM1Tu8HqoQQdMMnM239g7FNoFBikf7HydkrBRF4UejKNm95xBCTwZg98qKWufPQzk1JkqPY6evd4c87DrC3Syv",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-warmup.log.txt",
+        "raw/probe-crowd-withdrawal-warmup.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "1",
+      "counted": true,
+      "spend": "3z6yNRoWpPMwGq7DopbcXwtxn9X6N98ex3H4FG4M1RrnTPkeTwSNmmKdXTocQa6NCkkASJA2DVM4rFtwhawEGX8J",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-1.log.txt",
+        "raw/probe-crowd-withdrawal-1.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "2",
+      "counted": true,
+      "spend": "2JwE3FP35Zr7FtnGb5wtHdqVaZhFujHWpRmiSMPq5uRUCsEJwU6KT82p1fbA3JBAzSMtEb67Hsf8DRNtgESxtX9v",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-2.log.txt",
+        "raw/probe-crowd-withdrawal-2.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "3",
+      "counted": true,
+      "spend": "22fHNPyebqRU3d2848uYkt5ZHSm9YVQC9zkk4aLYwxjSqm5otN38T9iTsXZvKpeqYMzSSAwb26Sc2h8TNxkxfHKv",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-3.log.txt",
+        "raw/probe-crowd-withdrawal-3.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "4",
+      "counted": true,
+      "spend": "4ZB3JF87hmWq2d8PquEEboijjKXCasvQcSXFujutSERg35idEUYasNKYm7A2sfZZp9irUJtHLJFYZsz2itHv5zu6",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-4.log.txt",
+        "raw/probe-crowd-withdrawal-4.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "5",
+      "counted": true,
+      "spend": "5uW52Y1V1wXVo2pWoJ5qdaCHML4FmFwSr79gES9QnsVmcBimspPWms4ivwugFQsQkTHeh36qSmym2ezf9UGCR9nc",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-5.log.txt",
+        "raw/probe-crowd-withdrawal-5.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "6",
+      "counted": true,
+      "spend": "4EhScT6RGDbFh6JBrksaujs3R77Vy7rEkXRW6K9hqzudtXXW4knGMi7sUu6X7XXd876da9swG2GNQrVZuMhWA93x",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-6.log.txt",
+        "raw/probe-crowd-withdrawal-6.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "7",
+      "counted": true,
+      "spend": "622oJrdRDPoFo1TcHESrJarkjoBXFP5xsyMpnTJKusKCUBWQXuHcvxgnCv3GBPfmKZtfzbbDnuEUgPeuv3kNaQGA",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-7.log.txt",
+        "raw/probe-crowd-withdrawal-7.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "8",
+      "counted": true,
+      "spend": "4WDbrocifkwu3HFeJQYpUkS4MbVv7SHCFCDCiHKPhTbMB5XUU4p2M6JocsKnZVnjrjBz2QWLHuRBkDGFYkMRLi5j",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-8.log.txt",
+        "raw/probe-crowd-withdrawal-8.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "9",
+      "counted": true,
+      "spend": "29kHFKhT643WPPUmstPs2xcWRR78iAZSmqkUEfqLfjLugZzGjZGmvwwdKjPRrWNYVRZJ1QXoyU3D4Pes4AwRmf95",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-9.log.txt",
+        "raw/probe-crowd-withdrawal-9.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "10",
+      "counted": true,
+      "spend": "3cB3yMZ6zsKxrUV7mRJMbehz1oCUS36VKTvEREySyNZgbR4rvhCjcaXFxx5tpg4j3EY7nWD7KrFrrkEHRmeozgoq",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-10.log.txt",
+        "raw/probe-crowd-withdrawal-10.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "11",
+      "counted": true,
+      "spend": "BJVsFSM8sMh8vrQhyBPn55nHUpXFPziJedAyFcdsuZa3m8H2JTsPPRraT9xJFVVxPHKsiCvwmvDcD8bGdfMm657",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-11.log.txt",
+        "raw/probe-crowd-withdrawal-11.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "12",
+      "counted": true,
+      "spend": "5aSJmgip62KU4UZTU7yhHjXKz9D4jkfm3Jn9jgMEjhCy4yS3BDex9HcAh3iBCCv3mk7up7qUmJD96mkQgCdyG4Te",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-12.log.txt",
+        "raw/probe-crowd-withdrawal-12.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "13",
+      "counted": true,
+      "spend": "TTHLmmrufkJWsv3qk5jpce4tzRBhe1mtAZFPezrhPytoQ4DFTvFHgQokozp8Kk6vwY1FLPDixEgHJK3nmfTywph",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-13.log.txt",
+        "raw/probe-crowd-withdrawal-13.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "14",
+      "counted": true,
+      "spend": "cNXypbFo9jQykK3UCdE4Ee6gqBnzddAY4EHpYtghvMg7XAAByuuXxXfmn8id9T6otcEFuTyKCvQwiXiEb4JRoyt",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-14.log.txt",
+        "raw/probe-crowd-withdrawal-14.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "15",
+      "counted": true,
+      "spend": "3d5wgHLPTL5WdRH8MjJQeeSsnJ2QcyPBp64ux2Vo3SEwR65ZgUK8EFJvTiR2CUH84CGBuJNtCdPXkA2onCJLcza2",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-15.log.txt",
+        "raw/probe-crowd-withdrawal-15.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "16",
+      "counted": true,
+      "spend": "4eNEMgRZpivudmwxKcEsMH4ZGTwxHGkxhcw6xzh3yoUkP7aS61F5SNqLHu3Q3ve1s49mXPVFmBCQNQQMrTTrpguM",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-16.log.txt",
+        "raw/probe-crowd-withdrawal-16.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "17",
+      "counted": true,
+      "spend": "HRNpZeen8EZB7kFD3sjEn4e2umYfBwskRnebdUbLefsdpBeLj5e44hWMpSBKBWpkbqQFJXWchz8duvVZEPNanYp",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-17.log.txt",
+        "raw/probe-crowd-withdrawal-17.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "18",
+      "counted": true,
+      "spend": "3bnUKd8Bva1gcDd3KQTNKtcnUU16fRNF6tN9gozo3gLu6D7Z2FexX3ieYK63HRpaHEBSvNe9hs9SFYCWAHiqwJ1U",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-18.log.txt",
+        "raw/probe-crowd-withdrawal-18.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "19",
+      "counted": true,
+      "spend": "3sf2MAc6k5dYYVXQZjP2VFGZ3Tdx6VVmGe65umiFri1Mp7ZmkrThhFwVQwo3RuBnqB9VkbLDjYfSSxoK7sy8vonn",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-19.log.txt",
+        "raw/probe-crowd-withdrawal-19.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "20",
+      "counted": true,
+      "spend": "3mZ6RRWFmHqvoobWxAG2w49yAERzZSbNXsFrUg6nZrWrxEqujn6yYCwup9MJUQpQxpXuvpe7L1bUvF65PDVE6Cnx",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-20.log.txt",
+        "raw/probe-crowd-withdrawal-20.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "21",
+      "counted": true,
+      "spend": "qgEWB8o9Do6S8TdJbbqEBypLCv3sWc4x8oPrk8L6zs6U3K9Z2KnNjGwB4Vdb4kGhoVcmsDUMTqKVeByA567kGQ3",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-21.log.txt",
+        "raw/probe-crowd-withdrawal-21.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "22",
+      "counted": true,
+      "spend": "vsnkJCd4hRCxoXz1nfU3Cm6TyaAp6c5WR6R578tp1nMJjWxWa28WkRCovaiouempmGUTmGCAP6bvw2qEpDjxXDU",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-22.log.txt",
+        "raw/probe-crowd-withdrawal-22.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "23",
+      "counted": true,
+      "spend": "32ZfDQ5FNR2Fkj5F2BUVy9VZo7fFfn7M3qcVXCvgfxQRg7wnbrVpSkviRJYznnUahfefBZc6nLJ772YQDAxbx1WZ",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-23.log.txt",
+        "raw/probe-crowd-withdrawal-23.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "24",
+      "counted": true,
+      "spend": "c73S5utub56Xivsg9KvRkbikdkFus1RSqtrRUdHUP4WkvAZJqUTtz2ZqZE5f1fGmedkxwxydNkTc5gH65JsG5JA",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-24.log.txt",
+        "raw/probe-crowd-withdrawal-24.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "25",
+      "counted": true,
+      "spend": "4KmteNPjQ1LsWnHPTthZNuap2pY7VZZCSv6kfPL2A6ft3quVgNUVnxc6faRd2JZmjhiEHbPsJbMJf2dyMFTVvRXR",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-25.log.txt",
+        "raw/probe-crowd-withdrawal-25.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "26",
+      "counted": true,
+      "spend": "WsBTyZcxk8QUB2yhWo3fiebixCpSJewNL8WrCyuH37KbSpnWk55icY2vgc8LipJMNEJaKnJjCH9wTtKKTZyfoRi",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-26.log.txt",
+        "raw/probe-crowd-withdrawal-26.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "27",
+      "counted": true,
+      "spend": "5Bz2qfsi3PFqwRKDfrLdnuRtxdn6Wb8PxZsPN341rpaXRMbbLiyNU2G1d7CB5c9HJvG7tiQMq3dN2sqht57YPy3J",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-27.log.txt",
+        "raw/probe-crowd-withdrawal-27.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "28",
+      "counted": true,
+      "spend": "6177K4hv1aQ28gLZ2B37wSJhFqvs8CStNghdMKBTEcPVvYaL2EkUwZBXV4dZG5gjH4vas9KbJTtecJgjkBqQJ3Rw",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-28.log.txt",
+        "raw/probe-crowd-withdrawal-28.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "29",
+      "counted": true,
+      "spend": "5Bm8ojuketCnHm2wRCtTJ8Vtfk5FCW8Z5Kf7iAhYXX9sKZTDcjE9JJqTa697b5yTZB8NsZd7ng9yC38AnGa4obcL",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-29.log.txt",
+        "raw/probe-crowd-withdrawal-29.log.txt"
+      ]
+    },
+    {
+      "flow": "withdrawal",
+      "run": "30",
+      "counted": true,
+      "spend": "4fBkwG3TKx3uGdaCYNUTwNXeEH3En7Wz3DXtZcQPFyaGvoRgnTDLnwytULZHbpb4z7z9Ui85hHE5N2Prwt5LR9D3",
+      "p01_verify_exit": 2,
+      "p01_verify": "the tool failed",
+      "p01_crowd_exit": 1,
+      "logs": [
+        "raw/probe-verify-withdrawal-30.log.txt",
+        "raw/probe-crowd-withdrawal-30.log.txt"
+      ]
+    }
+  ]
+}

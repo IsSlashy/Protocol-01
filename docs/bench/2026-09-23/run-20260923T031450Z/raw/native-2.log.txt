@@ -1,0 +1,381 @@
+warning: unused variable: `is_boundary`
+   --> stark\src\air\transfer.rs:565:9
+    |
+565 |     let is_boundary = periodic[4];
+    |         ^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_is_boundary`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `alphas` is never read
+    --> stark\src\compact.rs:8001:9
+     |
+7991 | pub(crate) struct FriCommitData {
+     |                   ------------- field in this struct
+...
+8001 |     pub alphas: Vec<BaseElement>,
+     |         ^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variant `LegacyGeneric` is never constructed
+    --> stark\src\compact.rs:8611:5
+     |
+8610 | pub(crate) enum QuotientSpec {
+     |                 ------------ variant in this enum
+8611 |     LegacyGeneric,
+     |     ^^^^^^^^^^^^^
+     |
+     = note: `QuotientSpec` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: `p01-stark` (lib) generated 3 warnings (run `cargo fix --lib -p p01-stark` to apply 1 suggestion)
+warning: unused import: `TRACE_WIDTH`
+   --> programs\p01_stark_verifier\tests\common\mod.rs:264:60
+    |
+264 |     use p01_stark::air::spend::{CANONICAL_DEPTH, MASK_LEN, TRACE_WIDTH};
+    |                                                            ^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `p01_stark_verifier` (test "bench_all_circuits") generated 1 warning (run `cargo fix --test "bench_all_circuits" -p p01_stark_verifier` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 0.26s
+     Running tests\bench_all_circuits.rs (target\release\deps\bench_all_circuits-d1cc09342ed97f24.exe)
+
+running 1 test
+
+prove / verify, release build, fresh CSPRNG mask per sample, N = 5
+circuit                              prove  median     max |  verify  median     max |   bytes
+                                    min ms      ms      ms |  min ms      ms      ms |        
+------------------------------------------------------------------------------------------------
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C0 subscriber_ownership (masked)        26      97     720 |     0.2     0.2     0.2 |   74365
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C1 pool_commitment                      14     168     328 |     0.3     0.3     0.3 |   94897
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C2 balance_proof                        45     162     383 |     0.3     0.3     0.4 |   95777
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C3 merkle_path                          18     142     302 |     0.2     0.2     0.2 |   79597
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C4 confidential_balance                 37      70     135 |     0.2     0.2     0.3 |   75085
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C5 transfer                             93     266     372 |     0.3     0.3     0.3 |   91261
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C6 merkle_update                        19      73     267 |     0.2     0.2     0.2 |   82477
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+[verify] step1 ok
+[verify] step1b ok
+[verify] step2a ok
+[verify] step2 ok
+[verify] step3 ok
+[verify] step3.5 ok
+[verify] step4 ok
+[verify] step5 ok
+C7 spend                                36      63     277 |     0.2     0.2     0.2 |   79405
+raw samples written to D:\Protocol-01\docs\bench\2026-09-23\run-20260923T031450Z\raw\native-2.json
+test bench_prove_and_verify_all_eight_circuits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.76s
+

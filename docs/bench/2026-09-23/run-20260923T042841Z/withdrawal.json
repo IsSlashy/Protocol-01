@@ -1,0 +1,853 @@
+{
+  "flow": "withdrawal",
+  "harness": "apps/web/lib/privacy/pool/liveDevnetUnshieldV4.test.ts",
+  "rpc_host": "devnet.helius-rpc.com",
+  "key": "5ZyY…coS9",
+  "history_cache": "warm",
+  "warmup_runs": 1,
+  "start_marker": "/^\\s*payee \\S+ \\(re-derivable/",
+  "stop_marker": "/V4 WITHDRAWAL LANDED:/",
+  "publishable": true,
+  "why_not": [],
+  "cpu_busy_percent_during": {
+    "mean": 7.943179162672828,
+    "max": 93.45522319090601,
+    "samples": 1293
+  },
+  "failed_runs": 0,
+  "product": {
+    "n": 30,
+    "min": 28891.7998046875,
+    "median": 32282.10009765625,
+    "p90": 36205,
+    "max": 38582.300048828125,
+    "mean": 32439.043326822917,
+    "spread": 9690.500244140625,
+    "ratio": 1.3354065966692876
+  },
+  "phases": {
+    "prepare": {
+      "n": 30,
+      "min": 814.199951171875,
+      "median": 1299.6500244140625,
+      "p90": 2065.800048828125,
+      "max": 2670.39990234375,
+      "mean": 1414.8033447265625,
+      "spread": 1856.199951171875,
+      "ratio": 3.279783913644619
+    },
+    "fund_ephemeral": {
+      "n": 30,
+      "min": 590.60009765625,
+      "median": 686.3499755859375,
+      "p90": 765.89990234375,
+      "max": 794.60009765625,
+      "mean": 681.95,
+      "spread": 204,
+      "ratio": 1.3454113888730428
+    },
+    "execute": {
+      "n": 30,
+      "min": 26617,
+      "median": 30304.500122070312,
+      "p90": 34023,
+      "max": 36194.2001953125,
+      "mean": 30342.289982096354,
+      "spread": 9577.2001953125,
+      "ratio": 1.359815163065428
+    }
+  },
+  "extras": {
+    "scan": {
+      "n": 30,
+      "min": 1286.60009765625,
+      "median": 1318.849853515625,
+      "p90": 1377.300048828125,
+      "max": 2182,
+      "mean": 1384.1366536458333,
+      "spread": 895.39990234375,
+      "ratio": 1.695942666237058
+    },
+    "shield_leg": {
+      "n": 28,
+      "min": 32818,
+      "median": 36327.10009765625,
+      "p90": 39745.199951171875,
+      "max": 41364,
+      "mean": 36515.18929617746,
+      "spread": 8546,
+      "ratio": 1.2604058748247913
+    }
+  },
+  "samples": [
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790137774729.8,
+      "stop_epoch_ms": 1790137806498.1,
+      "product_ms": 31768.300048828125,
+      "phases": {
+        "prepare": 2567,
+        "fund_ephemeral": 718.39990234375,
+        "execute": 28482.900146484375
+      },
+      "extras": {
+        "scan": 45670.89990234375
+      },
+      "signatures": [
+        "5NCM1Tu8HqoQQdMMnM239g7FNoFBikf7HydkrBRF4UejKNm95xBCTwZg98qKWufPQzk1JkqPY6evd4c87DrC3Syv"
+      ],
+      "spend_signature": "5NCM1Tu8HqoQQdMMnM239g7FNoFBikf7HydkrBRF4UejKNm95xBCTwZg98qKWufPQzk1JkqPY6evd4c87DrC3Syv",
+      "run": 0,
+      "counted": false,
+      "exit": 0,
+      "log": "raw\\withdrawal-warmup.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790137810112.9,
+      "stop_epoch_ms": 1790137840845.9,
+      "product_ms": 30733,
+      "phases": {
+        "prepare": 1851.10009765625,
+        "fund_ephemeral": 614.300048828125,
+        "execute": 28267.599853515625
+      },
+      "extras": {
+        "scan": 1783
+      },
+      "signatures": [
+        "3z6yNRoWpPMwGq7DopbcXwtxn9X6N98ex3H4FG4M1RrnTPkeTwSNmmKdXTocQa6NCkkASJA2DVM4rFtwhawEGX8J"
+      ],
+      "spend_signature": "3z6yNRoWpPMwGq7DopbcXwtxn9X6N98ex3H4FG4M1RrnTPkeTwSNmmKdXTocQa6NCkkASJA2DVM4rFtwhawEGX8J",
+      "run": 1,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-1.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790137844734.1,
+      "stop_epoch_ms": 1790137876705.9,
+      "product_ms": 31971.7998046875,
+      "phases": {
+        "prepare": 828.89990234375,
+        "fund_ephemeral": 762.89990234375,
+        "execute": 30380
+      },
+      "extras": {
+        "scan": 2009.400146484375
+      },
+      "signatures": [
+        "2JwE3FP35Zr7FtnGb5wtHdqVaZhFujHWpRmiSMPq5uRUCsEJwU6KT82p1fbA3JBAzSMtEb67Hsf8DRNtgESxtX9v"
+      ],
+      "spend_signature": "2JwE3FP35Zr7FtnGb5wtHdqVaZhFujHWpRmiSMPq5uRUCsEJwU6KT82p1fbA3JBAzSMtEb67Hsf8DRNtgESxtX9v",
+      "run": 2,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-2.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790137928745.4,
+      "stop_epoch_ms": 1790137958428,
+      "product_ms": 29682.60009765625,
+      "phases": {
+        "prepare": 2065.800048828125,
+        "fund_ephemeral": 725.199951171875,
+        "execute": 26891.60009765625
+      },
+      "extras": {
+        "scan": 2182,
+        "shield_leg": 32818
+      },
+      "signatures": [
+        "3RPCijwmYFQL7erDuaQiNzGMLg7X67kzknGRab9TcKtzjTnCAJzqnLFXPxhhHYF36XxQXXs8yAMho49Zm8vxnxE1",
+        "22fHNPyebqRU3d2848uYkt5ZHSm9YVQC9zkk4aLYwxjSqm5otN38T9iTsXZvKpeqYMzSSAwb26Sc2h8TNxkxfHKv"
+      ],
+      "spend_signature": "22fHNPyebqRU3d2848uYkt5ZHSm9YVQC9zkk4aLYwxjSqm5otN38T9iTsXZvKpeqYMzSSAwb26Sc2h8TNxkxfHKv",
+      "run": 3,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-3.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138013371.8,
+      "stop_epoch_ms": 1790138051954.1,
+      "product_ms": 38582.300048828125,
+      "phases": {
+        "prepare": 1622.199951171875,
+        "fund_ephemeral": 765.89990234375,
+        "execute": 36194.2001953125
+      },
+      "extras": {
+        "scan": 1297,
+        "shield_leg": 36537.10009765625
+      },
+      "signatures": [
+        "5rSLNL1BzMNG8rQW9FoofVrjQfBxENYJzjnaYRCXWRNzoebT3zdYY7cxRgfEfYqF2mY46gYzreapvUKcuN5G5SYh",
+        "4ZB3JF87hmWq2d8PquEEboijjKXCasvQcSXFujutSERg35idEUYasNKYm7A2sfZZp9irUJtHLJFYZsz2itHv5zu6"
+      ],
+      "spend_signature": "4ZB3JF87hmWq2d8PquEEboijjKXCasvQcSXFujutSERg35idEUYasNKYm7A2sfZZp9irUJtHLJFYZsz2itHv5zu6",
+      "run": 4,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-4.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138109852.5,
+      "stop_epoch_ms": 1790138147152.7,
+      "product_ms": 37300.199951171875,
+      "phases": {
+        "prepare": 2670.39990234375,
+        "fund_ephemeral": 606.800048828125,
+        "execute": 34023
+      },
+      "extras": {
+        "scan": 1345.300048828125,
+        "shield_leg": 39472.89990234375
+      },
+      "signatures": [
+        "2wtPqWfvPB8HU87AuRVfRcBry1QWvK3JjGU1iw5Qb5d7vmmpNznT1rVNqZHyPPByzj244T51EE2RKGtKb6U5fFbH",
+        "5uW52Y1V1wXVo2pWoJ5qdaCHML4FmFwSr79gES9QnsVmcBimspPWms4ivwugFQsQkTHeh36qSmym2ezf9UGCR9nc"
+      ],
+      "spend_signature": "5uW52Y1V1wXVo2pWoJ5qdaCHML4FmFwSr79gES9QnsVmcBimspPWms4ivwugFQsQkTHeh36qSmym2ezf9UGCR9nc",
+      "run": 5,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-5.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138204317.2,
+      "stop_epoch_ms": 1790138237307.4,
+      "product_ms": 32990.199951171875,
+      "phases": {
+        "prepare": 1337.699951171875,
+        "fund_ephemeral": 714.60009765625,
+        "execute": 30937.89990234375
+      },
+      "extras": {
+        "scan": 1314.199951171875,
+        "shield_leg": 38709.699951171875
+      },
+      "signatures": [
+        "y4ZPKe998ta8ostTWfvoEus3QtBkXsVpNajTWaca117HpSfQ8Zf6M3sUJ1XWGNEgSuH5YifNDrMuzazYgzA5jzm",
+        "4EhScT6RGDbFh6JBrksaujs3R77Vy7rEkXRW6K9hqzudtXXW4knGMi7sUu6X7XXd876da9swG2GNQrVZuMhWA93x"
+      ],
+      "spend_signature": "4EhScT6RGDbFh6JBrksaujs3R77Vy7rEkXRW6K9hqzudtXXW4knGMi7sUu6X7XXd876da9swG2GNQrVZuMhWA93x",
+      "run": 6,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-6.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138290261.9,
+      "stop_epoch_ms": 1790138323527.5,
+      "product_ms": 33265.60009765625,
+      "phases": {
+        "prepare": 1520,
+        "fund_ephemeral": 661.2001953125,
+        "execute": 31084.39990234375
+      },
+      "extras": {
+        "scan": 1292,
+        "shield_leg": 34544.800048828125
+      },
+      "signatures": [
+        "3wJR6MXMo9TS2pDvuci11q4xW5y71XbuMb4TeLq39EGGY9kX7E5tAZ48QB1mgP2RmP9ZsppJgByXL1oXqCJidm2N",
+        "622oJrdRDPoFo1TcHESrJarkjoBXFP5xsyMpnTJKusKCUBWQXuHcvxgnCv3GBPfmKZtfzbbDnuEUgPeuv3kNaQGA"
+      ],
+      "spend_signature": "622oJrdRDPoFo1TcHESrJarkjoBXFP5xsyMpnTJKusKCUBWQXuHcvxgnCv3GBPfmKZtfzbbDnuEUgPeuv3kNaQGA",
+      "run": 7,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-7.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138378263.7,
+      "stop_epoch_ms": 1790138411890.4,
+      "product_ms": 33626.699951171875,
+      "phases": {
+        "prepare": 880.699951171875,
+        "fund_ephemeral": 590.60009765625,
+        "execute": 32155.39990234375
+      },
+      "extras": {
+        "scan": 1317.89990234375,
+        "shield_leg": 36362.5
+      },
+      "signatures": [
+        "66U4mb5RFhkadkZLBJ18aeVDXdxm1WX3FmCQjecg1QztbPSYUCgtvaP1YReofXinsJmQgzFywcyAMeZiERQXWAVX",
+        "4WDbrocifkwu3HFeJQYpUkS4MbVv7SHCFCDCiHKPhTbMB5XUU4p2M6JocsKnZVnjrjBz2QWLHuRBkDGFYkMRLi5j"
+      ],
+      "spend_signature": "4WDbrocifkwu3HFeJQYpUkS4MbVv7SHCFCDCiHKPhTbMB5XUU4p2M6JocsKnZVnjrjBz2QWLHuRBkDGFYkMRLi5j",
+      "run": 8,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-8.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138464297.4,
+      "stop_epoch_ms": 1790138496287.6,
+      "product_ms": 31990.2001953125,
+      "phases": {
+        "prepare": 928.900146484375,
+        "fund_ephemeral": 740.599853515625,
+        "execute": 30320.7001953125
+      },
+      "extras": {
+        "scan": 1293.800048828125,
+        "shield_leg": 33965.5
+      },
+      "signatures": [
+        "3T2aHT74K2JoVvPV3wrNoiTFJ6sw2AdUPFV2DmNPRhWGajzJxUm4ANy5ssRrwXsnLVpawW63uxzvTR8tiWNDf3rH",
+        "29kHFKhT643WPPUmstPs2xcWRR78iAZSmqkUEfqLfjLugZzGjZGmvwwdKjPRrWNYVRZJ1QXoyU3D4Pes4AwRmf95"
+      ],
+      "spend_signature": "29kHFKhT643WPPUmstPs2xcWRR78iAZSmqkUEfqLfjLugZzGjZGmvwwdKjPRrWNYVRZJ1QXoyU3D4Pes4AwRmf95",
+      "run": 9,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-9.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138550527.1,
+      "stop_epoch_ms": 1790138580695.5,
+      "product_ms": 30168.39990234375,
+      "phases": {
+        "prepare": 1292,
+        "fund_ephemeral": 625,
+        "execute": 28251.39990234375
+      },
+      "extras": {
+        "scan": 1286.60009765625,
+        "shield_leg": 35868.199951171875
+      },
+      "signatures": [
+        "665wwitmHnpkeKfq9QE91vqJz7NHXxzVKjTo3TezAbfRDbgoQg12Jq4JFcMU5sdTRup2Ks7cvhuzHcpv7hPCXUKF",
+        "3cB3yMZ6zsKxrUV7mRJMbehz1oCUS36VKTvEREySyNZgbR4rvhCjcaXFxx5tpg4j3EY7nWD7KrFrrkEHRmeozgoq"
+      ],
+      "spend_signature": "3cB3yMZ6zsKxrUV7mRJMbehz1oCUS36VKTvEREySyNZgbR4rvhCjcaXFxx5tpg4j3EY7nWD7KrFrrkEHRmeozgoq",
+      "run": 10,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-10.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138637035.6,
+      "stop_epoch_ms": 1790138669443.9,
+      "product_ms": 32408.2998046875,
+      "phases": {
+        "prepare": 1122.599853515625,
+        "fund_ephemeral": 787.400146484375,
+        "execute": 30498.2998046875
+      },
+      "extras": {
+        "scan": 1350.10009765625,
+        "shield_leg": 37568
+      },
+      "signatures": [
+        "5m3KxSLqRoQnXYpL6cNKe9T18gL9HjxoJGHiMrUSn2NF8qoZt8XXCG9Yk9mj3U3y4YGwLG5byPqcpm8iqgjgzWag",
+        "BJVsFSM8sMh8vrQhyBPn55nHUpXFPziJedAyFcdsuZa3m8H2JTsPPRraT9xJFVVxPHKsiCvwmvDcD8bGdfMm657"
+      ],
+      "spend_signature": "BJVsFSM8sMh8vrQhyBPn55nHUpXFPziJedAyFcdsuZa3m8H2JTsPPRraT9xJFVVxPHKsiCvwmvDcD8bGdfMm657",
+      "run": 11,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-11.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138721617.7,
+      "stop_epoch_ms": 1790138754207.2,
+      "product_ms": 32589.5,
+      "phases": {
+        "prepare": 1560.5,
+        "fund_ephemeral": 740.699951171875,
+        "execute": 30288.300048828125
+      },
+      "extras": {
+        "scan": 1320.199951171875,
+        "shield_leg": 33660.699951171875
+      },
+      "signatures": [
+        "2EmucszyPAsDvQeAWUwqTiwpVPVSSLMUiMgb2Wyn9nCGm8CELZcSUEPggcZhyeD4Utdn9d5FUupQKmpFneuYCr29",
+        "5aSJmgip62KU4UZTU7yhHjXKz9D4jkfm3Jn9jgMEjhCy4yS3BDex9HcAh3iBCCv3mk7up7qUmJD96mkQgCdyG4Te"
+      ],
+      "spend_signature": "5aSJmgip62KU4UZTU7yhHjXKz9D4jkfm3Jn9jgMEjhCy4yS3BDex9HcAh3iBCCv3mk7up7qUmJD96mkQgCdyG4Te",
+      "run": 12,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-12.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138811527.2,
+      "stop_epoch_ms": 1790138842499.9,
+      "product_ms": 30972.699951171875,
+      "phases": {
+        "prepare": 2338.800048828125,
+        "fund_ephemeral": 618.89990234375,
+        "execute": 28015
+      },
+      "extras": {
+        "scan": 1291.300048828125,
+        "shield_leg": 38968.699951171875
+      },
+      "signatures": [
+        "4ebKLgzkAbyNSnKwUrfPsKWBQ2Aph8A9tQ1iDYQv72xyVxUgEo4aYNFFSEhvEorP5kD1WAzCnCvcqM1CX96iW3en",
+        "TTHLmmrufkJWsv3qk5jpce4tzRBhe1mtAZFPezrhPytoQ4DFTvFHgQokozp8Kk6vwY1FLPDixEgHJK3nmfTywph"
+      ],
+      "spend_signature": "TTHLmmrufkJWsv3qk5jpce4tzRBhe1mtAZFPezrhPytoQ4DFTvFHgQokozp8Kk6vwY1FLPDixEgHJK3nmfTywph",
+      "run": 13,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-13.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138899069,
+      "stop_epoch_ms": 1790138935274,
+      "product_ms": 36205,
+      "phases": {
+        "prepare": 888,
+        "fund_ephemeral": 632.60009765625,
+        "execute": 34684.39990234375
+      },
+      "extras": {
+        "scan": 1308.599853515625,
+        "shield_leg": 38181.199951171875
+      },
+      "signatures": [
+        "61L4PzMVLST6nWFiWrKUpeDgzvF7MAjPffvVTcxNiFQqEheVjWoPhb4yNwUnoVg1FE9K9vdxRFsQjmWCrV9btKc1",
+        "cNXypbFo9jQykK3UCdE4Ee6gqBnzddAY4EHpYtghvMg7XAAByuuXxXfmn8id9T6otcEFuTyKCvQwiXiEb4JRoyt"
+      ],
+      "spend_signature": "cNXypbFo9jQykK3UCdE4Ee6gqBnzddAY4EHpYtghvMg7XAAByuuXxXfmn8id9T6otcEFuTyKCvQwiXiEb4JRoyt",
+      "run": 14,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-14.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790138995015.3,
+      "stop_epoch_ms": 1790139027180.3,
+      "product_ms": 32165,
+      "phases": {
+        "prepare": 1307.300048828125,
+        "fund_ephemeral": 721.599853515625,
+        "execute": 30136.10009765625
+      },
+      "extras": {
+        "scan": 1314.800048828125,
+        "shield_leg": 41215.800048828125
+      },
+      "signatures": [
+        "39S5nKBy53MuCGYRVstVbWj7fSe3ageamLduKYF913dMNrdU76p94faWDptYU9YWkKr3F2afAFpzwbrtG7vxhhRk",
+        "3d5wgHLPTL5WdRH8MjJQeeSsnJ2QcyPBp64ux2Vo3SEwR65ZgUK8EFJvTiR2CUH84CGBuJNtCdPXkA2onCJLcza2"
+      ],
+      "spend_signature": "3d5wgHLPTL5WdRH8MjJQeeSsnJ2QcyPBp64ux2Vo3SEwR65ZgUK8EFJvTiR2CUH84CGBuJNtCdPXkA2onCJLcza2",
+      "run": 15,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-15.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139082437.1,
+      "stop_epoch_ms": 1790139111440.5,
+      "product_ms": 29003.39990234375,
+      "phases": {
+        "prepare": 814.199951171875,
+        "fund_ephemeral": 614.300048828125,
+        "execute": 27574.89990234375
+      },
+      "extras": {
+        "scan": 1330.39990234375,
+        "shield_leg": 36835.10009765625
+      },
+      "signatures": [
+        "214z1jrVj1b4YPxL3MJjUyEasRGaSbEdVHPUa1nUW8fRKZKAdDnnfUKzEZs6H4rHYHQnSqFc1e6B64X6BbNpEjGh",
+        "4eNEMgRZpivudmwxKcEsMH4ZGTwxHGkxhcw6xzh3yoUkP7aS61F5SNqLHu3Q3ve1s49mXPVFmBCQNQQMrTTrpguM"
+      ],
+      "spend_signature": "4eNEMgRZpivudmwxKcEsMH4ZGTwxHGkxhcw6xzh3yoUkP7aS61F5SNqLHu3Q3ve1s49mXPVFmBCQNQQMrTTrpguM",
+      "run": 16,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-16.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139169352.8,
+      "stop_epoch_ms": 1790139202096.8,
+      "product_ms": 32744,
+      "phases": {
+        "prepare": 1146.599853515625,
+        "fund_ephemeral": 725.2001953125,
+        "execute": 30872.199951171875
+      },
+      "extras": {
+        "scan": 1287.5,
+        "shield_leg": 39540.800048828125
+      },
+      "signatures": [
+        "2UowYFbRjFfqEJzzZaySgZTstuheJdhMu55FZwd2qXSxXh8x1uGDuRFSiDQUhwsuFd4t5uYcQZoBjMVuMqyKNJKg",
+        "HRNpZeen8EZB7kFD3sjEn4e2umYfBwskRnebdUbLefsdpBeLj5e44hWMpSBKBWpkbqQFJXWchz8duvVZEPNanYp"
+      ],
+      "spend_signature": "HRNpZeen8EZB7kFD3sjEn4e2umYfBwskRnebdUbLefsdpBeLj5e44hWMpSBKBWpkbqQFJXWchz8duvVZEPNanYp",
+      "run": 17,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-17.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139255422.4,
+      "stop_epoch_ms": 1790139287821.6,
+      "product_ms": 32399.2001953125,
+      "phases": {
+        "prepare": 1279.7001953125,
+        "fund_ephemeral": 765.7998046875,
+        "execute": 30353.7001953125
+      },
+      "extras": {
+        "scan": 1291,
+        "shield_leg": 34868.599853515625
+      },
+      "signatures": [
+        "39Qyd73RhMEizwyzP4AyG5gezXzVyjg7Kqayfcs6CRcub8a4W9aCbzRstfs84dHLZBpSGPAjAQbFwAsnB8fpQ1Xx",
+        "3bnUKd8Bva1gcDd3KQTNKtcnUU16fRNF6tN9gozo3gLu6D7Z2FexX3ieYK63HRpaHEBSvNe9hs9SFYCWAHiqwJ1U"
+      ],
+      "spend_signature": "3bnUKd8Bva1gcDd3KQTNKtcnUU16fRNF6tN9gozo3gLu6D7Z2FexX3ieYK63HRpaHEBSvNe9hs9SFYCWAHiqwJ1U",
+      "run": 18,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-18.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139347601.5,
+      "stop_epoch_ms": 1790139383996.6,
+      "product_ms": 36395.10009765625,
+      "phases": {
+        "prepare": 954.5,
+        "fund_ephemeral": 794.60009765625,
+        "execute": 34646
+      },
+      "extras": {
+        "scan": 1331.400146484375,
+        "shield_leg": 41364
+      },
+      "signatures": [
+        "5ifFMLPvsAmXtLjDnE9U7zqfC45RjgUuC57dfACfw7F25ec8XeD8rF2ryFdPNaDr5B43VB8JHPwX3UfyZFTsd4PS",
+        "3sf2MAc6k5dYYVXQZjP2VFGZ3Tdx6VVmGe65umiFri1Mp7ZmkrThhFwVQwo3RuBnqB9VkbLDjYfSSxoK7sy8vonn"
+      ],
+      "spend_signature": "3sf2MAc6k5dYYVXQZjP2VFGZ3Tdx6VVmGe65umiFri1Mp7ZmkrThhFwVQwo3RuBnqB9VkbLDjYfSSxoK7sy8vonn",
+      "run": 19,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-19.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139442255.9,
+      "stop_epoch_ms": 1790139473701.1,
+      "product_ms": 31445.2001953125,
+      "phases": {
+        "prepare": 1103.10009765625,
+        "fund_ephemeral": 597.800048828125,
+        "execute": 29744.300048828125
+      },
+      "extras": {
+        "scan": 1287,
+        "shield_leg": 39745.199951171875
+      },
+      "signatures": [
+        "3EVJsTFRhbF5JNQoeQj3Crzb7RSrU5QfzA7GDzrZfY2X9zpzrpnqSoNkLxtkC5MutzSf78mtP8n58mnC5eZCy1wW",
+        "3mZ6RRWFmHqvoobWxAG2w49yAERzZSbNXsFrUg6nZrWrxEqujn6yYCwup9MJUQpQxpXuvpe7L1bUvF65PDVE6Cnx"
+      ],
+      "spend_signature": "3mZ6RRWFmHqvoobWxAG2w49yAERzZSbNXsFrUg6nZrWrxEqujn6yYCwup9MJUQpQxpXuvpe7L1bUvF65PDVE6Cnx",
+      "run": 20,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-20.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139526705.1,
+      "stop_epoch_ms": 1790139556438.3,
+      "product_ms": 29733.199951171875,
+      "phases": {
+        "prepare": 1368.39990234375,
+        "fund_ephemeral": 784.699951171875,
+        "execute": 27580.10009765625
+      },
+      "extras": {
+        "scan": 1346.199951171875,
+        "shield_leg": 34593.89990234375
+      },
+      "signatures": [
+        "2z4dPttNyygntgp9aKKW6PxgE6QSYAoLVmwbYf45wFgJdb3t7ohM5S1jN8nArUtb9fCw5YzeMwr1ZEAg1mghonxn",
+        "qgEWB8o9Do6S8TdJbbqEBypLCv3sWc4x8oPrk8L6zs6U3K9Z2KnNjGwB4Vdb4kGhoVcmsDUMTqKVeByA567kGQ3"
+      ],
+      "spend_signature": "qgEWB8o9Do6S8TdJbbqEBypLCv3sWc4x8oPrk8L6zs6U3K9Z2KnNjGwB4Vdb4kGhoVcmsDUMTqKVeByA567kGQ3",
+      "run": 21,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-21.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139611107.7,
+      "stop_epoch_ms": 1790139643895.9,
+      "product_ms": 32788.199951171875,
+      "phases": {
+        "prepare": 2033.5,
+        "fund_ephemeral": 594.400146484375,
+        "execute": 30160.2998046875
+      },
+      "extras": {
+        "scan": 1319.7998046875,
+        "shield_leg": 36291.7001953125
+      },
+      "signatures": [
+        "qoZAkHRC86beyHxsHdF5qcRjtD99QHPdtiay6ztSEch4FtdUZ7n2tGfmPK2Ur35WzLi4MiYLayH62L1jgPdyZP7",
+        "vsnkJCd4hRCxoXz1nfU3Cm6TyaAp6c5WR6R578tp1nMJjWxWa28WkRCovaiouempmGUTmGCAP6bvw2qEpDjxXDU"
+      ],
+      "spend_signature": "vsnkJCd4hRCxoXz1nfU3Cm6TyaAp6c5WR6R578tp1nMJjWxWa28WkRCovaiouempmGUTmGCAP6bvw2qEpDjxXDU",
+      "run": 22,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-22.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139695202,
+      "stop_epoch_ms": 1790139730090.9,
+      "product_ms": 34888.89990234375,
+      "phases": {
+        "prepare": 1100.300048828125,
+        "fund_ephemeral": 748.300048828125,
+        "execute": 33040.2998046875
+      },
+      "extras": {
+        "scan": 1347.89990234375,
+        "shield_leg": 32879.199951171875
+      },
+      "signatures": [
+        "4MSeiN31k6WYwpce5xmaEFawjkbCyKfsmxCQgkHHftxUmAMLx7jUqmepSaocZ8BrYtjZ4s3mehyTQMXdDcBGdyjH",
+        "32ZfDQ5FNR2Fkj5F2BUVy9VZo7fFfn7M3qcVXCvgfxQRg7wnbrVpSkviRJYznnUahfefBZc6nLJ772YQDAxbx1WZ"
+      ],
+      "spend_signature": "32ZfDQ5FNR2Fkj5F2BUVy9VZo7fFfn7M3qcVXCvgfxQRg7wnbrVpSkviRJYznnUahfefBZc6nLJ772YQDAxbx1WZ",
+      "run": 23,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-23.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139782024.2,
+      "stop_epoch_ms": 1790139812686.5,
+      "product_ms": 30662.300048828125,
+      "phases": {
+        "prepare": 1520.900146484375,
+        "fund_ephemeral": 715.89990234375,
+        "execute": 28425.5
+      },
+      "extras": {
+        "scan": 1339.699951171875,
+        "shield_leg": 33602.699951171875
+      },
+      "signatures": [
+        "4Q31YXNnYMrzmTz65drNhW4fExhgWfXQy1zkYgewtv7CLZMhE2CGcrEUzVoahsUcF5cyRSiFEJXsR7s73zwAn2BG",
+        "c73S5utub56Xivsg9KvRkbikdkFus1RSqtrRUdHUP4WkvAZJqUTtz2ZqZE5f1fGmedkxwxydNkTc5gH65JsG5JA"
+      ],
+      "spend_signature": "c73S5utub56Xivsg9KvRkbikdkFus1RSqtrRUdHUP4WkvAZJqUTtz2ZqZE5f1fGmedkxwxydNkTc5gH65JsG5JA",
+      "run": 24,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-24.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139866200.2,
+      "stop_epoch_ms": 1790139895607.2,
+      "product_ms": 29407,
+      "phases": {
+        "prepare": 1046.60009765625,
+        "fund_ephemeral": 602.89990234375,
+        "execute": 27757.5
+      },
+      "extras": {
+        "scan": 1377.300048828125,
+        "shield_leg": 35022.60009765625
+      },
+      "signatures": [
+        "54JDUKAHYHam93KE5cTquguEmCcwr2RdsvnUnJZiuqb9bz6nxotQYhntbKRyuRZhRqpEV6T3tuCWVGkfzeNM9Dgf",
+        "4KmteNPjQ1LsWnHPTthZNuap2pY7VZZCSv6kfPL2A6ft3quVgNUVnxc6faRd2JZmjhiEHbPsJbMJf2dyMFTVvRXR"
+      ],
+      "spend_signature": "4KmteNPjQ1LsWnHPTthZNuap2pY7VZZCSv6kfPL2A6ft3quVgNUVnxc6faRd2JZmjhiEHbPsJbMJf2dyMFTVvRXR",
+      "run": 25,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-25.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790139950879.1,
+      "stop_epoch_ms": 1790139984302.6,
+      "product_ms": 33423.5,
+      "phases": {
+        "prepare": 1246.89990234375,
+        "fund_ephemeral": 662.39990234375,
+        "execute": 31514.2001953125
+      },
+      "extras": {
+        "scan": 1288.199951171875,
+        "shield_leg": 36922.300048828125
+      },
+      "signatures": [
+        "21VdCahtXvytav26kZQJrURoK4g6pYfR9vk9UwDVaVtEfxEEDjXEZtYgaFTUJPkwkmCoLywxJTrP1ELa3fFXif1i",
+        "WsBTyZcxk8QUB2yhWo3fiebixCpSJewNL8WrCyuH37KbSpnWk55icY2vgc8LipJMNEJaKnJjCH9wTtKKTZyfoRi"
+      ],
+      "spend_signature": "WsBTyZcxk8QUB2yhWo3fiebixCpSJewNL8WrCyuH37KbSpnWk55icY2vgc8LipJMNEJaKnJjCH9wTtKKTZyfoRi",
+      "run": 26,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-26.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140036043.4,
+      "stop_epoch_ms": 1790140067926,
+      "product_ms": 31882.60009765625,
+      "phases": {
+        "prepare": 1409.2001953125,
+        "fund_ephemeral": 623.699951171875,
+        "execute": 29849.699951171875
+      },
+      "extras": {
+        "scan": 1331.39990234375,
+        "shield_leg": 33228.199951171875
+      },
+      "signatures": [
+        "5STPNRFKKyg97d5xUwzuB2tvLKmFjrXSVaUSPxKkFm1MKkBQQt98L5ZXT6iKxED7rC3fDRD5DmXJb9CHHqawH8oS",
+        "5Bz2qfsi3PFqwRKDfrLdnuRtxdn6Wb8PxZsPN341rpaXRMbbLiyNU2G1d7CB5c9HJvG7tiQMq3dN2sqht57YPy3J"
+      ],
+      "spend_signature": "5Bz2qfsi3PFqwRKDfrLdnuRtxdn6Wb8PxZsPN341rpaXRMbbLiyNU2G1d7CB5c9HJvG7tiQMq3dN2sqht57YPy3J",
+      "run": 27,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-27.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140122382.5,
+      "stop_epoch_ms": 1790140151677.7,
+      "product_ms": 29295.199951171875,
+      "phases": {
+        "prepare": 941,
+        "fund_ephemeral": 614.10009765625,
+        "execute": 27740.099853515625
+      },
+      "extras": {
+        "scan": 1300.099853515625,
+        "shield_leg": 35971.800048828125
+      },
+      "signatures": [
+        "5KyAkz6YCviAzHmS6czHUQJGUeYa9R55mdZEe8RaxFEgcZvHWojKJftG5muirxyohGbt2fwQNh2w933mAq5mPKiA",
+        "6177K4hv1aQ28gLZ2B37wSJhFqvs8CStNghdMKBTEcPVvYaL2EkUwZBXV4dZG5gjH4vas9KbJTtecJgjkBqQJ3Rw"
+      ],
+      "spend_signature": "6177K4hv1aQ28gLZ2B37wSJhFqvs8CStNghdMKBTEcPVvYaL2EkUwZBXV4dZG5gjH4vas9KbJTtecJgjkBqQJ3Rw",
+      "run": 28,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-28.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140209234.2,
+      "stop_epoch_ms": 1790140244794.4,
+      "product_ms": 35560.199951171875,
+      "phases": {
+        "prepare": 2585.300048828125,
+        "fund_ephemeral": 710.300048828125,
+        "execute": 32264.599853515625
+      },
+      "extras": {
+        "scan": 1333,
+        "shield_leg": 39194.7001953125
+      },
+      "signatures": [
+        "3nva7QRvUW1HwSQANZ5AftyiAkrzYdqFwVG3EnEtfJFjywgqhTXYw4GXpt5beAf73G3pnpnH5kMEaHUpBeaPaHiM",
+        "5Bm8ojuketCnHm2wRCtTJ8Vtfk5FCW8Z5Kf7iAhYXX9sKZTDcjE9JJqTa697b5yTZB8NsZd7ng9yC38AnGa4obcL"
+      ],
+      "spend_signature": "5Bm8ojuketCnHm2wRCtTJ8Vtfk5FCW8Z5Kf7iAhYXX9sKZTDcjE9JJqTa697b5yTZB8NsZd7ng9yC38AnGa4obcL",
+      "run": 29,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-29.log.txt"
+    },
+    {
+      "ok": true,
+      "missing": [],
+      "start_epoch_ms": 1790140297658.6,
+      "stop_epoch_ms": 1790140326550.4,
+      "product_ms": 28891.7998046875,
+      "phases": {
+        "prepare": 1679,
+        "fund_ephemeral": 595.7998046875,
+        "execute": 26617
+      },
+      "extras": {
+        "scan": 1307,
+        "shield_leg": 34491.400146484375
+      },
+      "signatures": [
+        "5m5idcFczCcnCi9qUZqoacJyBQ5cgJPnh3PhX79SRqmJYfzj2JYPHsvELjGdCEd8Vov7RkubbrvW6VytGU9XrZk1",
+        "4fBkwG3TKx3uGdaCYNUTwNXeEH3En7Wz3DXtZcQPFyaGvoRgnTDLnwytULZHbpb4z7z9Ui85hHE5N2Prwt5LR9D3"
+      ],
+      "spend_signature": "4fBkwG3TKx3uGdaCYNUTwNXeEH3En7Wz3DXtZcQPFyaGvoRgnTDLnwytULZHbpb4z7z9Ui85hHE5N2Prwt5LR9D3",
+      "run": 30,
+      "counted": true,
+      "exit": 0,
+      "log": "raw\\withdrawal-30.log.txt"
+    }
+  ]
+}

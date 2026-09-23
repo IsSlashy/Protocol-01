@@ -1,0 +1,1018 @@
+=== STARK pipeline live timing =========================================
+  rpc              https://devnet.helius-rpc.com/?api-key=<redacted>
+  circuits         0, 1, 3, 6, 7   runs 30   path L2   pacing default
+  warm-up          C0: 41 ms (discarded, not uploaded)
+  warm-up          C1: 36 ms (discarded, not uploaded)
+  warm-up          C3: 721 ms (discarded, not uploaded)
+  warm-up          C6: 777 ms (discarded, not uploaded)
+  warm-up          C7: 166 ms (discarded, not uploaded)
+  proved           C0 subscriber_ownership (legacy subscription): 74 365 B in 45 ms (Node, shipped blob)
+  proved           C1 pool_commitment (v3 shield pair): 94 897 B in 104 ms (Node, shipped blob)
+  proved           C3 merkle_path (v3 unshield pair): 79 597 B in 102 ms (Node, shipped blob)
+  proved           C6 merkle update (shield): 82 477 B in 76 ms (Node, shipped blob)
+  proved           C7 spend (unshield v4, subscription): 79 405 B in 700 ms (Node, shipped blob)
+  verifier         DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
+  authority        5ZyYaB8r29K1Mjm8nuEYy7AkNQREwyAsHpb8HSHLcoS9   balance 32.4896 SOL
+  buffer (0)       L2 4SJRy9KTfYpfKJqx5inbksFrxb61JUZkjJKu2R97Es34  PDA GEi5ThTd5QCxteFvAXcFNckr7Lxcn6HUdihSH4bsXcyn
+  buffer (1)       L2 74saY3KqdpQUnmfwBVaB2otmd8nVH2mkNA9f6JJg9vXz  PDA 8tqREsMGEbgwzRUeacLdLPq4ZU1VdoZ6mAaRPQqm925s
+  buffer (3)       L2 Bj5PUEjASGrivzRVkN5h2muW8KnXB76JigApyRHy2tHq  PDA GgMbmx4JFoBtfyv5faZXGaZS68d2TexoUehxXtNN4qew
+  buffer (6)       L2 ELvSrR23fchzA6FqLdQr2sTRcMR7sdgBgt5P2x3pjxLF  PDA GeQiBTjFgRBGsMqWPEmsq5vCMJ5ZRFx6VZwVrSduZovy
+  buffer (7)       L2 5ym7N14SwfhBRB16BpY773dJZ2EQ6YGZEQeJPXkdZPJy  PDA 775xXJVFHyDnz43mn9Dmg3miqHF3Ciqr8zqX99scuRfo
+
+  [C0 subscriber_ownership (legacy subscription)] run 1
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13060 ms + confirm 1194 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 45 ms | allocate 920 ms | upload 14301 ms | verify 716 ms | close 741 ms | STARK pipeline 16678 ms | prove + pipeline 16723 ms
+    verify tx YE6Rqz4hW3myKAc7kzAowNHQp5KA4Y8568f6oY8ucw6WUAUpXcs56Ear9xU8qMPHBNua2pZQENPnZU4MKdvHzQ2
+    slot 502749623  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991148 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 1
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18452 ms + confirm 1223 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 104 ms | allocate 876 ms | upload 19764 ms | verify 1536 ms | close 598 ms | STARK pipeline 22775 ms | prove + pipeline 22879 ms
+    verify tx 396Em1DitiEhj2gLXXntUJyb3RTghA1AsvenAV1y3E2u73T3cYmdxqifCXpxGafvQnu23wSqfUEroWKsYgHZ6piM, 5NSKniZ9bbJmS56XUv8YVwZLnfTiTKRAHLy3w7EbBkRy2Mi5h4xSWrtu2Tyh9zFoY59Mdk6PkMKYwkC7BRucZxGt
+    slot 502749764  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 390730 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 1
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18273 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 102 ms | allocate 862 ms | upload 19567 ms | verify 579 ms | close 580 ms | STARK pipeline 21588 ms | prove + pipeline 21690 ms
+    verify tx 2UGY6gb8NXHjVEgizWv3BdUDQpuESL3cVFYKgFFShGstP4PHRtU7pSuhrRDizZ2xkiHvq5xnaBxUYEnuvSCEpGPZ
+    slot 502749898  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878062 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C6 merkle update (shield)] run 1
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18328 ms + confirm 1206 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 76 ms | allocate 1120 ms | upload 19558 ms | verify 4257 ms | close 710 ms | STARK pipeline 25645 ms | prove + pipeline 25721 ms
+    verify tx DnFGfTSFPg6L7AJXTremx6HViBhn14mTXXQh2JXsVHXqTLCm4L2s3N7RVWHVKYXJzt3jzZYoFYqjWkHH8veso7x
+    slot 502750051  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 901486 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+ws error: Unexpected server response: 429
+
+  [C7 spend (unshield v4, subscription)] run 1
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18374 ms + confirm 1192 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 700 ms | allocate 5404 ms | upload 19676 ms | verify 603 ms | close 884 ms | STARK pipeline 26566 ms | prove + pipeline 27266 ms
+    verify tx 2sZu4TmhjErRv7iDPZ9Q7XVE2scY6EVxJ7kcKTEZY4r8xPQW3oxkC9X1LcziFGUGFTsLrcJHsstTrhM8rkXKXpf4
+    slot 502750211  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890580 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 2
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18198 ms + confirm 1203 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1308 ms | allocate 879 ms | upload 19631 ms | verify 590 ms | close 741 ms | STARK pipeline 21841 ms | prove + pipeline 23149 ms
+    verify tx 4SHgrsTAULydxmXpYGjV9uT6RQykw32RuJkqPonUCBXtpP2ngZ6qfnjySs7EXdwJjJmiS1RirG9AcZkM54Ybxj2L
+    slot 502750353  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991950 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 2
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23395 ms + confirm 1203 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 108 ms | allocate 1011 ms | upload 24633 ms | verify 1250 ms | close 604 ms | STARK pipeline 27498 ms | prove + pipeline 27606 ms
+    verify tx 6xN1b4AkBtHkYYpM3MVqAuTzv12ajQGGsPEybfqjkjTJhUCWWNuHwWD4ThhLf8THj83JmuKA4wU6EaWjri75mzC, 4gT15P7aWtPYcaT6oh1NtV8uNfrLiReiHDkrS1yKsrVyij5xQY2EvofYzTtwdVKCYF4cf52gnnLRU978BdroFk6g
+    slot 502750521  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 393165 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 2
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18238 ms + confirm 1210 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 139 ms | allocate 647 ms | upload 19471 ms | verify 687 ms | close 658 ms | STARK pipeline 21462 ms | prove + pipeline 21601 ms
+    verify tx 4rvVvVAtz1VmVq6z64A6vdNYasUKhT367ZtKoz71PG58U8sn8LuksqoR64qaJQaSRPoortp3kCyK5nJwkRGcMpFF
+    slot 502750652  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878298 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 2
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23308 ms + confirm 1201 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 104 ms | allocate 1003 ms | upload 24538 ms | verify 689 ms | close 625 ms | STARK pipeline 26855 ms | prove + pipeline 26959 ms
+    verify tx 52c1ECVZXJgt3sZWcyYraTzynCLFcXWxbMurWQ7HaJDaxEa97Z3b8s1i4RYe3thcBM6i9QdeK9qQqxb9QeJQyhHs
+    slot 502750816  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900624 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 2
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13132 ms + confirm 1210 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 500 ms | allocate 751 ms | upload 14420 ms | verify 573 ms | close 647 ms | STARK pipeline 16391 ms | prove + pipeline 16891 ms
+    verify tx 2v5ygZvk59dpYqXG3dMzf8kcbCXQ2PePFcRvrSguJFwBLqw9G6dDBYm3AH9xQXW4wq9emMiwmSh7vvmzRdpts9aM
+    slot 502750915  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 889483 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 3
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18272 ms + confirm 1192 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 45 ms | allocate 655 ms | upload 19483 ms | verify 588 ms | close 562 ms | STARK pipeline 21289 ms | prove + pipeline 21334 ms
+    verify tx 3dTgEpCwRsPXpg8vXVHdBVvMUDzvusXbtXmDF1kAtY7GHpTZEwjFBdfstcWHKy8xAcmUiuKWUtJPk1yaf5sUEu4H
+    slot 502751044  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990314 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 3
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23645 ms + confirm 1202 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 308 ms | allocate 914 ms | upload 24934 ms | verify 1271 ms | close 653 ms | STARK pipeline 27772 ms | prove + pipeline 28080 ms
+    verify tx 2gaq3rpNUbHdcTURmwexQpYyDWB1JUz9LToL6ZRE4Jte2DRtZFiWNgAnNqZR374zysL3wvkAwdcSrtcddhJJXyHg, 4zdb91TeFeaDbV1bEAjEGuaXUhL7yoApeWGMPw1xik3xth8rk5YxH6V8EmqtSmK4Erz4rKuFPTPDR6G4tvQbt98N
+    slot 502751218  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392150 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+
+  [C3 merkle_path (v3 unshield pair)] run 3
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18444 ms + confirm 1230 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 144 ms | allocate 984 ms | upload 19701 ms | verify 4344 ms | close 1503 ms | STARK pipeline 26532 ms | prove + pipeline 26676 ms
+    verify tx 5BWNiiJBaKPqnU9fqXebakN9KdzvjZXUKVbUk9WYh3LZ6SyNusj4ynKs7sPnB8jJE29wFqcMsxd68sN23VQh8Uhv
+    slot 502751374  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878913 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C6 merkle update (shield)] run 3
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18319 ms + confirm 1195 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 141 ms | allocate 4603 ms | upload 19568 ms | verify 4272 ms | close 649 ms | STARK pipeline 29092 ms | prove + pipeline 29233 ms
+    verify tx 5sqQfA89VkBZw6K535BgvLcp9p8Spuq182bS5cwTzGsFNnuqBnDGNUbBZCczNnK4S6SNYuudb36k8cDzHJypQt5i
+    slot 502751555  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 901358 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 3
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18342 ms + confirm 1198 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 191 ms | allocate 799 ms | upload 19565 ms | verify 688 ms | close 726 ms | STARK pipeline 21779 ms | prove + pipeline 21970 ms
+    verify tx 54g7KVjhNrWEjMhDX2KzhMcB2AeVuTkVx6pUYcmFsNWojcDXqC4gUV253toKqDmL79HBqdsvmmbxzEJcvkokCzGu
+    slot 502751688  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890876 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 4
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18209 ms + confirm 1194 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1329 ms | allocate 775 ms | upload 19493 ms | verify 714 ms | close 663 ms | STARK pipeline 21644 ms | prove + pipeline 22973 ms
+    verify tx 2YrzrdCbF2TeNQekgdGpRNZKbQheXDhVJMrHrdDTqez3q6y7BvnvEAEYUvqwNa1MdC8jGPNuX1c7gpjAuSUN9d2B
+    slot 502751829  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991720 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 4
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23660 ms + confirm 1202 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 427 ms | allocate 810 ms | upload 24891 ms | verify 1510 ms | close 747 ms | STARK pipeline 27958 ms | prove + pipeline 28385 ms
+    verify tx 4TQLj7k5fyCkoSaw7pza67J346VZtTUG3GfBhJgGSeLr9nXBHDzHr8SjbbtMC9cJKKaww3qsd4j1KBey7i2k29n3, 3bJTmUUcwRx4YjB88JYAy32nET9H6efv2rqqF1kcMqYTBYQWoH3NMe6RthxQJ3JjWFQtUZBT2g27YKtDQsnYSuWq
+    slot 502752001  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391639 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 4
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18422 ms + confirm 1250 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 35 ms | allocate 1087 ms | upload 19699 ms | verify 646 ms | close 617 ms | STARK pipeline 22050 ms | prove + pipeline 22085 ms
+    verify tx 2aFnt9Uz4knX84vuBqFWHG7NqR6tRwcbgjmotrTCZbkYm5hLewLHjwcRXhtsB5q2P9HiZWMuFc8FNwfne1z2c6aj
+    slot 502752137  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 880167 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C6 merkle update (shield)] run 4
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18346 ms + confirm 1199 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 573 ms | allocate 862 ms | upload 19634 ms | verify 617 ms | close 4251 ms | STARK pipeline 25363 ms | prove + pipeline 25936 ms
+    verify tx 4vrsxAH5Km9rfvhLHdoazuatFKga1fvJbHmA2x934ynryHKrkuWkQzZwCv7KotdptYzppTJyPwW7JJ2aV9MkcT8U
+    slot 502752270  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 903302 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 4
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18314 ms + confirm 1212 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 318 ms | allocate 775 ms | upload 19627 ms | verify 759 ms | close 692 ms | STARK pipeline 21853 ms | prove + pipeline 22171 ms
+    verify tx BbqynpeSFmoYRgd8g3QbDu6NXrKrDEFi3V7e96ZAk5kSWEwWyxDmiVa2LU3F1tkiJZ6bm1AXeJCQpumALFmkfUN
+    slot 502752424  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892400 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 5
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18255 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 811 ms | allocate 733 ms | upload 19543 ms | verify 621 ms | close 554 ms | STARK pipeline 21452 ms | prove + pipeline 22263 ms
+    verify tx 2vwVRttGxwDPCkHXZmuigaBE8R4T71B43HCepUJNj86kmRiJ5x3M8XL9kGPmirFxZehpgc7xxFALWQg3xHpGd7Hd
+    slot 502752559  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990613 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 5
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23717 ms + confirm 1205 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 202 ms | allocate 783 ms | upload 24945 ms | verify 1229 ms | close 681 ms | STARK pipeline 27639 ms | prove + pipeline 27841 ms
+    verify tx 5joUj5F4tnknNWUAFadbLBBEmpyXawGUvS54ff73e1eSunoomDpQFyzhdSE8oNFJ5fYNKonHhZRKpjpejQux4Hp1, 2dsjdybvNPgDQBzg3KCf5iqVxLMdcufqt2JkiGR1WreCULFiwJpjRnGNnLeA4dvQCoFXvX8h3qGJaihZyAeQVPyQ
+    slot 502752726  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 393163 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 5
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18259 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 108 ms | allocate 1007 ms | upload 19491 ms | verify 580 ms | close 535 ms | STARK pipeline 21613 ms | prove + pipeline 21721 ms
+    verify tx 4mqAxP93Cr5nSvHk1AGmViLu7kL4CzkuRYRcMApVEEVq1xy1uWdEaQL6g62dLjSFS7PTZ3r5Koehe5etwqjpEXMG
+    slot 502752857  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879449 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 5
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18135 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1611 ms | allocate 694 ms | upload 19366 ms | verify 650 ms | close 518 ms | STARK pipeline 21228 ms | prove + pipeline 22839 ms
+    verify tx 27QFEY6CqLR6YZr1oREvphyBue5Qi9g2L95Cx2FAWNwAUzaeeJSPT16cEyqM4wTJVtKNSeubH4D4v3p1FX5dge7Z
+    slot 502752995  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900491 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 5
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23478 ms + confirm 1199 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 292 ms | allocate 821 ms | upload 24706 ms | verify 989 ms | close 628 ms | STARK pipeline 27144 ms | prove + pipeline 27436 ms
+    verify tx 25tpYqfa82bfyUdxQhKyNvLqerr8zPWnMDqMfq3ZUzTVs3KAUBvvdMaeJgqH2up3z1gNpPwsbqXv9mcShvUX4ikJ
+    slot 502753157  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892313 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C0 subscriber_ownership (legacy subscription)] run 6
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 10840 ms + confirm 1204 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1216 ms | allocate 881 ms | upload 12148 ms | verify 598 ms | close 4270 ms | STARK pipeline 17895 ms | prove + pipeline 19111 ms
+    verify tx 2ucZ1zDWnuDX84SH667jG5ZMCBF9uGw7EpkW4D5wis4xDztjsSMQRgNmBRPR8g5fhs7BNziTTTwWdQ7PQSavMPAV
+    slot 502753254  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991750 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 6
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23685 ms + confirm 1214 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 441 ms | allocate 722 ms | upload 24985 ms | verify 1272 ms | close 436 ms | STARK pipeline 27416 ms | prove + pipeline 27857 ms
+    verify tx 3wT8u9hNot5FUUTPH246oxioQSdyDZ3DUcsHtsnj7arHR2dZm9HcGWRWSiMUFyP8ryGqAE7Ms8xFYdVp2Rg61bvD, DBjThUKuwXh75WRXStg5ZY5sqdtYfkpDAG5rPkbzbkuP2rveKGY65ZTQQ4tdHSyMXasfgVwbHqrvob4VzftMh5n
+    slot 502753447  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391970 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 6
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18051 ms + confirm 1222 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 762 ms | allocate 750 ms | upload 19376 ms | verify 875 ms | close 623 ms | STARK pipeline 21624 ms | prove + pipeline 22386 ms
+    verify tx 2RxNaeYBeLfN1BVK2P2mhG3j4MGUfKYVC9Hp7ZE4r3Nczn7Z7gBwE37KVGg4As5L5AXhEHVDqiFqpvb3GcRf79Fd
+    slot 502753584  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879820 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 6
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23344 ms + confirm 1194 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 183 ms | allocate 933 ms | upload 24575 ms | verify 604 ms | close 602 ms | STARK pipeline 26714 ms | prove + pipeline 26897 ms
+    verify tx GvCsS42hHVF5xdRZZMQPRgCnqhPanM3gC9E226mHmf5zMjmUPXJaWFqMBXLqTybxmnTLYm9BaGWy3hVKxiGt6P9
+    slot 502753748  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900490 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C7 spend (unshield v4, subscription)] run 6
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13252 ms + confirm 1204 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 692 ms | allocate 711 ms | upload 14482 ms | verify 4223 ms | close 571 ms | STARK pipeline 19987 ms | prove + pipeline 20679 ms
+    verify tx eZj8fLAwHR4dtbt2by4M7KuGTR3VkjGqmh68bex5KeWLeWfsqeMAxtX5Mr4Jq3n757UKn7bbZe8GX7vxV9Uo3LH
+    slot 502753875  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890549 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 7
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18314 ms + confirm 1201 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 699 ms | allocate 711 ms | upload 19543 ms | verify 733 ms | close 673 ms | STARK pipeline 21660 ms | prove + pipeline 22359 ms
+    verify tx 5wTtM2NwBdaJwjQjqKndPLXEBDWu2Hyk4D1yfTpdVVANU6YJCDMPLJ6JnigkPbAzXaSCfD8EiiM6oRiXnYvjvEg
+    slot 502754009  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991640 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 7
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23563 ms + confirm 1198 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 279 ms | allocate 947 ms | upload 24854 ms | verify 1410 ms | close 768 ms | STARK pipeline 27980 ms | prove + pipeline 28259 ms
+    verify tx 3cwDHF8rPwnqVXTxYHnpDiz8UoGsM8SwwkWLvCxDPdTJ7fzmQXuectuLDG1QSzFqV9SmY8DxfZp5BcKyE2Ca3qf, 5RkcHd1Kjwn4jTTL35r6LDcQfqchuNix4xKHzXtjsU4bg6Q21aKMPJM1H4sH2PJfxhjsnFL9xVkjMvdpiDEz7t8f
+    slot 502754180  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 390148 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 7
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18185 ms + confirm 1183 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 490 ms | allocate 901 ms | upload 19422 ms | verify 587 ms | close 687 ms | STARK pipeline 21597 ms | prove + pipeline 22087 ms
+    verify tx 4kKgNrsD9W4vsG5RFA9xrmXeNuP3f92mv1m3BCe7otzm8aFn7hZ3ExAtHBoMfM17L32sPnoD8UJZQYEPw4jUwwdc
+    slot 502754312  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878129 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 7
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23468 ms + confirm 1203 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 361 ms | allocate 767 ms | upload 24696 ms | verify 721 ms | close 558 ms | STARK pipeline 26742 ms | prove + pipeline 27103 ms
+    verify tx 2ARkAAySW2DLWyfDnZMg94U1wBr7b7yY861t6YQoNdtYkKCeL9ECwXBzj4yHG97FQujhTJaJrk1QUZh8ovAd98S3
+    slot 502754476  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900743 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 7
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23268 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 231 ms | allocate 889 ms | upload 24549 ms | verify 731 ms | close 667 ms | STARK pipeline 26837 ms | prove + pipeline 27068 ms
+    verify tx 5BhigEuzyWDQk3XVn4DWU1rYSEuawyZqXJuejjPGnfCpVnmUp7vpn7KQMCfoDBJewrY8YBbhgE7g4XD7hFq95LMu
+    slot 502754639  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 891069 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 8
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 10774 ms + confirm 1214 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 61 ms | allocate 1054 ms | upload 12009 ms | verify 754 ms | close 662 ms | STARK pipeline 14478 ms | prove + pipeline 14539 ms
+    verify tx 3r2sGtAHW6sVXum3gmqQmLd3ophrJ8wggxGv67fAZWxGSMidLZf3NMCK9aERraxJQYRLsqw63c5GUg5JaUoBKWoM
+    slot 502754729  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 992546 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 8
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23494 ms + confirm 1259 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1442 ms | allocate 951 ms | upload 24779 ms | verify 1548 ms | close 583 ms | STARK pipeline 27861 ms | prove + pipeline 29303 ms
+    verify tx 35ohVgVH61NYfg2R9PBBKUJKM1teZmivq3BJAw8jJcFDZBFJga4kSMVvogSnv3yEMQeAnAhkqjyFxcJfcLXZ1Bow, 5jNJbFHkLogELNssj2EEaPV7Ngk8ebaWh5kp3DMCrEfjwKigEBjhCcAS44biBTMeDRa5kSmUdZXy6Ue9VBuY6dUd
+    slot 502754907  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391939 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 8
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18387 ms + confirm 1195 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 449 ms | allocate 924 ms | upload 19677 ms | verify 741 ms | close 663 ms | STARK pipeline 22006 ms | prove + pipeline 22455 ms
+    verify tx 2XW7tf1sT5AdpPSd5WAVQm2iMbwG2kwtVHqbnixCV3GGTdH5nuEbuiSQhbWngVkh6np287JovoGA9sTLUqHa4sgZ
+    slot 502755043  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878257 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 8
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23392 ms + confirm 1194 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 306 ms | allocate 926 ms | upload 24671 ms | verify 681 ms | close 825 ms | STARK pipeline 27103 ms | prove + pipeline 27409 ms
+    verify tx 3BCdCCQNcHbVkrhEvnitFEVmaJRUDHgq8pMdVd9N2U9ofTd8ZNv5QBF9mzniKc8w93roiaBffUaD8HJCmggyWqPa
+    slot 502755207  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902467 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 8
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13187 ms + confirm 1206 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 820 ms | allocate 937 ms | upload 14480 ms | verify 575 ms | close 581 ms | STARK pipeline 16573 ms | prove + pipeline 17393 ms
+    verify tx 38opo8MTThnQHTx9S6UsRKFLM1gUtYuhya72ZMayk6gz2mCgQvHezMJtQw4uMRi3ShtNASwPugmiDt1NWkaLcGZf
+    slot 502755313  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 891334 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 9
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18325 ms + confirm 1191 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 482 ms | allocate 910 ms | upload 19607 ms | verify 721 ms | close 792 ms | STARK pipeline 22030 ms | prove + pipeline 22512 ms
+    verify tx 293ScozS635sEdNAtB9mEWS69RVUbGfJr5bW88KXQ6KTepbfmVKnsWiEYmWCb8fVwwbob63m5prMrLKZWYbxMRWC
+    slot 502755448  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991051 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 9
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23581 ms + confirm 1200 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 312 ms | allocate 889 ms | upload 24872 ms | verify 1472 ms | close 749 ms | STARK pipeline 27983 ms | prove + pipeline 28295 ms
+    verify tx eACdRaYxPw3ZjYxAD24nist7qtxXicdR18JGNwwAxRKzTg4Ko1g5cBV6JCJJLCGpy6jWuWz8YPcBkTwFfE5mJ4z, 6Yy4GuMBsZWAbNBjY4oBMB4zvqMFMoAMyHsJVJdQomuQnXDwm5eYb4EEWjG8BWWExp8Mw3EBKxgwpiwyEtCU5Zm
+    slot 502755622  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 390900 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 9
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13244 ms + confirm 1205 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 630 ms | allocate 887 ms | upload 14544 ms | verify 786 ms | close 650 ms | STARK pipeline 16867 ms | prove + pipeline 17497 ms
+    verify tx 55yM6bLCxDvx4a3MKFdPZnjKsJYHNQXhm28wNPQGUbCZ7emBJhrR4opSiCMWxiuFBqijR5miEYkiB5cueFGSGejG
+    slot 502755729  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878014 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 9
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23253 ms + confirm 1229 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 229 ms | allocate 896 ms | upload 24507 ms | verify 647 ms | close 458 ms | STARK pipeline 26507 ms | prove + pipeline 26736 ms
+    verify tx 59JPpiEZzcAJwH4FJbJMoQz8CHibGKnEzTw4y3VSnmbf8yWpBMqigNba2aKTDquvt1cz7ephe6aQVmiDQa1CvfE4
+    slot 502755892  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900523 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 9
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18285 ms + confirm 1218 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 396 ms | allocate 713 ms | upload 19526 ms | verify 756 ms | close 702 ms | STARK pipeline 21697 ms | prove + pipeline 22093 ms
+    verify tx 3ZMa9yVafekGyzdYpx7XFnZu9rn6cgFJzbHct4Lom4bNRwDe2UPVoKrq6UAvJ5ewAcnvBSn5FaiZpP3TF9EEBp9b
+    slot 502756021  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890180 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C0 subscriber_ownership (legacy subscription)] run 10
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 10744 ms + confirm 1198 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 256 ms | allocate 920 ms | upload 11963 ms | verify 4418 ms | close 664 ms | STARK pipeline 17966 ms | prove + pipeline 18222 ms
+    verify tx 4oJicMEr1pXXqrmCSYBSTBcRWgpkRhvwYmdCWXmXBBMKcML6cSLWRoGHMPQpD1Q1n1J7wm85a7AHhdBCsF2Rji1J
+    slot 502756132  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991722 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 10
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23423 ms + confirm 1191 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 30 ms | allocate 882 ms | upload 24698 ms | verify 1179 ms | close 603 ms | STARK pipeline 27362 ms | prove + pipeline 27392 ms
+    verify tx 31NptnTrZaFVB61sVVipLnrgiDRQBFwYqekLYfdwpd49TLy7M3cW6V55rFtsVM9paZ1B5K2S5LcXxTuJ1xKgDghp, 4LUyRifniSAFTCS378kR6y15VWGebjZsaPbP3o9Dj83kAJYirdJcbeFEFfMusSYbuewsd9b6usyzJg5bx1VGgyYK
+    slot 502756298  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391526 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 10
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18328 ms + confirm 1204 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 171 ms | allocate 874 ms | upload 19556 ms | verify 657 ms | close 519 ms | STARK pipeline 21607 ms | prove + pipeline 21778 ms
+    verify tx 2cN4ngiSzUnAHSTbakCuqWzpocPeNSSN3Y8twSjgzjT2T7EJhcTvGEkLiGUMW4MBV1hLLLn7ePREH9utvc5Mcb8u
+    slot 502756431  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879407 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 10
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18124 ms + confirm 1205 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 2718 ms | allocate 840 ms | upload 19462 ms | verify 652 ms | close 722 ms | STARK pipeline 21677 ms | prove + pipeline 24395 ms
+    verify tx 2UKYYxax4keERGV2a5gKh3ELJ8kSSTR2DCY3PxF3LsZkWM5bj38v9ho2weZuLE1id7f9pHpabUjEbNXex9nE4VPx
+    slot 502756580  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 901805 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 10
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 20864 ms + confirm 1206 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 385 ms | allocate 735 ms | upload 22098 ms | verify 739 ms | close 527 ms | STARK pipeline 24099 ms | prove + pipeline 24484 ms
+    verify tx 67MmfVqfvsaw81H36pt9oEnEb4S5MR3fFxoXy2QRkQTsTghz3KZV841J75uB6uwhgsz8xZPDq463WkQFNDqdZHJr
+    slot 502756730  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890523 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 11
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18368 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 205 ms | allocate 902 ms | upload 19588 ms | verify 676 ms | close 784 ms | STARK pipeline 21950 ms | prove + pipeline 22155 ms
+    verify tx YW2gUHsuMyGqk6Q6Qvs8iyJgABvE78RSQrznBPrekapAt4jr4H4sp4D9nrsYga7hJF9DEAi9hkb2Smju623RngS
+    slot 502756864  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990658 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 11
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23797 ms + confirm 1204 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 261 ms | allocate 899 ms | upload 25093 ms | verify 1427 ms | close 613 ms | STARK pipeline 28032 ms | prove + pipeline 28293 ms
+    verify tx 2VraZAABbC9UPhQeuREopiFzXVeCnJgGSqBC7BmEfHPhpTNpSQdz7qGbeoDBifG22BSfanoGhcz18QBeM5EzwhUh, isz1W3ZnXySEN7zjcMqW6z6VAcxv2KDzv8Aae2cEWJGC8o6g9voh5KfK2PRrWpSmexdZoYrXtRzpsZh7QDi2A8w
+    slot 502757034  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391684 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C3 merkle_path (v3 unshield pair)] run 11
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18235 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 650 ms | allocate 958 ms | upload 19526 ms | verify 578 ms | close 4315 ms | STARK pipeline 25376 ms | prove + pipeline 26026 ms
+    verify tx 5L6DisVKAqsh35xJF5KjiVQ3M73unHWtZoZh2UiUhGJrzbGovWH48vKKT6VGVj87qjojzsEBvpCP3agan1omUN4q
+    slot 502757169  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879245 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 11
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 2 resent, send 25702 ms + confirm 22130 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 208 ms | allocate 902 ms | upload 48032 ms | verify 756 ms | close 641 ms | STARK pipeline 50332 ms | prove + pipeline 50540 ms
+    verify tx 4ab2JbRgHYVAZB1ApzgddWy8zkU9yk28VERNQx5QBR2EAKyZYBPDzCAgprtfdeyRXSEUqku9EwbPJekuxCgFwQDk
+    slot 502757492  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 901145 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 11
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13113 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 171 ms | allocate 952 ms | upload 14346 ms | verify 596 ms | close 660 ms | STARK pipeline 16554 ms | prove + pipeline 16725 ms
+    verify tx 3jUkKfuHjaDSQhaV46jdtgz9LCxPKXqyW7uXuHk3wrwkTRKPTDY8Fux4AvXisFdojdZzrPUHzJyEWfkG57fhms2Y
+    slot 502757596  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892626 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 12
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18195 ms + confirm 1194 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 653 ms | allocate 708 ms | upload 19417 ms | verify 792 ms | close 606 ms | STARK pipeline 21522 ms | prove + pipeline 22175 ms
+    verify tx 4rrKxXPmza1So3c6Knu2HvMFGBGiGYWtXCtvKPc2TqkEQnpF7HTz8L3U7drW14ufBGXBsk8zhmT7uD9WmDcRPGPc
+    slot 502757731  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990987 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C1 pool_commitment (v3 shield pair)] run 12
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 20821 ms + confirm 1182 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 172 ms | allocate 618 ms | upload 22027 ms | verify 5428 ms | close 4188 ms | STARK pipeline 32260 ms | prove + pipeline 32432 ms
+    verify tx 2ivhJm9tjEmgYtGaVMn15oZBCErz2fgHdx2vYy6RaU9XUMVqaCBvCGqbCrhUVW5q1ADKH1vCAZimKfgkKXeURGke, MtzkDVC4vEKeqfPzSHWDv99AZeqwSqYJrkE7HevTxb34Z4Dxiza9Lze588aaW1pNzvW2ZcYPUH1yA3hH4tb9rve
+    slot 502757905  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 390997 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 12
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18226 ms + confirm 1209 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 98 ms | allocate 666 ms | upload 19466 ms | verify 613 ms | close 746 ms | STARK pipeline 21491 ms | prove + pipeline 21589 ms
+    verify tx 3aVU3qPvfL7VgDiMbCowSXjWEGdgJFpP8Y6NNaAuYc8h273LmSRaVuBG1QXBuKxtkCwsD8qutmwA4mfZqajVpswi
+    slot 502758060  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878850 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 12
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23345 ms + confirm 1204 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1638 ms | allocate 928 ms | upload 24641 ms | verify 666 ms | close 652 ms | STARK pipeline 26886 ms | prove + pipeline 28524 ms
+    verify tx 4nGe22TwmTQ5wmehZxWLfEAoWPPSADzcq7Qb4MmWjieTivTpkU2BNkvbN7JnFaSfQ5hyLaazKN34MJvquyizcbod
+    slot 502758234  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902286 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 12
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13162 ms + confirm 1225 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 639 ms | allocate 700 ms | upload 14438 ms | verify 591 ms | close 538 ms | STARK pipeline 16267 ms | prove + pipeline 16906 ms
+    verify tx 21x8nmuDhbiHDQMrgJYTaV1sZgiBFmNmFai1gx9uFMLHtFG7Vyxr5tGbsiCF7qVnmSrVdQ5j1n66hekRoKubCZWe
+    slot 502758335  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 891045 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 13
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 20715 ms + confirm 1209 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 112 ms | allocate 1010 ms | upload 21950 ms | verify 794 ms | close 669 ms | STARK pipeline 24423 ms | prove + pipeline 24535 ms
+    verify tx 2uy8BMcBRs8EUqowmo1cv7oqK65jXYSMRtQRa9SW2YsfhMV3sG5nBTENw7zg3eExe9cDgRXuWHhCpfjNznWWLGw4
+    slot 502758484  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991048 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 13
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23608 ms + confirm 1211 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 829 ms | allocate 960 ms | upload 24939 ms | verify 1626 ms | close 608 ms | STARK pipeline 28134 ms | prove + pipeline 28963 ms
+    verify tx 2nTTmDXUHyFyL5Guusr2Lxz4wAXKrUef44vXvnAjtVUgqdNxVzoQTyRC7WJZpinhaugVwUsYCULojzDc6uao1SC2, 282jHost7L5uYnV6tywqECK5AVmUPcTZ2uYKrLbSYAkkyxTwdA3aERrj6dbidg1q5wwWJC85Lw46AnUd5x91uS8B
+    slot 502758662  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 393049 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 13
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18195 ms + confirm 1204 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 674 ms | allocate 893 ms | upload 19489 ms | verify 714 ms | close 596 ms | STARK pipeline 21692 ms | prove + pipeline 22366 ms
+    verify tx 3dUdZGm2nx62R5EEcqFkqjKsJJbH2DqYuU2Dsxo8AxQhwA57h1MHkAL2VJv6Rdv8mqVUqj5pgXVJhaJzMJjD28Ro
+    slot 502758801  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879238 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C6 merkle update (shield)] run 13
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18133 ms + confirm 1195 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 362 ms | allocate 959 ms | upload 19358 ms | verify 616 ms | close 4270 ms | STARK pipeline 25203 ms | prove + pipeline 25565 ms
+    verify tx 4vZ3nzPo1U9XfVkvsSJPA6opF9RB7f9SU6efhYrevBT9oN1yj4tWtL5dRM59MRrUypwW6LGzSi3eXY5AQpeisNLE
+    slot 502758933  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 903070 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 13
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18264 ms + confirm 1192 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 994 ms | allocate 939 ms | upload 19519 ms | verify 734 ms | close 613 ms | STARK pipeline 21805 ms | prove + pipeline 22799 ms
+    verify tx 4tFkc44LKV8Se1c84v1JuPEawLnDDNjreemTwwA1tXUEKG6wqZyRX3u1RX8hqH1AQCJFpUwZk9YAwPcokVcAqmwo
+    slot 502759096  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890943 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 14
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18284 ms + confirm 1202 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 498 ms | allocate 698 ms | upload 19585 ms | verify 732 ms | close 547 ms | STARK pipeline 21562 ms | prove + pipeline 22060 ms
+    verify tx QUug1fUTrakrhA9GNUT9z6CqWtS14oDS5YYYTw2ut4wD9RPZPm8n8SHMk7SaRR1yCG9DcKiWRGqpXDXoqTobBAa
+    slot 502759232  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 989759 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 14
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23700 ms + confirm 1182 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 769 ms | allocate 745 ms | upload 24907 ms | verify 1274 ms | close 673 ms | STARK pipeline 27599 ms | prove + pipeline 28368 ms
+    verify tx 5ikDHKvhV8f9zgYvyvds9ZhkVzPD9hMbHxFemUNhxyThJXhHphiXt96suDtHkLsTcPwu66DBEdMV4U3p1qL2tSMM, 43DBHGXTBHnAZCwtEJaWFr4AnRhTgpxVfpTgEe7rUdx2AM5GAtT2wqDKGAf2ZLqShcjoCJuhoJGkHd2kJpMt3nih
+    slot 502759403  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 393068 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 14
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18275 ms + confirm 1213 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 171 ms | allocate 655 ms | upload 19514 ms | verify 598 ms | close 576 ms | STARK pipeline 21343 ms | prove + pipeline 21514 ms
+    verify tx 5uXA1jDeyTZbpiUJzEhQiZhaGcdpNVSBdV697yw4rejf7r4hpmuAphUuRX8aCH9u65TnydYdpxg2pzPyxB8ntqAL
+    slot 502759534  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879311 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 14
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23503 ms + confirm 1206 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1008 ms | allocate 721 ms | upload 24730 ms | verify 592 ms | close 604 ms | STARK pipeline 26646 ms | prove + pipeline 27654 ms
+    verify tx 3UTjioQZVi1pXdBiT2H4KLxbJWep4U15Sm8gLdKYiNoDeqPETCw6RbXx5tHx9yQxoFfj7nDhd6EA85utqL3MNjjQ
+    slot 502759701  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902632 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 14
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18201 ms + confirm 1210 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 86 ms | allocate 791 ms | upload 19436 ms | verify 689 ms | close 654 ms | STARK pipeline 21570 ms | prove + pipeline 21656 ms
+    verify tx 2ZgAGhovBc7EjwC22iH6mKkw5dax9zKjdxSutyNtGATRbmSRbTGRg1ot35SSeQ571cvorP9KL7wgLm6rRZeTyuhn
+    slot 502759834  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890396 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 15
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18146 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 253 ms | allocate 868 ms | upload 19377 ms | verify 835 ms | close 597 ms | STARK pipeline 21676 ms | prove + pipeline 21929 ms
+    verify tx UeqYTcorK82t1DiMCfnZscKwujf74daHuc1MqprnCk3dCc1mLCi8uEBYYm4Rn4sCbn26sUML6P9BQE2GyCGSsfm
+    slot 502759964  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990879 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 15
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23567 ms + confirm 1189 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 441 ms | allocate 720 ms | upload 24787 ms | verify 1358 ms | close 764 ms | STARK pipeline 27629 ms | prove + pipeline 28070 ms
+    verify tx VUqm5B8TJonMHr7cahWv8Nxu3LSvXeKqjeoqsWL5iFqNcL2WMH3P8W9yvPqH2kT8AwB4wtH5sxzC3mbvrxY9dtU, 8Ar6tF76gmzzMRagWtJ8fafhCPrC1V2bNfdsp7gpRUiBhnJWwBZ4xPDcKctX4HVRDAQpuxXKf6piUxNyXMCzEf2
+    slot 502760132  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392622 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 15
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18209 ms + confirm 1210 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 36 ms | allocate 883 ms | upload 19521 ms | verify 605 ms | close 596 ms | STARK pipeline 21605 ms | prove + pipeline 21641 ms
+    verify tx 2FfYzpJPZdzR4kPt1AWV4qso3RzgUu1UENGHN2WY5kUiq7fBbkc5EasoDuJEr5bdku4DX9X9oGXrJKRb2TjN7Lg1
+    slot 502760265  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878469 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 15
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18065 ms + confirm 1201 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 2442 ms | allocate 761 ms | upload 19294 ms | verify 591 ms | close 518 ms | STARK pipeline 21164 ms | prove + pipeline 23606 ms
+    verify tx 28XEkgmGZYz5dubBKDsMwpxQ5fCG18w5CQdzbUkctrH8d84Dwg8VsW5yB8rnjmbRyR3oL8hDQ761swoTb7cwFUBB
+    slot 502760409  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902177 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 15
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18453 ms + confirm 1199 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 455 ms | allocate 717 ms | upload 19753 ms | verify 744 ms | close 756 ms | STARK pipeline 21971 ms | prove + pipeline 22426 ms
+    verify tx 5wZD3RFTKjwbPJXoXB9gFQa9JT3khicqk77wFrUbHHL88mg4UCw4siqLEPF8GkisNz9EDhuCQkJArErUigzXNi1w
+    slot 502760541  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 888738 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 16
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18373 ms + confirm 1208 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 544 ms | allocate 892 ms | upload 19667 ms | verify 603 ms | close 564 ms | STARK pipeline 21726 ms | prove + pipeline 22270 ms
+    verify tx 3wG8MuP4grSx4xiQnW4DKvXV33bp2f1LD5sDNDR3oWgyaDJ22791uAwwUB6WGkFvpT4KwZCXe5Qg9SS6UcnRxG37
+    slot 502760676  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991829 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 16
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23375 ms + confirm 1193 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 544 ms | allocate 912 ms | upload 24589 ms | verify 1402 ms | close 658 ms | STARK pipeline 27561 ms | prove + pipeline 28105 ms
+    verify tx 4ULqDW8RVidHd565APZbdhE9NJqtUmHRnV1iiarQAQ7xdrYcmEHcp2F6Df8J8MDSG5hHfbyTLtoWRRvmwsvVu64d, 2ZQiDcm5FXNH2arJG4sxcNgqACeqyjQNRHad8MCnZtPpjhBSUwTSTS3sZnb69dsEd4cz255q4BWc71LCLYuBQ78
+    slot 502760846  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 393064 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 16
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18258 ms + confirm 1193 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 752 ms | allocate 1164 ms | upload 19536 ms | verify 707 ms | close 719 ms | STARK pipeline 22126 ms | prove + pipeline 22878 ms
+    verify tx 2fwRuvMqwExGdJ7RAgP7qH7FJFwu1upWxq5npL5jabiBvYzbxZsX6s7ycQ5GSo1d1JezdLrJuMpCfiqi3NHJzB2j
+    slot 502760984  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878016 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 16
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23228 ms + confirm 1199 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 564 ms | allocate 695 ms | upload 24535 ms | verify 588 ms | close 659 ms | STARK pipeline 26477 ms | prove + pipeline 27041 ms
+    verify tx 3Lo6Ag6ynJk2FU8VfkVKsXqVW67tHwNXoXgtBRDWw3i1aBxfj4L32DoFxxYY87jui8GT6WJ8KvpeF9XswT7y9a7D
+    slot 502761148  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 901421 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 16
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18338 ms + confirm 1189 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 275 ms | allocate 832 ms | upload 19553 ms | verify 708 ms | close 607 ms | STARK pipeline 21701 ms | prove + pipeline 21976 ms
+    verify tx 5UBCNT13nqi5z4UVgZzdp171hCRLuMMzttzAnGApTHfiDN3BN3s1pZUrfnk6QEinvamorvXZA5thfHABS97msXgr
+    slot 502761282  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 889715 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C0 subscriber_ownership (legacy subscription)] run 17
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 15848 ms + confirm 1198 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 759 ms | allocate 705 ms | upload 17068 ms | verify 752 ms | close 4250 ms | STARK pipeline 22775 ms | prove + pipeline 23534 ms
+    verify tx 21JQHUQpPXUZsjFaJUKPZQG6fdFPgbhJgt3eFEY926hVeasfkXxVxMTUAuHC1jTpYJoL87nSEEpkWAFx16pnMyt6
+    slot 502761404  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990929 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 17
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23681 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 869 ms | allocate 903 ms | upload 24910 ms | verify 1505 ms | close 734 ms | STARK pipeline 28052 ms | prove + pipeline 28921 ms
+    verify tx Uipshr5tCbTsPf3wGdSENLtabU1kBkbEQFPncW5rm7nzzT8c4MKQN7ER22GRnj2SmfBappdYLKo2QTzZmhQPqe7, 4FyXfkRbb3LjxdXwhxiuLtL1bxpXnbaswNAQsA3SzihQrm53BVVGfiMSEAdS4AcRwfagjNhz6tBAiM9rUEtKgPEn
+    slot 502761603  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391852 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 17
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18486 ms + confirm 1186 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1191 ms | allocate 908 ms | upload 19764 ms | verify 831 ms | close 669 ms | STARK pipeline 22172 ms | prove + pipeline 23363 ms
+    verify tx 2e6Lkzm4SQr4chpdZ11zuSpHMTtHQATngZtW4rgwmC5xdQDVgcBxVLL39wN5rDfJ7uecBrcXNZUwwgNJisr7B5JM
+    slot 502761745  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878815 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 17
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18108 ms + confirm 1192 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 2858 ms | allocate 976 ms | upload 19365 ms | verify 624 ms | close 643 ms | STARK pipeline 21608 ms | prove + pipeline 24466 ms
+    verify tx 4ynAMZfPtpCZ7A5DNEZhZJLiBrRFTSfuRpqmpapWxuMLD6kuXAShdWGVfNTyczmwMrR2Mrg9npPc2aMWusVaC1Ys
+    slot 502761893  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900431 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C7 spend (unshield v4, subscription)] run 17
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23431 ms + confirm 1219 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 435 ms | allocate 943 ms | upload 24678 ms | verify 627 ms | close 4314 ms | STARK pipeline 30561 ms | prove + pipeline 30996 ms
+    verify tx 3ZKCUKeM11jgsfbe9jDvc3EK77i5jPqNf3gyv1ybYkFFYAaNsKJVTzB8ojCm1PYh3AFKPJTfcWzoZesZ9kDF33iE
+    slot 502762061  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892079 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 18
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 15839 ms + confirm 1215 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 2087 ms | allocate 698 ms | upload 17083 ms | verify 722 ms | close 590 ms | STARK pipeline 19093 ms | prove + pipeline 21180 ms
+    verify tx 3yc3YygMFtjTNumARt5fi1ffzoPnr9iF7hFWKkbUwoJ6XxkBhkQRi1dEumhsxbTuoMZtsdwnhrkvYShHVG362ZA4
+    slot 502762212  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 992250 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C1 pool_commitment (v3 shield pair)] run 18
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23585 ms + confirm 1185 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 468 ms | allocate 4565 ms | upload 24841 ms | verify 1377 ms | close 660 ms | STARK pipeline 31444 ms | prove + pipeline 31912 ms
+    verify tx sVFSkUjHwSoqyBj65SywV7BSpwkyJwYh8kKmq6yYWu3HzzLEFiKfwKAaxLFzo9SGzVjY7rbP3Ekp7SWmMaibZPG, NQMrhc9o9fuBctHe3maXpfjx7kaK7E3PsqcSTuAhmqx81DfXu648rNEWMAPNefgQ5dycfDd41grGeDwAiMLVH9e
+    slot 502762408  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391026 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 18
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18336 ms + confirm 1205 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 275 ms | allocate 855 ms | upload 19710 ms | verify 596 ms | close 637 ms | STARK pipeline 21798 ms | prove + pipeline 22073 ms
+    verify tx 5QyVgAoTrLRzovZzFAHeBLZpmWWRi1qaWVZZk2ug9JB84mBypGfsqUwRg9XgiuYq75p9LyXoC6EX7JrjqvkxpT37
+    slot 502762540  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878975 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 18
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23270 ms + confirm 1203 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 787 ms | allocate 784 ms | upload 24560 ms | verify 729 ms | close 725 ms | STARK pipeline 26797 ms | prove + pipeline 27584 ms
+    verify tx KtxZqLTrBN7muXTUjUYCCGNVBvmNgxNkWGFUp6472XGBB1b2tYf27ENNhjCbVJuCLJ3wo4vQf3apTAdbaVpb4xf
+    slot 502762703  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900777 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 18
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13296 ms + confirm 1197 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 144 ms | allocate 968 ms | upload 14579 ms | verify 742 ms | close 665 ms | STARK pipeline 16955 ms | prove + pipeline 17099 ms
+    verify tx 32rhJKZxqEAxy29pEcBLfbuLQNVEfNBT25Kv6gf4xXeSgiyerqvSrfogpsjqsXVqKpTAksWahboU26jyHXGaKZk4
+    slot 502762805  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 889419 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 19
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 15847 ms + confirm 1200 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 554 ms | allocate 1520 ms | upload 17133 ms | verify 769 ms | close 642 ms | STARK pipeline 20064 ms | prove + pipeline 20618 ms
+    verify tx 4HQXYvUvXpzuzngLREexcqDS2wBR24B5n2ybSxauUwuwctju4oRuierzPExfvk4ZK3kuBKJGR2YLeb3AzYJX2PzT
+    slot 502762930  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 992272 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 19
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23607 ms + confirm 1205 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 480 ms | allocate 923 ms | upload 24836 ms | verify 1351 ms | close 632 ms | STARK pipeline 27742 ms | prove + pipeline 28222 ms
+    verify tx 2CgCiGVrnECHen6jmHgYpXsbGPKt5uZ9a6mbgSrWGPHfQJvVzAidcAsW43wdLjAS2PJwTDc4qVSmt5nMGmfzxZzs, 65DKPmtUc7cTe7YMJHN52NNUKzvz4RAgKN6JA38xWRsjKhD6wbHsK8e2YNyPSkxLUSaKnm2Gnh3vVRNvHidDiXkh
+    slot 502763102  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 393040 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 19
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18377 ms + confirm 1198 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1095 ms | allocate 887 ms | upload 19607 ms | verify 782 ms | close 673 ms | STARK pipeline 21950 ms | prove + pipeline 23045 ms
+    verify tx 4LGjzzk9gWJUzf77adHuhTs3rv1zhaBzPYBZBa4yNMyKRiCpnTxoCiujDBUJmkHJkD1sqQfXD79UCUByYrJRqHwn
+    slot 502763240  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878369 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 19
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23286 ms + confirm 1195 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 179 ms | allocate 1054 ms | upload 24505 ms | verify 605 ms | close 682 ms | STARK pipeline 26846 ms | prove + pipeline 27025 ms
+    verify tx 3kaCy4qpDiFe8V5jGSrQzoeY4h2btGbQjoj9Aut9DeRVDdeeNcM3f4RecDvGW6n5tVSfkRSZn3zGn9RN1NwqKDxE
+    slot 502763405  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902719 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 19
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18418 ms + confirm 1223 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 54 ms | allocate 605 ms | upload 19664 ms | verify 659 ms | close 1049 ms | STARK pipeline 21977 ms | prove + pipeline 22031 ms
+    verify tx 4JaHksph4XaNSvbyHACApQzDqDxzPWr1HeRBh8MTc5EXPhdh1HAkwmiyDgmvopZTDXGm3DMEvNpbdbstzrDQZ8V6
+    slot 502763538  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 889703 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 20
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18228 ms + confirm 1212 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 740 ms | allocate 1015 ms | upload 19486 ms | verify 627 ms | close 675 ms | STARK pipeline 21802 ms | prove + pipeline 22542 ms
+    verify tx 3UMczEf2n536wuiYBsBcfU9F5QnTnWnJUAsx3pRD4pEwdsiGGBEBSniKMoQLkYCDZ5tJwniDJ3KxTgknTiBRzgxt
+    slot 502763677  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991708 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 20
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23572 ms + confirm 1224 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 774 ms | allocate 712 ms | upload 24890 ms | verify 1292 ms | close 623 ms | STARK pipeline 27518 ms | prove + pipeline 28292 ms
+    verify tx x5m6TY7f5Fzx3DGJn4tMWXgF8okFPBRA6gBfgLsczd1XzKiQ2Poa9qQncB7hjsakJu9KpJLwgr6X24FA2hmHNmV, 4T1zHL2WQcwUFcXFMHbsDnKq3YnTobtmSo2Pa6XxHnzh6gXYnWen8ESjkjCjE7pRC58zNiu7wemPsA5q2wrCg2Bt
+    slot 502763844  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392696 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 20
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18423 ms + confirm 1200 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 376 ms | allocate 805 ms | upload 19651 ms | verify 602 ms | close 769 ms | STARK pipeline 21827 ms | prove + pipeline 22203 ms
+    verify tx goRgv8QFrA8WgrmPTT4PNZGq9orjkaP1fhXa1h69Rv1TUFbkgTquRA5BnqcBMVEte6iTncZq8YwkXp2T5CtJxex
+    slot 502763979  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878861 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 20
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18323 ms + confirm 1176 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 246 ms | allocate 866 ms | upload 19601 ms | verify 800 ms | close 581 ms | STARK pipeline 21847 ms | prove + pipeline 22093 ms
+    verify tx 2JkaxCaJMmHciM3BV12q8LiNxanvSMCK9QP6iqVffbywejeB4ZRDMX15z4ZfQP5xUHbwxeakWpadcnRskXeNfnBJ
+    slot 502764113  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900472 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 20
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18341 ms + confirm 1206 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 48 ms | allocate 622 ms | upload 19576 ms | verify 602 ms | close 679 ms | STARK pipeline 21479 ms | prove + pipeline 21527 ms
+    verify tx 3pTMm247aQuKw63q2jznCxeCXB7GzU52F7mheJYz237N1msdi45kpjjEMEHLdu342cUukHWsvMGJA485RKguGqkP
+    slot 502764243  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 889892 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 21
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 20608 ms + confirm 1187 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 628 ms | allocate 748 ms | upload 21899 ms | verify 741 ms | close 577 ms | STARK pipeline 23966 ms | prove + pipeline 24594 ms
+    verify tx 45uwYUArvrdVPU5CBVB9Ywwh3CUdmzJeMiPXTuiQimJpCvS8pX4eMjuVGLovZDE7P4HnN1UcRSm7BQNwG8YKiFNm
+    slot 502764391  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990417 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 21
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23632 ms + confirm 1215 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1470 ms | allocate 901 ms | upload 24869 ms | verify 1258 ms | close 750 ms | STARK pipeline 27779 ms | prove + pipeline 29249 ms
+    verify tx PWKpa2SVmony1GAyJLsDz6vF857n2kewAenAdYMp23GWtt75M2iafiAdAwB4Ci2wgiPdfv1gr1Eki4MPk6szt9X, 5zPov9XoD5JAEL6t5rZuBiWX7BkS978L965AXqujh2xfK9q7Yamn4nDHck4z1F2ETDw4vBBto7iotFd9TZ5W35yb
+    slot 502764568  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 393001 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C3 merkle_path (v3 unshield pair)] run 21
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18105 ms + confirm 1214 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 123 ms | allocate 4499 ms | upload 19345 ms | verify 607 ms | close 524 ms | STARK pipeline 24975 ms | prove + pipeline 25098 ms
+    verify tx 4s2pjumaauWx6NPPvME179K49trYnzYcon8aRABis8wuyWGTes77CFNBVRKWhu4K5zHgHY92Eji3eRTwAniiiVpY
+    slot 502764719  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879365 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 21
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23422 ms + confirm 1211 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 442 ms | allocate 794 ms | upload 24663 ms | verify 727 ms | close 786 ms | STARK pipeline 26970 ms | prove + pipeline 27412 ms
+    verify tx 5X24WgRjh9RLUjcWQQxfzA4rrVYx8yFFz8emnJjQVuo1HfoujoLq5YSLXmmTvdPpRDeGZfbTfvYS3yo4o8sm5pqm
+    slot 502764883  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902871 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 21
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18077 ms + confirm 1208 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 170 ms | allocate 941 ms | upload 19376 ms | verify 718 ms | close 751 ms | STARK pipeline 21786 ms | prove + pipeline 21956 ms
+    verify tx 5WnyU9aqYutUU8YtrZDUjCtr7cxtg15LUmmchaUmsypMZGk3Evuy2bxVNbUxufZYkvorcAp1dHFFWCMUHdidVvde
+    slot 502765016  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892516 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 22
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18043 ms + confirm 1206 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 547 ms | allocate 909 ms | upload 19283 ms | verify 580 ms | close 721 ms | STARK pipeline 21493 ms | prove + pipeline 22040 ms
+    verify tx 2fLeMB5EQxa7zR7tbaCE1AaDEQmCUc6XwYnvL3Y8v85eaaYs66sNu3S7q85SWvqyANhi3kp5cEtNWGbCcH4ci5RM
+    slot 502765150  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 993053 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 22
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23423 ms + confirm 1200 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 877 ms | allocate 700 ms | upload 24726 ms | verify 1157 ms | close 480 ms | STARK pipeline 27063 ms | prove + pipeline 27940 ms
+    verify tx 5MTKM3cT724PDJf9SNPYhm2Zm8s3PFq3r6bHdfgPj6JwChs4QJBxfmm6dYzihjA2QJRhhsz8nzZnphLCZBcPmKJB, 3AbyJtXJxJZP6K5xbAvv816k972PXDkzLAbdkMvkXriN55gpMdAbuKUYhUrQjvipWLFdL52P1WkBDDXM7bCeePwy
+    slot 502765323  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392963 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 22
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18192 ms + confirm 1202 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 326 ms | allocate 803 ms | upload 19416 ms | verify 645 ms | close 577 ms | STARK pipeline 21441 ms | prove + pipeline 21767 ms
+    verify tx 4ong11jM7gCgYqu9Kb5VRUE3F2tGQsTSSyXo4q45UNX1fCoj5QHFGwAyM9GQBPTUPxgT2FKxBSvsQAqohiHLb7x2
+    slot 502765454  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879517 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 22
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18373 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1017 ms | allocate 909 ms | upload 19602 ms | verify 647 ms | close 587 ms | STARK pipeline 21745 ms | prove + pipeline 22762 ms
+    verify tx 5xuBsQXLWu2Yz4BaQwR8MaTaZA4HdwVTBu6bxDmyFndkALA6xfqgR3wmV8WWjFbqRjSzXP7X3FutJvCh8B32BwW
+    slot 502765592  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902357 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+
+  [C7 spend (unshield v4, subscription)] run 22
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18157 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1689 ms | allocate 860 ms | upload 19390 ms | verify 629 ms | close 1204 ms | STARK pipeline 22085 ms | prove + pipeline 23774 ms
+    verify tx 2Df95UWexBxjnCkp3xGVA8C3RUsVfsbzPdcQH5rSbryqBgNmBLkivTam5mWAyfAKbfBpZGn7hBMTcv6e9oUnFLuu
+    slot 502765734  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 891012 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C0 subscriber_ownership (legacy subscription)] run 23
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18209 ms + confirm 1210 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 755 ms | allocate 4307 ms | upload 19545 ms | verify 677 ms | close 479 ms | STARK pipeline 25007 ms | prove + pipeline 25762 ms
+    verify tx X3YvCY4eLrq3Ve4quMbW872R4C5R1PWmmwAHud7dj1eEmGf9SgSsrRKXsxHiMSFqot3SGCiu83sMaLy1vkZXkvr
+    slot 502765892  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990898 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 23
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23566 ms + confirm 1220 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1019 ms | allocate 719 ms | upload 24982 ms | verify 1562 ms | close 524 ms | STARK pipeline 27787 ms | prove + pipeline 28806 ms
+    verify tx 38qH77GvLYQ921399yLuTYbGywrEfGLHLJMER4NCFVkxA5wGqkpiL16PRd7B5zsEBDERHEdg2Cq8zDQyJgouDMmS, 3PXGAY5TA6LaRs7SjLQoWL8CHNAqgiSijShzmT6GYZUDykEA82rxyVaagJopRm7F7EfzrQBKJLsUUJPR8YqqNnKU
+    slot 502766067  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392656 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 23
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18376 ms + confirm 1213 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 656 ms | allocate 687 ms | upload 19620 ms | verify 759 ms | close 599 ms | STARK pipeline 21665 ms | prove + pipeline 22321 ms
+    verify tx nDJGJvvKoURQCRCSKgFD3qmvgToTjJZWqYUMHVqMGxmQo7m6ZpSAUXfB1pnMPJgoSTpe4Bh1FfM4kDPikaW9smK
+    slot 502766204  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879299 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C6 merkle update (shield)] run 23
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18208 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1326 ms | allocate 929 ms | upload 19440 ms | verify 655 ms | close 4318 ms | STARK pipeline 25342 ms | prove + pipeline 26668 ms
+    verify tx 52zpfspEePcWVruS98Y41zMsvnDgGRppQULLTZHxc8i3iX1ZtAmTznFvNRzmmM5AFg669ZrA4aPy2SrfQKwZrNWW
+    slot 502766343  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 899178 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 23
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18355 ms + confirm 1200 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 732 ms | allocate 864 ms | upload 19587 ms | verify 684 ms | close 638 ms | STARK pipeline 21773 ms | prove + pipeline 22505 ms
+    verify tx FC513KJk4A1knXS5RJRugXQUM37TYRgfrUYKW8KaPTxMeAdNRoDxU9e3iLJnhdeU6UcbvGw2hPGHkVF32rcSf8i
+    slot 502766503  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890547 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 24
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18270 ms + confirm 1213 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 291 ms | allocate 849 ms | upload 19521 ms | verify 735 ms | close 825 ms | STARK pipeline 21930 ms | prove + pipeline 22221 ms
+    verify tx 4vuaF4LLAsugXWoHaDSk6ZQTi36wv8xZhoB815KAGMButdmk7W4ie5vZH9brNR51aAdfCbz74AfPYdZQka2ZZJhv
+    slot 502766635  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990916 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 24
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23492 ms + confirm 1182 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 300 ms | allocate 953 ms | upload 24707 ms | verify 1166 ms | close 552 ms | STARK pipeline 27378 ms | prove + pipeline 27678 ms
+    verify tx 3iT1VHEtm74dbUBUcei3hwCtZRZyxwHxWe9pvxriHfqvGc1eB7SNTovK7ddwoEM3bJB7cuu1CTRfMp78Bjii5e7g, 4SrmcPLLjX4yujFNEioVUUyowNLYvEk3bEvQTXA3mQzkAHPU36YZW2Ac1pVevYFcwVS7JSzZwVJadsck7r5vdL3w
+    slot 502766805  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392557 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 24
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18194 ms + confirm 1202 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1596 ms | allocate 964 ms | upload 19426 ms | verify 735 ms | close 736 ms | STARK pipeline 21861 ms | prove + pipeline 23457 ms
+    verify tx 3BxNun3VBoKUF3Lpn3LnbXGQEXB7B2NVLvGD2bJYfTVwyiUZ3arbrP33AFtaJK8nj4xPH5BZPK2FFkE8dT5kYYYX
+    slot 502766944  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878784 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 24
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23366 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 594 ms | allocate 946 ms | upload 24586 ms | verify 734 ms | close 826 ms | STARK pipeline 27093 ms | prove + pipeline 27687 ms
+    verify tx sC6rVsuj4f4gTBnJL8zhVwqiY9BgyXnd68e9hx6q6XPFm7rTXytTXRTyUHiFn1mXTwHtF3rkjjcjs68AgMrrSEZ
+    slot 502767111  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 899608 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 24
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18737 ms + confirm 1213 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 329 ms | allocate 923 ms | upload 20046 ms | verify 804 ms | close 753 ms | STARK pipeline 22526 ms | prove + pipeline 22855 ms
+    verify tx 2hJP5sNCc5VrtN3XdvnbYzJFGgT3wDGjaG1brpqanGYPXDcZXHndddFNHbanmgC3CfHDKKZETeo4S9HFDcM6gixm
+    slot 502767255  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892202 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 25
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 15770 ms + confirm 1223 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 181 ms | allocate 926 ms | upload 17083 ms | verify 724 ms | close 777 ms | STARK pipeline 19510 ms | prove + pipeline 19691 ms
+    verify tx zNYkfiuCMrMqU1nDZuxGCg1y6CXQudix91JQGtXg9cj3i8Yz7jqfQqjSoyuZ6doRr7hgmQk64zEfx6ZQQ81MUBw
+    slot 502767374  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990623 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 25
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23540 ms + confirm 1190 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 453 ms | allocate 912 ms | upload 24814 ms | verify 1188 ms | close 682 ms | STARK pipeline 27596 ms | prove + pipeline 28049 ms
+    verify tx 67PmwqwursMR3wW6iPTB9YXD1KaRC9LhZ9LZTFpC1aFa6Yy3zibxLDyhYeFhwGjD3pmoSyHHXZPsVUARD97Z51ap, 5WVshfNKgBZdNVfZFeqUpE4xTaqxvzGFr5ZBuHR9AU9Vz4YQjCqLr2k9Zoizt5KoXpGR8Qocbnb9qyPBCcXzwAbE
+    slot 502767546  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391876 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C3 merkle_path (v3 unshield pair)] run 25
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18203 ms + confirm 1216 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 139 ms | allocate 988 ms | upload 19508 ms | verify 4271 ms | close 772 ms | STARK pipeline 25540 ms | prove + pipeline 25679 ms
+    verify tx kiXmafoWngngBDRR5vtnnM6DJaBdcpcpyzuzo2R8S6WDRwZ71WycXBtNeKSkvqMBJ3FqGVza4XkPapSAXDmsJVu
+    slot 502767700  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879114 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C6 merkle update (shield)] run 25
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23159 ms + confirm 1190 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 31 ms | allocate 4433 ms | upload 24479 ms | verify 575 ms | close 697 ms | STARK pipeline 30184 ms | prove + pipeline 30215 ms
+    verify tx 3HXtgSwffa23jSs2VhzjefFwXRaUaRakY2dBL7vqoCkp9BWaHgaq5Emxf4v5nHFepNLqvVEKZ2ofnaRFJfgLzYUH
+    slot 502767884  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 900255 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 25
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13286 ms + confirm 1217 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1902 ms | allocate 721 ms | upload 14527 ms | verify 729 ms | close 591 ms | STARK pipeline 16569 ms | prove + pipeline 18471 ms
+    verify tx 3pJfuciEAeQngLg1NYUyvcNAVNLoxYk9hSA5kznbEfic1YiUbUPQNiB2tftS3wUTf1t4o5h6vXsiJEA5fQB2R3JG
+    slot 502767995  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890968 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 26
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18197 ms + confirm 1199 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 114 ms | allocate 1005 ms | upload 19553 ms | verify 824 ms | close 615 ms | STARK pipeline 21997 ms | prove + pipeline 22111 ms
+    verify tx 5B6dCkBCvW2dK3oqbMTHMFTshA6sqzUrm72jDycAMnP1jLZUtWHnzcVPifwU95dMub8RrZRQjMxjfJ77KrEdeUc
+    slot 502768128  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991268 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 26
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23807 ms + confirm 1211 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 501 ms | allocate 759 ms | upload 25043 ms | verify 1542 ms | close 735 ms | STARK pipeline 28080 ms | prove + pipeline 28581 ms
+    verify tx 5bfT3SG3tAGu1NxQxXukscTuiBo9Lu3p1Erjqt858bk758BHkh7AYXzNYEdazCxMBRowj7mMfdwzrfEhMsqJ5qr4, 4pdQTCiSdMeknBPz2v43F3Ge6Hq5t8Q3E5zD623PwqzdG3XAVfrhxDDpAB3DbHDJrEvLaF6QT5VJ8ptV6WDsHQJN
+    slot 502768300  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 391697 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 26
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23469 ms + confirm 1179 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 261 ms | allocate 956 ms | upload 24696 ms | verify 717 ms | close 691 ms | STARK pipeline 27060 ms | prove + pipeline 27321 ms
+    verify tx 544af8d3iB4MreuJ9VWuUjbvUAuLDgMKT9t86djr3hqjM7VTQYU1LxueTsHt9c7cy4PvDfGokzA26WzetBvUsB5J
+    slot 502768466  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878033 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 26
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18251 ms + confirm 1190 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 127 ms | allocate 993 ms | upload 19466 ms | verify 725 ms | close 745 ms | STARK pipeline 21929 ms | prove + pipeline 22056 ms
+    verify tx kDpqM4fohCZUNtXC1YhrYXQxxTH6LvD5NFgR128oSCphVfnecZGQgKP28wbNNY9o45LAYPf864TS5mwSA82EQaV
+    slot 502768601  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902656 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 26
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13145 ms + confirm 1230 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1086 ms | allocate 892 ms | upload 14402 ms | verify 624 ms | close 696 ms | STARK pipeline 16614 ms | prove + pipeline 17700 ms
+    verify tx 3jbuqTLNEyDXub9tTgcVT18H9KHpmajF6j3VcfjTCt147QuDrNieTWD7ThJjAzkGou3shTotZB45XCacyPGdcS9U
+    slot 502768710  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890514 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 27
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18280 ms + confirm 1199 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 314 ms | allocate 969 ms | upload 19515 ms | verify 585 ms | close 552 ms | STARK pipeline 21620 ms | prove + pipeline 21934 ms
+    verify tx 2ZpiAJarAzWnxHnyacviPib8Y5jSqFo1jGo9C3bJcU2KnS9vmN1oRTiP8nEY4rj3NK8Xw1Ds693Ffop5os7e77tT
+    slot 502768844  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991887 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 27
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23631 ms + confirm 1206 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 314 ms | allocate 817 ms | upload 24863 ms | verify 1304 ms | close 678 ms | STARK pipeline 27663 ms | prove + pipeline 27977 ms
+    verify tx 41QQQPZSjTmEJGPtyXCgsUZUxMwf9U79mYvZhMZwmK555xGsWAoWWpJq8CPuPxMTYFoeVVeyYVXDhbDCmWs2UvbK, 5cD8MdqcS6c8mTw3TwDLj26KryQ8rK2m6U8ffqfZT5rkw25Sb4RLbk5ZoXFaZnrxB9guY4u2SnQXyGScDAdhk8YH
+    slot 502769015  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392765 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 27
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18328 ms + confirm 1218 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 73 ms | allocate 1046 ms | upload 19577 ms | verify 813 ms | close 604 ms | STARK pipeline 22040 ms | prove + pipeline 22113 ms
+    verify tx 46u2U1iXeeFMrfohuFrQeqBE4jroCEW6DfJ5sqDdpoeey8dd2FCMrdzmtFSninGxyjgqZ4PchgVJHsUHNssxnKkD
+    slot 502769148  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878604 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+
+  [C6 merkle update (shield)] run 27
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18380 ms + confirm 1200 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 293 ms | allocate 833 ms | upload 19741 ms | verify 751 ms | close 1231 ms | STARK pipeline 22557 ms | prove + pipeline 22850 ms
+    verify tx 5f68Re9mQB66c46wzwEAfTvsaM2ANYDVv99Lzx26rwHFnSv62CtELAVRTAZKjtVSLbigzfJeSKuy4ADXevpPxaF
+    slot 502769282  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902361 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C7 spend (unshield v4, subscription)] run 27
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18132 ms + confirm 1198 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 145 ms | allocate 4317 ms | upload 19441 ms | verify 607 ms | close 4232 ms | STARK pipeline 28596 ms | prove + pipeline 28741 ms
+    verify tx 415JiuGJxkBQg1Qbnu96xwjvsiR7sSYmtmpqDtXuwNXzviC9crMRYPmhqyu35d2tnjs6FRyrsb7RTycifLJBo2y9
+    slot 502769440  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892512 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 28
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 1 resent, send 25737 ms + confirm 22085 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 335 ms | allocate 772 ms | upload 48016 ms | verify 724 ms | close 559 ms | STARK pipeline 50071 ms | prove + pipeline 50406 ms
+    verify tx 4v3c9tsFBFS7vN9Eghx7ueqeWq4QRSdBCDKByzujUmz8kBR4QTtZB6yKiu5mXCC8QvPxknSfRqJLQcoXp83cdQGJ
+    slot 502769764  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991702 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C1 pool_commitment (v3 shield pair)] run 28
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13396 ms + confirm 1210 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 97 ms | allocate 682 ms | upload 14633 ms | verify 4718 ms | close 568 ms | STARK pipeline 20601 ms | prove + pipeline 20698 ms
+    verify tx TwbXrTWq6kotm76pt31y4U5qddJ55e8dKbQxsTBZpfTxcmCJ9dQFTjiDce5NmsTNTHecFnygNRM9DT8kA1rn1Ps, 3p6tX5Qco8gEHL38LJKAepaTtBhHPH7mJb3G9TLST4ETFYC3gBbe8FWxEmR49QsFxDkbqpGnmXBvXRrVEmpGgfu2
+    slot 502769891  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392215 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C3 merkle_path (v3 unshield pair)] run 28
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18318 ms + confirm 1203 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1016 ms | allocate 704 ms | upload 19548 ms | verify 4296 ms | close 551 ms | STARK pipeline 25098 ms | prove + pipeline 26114 ms
+    verify tx 3Q4Gx88B1A8zB3YHDAZrCHtjW77fYQYSwu4mG7Vqd2w7rWbAsvnkxZBNEzepzLY2knc5cpuJ7TfV27484EKV9a2e
+    slot 502770048  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 879528 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 28
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23331 ms + confirm 1193 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1633 ms | allocate 731 ms | upload 24568 ms | verify 712 ms | close 773 ms | STARK pipeline 26784 ms | prove + pipeline 28417 ms
+    verify tx Uhvqds4fwxe1xQqsW9UJR3LG3Ps7Es4aB3G2aKQAqsFaGc9nUaNMUb7UbQVqDvmEurvLEKKzgTVfVxdn1Qk5dk4
+    slot 502770220  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 901451 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 28
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 13290 ms + confirm 1220 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1405 ms | allocate 1128 ms | upload 14668 ms | verify 680 ms | close 777 ms | STARK pipeline 17253 ms | prove + pipeline 18658 ms
+    verify tx F4u4CmtDR8Dunm5TPsXDnCAqjcPCAuPRA14yCFgvme1NZ78hGXtqYdB74NXXkHqHLwaFWax6kYVty5KpemoCzF6
+    slot 502770333  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 889152 of 1399850 compute units
+
+  [C0 subscriber_ownership (legacy subscription)] run 29
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18286 ms + confirm 1204 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 210 ms | allocate 892 ms | upload 19538 ms | verify 734 ms | close 700 ms | STARK pipeline 21863 ms | prove + pipeline 22073 ms
+    verify tx 3y436ozCazpPQSobTCy7gcPgLoSWa2exew7mcLX67hbW8oQf5XoZfU3gsR55iaUJ9W3QSPfL1Y4iV3U4mXHU4obu
+    slot 502770466  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 991955 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 29
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23377 ms + confirm 1197 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 856 ms | allocate 810 ms | upload 24603 ms | verify 1281 ms | close 570 ms | STARK pipeline 27264 ms | prove + pipeline 28120 ms
+    verify tx 33W9HDe4dcspmPT8zHRC11Pch43USnMQzgaoum4Ln64DijbRvcycNLYJ1jhy8w5nk7zbWYaCNADBFpzdpRffb76Z, 2bmAKsghRRwK4jAucQ1UvDJGbkokYTE5GkNh6HTZdJxaMmL5drSVDVsiu1LNATEk4r3dcdkSseyd1zNTzvSEgwmo
+    slot 502770637  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392551 of 1399850 compute units
+
+  [C3 merkle_path (v3 unshield pair)] run 29
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18112 ms + confirm 1197 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 638 ms | allocate 718 ms | upload 19335 ms | verify 591 ms | close 595 ms | STARK pipeline 21239 ms | prove + pipeline 21877 ms
+    verify tx 5Lv6D2ne8HAGvsEAKyQBRBShWeniWFiy8Yqu1RDvwSeCid3MTfN6vqKCo697JTG2iKwHa7MEMJXcALJfbn5WKF46
+    slot 502770767  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 880253 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 29
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18444 ms + confirm 1182 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1570 ms | allocate 700 ms | upload 19801 ms | verify 658 ms | close 760 ms | STARK pipeline 21919 ms | prove + pipeline 23489 ms
+    verify tx 4jMqzQvvZDiKTaL3g2t5Q7y4PPi2X5q7qkwFd9rNeSxipqHWw3be2w5xd8FzcCUjbXqGww4wsVB8FvvuYtheYp1B
+    slot 502770908  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 902376 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 29
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 20692 ms + confirm 1212 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 555 ms | allocate 727 ms | upload 21946 ms | verify 723 ms | close 666 ms | STARK pipeline 24062 ms | prove + pipeline 24617 ms
+    verify tx 28sBMD4Swcoi5LysyGXCu8vqT7fBzPmbT6G5L1zUpZg6qjJDmwC2Uz7C9Xq2SX17rFpZcRkmuNFLWRiqnzzJmCmo
+    slot 502771056  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 890976 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C0 subscriber_ownership (legacy subscription)] run 30
+    bytes 74 365  chunks 20 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 15753 ms + confirm 1201 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 169 ms | allocate 938 ms | upload 16982 ms | verify 4406 ms | close 669 ms | STARK pipeline 22995 ms | prove + pipeline 23164 ms
+    verify tx 56atjz3oL4AmvfHUCM2iHihPYMGt6yHqtLxjDJRXExksoobfXw1gYqjAdLhyH6iv6u7XiBEGGeiYuEE1Mj4ifpGg
+    slot 502771199  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 990170 of 1399850 compute units
+
+  [C1 pool_commitment (v3 shield pair)] run 30
+    bytes 94 897  chunks 25 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 23436 ms + confirm 1196 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 1240 ms | allocate 919 ms | upload 24720 ms | verify 1172 ms | close 643 ms | STARK pipeline 27454 ms | prove + pipeline 28694 ms
+    verify tx 5RLMeppgpYffam1bgJJRFZi6GL6FYfxJ7CYNkddzqvfRZnnLGqXiQsRDkSqPjBdpAkdKhaZ1mcgFn7RijmaLvBa9, 3ZHPFnJfikNZffr5YwbzdgY7yodu4eUZrBQsxuVz78JMof5Hrb73K1EkTLE6oYgzxEoBRKNzFkiV4YHRgXMy3LJu
+    slot 502771377  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 392890 of 1399850 compute units
+Server responded with 429 Too Many Requests.  Retrying after 500ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 1000ms delay...
+Server responded with 429 Too Many Requests.  Retrying after 2000ms delay...
+
+  [C3 merkle_path (v3 unshield pair)] run 30
+    bytes 79 597  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18221 ms + confirm 1207 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 22 ms | allocate 4317 ms | upload 19476 ms | verify 627 ms | close 684 ms | STARK pipeline 25104 ms | prove + pipeline 25126 ms
+    verify tx 2Mc2PQ1sfCQJxeUmVoR3LDPM3XrjXyVoi6eeJgxZWNK9LzWkayzuiwkYL8Z5sGzUN7BpD5SpDmpL7apgCi1nUvpi
+    slot 502771530  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 878177 of 1399850 compute units
+
+  [C6 merkle update (shield)] run 30
+    bytes 82 477  chunks 22 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 20741 ms + confirm 1257 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 31 ms | allocate 823 ms | upload 22024 ms | verify 697 ms | close 708 ms | STARK pipeline 24252 ms | prove + pipeline 24283 ms
+    verify tx 5jRij8bNJUsQLYj9Aj6K2coKVnMsZMjg9TwUgTikMdhjyvZcJZBEsCxo6XKvyTYeUaSEv3hWzzmMHVzfbDJhmbdS
+    slot 502771674  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 901760 of 1399850 compute units
+
+  [C7 spend (unshield v4, subscription)] run 30
+    bytes 79 405  chunks 21 (tx v1, 3840 B each, largest wire 4080 B, 0 resent, send 18062 ms + confirm 1210 ms)  path L2 keypair  phases merged where allowed  pacing v1 8/100ms
+    prove 920 ms | allocate 892 ms | upload 19306 ms | verify 606 ms | close 605 ms | STARK pipeline 21409 ms | prove + pipeline 22329 ms
+    verify tx 5aBMkzqufwZ5kUP9ZgptJJ17rKhMQqrVAPy9yS9Cm8dRcraE1QJ7Ex3bhZsJDfAfLnwq75Pth4qujGMcPvxnPgfM
+    slot 502771809  verifier success  Program DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs consumed 892158 of 1399850 compute units
+
+  cost             0.022770 SOL over 30 run(s) (rent recovered: buffers closed)
+
+  SUMMARY (prove + STARK pipeline, ms)
+    C0 subscriber_ownership (legacy subscription) min 14539  median 22165  max 50406
+    C1 pool_commitment (v3 shield pair)      min 20698  median 28240.5  max 32432
+    C3 merkle_path (v3 unshield pair)        min 17497  median 22262  max 27321
+    C6 merkle update (shield)                min 22056  median 26816.5  max 50540
+    C7 spend (unshield v4, subscription)     min 16725  median 22062  max 30996
+  samples written  D:\Protocol-01\docs\bench\2026-09-23\run-20260923T032635Z\raw\stark-pipeline.json
+
+  The pool instruction that consumes the buffer is one more transaction, not timed here.
