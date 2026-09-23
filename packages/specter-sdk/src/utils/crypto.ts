@@ -64,6 +64,17 @@ export function deriveKey(
  * Derive a deterministic stealth seed from shared secret and spending public key.
  * Both sender and recipient can compute the same seed, producing matching keypairs.
  *
+ * ⚠️ [AUDIT v1 r2, F5] THE SEED IS THE STEALTH ADDRESS'S FULL ED25519 SECRET,
+ * AND NO RECIPIENT SECRET GOES INTO IT. Both inputs are known to the sender
+ * (it chose the ephemeral key and ran the KEM encapsulation) and to anyone
+ * holding the viewing secret plus the KEM secret. So the SENDER, and any
+ * viewing-key holder, can sign for the stealth address: this is NOT a scheme
+ * where only the recipient can spend, and the viewing key is a spending key.
+ * Fixing it means deriving the stealth key additively from the recipient's
+ * spending SECRET (P = B + H(s)·G, p = b + H(s)), which changes
+ * `stealth/derive.ts`, the signing path and every address already derived:
+ * a founder decision.
+ *
  * @param spendingPubKey - The recipient's spending public key (32 bytes)
  * @param sharedSecret - The (possibly hybrid) shared secret
  */
@@ -75,7 +86,8 @@ export function deriveStealthSeed(
 }
 
 /**
- * Compute a view tag from shared secret (first byte of hash)
+ * Compute a view tag from shared secret (first byte of hash).
+ * ONE byte (0..255): it filters about 255 of 256 foreign announcements.
  * @param sharedSecret - The ECDH shared secret
  */
 export function computeViewTag(sharedSecret: Uint8Array): number {

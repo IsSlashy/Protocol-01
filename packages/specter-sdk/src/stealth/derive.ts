@@ -124,6 +124,11 @@ export function deriveStealthPublicKeyFromEncoded(
  * The recipient uses their viewing private key to recover the shared secret,
  * then derives the same stealth seed as the sender.
  *
+ * ⚠️ Who can spend (audit v1 F44): no spending SECRET goes into this key. The
+ * sender can compute the same seed, and so can anyone holding the viewing key
+ * (plus the KEM secret key in hybrid mode): each of them can sign for, and
+ * spend from, the stealth address. A viewing key is a spending key here.
+ *
  * @param spendingPubKey - Recipient's spending public key (for seed derivation)
  * @param viewingPrivateKey - Recipient's viewing private key
  * @param ephemeralPubKey - Sender's ephemeral public key

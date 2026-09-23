@@ -4,22 +4,23 @@
 
 **Built by [Protocol 01](https://github.com/IsSlashy/Protocol-01) — The Privacy Layer for Solana**
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: PolyForm Strict 1.0.0](https://img.shields.io/badge/License-PolyForm%20Strict%201.0.0-blue.svg)](LICENSE)
 
 </div>
 
 TypeScript primitives for building privacy protocols on Solana. Merkle trees, Poseidon commitments, nullifiers, and proof format conversion.
 
-> **Status: Groth16 helpers are legacy.** The `alt_bn128` proof-formatting helpers in this package targeted the Circom + snarkjs pipeline that was retired from the shipping stack in March 2026. The Goldilocks-Poseidon primitives (Merkle, commitment, nullifier) are still the foundation for the current STARK path — see [`apps/mobile/services/zk/goldilocks-poseidon.ts`](../../apps/mobile/services/zk/goldilocks-poseidon.ts) for the mobile port.
+> **Not the Styx pool hash.** Every hash in this package is Poseidon over the **BN254** scalar field, computed with [`poseidon-lite`](https://www.npmjs.com/package/poseidon-lite). The Styx pool uses Poseidon over the **Goldilocks** field (p = 2^64 - 2^32 + 1) in its STARK circuits, its on-chain verifier and the `zk_shielded` program. The two hashes give different values for the same input: the commitments, nullifiers, zero hashes and Merkle roots built here are 254-bit values that are **not compatible with the Styx pool**, and a note or a proof built from them cannot be used there. For the Goldilocks Poseidon of the pool, see [`stark/src/poseidon`](../../stark/src/poseidon) (Rust) and [`apps/mobile/services/zk/goldilocks-poseidon.ts`](../../apps/mobile/services/zk/goldilocks-poseidon.ts) (TypeScript port).
+>
+> **Groth16 helpers are legacy.** The `alt_bn128` proof-formatting helpers targeted the Circom + snarkjs pipeline, which the shipping stack no longer uses.
 
-## Why This Package
+## What This Package Is
 
-`@protocol-01/privacy-toolkit` is the **foundation layer** of the Protocol 01 stack. It provides the core cryptographic building blocks that every higher-level SDK depends on: note commitments, nullifier derivation, Merkle tree operations, and proof format conversion.
+`@protocol-01/privacy-toolkit` is a set of BN254-Poseidon building blocks from the earlier Groth16 design of Protocol 01: note commitments, nullifier derivation, incremental Merkle tree helpers, and snarkjs proof format conversion. Inside this repository, the only other package that imports it is `@protocol-01/privacy-sdk`, and only for `randomFieldElement()`.
 
-If you are building:
-- A privacy pool (shielded transactions) -- you need commitments + nullifiers + Merkle proofs
-- Confidential balances (zkSPL) -- you need balance commitments + proof formatting
-- Any ZK-SNARK application on Solana -- you need proof format conversion for the alt_bn128 precompile
+It can serve:
+- A BN254 / Circom privacy design of your own -- commitments + nullifiers + Merkle proofs over BN254 Poseidon
+- Any Groth16 application on Solana -- proof format conversion for the alt_bn128 precompile
 
 This package has **zero Solana dependencies** -- it is pure TypeScript + Poseidon and works in Node.js, browsers, and React Native.
 
@@ -62,13 +63,9 @@ const { newRoot, updatedSubtrees, pathElements, pathIndices } =
 
 ### Poseidon Commitments
 
-Note commitments, nullifiers, and balance commitments using Poseidon hash.
+Note commitments, nullifiers, and balance commitments using BN254 Poseidon (`poseidon-lite`).
 
-These primitives map directly to the circom circuit templates:
-- `createCommitment` -> `circuits/transfer.circom` (NoteCommitment template)
-- `computeNullifier` -> `circuits/transfer.circom` (NullifierDerivation template)
-- `createBalanceCommitment` -> `circuits/confidential_balance.circom` (BalanceCommitment template)
-- `deriveOwnerPubkey` -> `circuits/poseidon.circom` (SpendingKeyDerivation template)
+They follow the note, nullifier, balance-commitment and key-derivation templates of the retired Circom circuits of Protocol 01; those `.circom` files are no longer in the repository. None of these values is accepted by the Styx pool (see the note at the top).
 
 ```typescript
 import {
@@ -207,7 +204,18 @@ npm run build
 
 ## License
 
-MIT
+PolyForm Strict License 1.0.0 — see [LICENSE](LICENSE). The package is
+source-available: anyone may read, build, run and verify it for noncommercial
+purposes. Commercial use (including production deployment by a business),
+changes or derivative works, and redistribution need a written license from
+Volta Team ([styx.cash/licenses](https://styx.cash/licenses)).
+PolyForm Strict is not an open-source license.
+
+The versions already published to npm (1.0.0 to 1.0.4) were released under the
+MIT License and remain MIT, as does every commit of this repository before the
+one that replaced the MIT License with PolyForm Strict
+([LICENSE-MIT-BEFORE-POLYFORM](../../LICENSE-MIT-BEFORE-POLYFORM)). Versions
+published from 2026-09-22 on ship under PolyForm Strict 1.0.0.
 
 ---
 
@@ -222,6 +230,6 @@ The table below lists only packages that resolve on npm today.
 | **@protocol-01/privacy-sdk** | Full privacy SDK: shield, stealth, streams, vault |
 | **@protocol-01/stark-prover** | WASM STARK prover and on-chain verifier submitter |
 | **@protocol-01/specter-sdk** | Stealth wallets, transfers, registry |
-| **@protocol-01/privacy-toolkit** | Merkle trees, commitments, proof formatting |
+| **@protocol-01/privacy-toolkit** | BN254-Poseidon Merkle trees, commitments, Groth16 proof formatting (not the Styx pool hash) |
 
 [Website](https://protocol-01.dev) · [Twitter](https://x.com/Styx_PQ) · [Discord](https://discord.gg/EfqnVmb2dV)

@@ -89,7 +89,40 @@ export interface PrivateStreamState {
   lastTickAt: number | null;
   /** Transaction signatures from completed ticks */
   completedSignatures: string[];
+  /**
+   * One record per tick paid to a stealth address (`useStealthAddress`):
+   * what the RECIPIENT needs to derive the key of that address with
+   * `deriveStealthPrivateKey(ephemeralPublicKey, scanPrivateKey, spendPrivateKey)`.
+   * Nothing announces it on chain: the sender must deliver these records to
+   * the recipient, or the funds of those ticks cannot be spent by anyone.
+   * Absent in state serialized before 2026-09-23 (audit v1 F77).
+   */
+  stealthTicks?: StealthTickRecord[];
 }
+
+/** What the recipient of a stealth tick needs (hex-encoded ephemeral key). */
+export interface StealthTickRecord {
+  /** Signature returned by executeUnshield for this tick */
+  signature: string;
+  /** The one-time address the tick paid */
+  address: string;
+  /** Ephemeral X25519 public key of that address (hex) */
+  ephemeralPublicKey: string;
+  /** View tag of that address */
+  viewTag: number;
+}
+
+/** The stealth data of one tick, handed to executeUnshield so it can publish it. */
+export interface StealthTickData {
+  ephemeralPublicKey: Uint8Array;
+  viewTag: number;
+}
+
+type ExecuteUnshield = (
+  receipt: ShieldReceipt,
+  recipientAddress: string,
+  stealth?: StealthTickData,
+) => Promise<string>;
 
 // ============ Constants ============
 
@@ -205,12 +238,15 @@ function validateConfig(config: PrivateStreamConfig): void {
 
 /**
  * Derive a fresh stealth address for a tick.
- * Returns the base58 one-time address.
+ * Returns the base58 one-time address AND the ephemeral key and view tag: the
+ * recipient cannot derive the address's key without them (audit v1 F77; they
+ * used to be discarded here, so no tick paid to a stealth address could ever
+ * be spent).
  */
 function deriveTickStealthAddress(
   spendingPubKeyHex: string,
   viewingPubKeyHex: string,
-): string {
+): { address: string } & StealthTickData {
   // Decode the hex keys into a StealthMetaAddress
   const spendPub = hexToUint8Array(spendingPubKeyHex);
   const viewPub = hexToUint8Array(viewingPubKeyHex);
@@ -223,7 +259,11 @@ function deriveTickStealthAddress(
   };
 
   const stealth = generateStealthAddress(metaAddress);
-  return stealth.address;
+  return {
+    address: stealth.address,
+    ephemeralPublicKey: stealth.ephemeralPublicKey,
+    viewTag: stealth.viewTag,
+  };
 }
 
 /**
@@ -256,7 +296,7 @@ function hexToUint8Array(hex: string): Uint8Array {
 export class PrivateStream {
   private state: PrivateStreamState;
   private timer: ReturnType<typeof setTimeout> | null = null;
-  private executeUnshield: ((receipt: ShieldReceipt, recipientAddress: string) => Promise<string>) | null = null;
+  private executeUnshield: ExecuteUnshield | null = null;
   private isExecutingTick: boolean = false;
 
   private constructor(state: PrivateStreamState) {
@@ -292,6 +332,7 @@ export class PrivateStream {
       createdAt: Date.now(),
       lastTickAt: null,
       completedSignatures: [],
+      stealthTicks: [],
     };
 
     return new PrivateStream(state);
@@ -361,7 +402,7 @@ export class PrivateStream {
    *   Receives a receipt and a recipient address, returns the tx signature.
    */
   start(
-    executeUnshield: (receipt: ShieldReceipt, recipientAddress: string) => Promise<string>,
+    executeUnshield: ExecuteUnshield,
   ): void {
     if (this.state.receipts.length === 0 && this.state.ticksRemaining > 0) {
       throw new Error('No receipts attached. Call setReceipts() before start().');
@@ -498,11 +539,14 @@ export class PrivateStream {
 
     // Determine the recipient address for this tick
     let recipientAddress: string;
+    let stealth: StealthTickData | undefined;
     if (this.state.config.useStealthAddress) {
-      recipientAddress = deriveTickStealthAddress(
+      const tick = deriveTickStealthAddress(
         this.state.config.recipientSpendingPubKey!,
         this.state.config.recipientViewingPubKey!,
       );
+      recipientAddress = tick.address;
+      stealth = { ephemeralPublicKey: tick.ephemeralPublicKey, viewTag: tick.viewTag };
     } else {
       recipientAddress = this.state.config.recipientAddress;
     }
@@ -511,7 +555,9 @@ export class PrivateStream {
     const receipt = this.state.receipts[0];
 
     try {
-      const signature = await this.executeUnshield(receipt, recipientAddress);
+      const signature = stealth
+        ? await this.executeUnshield(receipt, recipientAddress, stealth)
+        : await this.executeUnshield(receipt, recipientAddress);
 
       // Success — move receipt to spent, record signature
       this.state.receipts.shift();
@@ -521,6 +567,14 @@ export class PrivateStream {
       this.state.failedAttempts = 0;
       this.state.lastTickAt = Date.now();
       this.state.completedSignatures.push(signature);
+      if (stealth) {
+        (this.state.stealthTicks ??= []).push({
+          signature,
+          address: recipientAddress,
+          ephemeralPublicKey: Array.from(stealth.ephemeralPublicKey, (b) => b.toString(16).padStart(2, '0')).join(''),
+          viewTag: stealth.viewTag,
+        });
+      }
 
       // Check completion
       if (this.state.ticksRemaining === 0) {

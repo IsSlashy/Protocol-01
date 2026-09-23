@@ -7,30 +7,46 @@ on:
       - master
   workflow_dispatch:  # Permet de lancer manuellement
 
+# The GITHUB_TOKEN only reads this repository; the pushes use PAT_TOKEN.
+permissions:
+  contents: read
+
 env:
   GIT_USER_NAME: IsSlashy
   GIT_USER_EMAIL: slashyfx@volta.team
+
+# INJECTION RULE (audit v1, 2026-09-22): no `${{ }}` expression inside a `run:`
+# script. GitHub pastes an expression into the script as TEXT before bash
+# parses it, so a `$( ... )` in a merged PR's title or branch name (the commit
+# subject) used to run in the same script as the PAT. Every value reaches bash
+# through `env:` and is read as a quoted variable, which bash never re-parses.
+# Checked by scripts/ci/sync-all-injection.test.mjs, which runs before any sync step.
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check this workflow against shell injection
+        run: node --test scripts/ci/sync-all-injection.test.mjs
 
       - name: Setup Git
         run: |
-          git config --global user.name "${{ env.GIT_USER_NAME }}"
-          git config --global user.email "${{ env.GIT_USER_EMAIL }}"
+          git config --global user.name "$GIT_USER_NAME"
+          git config --global user.email "$GIT_USER_EMAIL"
 
       - name: Set commit message
         id: msg
         run: |
-          # Use first line of commit message only, sanitized for shell safety
-          MSG=$(git log -1 --pretty=%s | head -c 200 | tr -d '"' | tr -d "'" | tr -d '`')
-          echo "msg=Sync: ${MSG}" >> $GITHUB_OUTPUT
+          # First line of the last commit message, kept verbatim: it only ever
+          # reaches a shell as the quoted variable "$COMMIT_MSG".
+          MSG=$(git log -1 --pretty=%s | head -c 200)
+          echo "msg=Sync: ${MSG}" >> "$GITHUB_OUTPUT"
 
       - name: Detect changes
         id: changes
@@ -48,48 +64,60 @@ jobs:
 
       - name: Sync p01-web
         if: steps.changes.outputs.web == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          COMMIT_MSG: ${{ steps.msg.outputs.msg }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           echo "Syncing p01-web..."
           cd apps/web
           rm -rf .git 2>/dev/null || true
           git init
           git add -A
-          git commit -m "${{ steps.msg.outputs.msg }}"
+          git commit -m "$COMMIT_MSG"
           git branch -M main
-          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-web.git
+          git remote add origin "https://${PAT_TOKEN}@github.com/IsSlashy/p01-web.git"
           git push -f origin main
           echo "✓ p01-web synced"
 
       - name: Sync p01-mobile
         if: steps.changes.outputs.mobile == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          COMMIT_MSG: ${{ steps.msg.outputs.msg }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           echo "Syncing p01-mobile..."
           cd apps/mobile
           rm -rf .git node_modules android/app/build android/.gradle .expo 2>/dev/null || true
           git init
           git add -A
-          git commit -m "${{ steps.msg.outputs.msg }}"
+          git commit -m "$COMMIT_MSG"
           git branch -M main
-          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-mobile.git
+          git remote add origin "https://${PAT_TOKEN}@github.com/IsSlashy/p01-mobile.git"
           git push -f origin main
           echo "✓ p01-mobile synced"
 
       - name: Sync p01-extension
         if: steps.changes.outputs.extension == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          COMMIT_MSG: ${{ steps.msg.outputs.msg }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           echo "Syncing p01-extension..."
           cd apps/extension
           rm -rf .git node_modules dist 2>/dev/null || true
           git init
           git add -A
-          git commit -m "${{ steps.msg.outputs.msg }}"
+          git commit -m "$COMMIT_MSG"
           git branch -M main
-          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-extension.git
+          git remote add origin "https://${PAT_TOKEN}@github.com/IsSlashy/p01-extension.git"
           git push -f origin main
           echo "✓ p01-extension synced"
 
       - name: Sync p01-sdk
         if: steps.changes.outputs.sdk == 'true' || github.event_name == 'workflow_dispatch'
+        env:
+          COMMIT_MSG: ${{ steps.msg.outputs.msg }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           echo "Syncing p01-sdk..."
           mkdir -p /tmp/p01-sdk/core
@@ -106,18 +134,24 @@ jobs:
           cd /tmp/p01-sdk
           git init
           git add -A
-          git commit -m "${{ steps.msg.outputs.msg }}"
+          git commit -m "$COMMIT_MSG"
           git branch -M main
-          git remote add origin https://${{ secrets.PAT_TOKEN }}@github.com/IsSlashy/p01-sdk.git
+          git remote add origin "https://${PAT_TOKEN}@github.com/IsSlashy/p01-sdk.git"
           git push -f origin main
           echo "✓ p01-sdk synced"
 
       - name: Summary
+        env:
+          WEB: ${{ steps.changes.outputs.web }}
+          MOBILE: ${{ steps.changes.outputs.mobile }}
+          EXTENSION: ${{ steps.changes.outputs.extension }}
+          SDK: ${{ steps.changes.outputs.sdk }}
         run: |
-          echo "## Sync Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Repo | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| p01-web | ${{ steps.changes.outputs.web == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| p01-mobile | ${{ steps.changes.outputs.mobile == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| p01-extension | ${{ steps.changes.outputs.extension == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| p01-sdk | ${{ steps.changes.outputs.sdk == 'true' && '✅ Synced' || '⏭️ Skipped' }} |" >> $GITHUB_STEP_SUMMARY
+          status() { if [ "$1" = "true" ]; then echo '✅ Synced'; else echo '⏭️ Skipped'; fi; }
+          echo "## Sync Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Repo | Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|------|--------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| p01-web | $(status "$WEB") |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| p01-mobile | $(status "$MOBILE") |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| p01-extension | $(status "$EXTENSION") |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| p01-sdk | $(status "$SDK") |" >> "$GITHUB_STEP_SUMMARY"

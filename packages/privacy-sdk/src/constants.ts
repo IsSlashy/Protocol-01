@@ -69,11 +69,16 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
  */
 
 /**
- * Get only the deployed program IDs for a given network.
+ * Get the declared program IDs for a given network, minus placeholders.
  * Programs with placeholder IDs (System Program) are excluded and a warning is logged for each.
  *
+ * It does not check the chain: an id it returns comes from Anchor.toml and may
+ * have no program behind it (on devnet zkspl, stream, subscription and
+ * whitelist are declared but not deployed; nothing is deployed on mainnet).
+ * Read the account on the cluster before relying on a module.
+ *
  * @param network - The target network ('devnet' or 'mainnet')
- * @returns A partial ProgramIds object containing only deployed programs
+ * @returns A partial ProgramIds object without the placeholder entries
  */
 export function getDeployedProgramIds(network: Network): Partial<ProgramIds> {
   const PLACEHOLDER = '11111111111111111111111111111111';

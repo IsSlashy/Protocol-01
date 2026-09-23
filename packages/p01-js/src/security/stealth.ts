@@ -12,7 +12,10 @@
  * 4. Sender computes shared secret: S = r * scanPubKey
  * 5. Sender derives one-time address: P = spendPubKey + hash(S)*G
  * 6. Recipient scans using: S' = scanPrivKey * R, then checks P' = spendPubKey + hash(S')*G
- * 7. Recipient derives spending key: p = spendPrivKey + hash(S')
+ * 7. Recipient derives spending key: p = a + hash(S') (mod L), where a is the
+ *    RFC 8032 secret scalar of the spend key, clamp(sha512(spendSeed)[0..32]),
+ *    because spendPubKey = a*G. p is a raw scalar, not an ed25519 seed: sign
+ *    with `signWithStealthKey`, never with `ed25519.sign` or a Solana Keypair.
  *
  * @module security/stealth
  */
@@ -348,8 +351,9 @@ export function scanAndDeriveStealthPayment(
     spendPrivateKey
   );
 
-  // Derive the public key and address for verification
-  const publicKey = ed25519.getPublicKey(privateKey);
+  // The address this key controls: p*G. NOT ed25519.getPublicKey(p), which
+  // would hash p again as if it were a seed and name an unrelated address.
+  const publicKey = stealthPublicKeyFromPrivateKey(privateKey);
   const address = base58Encode(publicKey);
 
   return {
@@ -367,12 +371,24 @@ export function scanAndDeriveStealthPayment(
  * Process:
  * 1. Compute shared secret: S = scanPrivKey * ephemeralPubKey
  * 2. Hash to scalar: s = hash(S)
- * 3. Derive private key: p = spendPrivKey + s (mod curve order)
+ * 3. Derive private key: p = a + s (mod curve order), where a is the RFC 8032
+ *    secret scalar of the spend key (clamp(sha512(spendSeed)[0..32])), since
+ *    the published spend public key is a*G and the one-time address is
+ *    spendPubKey + s*G = p*G.
+ *
+ * WARNING: this used to add s to the raw spend SEED read as an integer. That
+ * value controlled neither the one-time address nor any key related to it, so
+ * funds paid to a stealth address could not be spent through the SDK (audit v1
+ * round 4; `stealth.test.ts`).
+ *
+ * The result is a raw scalar (32 bytes, little-endian), NOT an ed25519 seed:
+ * `ed25519.sign(message, p)` and `Keypair.fromSeed(p)` both hash it again and
+ * sign for a different key. Sign with {@link signWithStealthKey}.
  *
  * @param ephemeralPubKey - Ephemeral public key from the transaction
  * @param scanPrivateKey - Our scan private key
- * @param spendPrivateKey - Our spend private key
- * @returns The one-time private key for spending
+ * @param spendPrivateKey - Our spend private key (the 32-byte ed25519 seed)
+ * @returns The one-time private scalar for spending (little-endian)
  *
  * @example
  * ```typescript
@@ -382,8 +398,9 @@ export function scanAndDeriveStealthPayment(
  *   keyPair.spendPrivateKey
  * );
  *
- * // Use oneTimePrivateKey to sign transactions
- * const signature = ed25519.sign(message, oneTimePrivateKey);
+ * // Sign a Solana transaction whose fee payer is the stealth address
+ * const signature = signWithStealthKey(transaction.serializeMessage(), oneTimePrivateKey);
+ * transaction.addSignature(new PublicKey(stealthAddress), Buffer.from(signature));
  * ```
  */
 export function deriveStealthPrivateKey(
@@ -401,13 +418,105 @@ export function deriveStealthPrivateKey(
   // Step 2: Hash to scalar
   const sharedSecretHash = hashToScalar(sharedSecret);
 
-  // Step 3: Add to spend private key
-  // p = spendPrivKey + hash(S) (mod curve order)
-  const spendScalar = bytesToBigInt(spendPrivateKey) % CURVE_ORDER;
+  // Step 3: Add to the spend key's secret SCALAR (not its seed)
+  // p = a + hash(S) (mod curve order), with spendPubKey = a*G
+  const spendScalar = ed25519SecretScalar(spendPrivateKey);
   const hashScalar = bytesToBigInt(sharedSecretHash) % CURVE_ORDER;
   const oneTimeScalar = (spendScalar + hashScalar) % CURVE_ORDER;
 
   return bigIntToBytes(oneTimeScalar, 32);
+}
+
+/**
+ * The public key (and so the Solana address bytes) a one-time stealth private
+ * scalar controls: p*G.
+ *
+ * @param oneTimePrivateKey - Scalar from {@link deriveStealthPrivateKey}
+ * @returns 32-byte ed25519 public key
+ */
+export function stealthPublicKeyFromPrivateKey(oneTimePrivateKey: Uint8Array): Uint8Array {
+  return ed25519.Point.BASE.multiply(oneTimeScalarOf(oneTimePrivateKey)).toBytes();
+}
+
+/**
+ * The base58 address a one-time stealth private scalar controls.
+ *
+ * @param oneTimePrivateKey - Scalar from {@link deriveStealthPrivateKey}
+ * @returns base58 Solana address
+ */
+export function stealthAddressFromPrivateKey(oneTimePrivateKey: Uint8Array): string {
+  return base58Encode(stealthPublicKeyFromPrivateKey(oneTimePrivateKey));
+}
+
+/**
+ * Signs a message with a one-time stealth private scalar.
+ *
+ * The output is a standard 64-byte ed25519 signature (R || S) that verifies
+ * under the stealth address with any RFC 8032 verifier, including the Solana
+ * runtime. It exists because the scalar is not a seed, so `ed25519.sign` cannot
+ * be used. The nonce is derived deterministically from the key and the
+ * message, domain-separated from every other hash in this module, never drawn.
+ *
+ * @param message - Bytes to sign (for Solana: `transaction.serializeMessage()`)
+ * @param oneTimePrivateKey - Scalar from {@link deriveStealthPrivateKey}
+ * @returns 64-byte ed25519 signature
+ */
+export function signWithStealthKey(message: Uint8Array, oneTimePrivateKey: Uint8Array): Uint8Array {
+  const a = oneTimeScalarOf(oneTimePrivateKey);
+  const A = ed25519.Point.BASE.multiply(a).toBytes();
+
+  // Nonce prefix: the role sha512(seed)[32..64] plays in RFC 8032, derived
+  // here from the scalar under its own domain separator.
+  const nonceDomain = new TextEncoder().encode('Protocol01-Stealth-sign-nonce-v1');
+  const prefix = sha512(concatBytes(nonceDomain, bigIntToBytes(a, 32)));
+  const r = bytesToBigInt(sha512(concatBytes(prefix, message))) % CURVE_ORDER;
+  if (r === BigInt(0)) {
+    throw new Error('Stealth signing nonce reduced to zero');
+  }
+  const R = ed25519.Point.BASE.multiply(r).toBytes();
+
+  const k = bytesToBigInt(sha512(concatBytes(R, A, message))) % CURVE_ORDER;
+  const S = (r + k * a) % CURVE_ORDER;
+
+  return concatBytes(R, bigIntToBytes(S, 32));
+}
+
+/** A one-time scalar as a bigint in [1, L), refusing anything else. */
+function oneTimeScalarOf(oneTimePrivateKey: Uint8Array): bigint {
+  if (oneTimePrivateKey.length !== 32) {
+    throw new Error('One-time stealth private key must be 32 bytes');
+  }
+  const a = bytesToBigInt(oneTimePrivateKey) % CURVE_ORDER;
+  if (a === BigInt(0)) {
+    throw new Error('One-time stealth private key is zero');
+  }
+  return a;
+}
+
+/**
+ * The RFC 8032 secret scalar of an ed25519 seed: clamp(sha512(seed)[0..32]),
+ * read little-endian and reduced mod L. `ed25519.getPublicKey(seed)` is this
+ * scalar times G.
+ */
+function ed25519SecretScalar(seed: Uint8Array): bigint {
+  if (seed.length !== 32) {
+    throw new Error('Spend private key must be a 32-byte ed25519 seed');
+  }
+  const h = sha512(seed).slice(0, 32);
+  h[0] &= 248;
+  h[31] &= 127;
+  h[31] |= 64;
+  return bytesToBigInt(h) % CURVE_ORDER;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
 }
 
 // ============ Utility Functions ============

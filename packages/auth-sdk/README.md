@@ -113,7 +113,7 @@ Available networks: `'mainnet-beta'`, `'devnet'`, `'testnet'`, `'localnet'`.
 
 ### Custom Session Storage
 
-The default in-memory session store works for single-server development. For production, provide a persistent store via `sessionStore` (server) or `sessionStorage` (client):
+The server has **no default session store**. Without a `sessionStore` (and without a `session` passed to `verifyCallback`), the server has no session to check: it never returns `"Session not found"` or `"Session expired"`, and one signed callback verifies again and again within `maxTimestampAge` (a replay). Provide a persistent store via `sessionStore` (server) or `sessionStorage` (client), and set `requireSession: true` so that a callback with no session to check is refused (`"Session not found"`) instead of verified. `requireSession` defaults to `false` only to keep existing integrations working (audit v1 F78):
 
 ```typescript
 import { createClient } from 'redis';
@@ -143,6 +143,7 @@ const sessionStore: ServerSessionStore = {
 const auth = new P01AuthServer({
   serviceId: 'my-service',
   sessionStore,
+  requireSession: true, // refuse a callback that has no session to check
 });
 ```
 
@@ -218,8 +219,9 @@ app.listen(3000);
 | `"Timestamp expired or invalid"` | Auth response is older than `maxTimestampAge` (default 60s) | Ensure client and server clocks are roughly synced. Increase `maxTimestampAge` if needed. |
 | `"Invalid signature"` | Ed25519 signature does not match the challenge | The signing wallet does not match `publicKey`, or the challenge was tampered with. |
 | `"Subscription not active"` | Wallet does not hold the required SPL token | User needs to purchase/renew their subscription token. |
-| `"Session not found"` | Session ID does not exist in the store | Session may have expired or been cancelled. Create a new session. |
-| `"Session expired"` | Session TTL has elapsed | Default TTL is 5 minutes. User needs to scan a fresh QR code. |
+| `"Session not found"` | Session ID does not exist in the `sessionStore` (or differs from the `session` passed), or `requireSession: true` and there is no session to check. Never returned without a `sessionStore`, a `session` or `requireSession`. | Session may have expired or been cancelled. Create a new session. |
+| `"Session expired"` | Session TTL has elapsed. Only checked with a `sessionStore` or a `session` passed. | Default TTL is 5 minutes. User needs to scan a fresh QR code. |
+| `"Session already completed"` | The session in the `sessionStore` was already verified once (a replay). | Create a new session. |
 | `"Invalid callback: missing required fields ..."` | Callback body is missing `sessionId`, `wallet`, `signature`, or `publicKey` | Ensure the mobile app is sending the complete `AuthResponse` object. |
 
 Network errors during on-chain subscription verification are caught internally and result in `"Subscription not active"`. Check your RPC URL if verification consistently fails.
@@ -271,4 +273,15 @@ import { P01AuthServer } from '@protocol-01/auth-sdk/server';
 
 ## License
 
-MIT
+PolyForm Strict License 1.0.0 — see [LICENSE](LICENSE). The package is
+source-available: anyone may read, build, run and verify it for noncommercial
+purposes. Commercial use (including production deployment by a business),
+changes or derivative works, and redistribution need a written license from
+Volta Team ([styx.cash/licenses](https://styx.cash/licenses)).
+PolyForm Strict is not an open-source license.
+
+The versions already published to npm (0.1.0 to 0.1.1) were released under the
+MIT License and remain MIT, as does every commit of this repository before the
+one that replaced the MIT License with PolyForm Strict
+([LICENSE-MIT-BEFORE-POLYFORM](../../LICENSE-MIT-BEFORE-POLYFORM)). Versions
+published from 2026-09-22 on ship under PolyForm Strict 1.0.0.

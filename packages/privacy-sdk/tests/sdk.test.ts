@@ -484,6 +484,14 @@ function disc(name: string): Buffer {
 
 describe('LiquidityModule', () => {
   const liquidity = new LiquidityModule(mockConnection);
+  // Audit v1 F27: deposit / prefund / settle refuse against the DEPLOYED id
+  // (drainable reserve; tests/liquidityDisabled.test.ts). Their encoding is
+  // checked against another program id, as a localnet or a fixed redeploy at a
+  // new address would have.
+  const liquidityAtTestId = new LiquidityModule(
+    mockConnection,
+    new PublicKey('LiqTest111111111111111111111111111111111111'),
+  );
 
   describe('PDAs', () => {
     it('should derive pool PDA deterministically', () => {
@@ -535,7 +543,7 @@ describe('LiquidityModule', () => {
 
     it('buildDepositIx → disc + amount LE', () => {
       const amount = 1_500_000_000n;
-      const ix = liquidity.buildDepositIx(testKeypair.publicKey, amount);
+      const ix = liquidityAtTestId.buildDepositIx(testKeypair.publicKey, amount);
       expect(ix.data.subarray(0, 8).equals(disc('deposit'))).toBe(true);
       expect(ix.data.readBigUInt64LE(8)).toBe(amount);
     });
@@ -555,7 +563,7 @@ describe('LiquidityModule', () => {
       const starkCommitment = 0xDEADBEEFn;
       const amount = 1_000_000_000n;
 
-      const ix = liquidity.buildPrefundIx({
+      const ix = liquidityAtTestId.buildPrefundIx({
         ephemeralSigner:  Keypair.generate().publicKey,
         recipient:        Keypair.generate().publicKey,
         denominatedPool:  Keypair.generate().publicKey,
@@ -579,7 +587,7 @@ describe('LiquidityModule', () => {
     });
 
     it('buildSettleIx → disc only, 10 accounts', () => {
-      const ix = liquidity.buildSettleIx({
+      const ix = liquidityAtTestId.buildSettleIx({
         settler:           testKeypair.publicKey,
         denominatedPool:   Keypair.generate().publicKey,
         merkleTree:        Keypair.generate().publicKey,

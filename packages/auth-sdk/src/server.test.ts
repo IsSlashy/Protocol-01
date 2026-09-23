@@ -801,6 +801,114 @@ describe('P01AuthServer', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Audit R4 (AXIS 8): the session refusals the README documents
+  // -----------------------------------------------------------------------
+
+  /**
+   * 🚨 THE README'S ERROR TABLE LISTS "Session not found" AND "Session
+   * expired", and verifyCallback made neither. A missed store lookup fell
+   * through to an EMPTY challenge, so a callback signed over '' for a session
+   * that does not exist succeeded; a session past its expiresAt succeeded; and
+   * nothing marked a session used, so one callback body verified again and
+   * again inside the timestamp window. These cases pin the refusals.
+   */
+  describe('R4 · session refusals the README documents', () => {
+    function serverWithStore() {
+      const store = createMockSessionStore();
+      const server = new P01AuthServer({ ...defaultConfig(), sessionStore: store });
+      return { store, server };
+    }
+
+    it('refuses a session the configured store does not hold ("Session not found")', async () => {
+      const { server } = serverWithStore();
+      const result = await server.verifyCallback(makeResponse({ sessionId: 'ghost' }));
+      expect(result.success, 'a callback for a session that does not exist was accepted').toBe(false);
+      expect(result.error).toBe('Session not found');
+      expect(mockNaclVerify).not.toHaveBeenCalled();
+    });
+
+    it('refuses a stored session past its expiresAt ("Session expired")', async () => {
+      const { store, server } = serverWithStore();
+      store.map.set('sess-1', makeSession({ expiresAt: Date.now() - 3_600_000 }));
+      const result = await server.verifyCallback(makeResponse());
+      expect(result.success, 'a session that expired an hour ago was accepted').toBe(false);
+      expect(result.error).toBe('Session expired');
+    });
+
+    it('refuses an explicit session past its expiresAt ("Session expired")', async () => {
+      const server = new P01AuthServer(defaultConfig());
+      const result = await server.verifyCallback(
+        makeResponse(),
+        makeSession({ expiresAt: Date.now() - 1 }),
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Session expired');
+    });
+
+    it('refuses an explicit session whose id is not the one the callback names', async () => {
+      const server = new P01AuthServer(defaultConfig());
+      const result = await server.verifyCallback(
+        makeResponse({ sessionId: 'sess-OTHER' }),
+        makeSession({ sessionId: 'sess-1' }),
+      );
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Session not found');
+    });
+
+    it('verifies a stored session once: the same callback replayed is refused', async () => {
+      const { store, server } = serverWithStore();
+      store.map.set('sess-1', makeSession());
+      const body = makeResponse();
+      const first = await server.verifyCallback(body);
+      expect(first.success).toBe(true);
+      expect(store.map.get('sess-1')?.status).toBe('completed');
+      for (let i = 0; i < 2; i += 1) {
+        const again = await server.verifyCallback(body);
+        expect(again.success, 'the same callback verified twice').toBe(false);
+        expect(again.error).toBe('Session already completed');
+      }
+    });
+
+    it('a failed signature does not consume the session', async () => {
+      const { store, server } = serverWithStore();
+      store.map.set('sess-1', makeSession());
+      mockNaclVerify.mockReturnValueOnce(false);
+      const bad = await server.verifyCallback(makeResponse());
+      expect(bad.error).toBe('Invalid signature');
+      expect(store.map.get('sess-1')?.status).toBe('pending');
+      const good = await server.verifyCallback(makeResponse());
+      expect(good.success).toBe(true);
+    });
+
+    it('a stored session whose subscription check fails is marked failed, not left open', async () => {
+      mockGetTokenAccountBalance.mockRejectedValueOnce(new Error('no account'));
+      const store = createMockSessionStore();
+      store.map.set('sess-1', makeSession());
+      const server = new P01AuthServer({ ...defaultConfig(), subscriptionMint: 'MINT', sessionStore: store });
+      const result = await server.verifyCallback(makeResponse());
+      expect(result.error).toBe('Subscription not active');
+      expect(store.map.get('sess-1')?.status).toBe('failed');
+      const again = await server.verifyCallback(makeResponse());
+      expect(again.success).toBe(false);
+    });
+
+    it('the header middleware keeps its per-request behaviour and consumes nothing', async () => {
+      const { store, server } = serverWithStore();
+      store.map.set('sess-1', makeSession({ status: 'completed' }));
+      const mw = server.middleware();
+      const encoded = Buffer.from(JSON.stringify(makeResponse())).toString('base64');
+      for (let i = 0; i < 2; i += 1) {
+        const req: any = { headers: { 'x-p01-auth': encoded } };
+        const next = vi.fn();
+        await mw(req, {}, next);
+        expect(next).toHaveBeenCalledOnce();
+        expect(req.p01Auth?.wallet).toBe('DERIVED_WALLET');
+      }
+      expect(store.set).not.toHaveBeenCalled();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Full flow integration
   // -----------------------------------------------------------------------
 
@@ -890,5 +998,69 @@ describe('P01AuthServer', () => {
       expect(result.error).toBe('Invalid signature');
       expect(mockGetTokenAccountBalance).not.toHaveBeenCalled();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit v1, F78: the session refusals exist only with a session to check.
+// Without a sessionStore and without a session argument, verifyCallback checks
+// the signature over an EMPTY challenge and never answers "Session not found"
+// or "Session expired", so one signed callback verifies again and again
+// within maxTimestampAge. Refusing that by default would break every caller
+// that verifies without a store (an API decision for the founder), so it is
+// opt-in: `requireSession: true` fails closed. The README must say which
+// refusals need a store, and must not promise a server-side default store.
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+
+describe('F78: session refusals without a session store', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockNaclVerify.mockReturnValue(true);
+    mockNaclVerify.mockClear();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('requireSession: true refuses a callback with neither a store nor a session, before any signature check', async () => {
+    const server = new P01AuthServer({ ...defaultConfig(), requireSession: true } as never);
+    const result = await server.verifyCallback(makeResponse());
+    expect(result).toEqual({ success: false, error: 'Session not found' });
+    expect(mockNaclVerify).not.toHaveBeenCalled();
+  });
+
+  it('requireSession: true still verifies a stored pending session once, then refuses the replay', async () => {
+    const store = createMockSessionStore();
+    store.map.set('sess-1', makeSession());
+    const server = new P01AuthServer({ ...defaultConfig(), sessionStore: store, requireSession: true } as never);
+    expect((await server.verifyCallback(makeResponse())).success).toBe(true);
+    expect(await server.verifyCallback(makeResponse())).toEqual({ success: false, error: 'Session already completed' });
+  });
+
+  it('without requireSession and without a store, the replay is accepted (documented, not fixed: API decision)', async () => {
+    const server = new P01AuthServer(defaultConfig());
+    expect((await server.verifyCallback(makeResponse())).success).toBe(true);
+    expect((await server.verifyCallback(makeResponse())).success).toBe(true);
+  });
+
+  const README = readFileSync(resolvePath(__dirname, '..', 'README.md'), 'utf8');
+  const SERVER_TS = readFileSync(resolvePath(__dirname, 'server.ts'), 'utf8');
+
+  it('the README says the session refusals need a sessionStore (or a session), and names requireSession', () => {
+    for (const err of ['"Session not found"', '"Session expired"']) {
+      const row = README.split('\n').find((l) => l.startsWith(`| \`${err}\``));
+      expect(row, `no README row for ${err}`).toBeDefined();
+      expect(row!, row).toMatch(/sessionStore/);
+    }
+    expect(README).toMatch(/requireSession/);
+    expect(README).toMatch(/replay/i);
+  });
+
+  it('neither the README nor server.ts promises a server-side default in-memory session store', () => {
+    expect(README).not.toMatch(/default in-memory session store works/i);
+    expect(SERVER_TS).not.toMatch(/default in-memory store works/i);
   });
 });

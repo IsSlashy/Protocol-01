@@ -54,10 +54,12 @@ this verifier refuses at the parser; do not pair it with the current program.
 
 ### Measured on devnet (Helius, one run each, `docs/BENCHMARK-2026-09-13.md` §6/§6b)
 
-prove + allocate + upload + verify + close, from Node with this blob:
+prove + allocate + upload + verify + close, from Node, on 2026-09-13 with the
+blob of that day, `0ad6d7f1…` (265,324 bytes):
 C0 10.9 s · C1 5.8 s · C2 5.5 s · C3 5.3 s · C4 8.1 s · C5 15.9 s (9.7 s of it
 proving) · C6 8.2 s · C7 8.0 s. The 1,000-byte PDA path measured 35–41 s for
-the same C7 proof on the same endpoint.
+the same C7 proof on the same endpoint. The 2026-09-20 reship `d5583d41…` has
+not been re-measured end to end; these are the figures of `0ad6d7f1…`.
 
 ### Harness
 

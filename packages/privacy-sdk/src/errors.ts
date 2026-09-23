@@ -16,6 +16,8 @@ export enum PrivacyErrorCode {
   NULLIFIER_ALREADY_SPENT = 2006,
   POOL_NOT_FOUND = 2007,
   DENOMINATION_MISMATCH = 2008,
+  /** The deployed p01_liquidity program is drainable: the SDK refuses to route through it (audit v1 F27). */
+  LIQUIDITY_DISABLED = 2009,
 
   // ─── 3xxx: retired with the stealth module (specter program closed 2026-09-13)
   // ─── 7xxx: retired with the vault module (quantum vault program closed 2026-09-13)

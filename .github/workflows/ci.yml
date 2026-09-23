@@ -42,10 +42,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2.4.1
         with:
           # Match `packageManager` in package.json exactly. CI was on 10.34.0
           # while the field, the lockfile target and every developer are on
@@ -69,7 +69,7 @@ jobs:
         # failures that are entirely the shadowing -- MEASURED 2026-08-26, 73 red
         # under Node 25 against 6 under Node 24. A runtime this suite is sensitive
         # to is one CI should be reading from the same file developers do.
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
           cache: pnpm
@@ -80,7 +80,7 @@ jobs:
         run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
 
       - name: Cache pnpm store
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ steps.pnpm-store.outputs.STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
@@ -88,7 +88,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Cache Turbo
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .turbo
           key: ${{ runner.os }}-turbo-${{ github.sha }}
@@ -161,15 +161,19 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # the commit the stable branch pointed at on 2026-09-23
         with:
+          # Pinned by SHA, the action no longer reads the channel from the
+          # ref, so it is named here. It still floats (stable): see
+          # FLOATING_TOOLCHAIN_ALLOWED in scripts/ci/workflow-pins.test.mjs.
+          toolchain: stable
           components: clippy, rustfmt
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry
@@ -179,7 +183,7 @@ jobs:
             ${{ runner.os }}-cargo-registry-
 
       - name: Cache cargo target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: target
           key: ${{ runner.os }}-cargo-target-${{ hashFiles('**/Cargo.lock') }}
@@ -452,13 +456,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # the commit the stable branch pointed at on 2026-09-23
+        with:
+          toolchain: stable
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.cargo/registry/index
@@ -468,7 +474,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Cache cargo target
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: target
           key: ${{ runner.os }}-cargo-slowpins-${{ hashFiles('**/Cargo.lock') }}
@@ -515,12 +521,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
         # Same as the job above: read the version from .node-version so CI and
         # developers cannot drift apart.
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
 
@@ -747,3 +753,12 @@ jobs:
       # self-consistent; it does not ask the chain, and it says so when it passes.
       - name: Prover artifact — blob, four twins, and the fixture table agree
         run: node packages/stark-prover/scripts/deployed-verifier-check.mjs
+
+      # Also node-builtins only, so also here. The workflows that hold a secret
+      # reference every action by commit SHA and install no tool at a floating
+      # version (audit v1 F43); the settler installs from the lockfile only;
+      # sync-all passes the commit subject through env, never inline in a script
+      # (F12). Before this step those three files ran only inside the manual
+      # workflow they check, or nowhere.
+      - name: Workflow hygiene — pinned actions and tools beside secrets
+        run: node --test scripts/ci/workflow-pins.test.mjs scripts/ci/run-settler-pins.test.mjs scripts/ci/sync-all-injection.test.mjs

@@ -1,6 +1,17 @@
 /**
  * LiquidityModule — thin wrapper around the on-chain `p01_liquidity` program.
  *
+ * ⛔ DISABLED AGAINST THE DEPLOYED PROGRAM (audit v1 F27, 2026-09-23). The
+ * deployed `prefund` pays the amount the caller names against a STARK proof
+ * buffer whose phase-2 verification it does not check, with no Merkle
+ * membership; the devnet reserve was drained in litesvm with the deployed
+ * ELF. Until the program is fixed and redeployed (a founder decision),
+ * `buildDepositIx`, `buildPrefundIx` and `buildSettleIx` throw
+ * `PrivacyError(LIQUIDITY_DISABLED)` when they target
+ * {@link P01_LIQUIDITY_PROGRAM_ID}. `buildWithdrawIx` stays available so LPs
+ * can take out what is already in the reserve. Another program id (localnet,
+ * or a fixed redeploy at a new address) still encodes.
+ *
  * Mirrors apps/mobile/services/liquidity. Builds Anchor instructions for:
  *   - init_pool / update_params (admin)
  *   - deposit / withdraw         (LPs)
@@ -18,12 +29,29 @@ import {
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { PrivacyError, PrivacyErrorCode } from '../errors';
 
 // ─── Program IDs (same on devnet + mainnet once deployed) ────────────────────
 
 export const P01_LIQUIDITY_PROGRAM_ID = new PublicKey(
   '6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg',
 );
+
+/**
+ * Refuse an instruction that would route funds through the deployed,
+ * drainable p01_liquidity program (audit v1 F27). Nothing is built or sent.
+ */
+export function refuseDeployedLiquidity(programId: PublicKey, operation: string): void {
+  if (!programId.equals(P01_LIQUIDITY_PROGRAM_ID)) return;
+  throw new PrivacyError(
+    PrivacyErrorCode.LIQUIDITY_DISABLED,
+    `${operation} is disabled: the deployed p01_liquidity program ` +
+      `(${P01_LIQUIDITY_PROGRAM_ID.toBase58()}) pays a prefund against a proof buffer whose ` +
+      'phase-2 verification it does not check, with no Merkle membership, so its reserve can be ' +
+      'drained. The instant-unshield path stays disabled until the program is fixed and redeployed. ' +
+      'Nothing was built or sent. LPs can still withdraw (buildWithdrawIx).',
+  );
+}
 
 const POOL_SEED = Buffer.from('liquidity_pool');
 const PREFUND_SEED = Buffer.from('prefund');
@@ -193,7 +221,9 @@ export class LiquidityModule {
     });
   }
 
+  /** ⛔ Throws LIQUIDITY_DISABLED against the deployed program (F27). */
   buildDepositIx(depositor: PublicKey, amount: bigint): TransactionInstruction {
+    refuseDeployedLiquidity(this.programId, 'LP deposit');
     const [poolPDA] = this.getPoolPDA();
     const [sharePDA] = this.getLpSharePDA(depositor, poolPDA);
     const data = Buffer.alloc(8 + 8);
@@ -232,7 +262,9 @@ export class LiquidityModule {
     });
   }
 
+  /** ⛔ Throws LIQUIDITY_DISABLED against the deployed program (F27). */
   buildPrefundIx(args: PrefundIxArgs): TransactionInstruction {
+    refuseDeployedLiquidity(this.programId, 'prefund');
     const [poolPDA] = this.getPoolPDA();
     const [prefundRecord] = this.getPrefundRecordPDA(args.denominatedPool, args.nullifier);
 
@@ -260,7 +292,9 @@ export class LiquidityModule {
     });
   }
 
+  /** ⛔ Throws LIQUIDITY_DISABLED against the deployed program (F27). */
   buildSettleIx(args: SettleIxArgs): TransactionInstruction {
+    refuseDeployedLiquidity(this.programId, 'settle');
     const [poolPDA] = this.getPoolPDA();
     const [prefundRecord] = this.getPrefundRecordPDA(args.denominatedPool, args.nullifier);
 

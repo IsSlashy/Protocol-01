@@ -64,8 +64,15 @@ export interface StealthPayment {
   amount: number;
   /** Token mint */
   tokenMint: string;
-  /** One-time private key to spend */
+  /**
+   * One-time private SCALAR of the stealth address (32 bytes, little-endian).
+   * NOT an ed25519 seed: `Keypair.fromSeed(privateKey)` and
+   * `ed25519.sign(m, privateKey)` sign for an unrelated key. Sign with
+   * `signWithStealthKey` or `SecurityManager.signStealthPayment`.
+   */
   privateKey: Uint8Array;
+  /** The one-time address this payment was made to (base58); privateKey controls it */
+  address?: string;
   /** Timestamp */
   timestamp: number;
 }

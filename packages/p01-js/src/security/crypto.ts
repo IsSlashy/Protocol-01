@@ -14,7 +14,7 @@
  * @module security/crypto
  */
 
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { ed25519, ed25519_hasher } from '@noble/curves/ed25519.js';
 import { x25519 } from '@noble/curves/ed25519.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { sha512 as realSha512 } from '@noble/hashes/sha2.js';
@@ -549,20 +549,23 @@ export function hashConcat(
 // ============ Pedersen Commitments ============
 
 /**
- * Generator point H for Pedersen commitments
+ * Generator point H for Pedersen commitments.
  *
- * H is derived from hashing the standard generator G to ensure
- * that no one knows the discrete log of H with respect to G.
- * This is required for the binding property of the commitment.
+ * Binding needs that nobody knows log_G(H). H used to be `h·G` with
+ * h = SHA-256('Protocol01-Pedersen-H-Generator'): a PUBLIC discrete log, so any
+ * commitment opened to any value (audit v1 F76; src/security/pedersen.test.ts
+ * forges such an opening). It is now the RFC 9380 hash-to-curve of a fixed
+ * message under a fixed domain tag (edwards25519_XMD:SHA-512_ELL2_RO_, which
+ * clears the cofactor), so its discrete log is unknown.
+ *
+ * Commitments made with the old H (p01-js 0.3.2 and earlier) do not verify
+ * against this one; they were not binding anyway.
  */
-const PEDERSEN_H_POINT = (() => {
-  // Hash 'Protocol01-Pedersen-H' to get a point
-  const hBytes = hashSHA256(new TextEncoder().encode('Protocol01-Pedersen-H-Generator'));
-  // Use hash-to-curve to get a valid point
-  // We multiply the base point by the hash to get H
-  const scalar = bytesToBigInt(hBytes) % ed25519.Point.Fn.ORDER;
-  return ed25519.Point.BASE.multiply(scalar);
-})();
+export const PEDERSEN_H_DST = 'Protocol01-Pedersen-H-v2:edwards25519_XMD:SHA-512_ELL2_RO_';
+const PEDERSEN_H_POINT = ed25519_hasher.hashToCurve(
+  new TextEncoder().encode('Protocol01 Pedersen generator H'),
+  { DST: PEDERSEN_H_DST },
+) as unknown as typeof ed25519.Point.BASE;
 
 /**
  * Create a Pedersen commitment to a value
@@ -612,9 +615,11 @@ export function createCommitment(
   // Convert blinding factor to scalar
   const rScalar = bytesToBigInt(r) % ed25519.Point.Fn.ORDER;
 
-  // C = vG + rH
-  const vG = ed25519.Point.BASE.multiply(value % ed25519.Point.Fn.ORDER);
-  const rH = PEDERSEN_H_POINT.multiply(rScalar);
+  // C = vG + rH. `multiply` refuses the scalar 0, and 0 is a valid value
+  // (and a valid, if unwise, blinding factor): map it to the identity.
+  const vScalar = value % ed25519.Point.Fn.ORDER;
+  const vG = vScalar === BigInt(0) ? ed25519.Point.ZERO : ed25519.Point.BASE.multiply(vScalar);
+  const rH = rScalar === BigInt(0) ? ed25519.Point.ZERO : PEDERSEN_H_POINT.multiply(rScalar);
   const commitment = vG.add(rH);
 
   return {

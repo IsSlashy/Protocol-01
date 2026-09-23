@@ -1,4 +1,13 @@
 /**
+ * ⛔ [DISABLED — 2026-09-23, audit v1 F27] Against the deployed p01_liquidity
+ * program (`6PfFkvj…`), `buildInstructions`, `buildAll` and
+ * `buildInstantUnshield` throw `PrivacyError(LIQUIDITY_DISABLED)` before any
+ * RPC call: that program's `prefund` pays against a proof buffer whose
+ * phase-2 verification it does not check, with no Merkle membership, so its
+ * reserve can be drained. They still build for another liquidity program id
+ * (localnet, or a fixed redeploy at a new address). Re-enabling needs the
+ * program fix and redeploy (founder decision).
+ *
  * ⚠️ [LEGACY UPLOAD PROTOCOL — 2026-09-13] This module plans the PRE-L2 proof
  * upload: `init_proof_buffer` + up to eight `resize_proof_buffer` transactions
  * and 1,000-byte legacy chunks. The shipping path is `uploadAndVerify` in
@@ -51,7 +60,7 @@ import {
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
-import { LiquidityModule, type PrefundFeeBreakdown } from './liquidity';
+import { LiquidityModule, refuseDeployedLiquidity, type PrefundFeeBreakdown } from './liquidity';
 
 // ─── On-chain constants (mirror apps/mobile/services/stark/index.ts) ─────────
 
@@ -488,6 +497,9 @@ export class InstantUnshieldFlow {
   buildInstructions(
     input: InstantUnshieldInput & { minEpoch: bigint },
   ): InstantUnshieldInstructionList {
+    // ⛔ Audit v1 F27: the deployed p01_liquidity is drainable. Refuse first,
+    // before any validation or PDA work.
+    refuseDeployedLiquidity(this.liquidity.programId, 'Instant unshield');
     if (input.proofBytes.length !== input.proofSize) {
       throw new Error(
         `InstantUnshieldFlow: proofSize (${input.proofSize}) !== proofBytes.length (${input.proofBytes.length})`,
@@ -603,6 +615,8 @@ export class InstantUnshieldFlow {
    * queried. Otherwise the wrapper calls `connection.getSlot('confirmed')`.
    */
   async buildAll(input: InstantUnshieldInput): Promise<InstantUnshieldPlan> {
+    // Refuse before fetchCurrentEpoch: no RPC call for a disabled path (F27).
+    refuseDeployedLiquidity(this.liquidity.programId, 'Instant unshield');
     const minEpoch = input.minEpoch ?? (await this.fetchCurrentEpoch());
 
     const ixs = this.buildInstructions({ ...input, minEpoch });
@@ -680,8 +694,9 @@ export class InstantUnshieldFlow {
 export async function buildInstantUnshield(
   connection: Connection,
   input: InstantUnshieldInput,
+  liquidityProgramId?: PublicKey,
 ): Promise<InstantUnshieldPlan> {
-  return new InstantUnshieldFlow(connection).buildAll(input);
+  return new InstantUnshieldFlow(connection, liquidityProgramId).buildAll(input);
 }
 
 // `GenericSigner` is exposed publicly so SDK consumers can satisfy the

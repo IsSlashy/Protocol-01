@@ -29,6 +29,8 @@ import {
   encodeStealthMetaAddress,
   decodeStealthMetaAddress,
   scanAndDeriveStealthPayment,
+  signWithStealthKey,
+  stealthAddressFromPrivateKey,
 } from './stealth';
 
 import {
@@ -333,6 +335,7 @@ export class SecurityManager {
             amount: tx.amount,
             tokenMint: tx.tokenMint,
             privateKey: result.privateKey,
+            address: result.address,
             timestamp: tx.timestamp,
           });
         }
@@ -343,6 +346,29 @@ export class SecurityManager {
     }
 
     return payments;
+  }
+
+  /**
+   * Sign a message (for Solana: `transaction.serializeMessage()`) for the
+   * stealth address a scanned payment was made to.
+   *
+   * `payment.privateKey` is a raw scalar, not an ed25519 seed, so it cannot go
+   * through `Keypair.fromSeed` or `ed25519.sign` (audit v1 F77). Refuses a
+   * payment whose key does not control its recorded address.
+   *
+   * @returns 64-byte ed25519 signature that verifies under `payment.address`
+   */
+  signStealthPayment(message: Uint8Array, payment: StealthPayment): Uint8Array {
+    if (payment.address !== undefined) {
+      const controlled = stealthAddressFromPrivateKey(payment.privateKey);
+      if (controlled !== payment.address) {
+        throw new SecurityError(
+          'This payment key does not control the payment address.',
+          'INVALID_META_ADDRESS',
+        );
+      }
+    }
+    return signWithStealthKey(message, payment.privateKey);
   }
 
   /**

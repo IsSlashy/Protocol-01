@@ -1,17 +1,31 @@
 /**
  * Confidential Transactions Module
  *
- * Implements confidential amounts using Pedersen Commitments.
- * Allows transactions where the amount is hidden but verifiable.
+ * Pedersen-style commitments over ed25519, plus a confidential-transfer API
+ * that is NOT IMPLEMENTED.
  *
- * This is a simplified implementation. For production, consider
- * integrating with Light Protocol for full ZK support.
+ * WARNING — read before using anything in this file:
+ *  - There is no range proof and no transfer proof in this package.
+ *    `createConfidentialTransfer` therefore refuses (throws) and
+ *    `verifyConfidentialTransfer` always returns false. Until 2026-09 they
+ *    returned a placeholder "proof" whose public inputs were sha256 of each
+ *    amount (anyone could enumerate the amounts back) and a verifier that
+ *    accepted any object of the right shape (audit v1, round 4).
+ *  - Since audit v1 (F76) the second generator H of the commitments from
+ *    `createConfidentialAmount` comes from the RFC 9380 hash-to-curve under
+ *    `PEDERSEN_H_DST` (see `PEDERSEN_H_POINT` in ./crypto), so no discrete log
+ *    of H to G is known. Commitments made by p01-js 0.3.2 and earlier used
+ *    H = h·G with a public h and are not binding: anyone could open one to any
+ *    value. They do not verify against the new H. There is still no range
+ *    proof, so a commitment alone says nothing about the amount being in range.
+ *
+ * Styx payments do not use this module: the pool uses client-side STARK
+ * proofs (see @protocol-01/stark-prover).
  */
 
 import type {
   ConfidentialAmount,
   ConfidentialTransfer,
-  ZKProof,
 } from './types';
 import {
   createCommitment,
@@ -19,7 +33,6 @@ import {
   addCommitments,
   subtractCommitments,
   generateRandomBytes,
-  hashSHA256,
   bytesToHex,
   hexToBytes,
   bigIntToBytes,
@@ -153,16 +166,18 @@ export function subtractConfidentialAmounts(
 // ============ Confidential Transfers ============
 
 /**
- * Create a confidential transfer
+ * Create a confidential transfer — NOT IMPLEMENTED, always throws.
  *
- * Creates commitments that prove:
- * senderBalance - transferAmount = newSenderBalance
- * recipientBalance + transferAmount = newRecipientBalance
+ * A confidential transfer needs a range proof and a conservation proof over
+ * the commitments. This package has neither, so after the input checks this
+ * function throws instead of returning a transfer that would look
+ * confidential without being so. (The former placeholder published
+ * sha256(amount) for each amount, which revealed the amounts.)
  *
  * @param transferAmount - Amount to transfer
  * @param senderBalance - Sender's current balance
  * @param recipientBalance - Recipient's current balance
- * @returns Confidential transfer data
+ * @throws Error always: invalid inputs first, then "no range proof"
  */
 export function createConfidentialTransfer(
   transferAmount: bigint,
@@ -175,91 +190,31 @@ export function createConfidentialTransfer(
   if (transferAmount > senderBalance) {
     throw new Error('Insufficient balance');
   }
+  void recipientBalance;
 
-  // Create commitments
-  const senderCommitment = createConfidentialAmount(senderBalance);
-  const recipientCommitment = createConfidentialAmount(recipientBalance);
-  const transferCommitment = createConfidentialAmount(transferAmount);
-
-  // In production, generate a real ZK proof here
-  // For now, we create a placeholder
-  const proof = createPlaceholderProof(
-    senderBalance,
-    recipientBalance,
-    transferAmount
+  throw new Error(
+    'createConfidentialTransfer is not implemented: this package has no range proof ' +
+      'or transfer proof, so it cannot produce a confidential transfer. ' +
+      'Do not treat any output of this module as private or verified.'
   );
-
-  return {
-    senderCommitment: senderCommitment.commitment,
-    recipientCommitment: recipientCommitment.commitment,
-    transferCommitment: transferCommitment.commitment,
-    proof,
-  };
 }
 
 /**
- * Verify a confidential transfer (without knowing amounts)
+ * Verify a confidential transfer — NOT IMPLEMENTED, fails closed.
  *
- * Verifies that the commitments are consistent:
- * - Transfer amount is positive (range proof)
- * - Sender has sufficient balance
- * - Conservation of funds
+ * Checking range, sufficient balance and conservation of funds needs a proof
+ * verifier this package does not have. It therefore returns false for every
+ * input. (The former version checked only the shape of the object and
+ * accepted forgeries such as zero commitments with a 1-byte proof.)
  *
  * @param transfer - The confidential transfer to verify
- * @returns True if valid
+ * @returns Always false
  */
 export function verifyConfidentialTransfer(
   transfer: ConfidentialTransfer
 ): boolean {
-  // In production, this would verify the ZK proof
-  // For now, we just check the proof structure
-  return (
-    transfer.proof.type === 'bulletproof' &&
-    transfer.proof.proof.length > 0 &&
-    transfer.proof.publicInputs.length === 3
-  );
-}
-
-// ============ Simplified Range Proofs ============
-
-/**
- * Note: Real Bulletproof implementation requires complex math.
- * For production, use a proper library like:
- * - dalek-cryptography/bulletproofs (Rust, can be compiled to WASM)
- * - Light Protocol's implementation
- *
- * This is a simplified placeholder for development.
- */
-
-/**
- * Create a simplified "proof" for development
- * NOT SECURE - Replace with real Bulletproofs in production
- */
-function createPlaceholderProof(
-  senderBalance: bigint,
-  recipientBalance: bigint,
-  transferAmount: bigint
-): ZKProof {
-  // Hash the values to create a deterministic "proof"
-  // This is NOT a real ZK proof - just a placeholder
-  const data = new Uint8Array([
-    ...bigIntToBytes(senderBalance, 32),
-    ...bigIntToBytes(recipientBalance, 32),
-    ...bigIntToBytes(transferAmount, 32),
-  ]);
-
-  const proofHash = hashSHA256(data);
-
-  return {
-    type: 'bulletproof',
-    proof: proofHash,
-    publicInputs: [
-      hashSHA256(bigIntToBytes(senderBalance, 32)),
-      hashSHA256(bigIntToBytes(recipientBalance, 32)),
-      hashSHA256(bigIntToBytes(transferAmount, 32)),
-    ],
-    verificationKeyHash: bytesToHex(hashSHA256(new Uint8Array([1, 2, 3]))),
-  };
+  void transfer;
+  return false;
 }
 
 // ============ Serialization ============
@@ -372,6 +327,6 @@ export async function createPrivateTransferWithLight(
 ): Promise<{ signature: string; nullifier: Uint8Array }> {
   // Placeholder - would integrate with Light Protocol SDK
   throw new Error(
-    'Light Protocol integration not yet implemented. Use createConfidentialTransfer for basic privacy.'
+    'Light Protocol integration not yet implemented. This package has no private transfer.'
   );
 }

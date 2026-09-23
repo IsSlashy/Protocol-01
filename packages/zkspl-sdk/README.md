@@ -1,6 +1,13 @@
 # @protocol-01/zkspl-sdk
 
-Confidential SPL token operations for Solana. Private balances, shielded transfers, and zero-knowledge balance proofs powered by Groth16 ZK-SNARKs and Poseidon hashing.
+Client for confidential SPL token accounts on Solana: balances kept as Poseidon commitments, amount-hiding transfers, and balance proofs (legacy Groth16 path).
+
+> **⛔ Status (2026-09-23, audit v1 F46): the program is not deployed, and it does not enforce two things this README used to announce.**
+> - The `p01_zkspl` program id this SDK declares (`AY38smtd…`) is **not deployed** on devnet or mainnet. Every call that sends a transaction fails.
+> - **Balance threshold: not enforced.** `prove_balance` checks the integrity of the commitment only; the `threshold` is written into the event, but no constraint of the proof binds it. A successful `proveBalance` says nothing about `balance >= threshold`.
+> - **Conservation on withdraw: not enforced.** `withdraw` fixes the proof's amount hash to `Poseidon(0, 0)`, so the public amount is not bound to the balance change: the program in this repository would pay out any amount from the vault.
+>
+> Fixing either needs a program change and a first deployment (an open decision). Do not rely on this package for funds.
 
 > **⚠️ Legacy — Groth16 was retired from the shipping Protocol 01 stack in March 2026.**
 > The `p01_zkspl` on-chain program now verifies **STARK proofs** via the shared FRI verifier. This SDK's Groth16 path still compiles and runs for anyone auditing the historical pipeline, but new integrations should target the STARK path. See the root [README](../../README.md) for the current architecture.
@@ -50,11 +57,11 @@ On-chain, every confidential account stores a **Poseidon commitment** instead of
 commitment = Poseidon(balance, Poseidon(salt, nonce), owner_pubkey, token_mint)
 ```
 
-Every state-changing operation (deposit, withdraw, transfer) generates a **Groth16 zero-knowledge proof** that the new commitment is correct -- without revealing the balance, salt, or spending key.
+Every state-changing operation (deposit, withdraw, transfer) generates a **Groth16 proof** meant to show that the new commitment is correct, without revealing the balance, salt, or spending key. What the program checks is narrower (see Status).
 
-- **Deposits/withdrawals** are public-amount operations where the ZK proof validates the balance update.
+- **Deposits/withdrawals** are public-amount operations. For a withdrawal the amount is not bound to the balance change (see Status): conservation is not enforced by the program.
 - **Confidential transfers** hide the transfer amount behind an `amountHash = Poseidon(amount, amountSalt)`. The recipient needs `amount` and `amountSalt` (sent out-of-band) to apply the credit.
-- **Balance proofs** prove `balance >= threshold` without revealing the actual balance. Useful for DeFi collateral checks.
+- **Balance proofs** were meant to show `balance >= threshold` without revealing the balance. The threshold is not enforced by the program (see Status), so they cannot back a collateral check.
 
 ## Configuration
 
@@ -130,7 +137,7 @@ The main entry point. Pass a config object or `(connection, wallet, programId)`.
 | `withdraw(tokenMint, amount, userATA?, vaultATA?)` | Withdraw from confidential to regular SPL tokens | `Promise<ZkSplTxResult>` |
 | `confidentialTransfer(tokenMint, recipient, amount, salt?)` | Private transfer to another user | `Promise<ZkSplTxResult & { amountHash, amountSaltUsed }>` |
 | `applyPending(tokenMint, amount, amountSalt)` | Apply a received pending credit | `Promise<ZkSplTxResult>` |
-| `proveBalance(tokenMint, threshold)` | Prove balance >= threshold (ZK) | `Promise<string>` (tx sig) |
+| `proveBalance(tokenMint, threshold)` | Balance proof; the threshold is not enforced on chain (see Status) | `Promise<string>` (tx sig) |
 | `addViewer(tokenMint, viewer)` | Grant viewing access to an auditor | `Promise<string>` |
 | `removeViewer(tokenMint, viewer)` | Revoke viewing access | `Promise<string>` |
 | `getLocalBalance(tokenMint)` | Get locally-known plaintext balance | `Promise<bigint \| null>` |
@@ -268,7 +275,7 @@ The SDK throws descriptive errors with context about what went wrong and how to 
 
 | Network | Status | Notes |
 |---------|--------|-------|
-| `devnet` | Live | Default. Programs deployed and verified. |
+| `devnet` | Not deployed | The declared `p01_zkspl` id holds no program (root README, 2026-09-23). |
 | `mainnet-beta` | Not deployed | Program IDs are empty. Will throw if used without overrides. |
 | `localnet` | Manual | Pass `programId` in config after deploying locally. |
 
@@ -281,4 +288,15 @@ The SDK throws descriptive errors with context about what went wrong and how to 
 
 ## License
 
-MIT
+PolyForm Strict License 1.0.0 — see [LICENSE](LICENSE). The package is
+source-available: anyone may read, build, run and verify it for noncommercial
+purposes. Commercial use (including production deployment by a business),
+changes or derivative works, and redistribution need a written license from
+Volta Team ([styx.cash/licenses](https://styx.cash/licenses)).
+PolyForm Strict is not an open-source license.
+
+The versions already published to npm (0.1.0 to 0.1.3) were released under the
+MIT License and remain MIT, as does every commit of this repository before the
+one that replaced the MIT License with PolyForm Strict
+([LICENSE-MIT-BEFORE-POLYFORM](../../LICENSE-MIT-BEFORE-POLYFORM)). Versions
+published from 2026-09-22 on ship under PolyForm Strict 1.0.0.

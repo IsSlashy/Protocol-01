@@ -118,7 +118,14 @@ function rpcUrl(): string {
   // getProgramAccounts from serverless), else the public devnet RPC. We do NOT
   // fall back to a generic SOLANA_RPC_URL here — it may point at mainnet, where
   // the devnet program has zero accounts (the exact 0-pool bug we hit).
-  const heliusKey = process.env.HELIUS_API_KEY || process.env.NEXT_PUBLIC_HELIUS_API_KEY;
+  //
+  // The server's OWN key only (audit v1 F36). This used to fall back to the
+  // browser's key, which Next inlines into the public bundle: anyone could
+  // read it there and spend the same quota, and a rotation of the public key
+  // silently re-pointed this route. Without a server key, the keyless public
+  // devnet endpoint below carries no credential at all.
+  // Pinned by lib/metrics/onchain.test.ts.
+  const heliusKey = process.env.HELIUS_API_KEY;
   return (
     process.env.EXPLORER_RPC_URL ||
     (heliusKey ? `https://devnet.helius-rpc.com/?api-key=${heliusKey}` : 'https://api.devnet.solana.com')

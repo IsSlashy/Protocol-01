@@ -1,5 +1,20 @@
 # Changelog — @protocol-01/privacy-sdk
 
+## Unreleased
+
+- `shield`, `transfer` and `unshield` refuse before any proof request or RPC
+  call: each targets an instruction the deployed `zk_shielded` program does not
+  register (`UNREGISTERED_ZK_SHIELDED_INSTRUCTIONS`).
+- Instant unshield and the liquidity pool are disabled against the deployed
+  `p01_liquidity` program (`6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg`),
+  whose reserve can be drained (audit v1 F27): `InstantUnshieldFlow`,
+  `buildInstantUnshield`, `LiquidityModule.buildDepositIx`, `buildPrefundIx`
+  and `buildSettleIx` throw `PrivacyError(LIQUIDITY_DISABLED)` (new code 2009)
+  for that id. `buildWithdrawIx` still builds. `buildInstantUnshield` takes an
+  optional third argument, the liquidity program id.
+- README: status section; the network table now lists what is deployed
+  (devnet only, nothing on mainnet).
+
 ## 2.0.0 — 2026-09-13
 
 API break. On 2026-09-13 the founder had four programs closed on devnet with

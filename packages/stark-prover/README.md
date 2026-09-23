@@ -100,10 +100,13 @@ chain for the consuming instruction (`zk_shielded.shield_denominated_v3`,
 `unshield_denominated_stark_v4`, `subscribe_private_stark_v4`, …) to read
 cross-program; close it afterwards with `closeProofBuffer`.
 
-Measured on Helius devnet, one run each, prove + upload + verify + close from
-Node (`docs/BENCHMARK-2026-09-13.md` §6/§6b): C7 8.0 s, C6 8.2 s, C1 5.8 s,
-C2 5.5 s, C3 5.3 s, C4 8.1 s, C0 10.9 s, C5 15.9 s. The legacy 1,000-byte PDA
-path measured 35–41 s for the same C7 proof.
+Measured on Helius devnet on 2026-09-13, one run each, prove + upload +
+verify + close from Node, with the blob shipped that day, `0ad6d7f1…`
+(265,324 B; `docs/BENCHMARK-2026-09-13.md` §6/§6b): C7 8.0 s, C6 8.2 s,
+C1 5.8 s, C2 5.5 s, C3 5.3 s, C4 8.1 s, C0 10.9 s, C5 15.9 s. The legacy
+1,000-byte PDA path measured 35–41 s for the same C7 proof. The blob this
+version ships, `d5583d41…` (262,363 B, reshipped 2026-09-20), has not been
+re-measured end to end; these figures are not its own.
 
 `scripts/live-timing.ts` reproduces these figures against the deployed
 verifier for any circuit; `scripts/c7-live-proof.ts` submits one honest proof
@@ -111,6 +114,26 @@ and reads the verdict back off the chain.
 
 ## License
 
-MIT — see the [LICENSE](../../LICENSE) file at the repository root. (Earlier manifests pointed at a proprietary root license; the repository is MIT everywhere as of 2026-08-04.)
+PolyForm Strict License 1.0.0 — see [LICENSE](LICENSE). The package is
+source-available: anyone may read, build, run and verify it for noncommercial
+purposes. Commercial use (including production deployment by a business),
+changes or derivative works, and redistribution need a written license from
+Volta Team ([styx.cash/licenses](https://styx.cash/licenses)).
+PolyForm Strict is not an open-source license.
 
-A soft license gate (`license.ts`) is included for production use. Development, evaluation, testing and hackathon use require no license key. For commercial production deployments, contact contact@protocol01.com.
+The four versions already published to npm (0.1.0 to 0.1.3) are available
+under the MIT License, as is every commit of this repository before the one
+that replaced the MIT License with PolyForm Strict
+([LICENSE-MIT-BEFORE-POLYFORM](../../LICENSE-MIT-BEFORE-POLYFORM)). 0.1.2 and
+0.1.3 were released under MIT; 0.1.0 and 0.1.1 were released pointing at the
+root license, which was proprietary at the time, and the same MIT grant covers
+them. Versions published from 2026-09-22 on ship under PolyForm Strict 1.0.0.
+
+(The repository was MIT everywhere from 2026-08-04, and new work moved to
+PolyForm Strict 1.0.0 on 2026-09-22.)
+
+A soft license gate (`license.ts`) warns when no commercial license key is
+given; it never blocks proving. Noncommercial research, audit, evaluation and
+testing need no key. For a commercial license, see
+[styx.cash/licenses](https://styx.cash/licenses) (the URL lives in
+one exported constant, `COMMERCIAL_LICENSE_URL`).

@@ -21,21 +21,25 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2.4.1
         with:
-          version: 10.34.0
+          # The version package.json declares (packageManager), as every other
+          # workflow installs it. Checked by scripts/ci/workflow-pins.test.mjs.
+          version: 9.15.9
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install Vercel CLI
-        run: npm i -g vercel@latest
+        # Exact version, not @latest: this step runs next to VERCEL_TOKEN.
+        # 58.9.0 is the CLI the founder's machine deploys with (2026-09-18).
+        run: npm i -g vercel@58.9.0
 
       - name: Pull Vercel environment
         run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}

@@ -430,6 +430,33 @@ app.post('/p01/webhook', (req, res) => {
 | `EncryptedPayload` | End-to-end encrypted payload type |
 | `ConfidentialAmount` | Confidential transaction amount type |
 
+### Security primitives: status
+
+Changed in the repository on 2026-09-22/23 (audit v1 F76, F77). **The build
+on npm, 0.3.2, still has the old behaviour** of every item below; a
+republish is pending.
+
+- **Pedersen commitments.** The generator `H` is now the RFC 9380
+  hash-to-curve (edwards25519) of a fixed message under the domain tag
+  `PEDERSEN_H_DST`, so nobody knows its discrete log with respect to `G`.
+  In 0.3.2 and earlier, `H` was `h·G` for a public `h`: those commitments
+  are **not binding** (one commitment opens to any value) and do not verify
+  against the new `H`.
+- **Confidential transfers.** This package has **no range proof**.
+  `createConfidentialTransfer` refuses, and `verifyConfidentialTransfer`
+  returns `false` for every input, rather than publish amount-derived data or
+  accept a forgery.
+- **Stealth addresses.** `deriveStealthPrivateKey` returns the one-time
+  private **scalar** of the address (`p = a + H(S)`, with `a` the spend key's
+  RFC 8032 scalar); it is not an ed25519 seed, so `Keypair.fromSeed` and
+  `ed25519.sign` must not be used with it. Sign with `signWithStealthKey`, or
+  `SecurityManager.signStealthPayment` for a payment found by
+  `scanIncomingPayments` (which now also returns its `address`).
+  `PrivateStream` with `useStealthAddress` records, per paid tick, the
+  address, ephemeral public key and view tag in `stealthTicks`, and passes
+  them to `executeUnshield`; nothing announces them on chain, so the sender
+  has to deliver them to the recipient, who needs them to derive the key.
+
 ### Key Types
 
 - `MerchantConfig` -- Merchant setup (merchantId, merchantName, webhookUrl, defaultToken, network)
@@ -444,4 +471,15 @@ app.post('/p01/webhook', (req, res) => {
 
 ## License
 
-MIT
+PolyForm Strict License 1.0.0 — see [LICENSE](LICENSE). The package is
+source-available: anyone may read, build, run and verify it for noncommercial
+purposes. Commercial use (including production deployment by a business),
+changes or derivative works, and redistribution need a written license from
+Volta Team ([styx.cash/licenses](https://styx.cash/licenses)).
+PolyForm Strict is not an open-source license.
+
+The versions already published to npm (0.2.0 to 0.3.2) were released under the
+MIT License and remain MIT, as does every commit of this repository before the
+one that replaced the MIT License with PolyForm Strict
+([LICENSE-MIT-BEFORE-POLYFORM](../../LICENSE-MIT-BEFORE-POLYFORM)). Versions
+published from 2026-09-22 on ship under PolyForm Strict 1.0.0.

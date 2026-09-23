@@ -24,21 +24,41 @@ concurrency:
 jobs:
   settle:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20, not 10: the frozen install below is the whole workspace, not two packages.
+    timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      # NOTHING THAT RUNS NEXT TO THE KEY IS RESOLVED ON THE DAY.
+      # This used to be `npm install --no-save tsx @solana/web3.js@^1.98.4`
+      # then `npx tsx`. This is a pnpm workspace with no package-lock.json, so
+      # npm resolved the root tree fresh on every run and executed whatever the
+      # registry served inside `^1` with SETTLER_KEYPAIR_JSON in env (web3.js
+      # 1.x already had one key-stealing publish, 1.95.6/1.95.7, Dec 2024).
+      # Now: the pnpm that package.json declares, pnpm-lock.yaml frozen (tsx
+      # and @solana/web3.js are root devDependencies, pinned with integrity
+      # hashes), and `pnpm exec` so nothing is fetched at run time.
+      # Checked by scripts/ci/run-settler-pins.test.mjs (audit v1 r2, lane 4).
+      - name: Check the install is pinned
+        run: node --test scripts/ci/run-settler-pins.test.mjs
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2.4.1
+        with:
+          version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: '22'
+          node-version-file: .node-version
+          cache: pnpm
 
-      - name: Install tsx + web3.js
-        run: npm install --no-save tsx @solana/web3.js@^1.98.4
+      - name: Install from the lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Run settler
         env:
           SETTLER_KEYPAIR_JSON: ${{ secrets.SETTLER_KEYPAIR_JSON }}
           RPC_URL: ${{ secrets.SETTLER_RPC_URL }}
-        run: npx tsx scripts/run-settler.ts
+        run: pnpm exec tsx scripts/run-settler.ts

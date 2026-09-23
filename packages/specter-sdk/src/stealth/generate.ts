@@ -91,6 +91,12 @@ export function parseStealthMetaAddress(
 /**
  * Generate a one-time stealth address for receiving a payment.
  * Automatically uses hybrid mode if the meta-address contains a KEM public key.
+ *
+ * ⚠️ Who can spend (audit v1 F44): the address's secret key is derived from
+ * the shared secret and the recipient's spending PUBLIC key only. The sender
+ * (who holds the ephemeral secret and ran the KEM encapsulation), and anyone
+ * holding the recipient's viewing key plus KEM secret key, can derive it and
+ * spend from the address. Not only the recipient.
  */
 export function generateStealthAddress(
   recipientMetaAddress: StealthMetaAddress | string,

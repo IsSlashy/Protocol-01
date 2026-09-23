@@ -108,6 +108,54 @@ const STARK_DISCRIMINATORS = {
   unshield_stark: Buffer.from([189,  84, 110, 154, 217, 120, 183, 239]),
 } as const;
 
+/**
+ * Instructions this module builds that the deployed `zk_shielded` program
+ * does NOT register, each with the reason (read in
+ * `programs/zk_shielded/src/lib.rs`, where the `pub fn` for each is commented
+ * out or never existed).
+ *
+ * Sending any of them ends in InstructionFallbackNotFound, and before this
+ * guard it ended there only after the host had generated a STARK proof and
+ * paid to upload it. Every public pool call now checks this list up front and
+ * refuses before it asks for a proof or touches the RPC.
+ *
+ * The production pool instructions are `shield_denominated_v3`,
+ * `unshield_denominated_stark_v3` and `unshield_denominated_stark_v4` (C1 + C3,
+ * or C7). This module does not build them yet; the web app does
+ * (`apps/web/lib/privacy/pool`).
+ *
+ * `tests/shieldRegistry.test.ts` parses lib.rs and fails if this module builds
+ * an unregistered name missing from this list, or if a listed name becomes
+ * registered again (then the guard must come off and the path be re-tested).
+ */
+export const UNREGISTERED_ZK_SHIELDED_INSTRUCTIONS: Readonly<Record<string, string>> = Object.freeze({
+  shield_stark:
+    'the program never had a `shield_stark` instruction, and its base-pool `shield` is unregistered too: the base pool has no exit, so it takes no deposits',
+  transfer_stark:
+    'the program never had a `transfer_stark` instruction, and its base-pool `transfer` is unregistered: circuit 5 proves no membership of the notes it spends',
+  unshield_stark:
+    'the program never had an `unshield_stark` instruction, and its base-pool `unshield` is unregistered: circuit 5 proves no membership of the notes it spends',
+  shield_denominated:
+    'the v2 denominated deposit is unregistered: its withdrawal was retired, so it would take deposits it cannot pay out',
+  unshield_denominated_stark:
+    'the v2 denominated withdrawal is retired: circuit 1 alone, with no circuit-3 membership proof',
+});
+
+/**
+ * Refuse, before any proof request or RPC call, an operation whose
+ * instruction the deployed program does not register.
+ */
+function refuseIfUnregistered(instruction: string, code: PrivacyErrorCode): void {
+  const reason = UNREGISTERED_ZK_SHIELDED_INSTRUCTIONS[instruction];
+  if (reason === undefined) return;
+  throw new PrivacyError(
+    code,
+    `\`${instruction}\` is not registered on the deployed zk_shielded program (${reason}). ` +
+      'Nothing was proved or sent. The live pool instructions are shield_denominated_v3 and ' +
+      'unshield_denominated_stark_v3 / _v4, which this SDK does not build yet.',
+  );
+}
+
 // ─── Note encryption (XChaCha20-Poly1305 style, simplified for SDK) ─────────
 
 /**
@@ -188,6 +236,12 @@ function encryptNote(
  * root update) — the host supplies a prover via
  * {@link ProverConfig.generateStarkProof}. Denominated-pool shield requires
  * no proof; denominated-pool unshield reads a pre-verified STARK buffer.
+ *
+ * ⛔ NOT USABLE ON THE DEPLOYED PROGRAM TODAY. `shield`, `transfer` and
+ * `unshield` all target instructions `zk_shielded` does not register (see
+ * {@link UNREGISTERED_ZK_SHIELDED_INSTRUCTIONS}), so each call throws a
+ * PrivacyError before it requests a proof or sends anything. `getPoolInfo`
+ * and `getShieldedBalance` only read accounts and are unaffected.
  */
 export class ShieldModule {
   /** Host-supplied STARK prover, timeout, and legacy Groth16 paths. */
@@ -250,6 +304,11 @@ export class ShieldModule {
         'Shield amount must be greater than zero.',
       );
     }
+
+    refuseIfUnregistered(
+      params.denominated ? 'shield_denominated' : 'shield_stark',
+      PrivacyErrorCode.SHIELD_FAILED,
+    );
 
     // Generate Goldilocks-field randomness for commitment blinding
     const randomness = this.randomFieldElement();
@@ -391,6 +450,11 @@ export class ShieldModule {
       );
     }
 
+    refuseIfUnregistered(
+      params.denominated ? 'unshield_denominated_stark' : 'unshield_stark',
+      PrivacyErrorCode.UNSHIELD_FAILED,
+    );
+
     try {
       if (params.denominated) {
         return await this.unshieldDenominated(tokenInfo, amount, recipient);
@@ -433,6 +497,8 @@ export class ShieldModule {
         'Transfer amount must be greater than zero.',
       );
     }
+
+    refuseIfUnregistered('transfer_stark', PrivacyErrorCode.PROOF_GENERATION_FAILED);
 
     // Resolve recipient public key
     const recipientPubkey = typeof params.to === 'string'

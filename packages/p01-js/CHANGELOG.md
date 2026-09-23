@@ -4,6 +4,13 @@ All notable changes to the `p-01` SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed (audit v1, not yet on npm: 0.3.2 still has the old behaviour)
+
+- **Pedersen generator `H`** (F76): RFC 9380 hash-to-curve under `PEDERSEN_H_DST` instead of `h·G` with a public `h`, which made every commitment openable to any value. Old commitments do not verify against the new `H`. A commitment to the value 0 no longer throws.
+- **Stealth recipients** (F77): `PrivateStream` records `stealthTicks` (address, ephemeral public key, view tag) and passes the stealth data to `executeUnshield` as a third argument; before, it discarded the ephemeral key and no stealth tick could be spent. `scanIncomingPayments` returns the payment `address`; new `SecurityManager.signStealthPayment` and `stealthAddressFromPrivateKey`.
+
 ## [0.2.0] - 2026-04-27
 
 ### Changed

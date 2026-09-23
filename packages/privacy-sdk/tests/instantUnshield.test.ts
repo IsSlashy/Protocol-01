@@ -69,6 +69,12 @@ function makeInput(overrides: {
 // Use a valid devnet URL so Connection constructor doesn't choke; we don't hit it.
 const conn = new Connection('https://api.devnet.solana.com', 'confirmed');
 
+// Audit v1 F27: against the DEPLOYED p01_liquidity id every builder of this
+// flow refuses (the program's reserve is drainable; tests/liquidityDisabled.test.ts
+// pins the refusal). The encoding below is checked against another program id,
+// the one a localnet or a fixed redeploy at a new address would have.
+const TEST_LIQUIDITY_PROGRAM_ID = new PublicKey('LiqTest111111111111111111111111111111111111');
+
 // ─── Constants surface ───────────────────────────────────────────────────────
 
 describe('InstantUnshield constants', () => {
@@ -139,7 +145,7 @@ describe('keypairSigner / adapterSigner', () => {
 
 describe('InstantUnshieldFlow.buildInstructions', () => {
   it('produces every phase\'s instructions with correct counts', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     // 25KB proof:
     //   target account = 25000 + 83 = 25083
     //   resizes = ceil((25083 - 10240) / 10240) = ceil(14843/10240) = 2
@@ -152,21 +158,21 @@ describe('InstantUnshieldFlow.buildInstructions', () => {
     expect(ixs.chunks.length).toBe(25);
     expect(ixs.verifyPhase1.programId.equals(P01_STARK_VERIFIER_PROGRAM_ID)).toBe(true);
     expect(ixs.verifyPhase2.programId.equals(P01_STARK_VERIFIER_PROGRAM_ID)).toBe(true);
-    expect(ixs.prefund.programId.equals(P01_LIQUIDITY_PROGRAM_ID)).toBe(true);
+    expect(ixs.prefund.programId.equals(TEST_LIQUIDITY_PROGRAM_ID)).toBe(true);
     expect(ixs.proofBuffer).toBeInstanceOf(PublicKey);
     expect(ixs.prefundRecord).toBeInstanceOf(PublicKey);
     expect(ixs.minEpoch).toBe(12345n);
   });
 
   it('emits zero resizes when proof fits in 10KB', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const ixs = flow.buildInstructions(makeInput({ proofSize: 5_000 }));
     expect(ixs.resizes.length).toBe(0);
     expect(ixs.chunks.length).toBe(5);
   });
 
   it('uses the supplied ephemeral signer instead of generating one', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const eph = Keypair.generate();
     const ixs = flow.buildInstructions(makeInput({ ephemeralSigner: eph }));
     expect(ixs.ephemeralSigner.publicKey.equals(eph.publicKey)).toBe(true);
@@ -180,13 +186,13 @@ describe('InstantUnshieldFlow.buildInstructions', () => {
   });
 
   it('throws if proofSize disagrees with proofBytes.length', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const input = { ...makeInput(), proofSize: 999 };
     expect(() => flow.buildInstructions(input)).toThrow(/proofSize.*proofBytes/);
   });
 
   it('throws on wrong-length nullifier or merkle root', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     expect(() =>
       flow.buildInstructions({ ...makeInput(), nullifier: new Uint8Array(16) }),
     ).toThrow(/nullifier must be 32 bytes/);
@@ -196,7 +202,7 @@ describe('InstantUnshieldFlow.buildInstructions', () => {
   });
 
   it('throws when publicInputs has fewer than 2 entries', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     expect(() =>
       flow.buildInstructions({ ...makeInput(), publicInputs: [42n] }),
     ).toThrow(/≥2 public inputs/);
@@ -207,7 +213,7 @@ describe('InstantUnshieldFlow.buildInstructions', () => {
 
 describe('init_proof_buffer instruction encoding', () => {
   it('matches the on-chain Anchor layout: 8 disc + u32 size + u8 circuit_id', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const ixs = flow.buildInstructions(makeInput({ proofSize: 7_777 }));
 
     expect(ixs.init.data.length).toBe(8 + 4 + 1);
@@ -231,7 +237,7 @@ describe('init_proof_buffer instruction encoding', () => {
 
 describe('resize_proof_buffer instruction encoding', () => {
   it('uses the bare discriminator (no args) and the same 3-key layout as init', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const ixs = flow.buildInstructions(makeInput({ proofSize: 25_000 }));
     const r = ixs.resizes[0]!;
     expect(r.data.length).toBe(8);
@@ -244,7 +250,7 @@ describe('resize_proof_buffer instruction encoding', () => {
 
 describe('write_proof_chunk instruction encoding', () => {
   it('encodes [disc][u32 offset][u32 len][bytes] and slices proofBytes correctly', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const input = makeInput({ proofSize: 2_400 }); // 3 chunks: 1000 + 1000 + 400
     const ixs = flow.buildInstructions(input);
     expect(ixs.chunks.length).toBe(3);
@@ -269,7 +275,7 @@ describe('write_proof_chunk instruction encoding', () => {
 
 describe('verify_stark_proof_v2 + verify_deep_ali_phase2 encoding', () => {
   it('encodes [disc][borsh Vec<u64> publicInputs] for both phases', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const input = makeInput();
     const ixs = flow.buildInstructions(input);
 
@@ -295,11 +301,11 @@ describe('verify_stark_proof_v2 + verify_deep_ali_phase2 encoding', () => {
 
 describe('prefund instruction', () => {
   it('uses the liquidity program, has the prefund discriminator, and embeds nullifier+root+epoch+commitment+amount', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const input = makeInput();
     const ixs = flow.buildInstructions(input);
 
-    expect(ixs.prefund.programId.equals(P01_LIQUIDITY_PROGRAM_ID)).toBe(true);
+    expect(ixs.prefund.programId.equals(TEST_LIQUIDITY_PROGRAM_ID)).toBe(true);
 
     // 8 disc + 32 nullifier + 32 root + 8 min_epoch + 8 commitment + 8 amount
     expect(ixs.prefund.data.length).toBe(8 + 32 + 32 + 8 + 8 + 8);
@@ -324,7 +330,7 @@ describe('prefund instruction', () => {
   });
 
   it('echoes correct fee math via LiquidityModule.computePrefundFees', () => {
-    const flow = new InstantUnshieldFlow(conn);
+    const flow = new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID);
     const ixs = flow.buildInstructions(makeInput());
     // default 30bps prefund + 30bps reward on 1 SOL (1e9 lamports)
     expect(ixs.fees.prefundFee).toBe(3_000_000n);
@@ -366,7 +372,7 @@ describe('buildAll / buildInstantUnshield (plan shape)', () => {
     // chunks = 12
 
     // Use buildAll with explicit minEpoch so we don't hit RPC.
-    const plan = await new InstantUnshieldFlow(conn).buildAll(input);
+    const plan = await new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID).buildAll(input);
 
     expect(plan.ephemeralSigner.publicKey.equals(eph.publicKey)).toBe(true);
     expect(plan.minEpoch).toBe(input.minEpoch);
@@ -394,13 +400,13 @@ describe('buildAll / buildInstantUnshield (plan shape)', () => {
     // Prefund: [SetComputeUnitLimit, prefund]
     expect(plan.prefundTx.instructions.length).toBe(2);
     expect(plan.prefundTx.instructions[0]!.programId.equals(ComputeBudgetProgram.programId)).toBe(true);
-    expect(plan.prefundTx.instructions[1]!.programId.equals(P01_LIQUIDITY_PROGRAM_ID)).toBe(true);
+    expect(plan.prefundTx.instructions[1]!.programId.equals(TEST_LIQUIDITY_PROGRAM_ID)).toBe(true);
   });
 
   it('function-form alias buildInstantUnshield is identical to class form', async () => {
     const input = makeInput();
-    const a = await buildInstantUnshield(conn, input);
-    const b = await new InstantUnshieldFlow(conn).buildAll({
+    const a = await buildInstantUnshield(conn, input, TEST_LIQUIDITY_PROGRAM_ID);
+    const b = await new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID).buildAll({
       ...input,
       ephemeralSigner: a.ephemeralSigner, // share signer for byte-equality
     });
@@ -413,7 +419,7 @@ describe('buildAll / buildInstantUnshield (plan shape)', () => {
   it('unique CU price per resize tx so serialized bytes differ', async () => {
     // 35KB proof => 3 resizes (35083 - 10240 = 24843, /10240 = 3)
     const input = makeInput({ proofSize: 35_000 });
-    const plan = await new InstantUnshieldFlow(conn).buildAll(input);
+    const plan = await new InstantUnshieldFlow(conn, TEST_LIQUIDITY_PROGRAM_ID).buildAll(input);
     expect(plan.resizeTxs.length).toBe(3);
     const microLamportsExtracted = plan.resizeTxs.map((tx) => {
       const cuIx = tx.instructions[0]!;

@@ -18,12 +18,12 @@ jobs:
     if: contains(github.event.head_commit.modified, 'apps/web/') || contains(github.event.head_commit.added, 'apps/web/')
     steps:
       - name: Checkout main repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Sync to p01-web
-        uses: cpina/github-action-push-to-another-repository@main
+        uses: cpina/github-action-push-to-another-repository@55306faa4ed53b815ae49e564af8cfb359d32ae2 # v1.7.3 (the commit main pointed at on 2026-09-23)
         env:
           SSH_DEPLOY_KEY: ${{ secrets.P01_WEB_DEPLOY_KEY }}
         with:
@@ -38,12 +38,12 @@ jobs:
     if: contains(github.event.head_commit.modified, 'apps/mobile/') || contains(github.event.head_commit.added, 'apps/mobile/')
     steps:
       - name: Checkout main repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Sync to p01-mobile
-        uses: cpina/github-action-push-to-another-repository@main
+        uses: cpina/github-action-push-to-another-repository@55306faa4ed53b815ae49e564af8cfb359d32ae2 # v1.7.3 (the commit main pointed at on 2026-09-23)
         env:
           SSH_DEPLOY_KEY: ${{ secrets.P01_MOBILE_DEPLOY_KEY }}
         with:
@@ -58,12 +58,12 @@ jobs:
     if: contains(github.event.head_commit.modified, 'apps/extension/') || contains(github.event.head_commit.added, 'apps/extension/')
     steps:
       - name: Checkout main repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Sync to p01-extension
-        uses: cpina/github-action-push-to-another-repository@main
+        uses: cpina/github-action-push-to-another-repository@55306faa4ed53b815ae49e564af8cfb359d32ae2 # v1.7.3 (the commit main pointed at on 2026-09-23)
         env:
           SSH_DEPLOY_KEY: ${{ secrets.P01_EXTENSION_DEPLOY_KEY }}
         with:
@@ -78,7 +78,7 @@ jobs:
     if: contains(github.event.head_commit.modified, 'packages/p01-js/') || contains(github.event.head_commit.added, 'packages/p01-js/') || contains(github.event.head_commit.modified, 'packages/specter-sdk/') || contains(github.event.head_commit.added, 'packages/specter-sdk/')
     steps:
       - name: Checkout main repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
@@ -90,7 +90,7 @@ jobs:
           cp -r packages/specter-sdk/* /tmp/p01-sdk/core/
 
       - name: Sync to p01-sdk
-        uses: cpina/github-action-push-to-another-repository@main
+        uses: cpina/github-action-push-to-another-repository@55306faa4ed53b815ae49e564af8cfb359d32ae2 # v1.7.3 (the commit main pointed at on 2026-09-23)
         env:
           SSH_DEPLOY_KEY: ${{ secrets.P01_SDK_DEPLOY_KEY }}
         with:

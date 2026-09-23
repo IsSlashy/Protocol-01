@@ -71,15 +71,29 @@ export interface P01AuthServerConfig {
   network?: SolanaNetwork;
   /** Maximum age of auth timestamp (default: 60s) */
   maxTimestampAge?: number;
-  /** Session store for multi-server setups */
+  /**
+   * Where the server keeps the sessions it issued. Without one (and without a
+   * `session` passed to `verifyCallback`), there is no session to check:
+   * "Session not found" / "Session expired" are never returned and a signed
+   * callback verifies again within `maxTimestampAge` (a replay).
+   */
   sessionStore?: ServerSessionStore;
+  /**
+   * Fail closed when there is no session to check: `verifyCallback` with
+   * neither a `sessionStore` nor a `session` returns "Session not found"
+   * before any signature check. Default `false` only because turning it on
+   * refuses every caller that verifies without a store today (audit v1 F78);
+   * set it to `true`.
+   */
+  requireSession?: boolean;
 }
 
 /**
  * Session store interface for multi-server setups.
  *
- * The default in-memory store works for single-server deployments.
- * For production, implement this interface with a persistent store.
+ * The server has NO default store: without one, sessions are not checked
+ * (see `P01AuthServerConfig.sessionStore`). Implement this interface with a
+ * persistent store shared by every server instance.
  *
  * @example Redis implementation:
  * ```typescript
@@ -170,12 +184,42 @@ export class P01AuthServer {
    * @throws Never throws -- returns `{ success: false, error }` on failure.
    * Common errors:
    * - `"Timestamp expired or invalid"` -- the auth response is too old (> maxTimestampAge)
+   * - `"Session not found"` -- a `sessionStore` is configured and does not hold
+   *   `response.sessionId`, or the `session` passed has a different id
+   * - `"Session expired"` -- the session is past its `expiresAt`
+   * - `"Session already completed"` -- the session was already verified once
    * - `"Invalid signature"` -- the Ed25519 signature does not match
    * - `"Subscription not active"` -- the wallet does not hold the required token
+   *
+   * A session read from `sessionStore` is SINGLE-USE: once its signature
+   * verifies it is written back as `completed` (or `failed` if the
+   * subscription check then refuses), so the same callback cannot verify
+   * twice. A `session` passed as an argument is checked the same way but is
+   * not written anywhere: the caller that owns it must mark it used.
+   *
+   * ⚠️ With neither a `sessionStore` nor a `session`, there is no
+   * server-issued challenge to bind the callback to: the signature is checked
+   * over an empty challenge, which proves only that the wallet signed this
+   * `sessionId` within `maxTimestampAge`. Do not treat that as completing a
+   * session you created.
    */
   async verifyCallback(
     response: AuthResponse,
     session?: AuthSession
+  ): Promise<VerificationResult> {
+    return this.verify(response, session, true);
+  }
+
+  /**
+   * The verification itself. `enforceSession` is the callback contract above;
+   * the header middleware runs without it, because a per-request header rides
+   * on a login session that has already completed (and outlived its QR TTL),
+   * and it keeps the behaviour it always had.
+   */
+  private async verify(
+    response: AuthResponse,
+    session: AuthSession | undefined,
+    enforceSession: boolean
   ): Promise<VerificationResult> {
     try {
       // Validate required callback fields
@@ -200,8 +244,40 @@ export class P01AuthServer {
 
       // Get session if store provided
       let sessionData = session;
+      let fromStore = false;
       if (!sessionData && this.config.sessionStore) {
         sessionData = await this.config.sessionStore.get(response.sessionId) || undefined;
+        fromStore = true;
+      }
+
+      /**
+       * 🚨 THE REFUSALS THE README DOCUMENTS (audit R4, AXIS 8). A missed
+       * store lookup used to fall through to an EMPTY challenge, so a callback
+       * signed over '' for a session that never existed verified; a session
+       * past its expiresAt verified; and nothing marked a session used.
+       */
+      if (enforceSession) {
+        if (fromStore && !sessionData) {
+          return { success: false, error: 'Session not found' };
+        }
+        // Audit v1 F78: nothing to bind the callback to. Opt-in refusal.
+        if (!sessionData && this.config.requireSession) {
+          return { success: false, error: 'Session not found' };
+        }
+        if (sessionData) {
+          if (sessionData.sessionId !== response.sessionId) {
+            return { success: false, error: 'Session not found' };
+          }
+          if (sessionData.status === 'expired' || Date.now() > sessionData.expiresAt) {
+            return { success: false, error: 'Session expired' };
+          }
+          if (sessionData.status === 'completed') {
+            return { success: false, error: 'Session already completed' };
+          }
+          if (sessionData.status === 'rejected' || sessionData.status === 'failed') {
+            return { success: false, error: `Session ${sessionData.status}` };
+          }
+        }
       }
 
       // Verify signature
@@ -214,6 +290,22 @@ export class P01AuthServer {
         return { success: false, error: 'Invalid signature' };
       }
 
+      /**
+       * ONE USE. Written back the moment the signature verifies, before the
+       * subscription RPC, so the window in which a replay could read the
+       * session as still open is as short as this interface allows (it has no
+       * compare-and-set). A replay then reads `completed` and is refused.
+       */
+      const consumable = enforceSession && fromStore && sessionData ? sessionData : undefined;
+      if (consumable) {
+        await this.config.sessionStore!.set({
+          ...consumable,
+          status: 'completed',
+          walletAddress: response.wallet,
+          signature: response.signature,
+        });
+      }
+
       // Verify subscription if required
       if (this.config.subscriptionMint) {
         const subscriptionValid = await this.verifySubscription(
@@ -222,6 +314,14 @@ export class P01AuthServer {
         );
 
         if (!subscriptionValid) {
+          if (consumable) {
+            await this.config.sessionStore!.set({
+              ...consumable,
+              status: 'failed',
+              walletAddress: response.wallet,
+              signature: response.signature,
+            });
+          }
           return { success: false, error: 'Subscription not active' };
         }
 
@@ -369,7 +469,7 @@ export class P01AuthServer {
         const authData = JSON.parse(
           Buffer.from(authHeader, 'base64').toString()
         );
-        const result = await this.verifyCallback(authData);
+        const result = await this.verify(authData, undefined, false);
 
         if (result.success) {
           req.p01Auth = {
