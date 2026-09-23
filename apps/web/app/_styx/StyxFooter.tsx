@@ -27,11 +27,14 @@ import { useT } from "@/i18n";
  */
 const SECTIONS: {
   title: string;
-  links: { label: string; href: string; external?: boolean }[];
+  /* `labelKey`, when set, is an i18n key and wins over `label` (the English
+     fallback). Only the white paper link uses it so far. */
+  links: { label: string; labelKey?: string; href: string; external?: boolean }[];
 }[] = [
   {
     title: "Protocol",
     links: [
+      { label: "White paper", labelKey: "footer.whitepaper", href: "/whitepaper" },
       { label: "Devnet app", href: "/app" },
       { label: "Explorer", href: "/explorer" },
       { label: "Roadmap", href: "/roadmap" },
@@ -93,7 +96,7 @@ export default function StyxFooter() {
                         ? { target: "_blank", rel: "noopener noreferrer" }
                         : {})}
                     >
-                      {link.label}
+                      {link.labelKey ? t(link.labelKey) : link.label}
                     </a>
                   </li>
                 ))}

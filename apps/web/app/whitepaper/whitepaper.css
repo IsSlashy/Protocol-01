@@ -1,0 +1,447 @@
+/* ===========================================================================
+   /whitepaper — long-form reading on the Styx design system.
+
+   Every colour, face and rule below is a token of app/_styx/styx.css; this file
+   only adds what a 13,000-word paper needs and no other page has: a reading
+   measure, heading rhythm with anchors, contents, lists, inline code, and a
+   print stylesheet for scripts/whitepaper-pdf.mjs. Scoped to `.wp-*` classes,
+   so nothing here reaches another page. The site has one theme (dark); print
+   switches the same tokens to ink on paper.
+   =========================================================================== */
+
+.wp-hero {
+  padding-block: clamp(4rem, 10vw, 7.5rem) clamp(2rem, 5vw, 3rem);
+}
+
+.wp-title {
+  font-family: var(--styx-serif);
+  font-weight: var(--styx-serif-display);
+  font-optical-sizing: auto;
+  font-size: clamp(2.1rem, 5.2vw, 3.6rem);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  margin: 1.5rem 0 0;
+  text-wrap: balance;
+}
+
+.wp-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+}
+
+/* ---- Contents ---------------------------------------------------------- */
+
+.wp-toc {
+  border: 1px solid var(--styx-rule);
+  background: var(--styx-panel);
+  padding: 1.5rem clamp(1.1rem, 3vw, 1.75rem);
+  margin-bottom: clamp(2.5rem, 6vw, 4rem);
+}
+
+.wp-toc-title {
+  margin: 0 0 1rem;
+}
+
+.wp-toc-list,
+.wp-toc-sub {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wp-toc-list > li {
+  padding-block: 0.45rem;
+  border-top: 1px solid var(--styx-rule-soft);
+}
+
+.wp-toc-list > li:first-child {
+  border-top: none;
+}
+
+.wp-toc-list > li > a {
+  color: var(--styx-paper);
+  font-size: 0.9375rem;
+}
+
+.wp-toc-sub {
+  margin-top: 0.35rem;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.wp-toc-sub a {
+  color: var(--styx-muted);
+  font-size: 0.8125rem;
+}
+
+.wp-toc a {
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.wp-toc a:hover,
+.wp-toc a:focus-visible {
+  color: var(--styx-paper);
+  text-decoration: underline;
+  text-decoration-color: var(--styx-accent);
+  text-underline-offset: 4px;
+}
+
+/* ---- The article ------------------------------------------------------- */
+
+.wp-article {
+  padding-bottom: clamp(4rem, 9vw, 7rem);
+  color: var(--styx-muted);
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  overflow-wrap: break-word;
+}
+
+.wp-article > * {
+  max-width: 68ch;
+}
+
+/* Tables and code may use the full column. */
+.wp-article > .wp-table-wrap,
+.wp-article > .wp-code {
+  max-width: none;
+}
+
+.wp-article p {
+  margin: 0 0 1.2rem;
+}
+
+.wp-article strong {
+  color: var(--styx-paper);
+  font-weight: 600;
+}
+
+.wp-article em {
+  font-style: italic;
+}
+
+.wp-article a {
+  color: var(--styx-paper);
+  text-decoration: underline;
+  text-decoration-color: var(--styx-accent);
+  text-underline-offset: 3px;
+  overflow-wrap: anywhere;
+}
+
+.wp-article a:hover {
+  text-decoration-color: var(--styx-paper);
+}
+
+.wp-article :not(pre) > code {
+  font-family: var(--styx-mono);
+  font-size: 0.85em;
+  color: var(--styx-paper);
+  background: var(--styx-panel-2);
+  border: 1px solid var(--styx-rule-soft);
+  padding: 0.05em 0.35em;
+  overflow-wrap: anywhere;
+}
+
+.wp-h2,
+.wp-h3,
+.wp-h4 {
+  position: relative;
+  color: var(--styx-paper);
+  font-family: var(--styx-serif);
+  text-wrap: balance;
+}
+
+.wp-h2 {
+  font-weight: var(--styx-serif-title);
+  font-size: clamp(1.6rem, 3.2vw, 2.2rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  margin: 3.5rem 0 1.25rem;
+  padding-top: 2rem;
+  border-top: 1px solid var(--styx-rule);
+}
+
+.wp-h3 {
+  font-weight: var(--styx-serif-small);
+  font-size: 1.35rem;
+  line-height: 1.25;
+  margin: 2.5rem 0 0.9rem;
+}
+
+.wp-h4 {
+  font-weight: var(--styx-serif-small);
+  font-size: 1.1rem;
+  margin: 2rem 0 0.75rem;
+}
+
+.wp-anchor {
+  margin-left: 0.5rem;
+  font-family: var(--styx-mono);
+  font-size: 0.7em;
+  color: var(--styx-accent);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.wp-h2:hover .wp-anchor,
+.wp-h3:hover .wp-anchor,
+.wp-h4:hover .wp-anchor,
+.wp-anchor:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .wp-anchor {
+    opacity: 0.5;
+  }
+}
+
+.wp-article ul,
+.wp-article ol {
+  margin: 0 0 1.3rem;
+  padding-left: 1.4rem;
+}
+
+.wp-article ul {
+  list-style: none;
+  padding-left: 1.1rem;
+}
+
+.wp-article ul > li {
+  position: relative;
+}
+
+.wp-article ul > li::before {
+  content: "";
+  position: absolute;
+  left: -1.05rem;
+  top: 0.8em;
+  width: 0.45rem;
+  height: 1px;
+  background: var(--styx-accent);
+}
+
+.wp-article ol > li::marker {
+  font-family: var(--styx-mono);
+  font-size: 0.8em;
+  color: var(--styx-faint);
+}
+
+.wp-article li {
+  margin-bottom: 0.55rem;
+}
+
+.wp-rule {
+  border: none;
+  height: 1px;
+  background: var(--styx-rule-soft);
+  margin: 2.5rem 0;
+}
+
+/* A rule directly before a section heading is already drawn by the heading. */
+.wp-rule:has(+ .wp-h2) {
+  display: none;
+}
+
+.wp-quote {
+  margin: 0 0 1.3rem;
+  padding: 0.25rem 0 0.25rem 1.2rem;
+  border-left: 2px solid var(--styx-accent);
+}
+
+/* ---- Tables and code: scroll inside, never the page -------------------- */
+
+.wp-table-wrap {
+  margin: 0.5rem 0 1.6rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wp-table-wrap:focus-visible {
+  outline: 1px solid var(--styx-accent);
+  outline-offset: 2px;
+}
+
+.wp-table {
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.wp-table th {
+  white-space: normal;
+  min-width: 5rem;
+}
+
+.wp-table td {
+  min-width: 7rem;
+}
+
+.wp-table td:first-child {
+  color: var(--styx-paper);
+}
+
+.wp-code {
+  margin: 0.5rem 0 1.6rem;
+}
+
+.wp-code .styx-code {
+  font-size: 0.78rem;
+  white-space: pre;
+}
+
+/* ---- Back to contents -------------------------------------------------- */
+
+.wp-totop {
+  position: fixed;
+  right: clamp(0.75rem, 3vw, 1.5rem);
+  bottom: clamp(0.75rem, 3vw, 1.5rem);
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
+  background: var(--styx-panel);
+  border: 1px solid var(--styx-rule);
+  color: var(--styx-muted);
+  font-family: var(--styx-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.wp-totop:hover,
+.wp-totop:focus-visible {
+  color: var(--styx-paper);
+  border-color: var(--styx-accent);
+}
+
+@media (max-width: 640px) {
+  .wp-article {
+    font-size: 1rem;
+  }
+}
+
+/* ---- Print (scripts/whitepaper-pdf.mjs) ------------------------------- */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 16mm 15mm 18mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+
+  /* The same tokens, as ink on paper. `body:has(.wp-root)` keeps this to the
+     white paper even if the stylesheet stays loaded after navigation. */
+  body:has(.wp-root) .styx {
+    --styx-ink: #ffffff;
+    --styx-panel: #f6f5f2;
+    --styx-panel-2: #f1f0ec;
+    --styx-paper: #111111;
+    --styx-muted: #222222;
+    --styx-faint: #555555;
+    --styx-rule: #c9c9c9;
+    --styx-rule-soft: #e3e3e3;
+    --styx-accent: #1f7f78;
+    background: #fff;
+    min-height: 0;
+  }
+
+  body:has(.wp-root) .styx-has-chrome {
+    padding-top: 0;
+  }
+
+  body:has(.wp-root) .styx-header,
+  body:has(.wp-root) .styx-footer,
+  body:has(.wp-root) .styx-skip-link,
+  body:has(.wp-root) .fixed.inset-0,
+  body:has(.wp-root) [data-corruption-overlay],
+  .wp-noprint,
+  .wp-anchor {
+    display: none !important;
+  }
+
+  .styx-hero-rule {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .wp-hero {
+    padding-block: 0 1.5rem;
+  }
+
+  .wp-title {
+    font-size: 26pt;
+  }
+
+  .wp-article {
+    font-size: 10.5pt;
+    line-height: 1.55;
+    padding-bottom: 0;
+  }
+
+  .wp-article > * {
+    max-width: none;
+  }
+
+  .wp-h2 {
+    font-size: 17pt;
+    margin-top: 1.6rem;
+    break-after: avoid;
+  }
+
+  .wp-h3,
+  .wp-h4 {
+    font-size: 12.5pt;
+    break-after: avoid;
+  }
+
+  .wp-toc {
+    break-after: page;
+  }
+
+  .wp-table-wrap {
+    overflow: visible;
+    border-color: #c9c9c9;
+  }
+
+  .wp-table {
+    font-size: 8pt;
+  }
+
+  .wp-table td,
+  .wp-table th {
+    min-width: 0;
+  }
+
+  .wp-table tr,
+  .wp-code,
+  .wp-quote {
+    break-inside: avoid;
+  }
+
+  .wp-code .styx-code {
+    white-space: pre-wrap;
+    overflow: visible;
+    font-size: 7.5pt;
+  }
+
+  .wp-article :not(pre) > code {
+    background: none;
+    border: none;
+    padding: 0;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

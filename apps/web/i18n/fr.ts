@@ -177,6 +177,22 @@ const fr: Translations = {
     terms: 'Conditions',
     licenses: 'Licences',
     disclaimer: 'En d\u00e9veloppement actif. Non audit\u00e9. Utilisez \u00e0 vos propres risques.',
+    whitepaper: 'Livre blanc',
+  },
+
+  // \u2500\u2500 Livre blanc (/whitepaper) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // L\u2019interface autour du livre blanc seulement : le texte lui-m\u00eame
+  // (docs/WHITEPAPER.md) est en anglais et rendu tel quel.
+  whitepaper: {
+    overline: 'Styx Protocol \u00b7 Livre blanc',
+    downloadPdf: 'T\u00e9l\u00e9charger le PDF',
+    contents: 'Sommaire',
+    backToContents: 'Retour au sommaire',
+    englishOnly: 'R\u00e9dig\u00e9 en anglais',
+    words: 'mots',
+    minutes: 'min de lecture',
+    pendingTitle: 'Le livre blanc est en cours de finalisation',
+    pendingBody: 'Ses derniers chiffres mesur\u00e9s sont encore en cours d\u2019ajout. Tant qu\u2019ils ne sont pas tous en place, cette page n\u2019affiche que cet avis et rien du livre blanc : aucune version inachev\u00e9e ne peut \u00eatre lue ni partag\u00e9e d\u2019ici.',
   },
 
   // \u2500\u2500 404 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -1039,6 +1055,9 @@ const fr: Translations = {
     designDoc: 'Document de conception & architecture',
     designDocMeta: 'PDF \u00b7 18 pages',
     designDocRevision: 'MIS \u00c0 JOUR PROGRESSIVEMENT \u00b7 DERNI\u00c8RE R\u00c9VISION JUIN 2026',
+    whitepaper: 'Livre blanc Styx',
+    whitepaperMeta: 'Page web \u00b7 en anglais',
+    whitepaperMetaPdf: 'Page web et PDF \u00b7 en anglais',
     footerBeta: 'B\u00eata',
     footerDevnet: 'Devnet uniquement',
     footerBuilt: 'Construit de z\u00e9ro pour la confidentialit\u00e9',

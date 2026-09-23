@@ -57,6 +57,10 @@ function readCookie(name: string): string | null {
 
 /**
  * Resolution order, most specific first:
+ *  0. a `?lang=en` or `?lang=fr` query parameter, for this page load only
+ *     (it is not stored). scripts/whitepaper-pdf.mjs prints /whitepaper?lang=en
+ *     so the PDF's page UI (overline, "Contents") is English whatever the
+ *     locale of the machine that prints it.
  *  1. an explicit stored choice, if one was ever made
  *  2. the country from the Vercel geo header, via the middleware cookie
  *  3. the browser's own language region, which is the only signal available in
@@ -66,6 +70,13 @@ function readCookie(name: string): string | null {
  */
 function resolveLocale(): Locale {
   if (typeof window === "undefined") return "en";
+
+  try {
+    const forced = new URLSearchParams(window.location.search).get("lang");
+    if (forced === "en" || forced === "fr") return forced;
+  } catch {
+    // No usable location. Keep going.
+  }
 
   try {
     const saved = localStorage.getItem(LOCALE_STORAGE_KEY);

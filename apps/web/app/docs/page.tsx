@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import { useT } from "@/i18n";
+import { useWhitepaperPdfAvailable } from "@/lib/whitepaper/pdfFlag";
 import {
   Download,
   FileText,
@@ -1258,6 +1259,8 @@ function DocsBody({ t }: { t: (k: string) => string }) {
 
 export default function DocsPage() {
   const t = useT();
+  // Set at build by app/docs/layout.tsx: "and PDF" only when the PDF matches.
+  const whitepaperPdf = useWhitepaperPdfAvailable();
   return (
     <StyxShell>
       <DocsBody t={t} />
@@ -1269,6 +1272,25 @@ export default function DocsPage() {
           attribute dropped. */}
       <section className="styx-section styx-section-alt">
         <div className="styx-container styx-center">
+          {/* The white paper (docs/WHITEPAPER.md, rendered at /whitepaper). */}
+          <div style={{ marginBottom: "0.9rem" }}>
+            <a href="/whitepaper" className="styx-btn-ghost styx-sweep">
+              <FileText size={14} aria-hidden="true" style={{ flex: "none" }} />
+              <span
+                style={{
+                  fontFamily: "var(--styx-sans)",
+                  fontSize: "0.9375rem",
+                  letterSpacing: "normal",
+                  textTransform: "none",
+                }}
+              >
+                {t('docs.whitepaper')}
+              </span>
+              <span className="styx-card-label" style={{ margin: 0 }}>
+                {t(whitepaperPdf ? 'docs.whitepaperMetaPdf' : 'docs.whitepaperMeta')}
+              </span>
+            </a>
+          </div>
           <a
             href="/protocol-01-design-document.pdf"
             download

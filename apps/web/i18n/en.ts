@@ -175,6 +175,22 @@ const en = {
     terms: 'Terms',
     licenses: 'Licenses',
     disclaimer: 'In active development. Not audited. Use at your own risk.',
+    whitepaper: 'White paper',
+  },
+
+  // ── White paper (/whitepaper) ──────────────────────────────
+  // UI around the paper only. The paper itself is docs/WHITEPAPER.md, in
+  // English, rendered as is.
+  whitepaper: {
+    overline: 'Styx Protocol · White paper',
+    downloadPdf: 'Download PDF',
+    contents: 'Contents',
+    backToContents: 'Back to contents',
+    englishOnly: 'In English',
+    words: 'words',
+    minutes: 'min read',
+    pendingTitle: 'The white paper is being finalised',
+    pendingBody: 'Its last measured figures are still being filled in. Until every one is in place, this page shows this notice and nothing of the paper, so no unfinished version can be read or shared from here.',
   },
 
   // ── 404 ────────────────────────────────────────────────────
@@ -1049,6 +1065,12 @@ const en = {
     designDoc: 'Design & Architecture Document',
     designDocMeta: 'PDF · 18 pages',
     designDocRevision: 'PROGRESSIVELY UPDATED · LAST REVISION JUNE 2026',
+    whitepaper: 'Styx white paper',
+    // Two strings on purpose: /docs shows the second one only when the build
+    // found a PDF printed from this exact paper (app/docs/layout.tsx), the same
+    // rule the white paper page applies to its own "Download PDF" link.
+    whitepaperMeta: 'Web page · English',
+    whitepaperMetaPdf: 'Web page and PDF · English',
     footerBeta: 'Beta',
     footerDevnet: 'Devnet Only',
     footerBuilt: 'Built from scratch for privacy',
