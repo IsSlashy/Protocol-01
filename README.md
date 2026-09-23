@@ -69,6 +69,19 @@ v1.0.3 and the extension ZIP) produce proofs the current verifier rejects.
 
 **What v1 does protect**
 
+- **Your deposit and your withdrawal are two different notes.** When you shield on the web
+  app, your SOL funds a note the deployment keeps, and you receive an *older* note that an
+  earlier payment funded. What you later withdraw or subscribe with is that older note, so
+  nothing on chain ties your spend to your own payment.
+- **The note's fingerprint never appears on chain when you spend.** A web withdrawal or
+  subscription runs on circuit 7, which publishes a one-time tag (the nullifier) and not the
+  note's commitment (pinned by `packages/stark-prover/src/wireFormat.test.ts`, "publishes six
+  felts and NOT the note commitment"). A chain observer cannot match a spend to a deposit by
+  its fingerprint.
+- What still links things is listed below and in [`docs/LEAK-LEDGER.md`](docs/LEAK-LEDGER.md):
+  the deployment knows which note it handed you, the minutes between your payment and your
+  spend (how much that tells depends on traffic), the payout address, and the proof-hiding
+  caveat F69.
 - **The pool deposit is not signed by your wallet.** A one-time key signs it, funded by the
   deployment (except the plain deposit offered when no older note is in stock, labelled as such). A web withdrawal pays a per-note address, never your connected wallet.
 - **A web withdrawal does not republish the deposit's fingerprint.** It runs on circuit 7,
