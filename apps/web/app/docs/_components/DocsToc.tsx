@@ -3,8 +3,8 @@
 /**
  * DocsToc — the "on this page" rail, in the Styx voice.
  *
- * A restyle of components/docs/TopicToc.tsx, which is shared with pages still on
- * the Protocol 01 identity and therefore left untouched. The length rule is the
+ * A restyle of the old components/docs/TopicToc.tsx (deleted on 2026-09-23,
+ * nothing imported it any more). The length rule is the
  * load-bearing part and is preserved exactly: fewer than two anchors and the rail
  * does not render at all, which is what keeps the architecture topic (zero
  * anchors) from growing an empty column.

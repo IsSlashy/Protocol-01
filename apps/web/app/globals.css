@@ -241,12 +241,6 @@
       0 0 30px rgba(57, 197, 187, 0.2);
   }
 
-  .text-glow-pink {
-    text-shadow: 0 0 10px rgba(255, 119, 168, 0.5),
-      0 0 20px rgba(255, 119, 168, 0.3),
-      0 0 30px rgba(255, 119, 168, 0.2);
-  }
-
   .text-glow-yellow {
     text-shadow: 0 0 10px rgba(255, 204, 0, 0.5),
       0 0 20px rgba(255, 204, 0, 0.3),
@@ -398,19 +392,6 @@
     border-radius: 0.5rem;
   }
 
-  .card-hover {
-    background-color: var(--color-p01-surface);
-    border: 1px solid var(--color-p01-border);
-    border-radius: 0.5rem;
-    transition: border-color 160ms ease;
-  }
-
-  .card-hover:hover {
-    border-color: rgba(57, 197, 187, 0.5);
-    background-color: var(--color-p01-surface-2);
-    box-shadow: 0 0 30px rgba(57, 197, 187, 0.1);
-  }
-
   /* Crystal glass (frosted glassmorphism) */
   /* [2026-09-12] The app's panels in the Styx voice: ink, one hairline, a
      light frost so the page's field shows through — no gradient sheen, no
@@ -502,26 +483,6 @@
       inset 0 0 60px rgba(0, 0, 0, 0.5);
   }
 
-  .terminal-header {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    border-bottom: 1px solid var(--color-p01-border);
-    background: linear-gradient(180deg, #1a1a1e 0%, #151518 100%);
-  }
-
-  .terminal-dot {
-    width: 0.75rem;
-    height: 0.75rem;
-    border-radius: 9999px;
-  }
-
-  .terminal-content {
-    padding: 1rem;
-    overflow-x: auto;
-  }
-
   /* Badge Styles */
   .badge {
     display: inline-flex;
@@ -546,12 +507,6 @@
     background-color: rgba(57, 197, 187, 0.1);
     color: var(--color-p01-cyan);
     border: 1px solid rgba(57, 197, 187, 0.3);
-  }
-
-  .badge-pink {
-    background-color: rgba(255, 119, 168, 0.1);
-    color: var(--color-p01-pink);
-    border: 1px solid rgba(255, 119, 168, 0.3);
   }
 
   .badge-purple {
@@ -593,41 +548,6 @@
     .section {
       padding: 6rem 2rem;
     }
-  }
-
-  .section-title {
-    font-size: 2.25rem;
-    font-weight: 700;
-    text-align: center;
-    margin-bottom: 1rem;
-    font-family: var(--font-display);
-  }
-
-  @media (min-width: 640px) {
-    .section-title {
-      font-size: 3rem;
-    }
-  }
-
-  .section-subtitle {
-    font-size: 1.125rem;
-    color: var(--color-p01-text-muted);
-    text-align: center;
-    max-width: 42rem;
-    margin-left: auto;
-    margin-right: auto;
-    margin-bottom: 4rem;
-  }
-
-  /* Grid pattern background */
-  .grid-pattern {
-    background-image: linear-gradient(
-        to right,
-        rgba(57, 197, 187, 0.05) 1px,
-        transparent 1px
-      ),
-      linear-gradient(to bottom, rgba(57, 197, 187, 0.05) 1px, transparent 1px);
-    background-size: 40px 40px;
   }
 
   /* Hex pattern for P-01 */
@@ -1025,20 +945,6 @@
 @keyframes chromatic-shift-pink {
   0%, 100% { transform: translate(2px, 0); }
   50% { transform: translate(1px, -1px); }
-}
-
-
-/* ===== Trust logo marquee (scroll left → right) ===== */
-@keyframes trust-marquee-ltr {
-  from { transform: translateX(-50%); }
-  to   { transform: translateX(0); }
-}
-.trust-track-anim {
-  animation: trust-marquee-ltr 30s linear infinite;
-  will-change: transform;
-}
-.trust-marquee-wrap:hover .trust-track-anim {
-  animation-play-state: paused;
 }
 
 /* ===== Print Styles ===== */

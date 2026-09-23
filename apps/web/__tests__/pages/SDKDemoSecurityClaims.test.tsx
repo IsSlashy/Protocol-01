@@ -58,14 +58,11 @@ describe('SDKDemoPage -- Stream SDK tab makes no pause/modify guarantee the prog
   });
 });
 
-// close-v1, lane L4, finding F68. The Privacy SDKs tab showed privacy-toolkit
-// with `poseidonHash`, `MerkleTree` and `WOTSKeypair`, none of which the
-// package exports, under a caption of "Poseidon hashing, Merkle trees, WOTS+
-// signatures, encrypted note storage". The package is BN254 Poseidon
-// (poseidon-lite) from the earlier Groth16 design; the Styx pool, its STARK
-// circuits and the verifier use Poseidon over Goldilocks, and a value built
-// with the toolkit is not accepted there (packages/privacy-toolkit/README.md).
-describe('SDKDemoPage -- Privacy SDKs tab does not present privacy-toolkit as the pool hash', () => {
+// close-v1, lane L4, finding F68, then 2026-09-23. The Privacy SDKs tab showed
+// privacy-toolkit (BN254 Poseidon from the earlier Groth16 design, not the pool
+// hash), zk-sdk and zkspl-sdk. Their source was deleted on 2026-09-23, so the
+// tab no longer lists them, shows their snippets or tells anyone to install them.
+describe('SDKDemoPage -- Privacy SDKs tab lists no package whose source was deleted', () => {
   beforeEach(async () => {
     delete (window as unknown as Record<string, unknown>).protocol01;
     render(<SDKDemoPage />);
@@ -73,16 +70,10 @@ describe('SDKDemoPage -- Privacy SDKs tab does not present privacy-toolkit as th
     await user.click(screen.getByRole('button', { name: 'Privacy SDKs' }));
   });
 
-  it('the snippet imports only what the package exports', () => {
+  it('names none of zk-sdk, zkspl-sdk or privacy-toolkit', () => {
     const text = document.body.textContent ?? '';
-    expect(text).toMatch(/@protocol-01\/privacy-toolkit/);
+    expect(text).toMatch(/@protocol-01\/specter-sdk/);
+    expect(text).not.toMatch(/@protocol-01\/(zk-sdk|zkspl-sdk|privacy-toolkit)/);
     expect(text).not.toMatch(/WOTSKeypair|poseidonHash, MerkleTree/);
-  });
-
-  it('the caption and the snippet say BN254 and that it is not the pool hash', () => {
-    const text = document.body.textContent ?? '';
-    expect(text).not.toMatch(/WOTS\+ signatures, encrypted note storage/);
-    expect(text).toMatch(/BN254/);
-    expect(text).toMatch(/not the (Styx )?pool/i);
   });
 });

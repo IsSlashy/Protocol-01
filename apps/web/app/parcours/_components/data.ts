@@ -265,12 +265,12 @@ export const NPM_PACKAGES: NpmRow[] = [
   {
     name: 'privacy-toolkit',
     version: '1.0.4',
-    role: 'Primitives isolées : commitments Poseidon, arbres de Merkle, encodage de notes.',
+    role: "Primitives Poseidon BN254 de l'ancienne conception Groth16. Source retirée du dépôt le 23 septembre 2026, toujours en ligne sur npm.",
   },
   {
     name: 'zk-sdk',
     version: '1.0.2',
-    role: "Surface historique du système de preuve, aujourd'hui une coquille de réexport au-dessus de stark-prover.",
+    role: "Surface historique du système de preuve. Source retirée du dépôt le 23 septembre 2026, toujours en ligne sur npm.",
   },
   {
     name: 'stark-prover',
@@ -280,7 +280,7 @@ export const NPM_PACKAGES: NpmRow[] = [
   {
     name: 'zkspl-sdk',
     version: '0.1.3',
-    role: 'Soldes SPL confidentiels engagés par Poseidon.',
+    role: "Soldes SPL confidentiels d'un programme jamais déployé. Source retirée du dépôt le 23 septembre 2026, toujours en ligne sur npm.",
   },
   {
     name: 'p01-js',
@@ -300,7 +300,7 @@ export const NPM_PACKAGES: NpmRow[] = [
   {
     name: 'arcium-sdk',
     version: '0.1.2',
-    role: "Vestige d'une intégration MPC retirée du protocole le 17 juillet 2026. Toujours en ligne sur npm, plus utilisée.",
+    role: "Vestige d'une intégration MPC retirée du protocole le 17 juillet 2026. Source retirée du dépôt le 23 septembre 2026, toujours en ligne sur npm, plus utilisée.",
   },
 ];
 

@@ -146,7 +146,9 @@ describe('Homepage, the Styx Protocol landing page', () => {
         'https://discord.gg/EfqnVmb2dV'
       );
       expect(footerDiscord).toHaveAttribute('target', '_blank');
-      expect(screen.queryByRole('link', { name: en.cta.joinDiscord })).toBeNull();
+      // The old CTA section's "Join Discord" button left with the long page. Its
+      // dictionary key was deleted on 2026-09-23, so the guard names the text.
+      expect(screen.queryByRole('link', { name: 'Join Discord' })).toBeNull();
     });
 
     it('exposes exactly Discord and X as outbound links, GitHub stays hidden in waitlist mode', () => {
@@ -166,12 +168,30 @@ describe('Homepage, the Styx Protocol landing page', () => {
   describe('Page Sections', () => {
     // 2026-09-12: the landing page IS the product. One headline, the devnet
     // app, three links. The long sections (problem, features, technology,
-    // logos, film, waitlist) are gone from this route; their copy stays in the
-    // dictionary and in app/_home/HomeSections.tsx, which nothing renders.
+    // logos, film, waitlist) are gone from this route. Their components and
+    // their dictionary keys were deleted on 2026-09-23, so the absence checks
+    // below name the old copy as literals: it must not come back on this page.
     it('leads with the app headline and one line under it', () => {
       expect(screen.getByRole('heading', { level: 1, name: en.pay.page.h1 })).toBeInTheDocument();
       expect(screen.getByText(en.pay.page.overline)).toBeInTheDocument();
       expect(screen.getByText(`${en.hero.desc3} ${en.hero.desc4}`)).toBeInTheDocument();
+    });
+    // Ported from the deleted __tests__/components/Hero.test.tsx (2026-09-23):
+    // this is now the only test that pins the line under the headline word for
+    // word. Since 2026-09-22 the code is source-available (PolyForm Strict
+    // 1.0.0), not open source: the closing line must not claim otherwise.
+    it('pins the line under the headline word for word, source available and not open source', () => {
+      expect(en.hero.desc3).toBe(
+        'Post-quantum proofs, stealth addresses, shielded pools. Live on devnet.'
+      );
+      expect(en.hero.desc4).toBe(
+        'Your wallet keys stay on your device. A note this deployment hands you is not yours alone: it can spend it until you do. Source available. No KYC.'
+      );
+      expect(en.hero.desc4).not.toMatch(/open.?source/i);
+      expect(screen.getByText(
+        'Post-quantum proofs, stealth addresses, shielded pools. Live on devnet. ' +
+        'Your wallet keys stay on your device. A note this deployment hands you is not yours alone: it can spend it until you do. Source available. No KYC.'
+      )).toBeInTheDocument();
     });
     it('renders the devnet app itself, with the devnet line under it', () => {
       const app = document.getElementById('app');
@@ -192,10 +212,10 @@ describe('Homepage, the Styx Protocol landing page', () => {
       for (const id of ['problem', 'features', 'download', 'tech']) {
         expect(document.getElementById(id)).toBeNull();
       }
-      expect(screen.queryByText(en.hero.kicker)).toBeNull();
-      expect(screen.queryByText(en.problem.without)).toBeNull();
-      expect(screen.queryByText(en.features.privacyPools)).toBeNull();
-      expect(screen.queryByText(en.ecosystem.badge)).toBeNull();
+      expect(screen.queryByText('WHO YOU PAY. WHAT YOU BUY. HOW MUCH.')).toBeNull();
+      expect(screen.queryByText('Standard chain')).toBeNull();
+      expect(screen.queryByText('Privacy Pools')).toBeNull();
+      expect(screen.queryByText('Ecosystem & Technologies')).toBeNull();
     });
     it('renders the Footer, with its devnet warning and the discreet waitlist admin entrance', () => {
       expect(

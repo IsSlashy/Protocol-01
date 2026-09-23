@@ -26,8 +26,8 @@ import StyxField from "../_styx/StyxField";
  * the first control, and nothing on this page may say more than the code does.
  *
  * Every string is a dictionary key, both locales; nothing here is a claim the
- * previous page did not already make. HomeSections.tsx is kept in the tree
- * (nothing imports it) so its sections can come back one at a time if wanted.
+ * previous page did not already make. The long page (HomeSections.tsx and the
+ * components only it used) was deleted on 2026-09-23; git history keeps it.
  */
 export default function HomeSimple() {
   const t = useT();

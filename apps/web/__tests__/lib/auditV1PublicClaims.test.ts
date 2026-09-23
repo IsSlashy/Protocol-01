@@ -158,7 +158,8 @@ describe('F21: detail10 states the FRI rate the verifier enforces, not a "measur
 });
 
 describe('F46: zkSPL copy does not announce a threshold or a conservation law the code does not enforce', () => {
-  // programs/p01_zkspl/src/instructions/prove_balance.rs: "(balance >= threshold)
+  // programs/p01_zkspl/src/instructions/prove_balance.rs (deleted 2026-09-23,
+  // read it at HEAD f0f8a51b): "(balance >= threshold)
   // is NOT enforced by the AIR"; withdraw.rs binds amount_hash = Poseidon(0, 0),
   // so the new commitment is not tied to the public amount withdrawn.
   const lines: Array<[string, string]> = [

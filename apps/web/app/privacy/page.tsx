@@ -113,9 +113,10 @@ import StyxShell from "../_styx/StyxShell";
  *     claim in s2.keys.k1, so deleting this one left section 6 silent on key
  *     storage while section 2 still spoke.
  *
- * Jupiter (s5) was checked and KEPT: apps/mobile/services/jupiter/index.ts and
- * apps/extension/src/shared/services/jupiter.ts both use it, and the policy's
- * scope is the mobile app, the extension and the SDK, not this website alone.
+ * Jupiter (s5) was checked and KEPT: apps/mobile/services/jupiter/index.ts uses
+ * it (the extension's jupiter.ts was deleted on 2026-09-23 with its Swap page),
+ * and the policy's scope is the mobile app, the extension and the SDK, not this
+ * website alone.
  *
  * NO Reveal ON THIS PAGE, deliberately. Reveal renders data-revealed="false" on
  * the server and flips it in an effect, and styx.css:1081 sets that state to

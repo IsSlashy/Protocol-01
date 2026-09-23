@@ -12,7 +12,8 @@ import type { CSSProperties } from "react";
  * real heading ELEMENT the reset wins and only size and line-height survive: the
  * heading renders in Inter at the inherited weight, which is the one typeface the
  * direction rules out. The identical class on a span renders Newsreader, which is
- * why app/styx-kit looks right and a page built from real headings does not.
+ * why the old app/styx-kit sketch looked right and a page built from real
+ * headings does not.
  *
  * An inline style outranks both selectors, so the class keeps every other
  * declaration and these three come back. Nothing new is introduced: the values

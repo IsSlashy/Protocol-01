@@ -8,13 +8,12 @@ import { SERIF_DISPLAY, SERIF_SMALL } from "./serif";
 /**
  * WaitlistJoin: the whole hero of /waitlist. Overline, heading, lede, form.
  *
- * The wiring is cloned from components/WaitlistForm.tsx, deliberately, line for
+ * The wiring was cloned from components/WaitlistForm.tsx, deliberately, line for
  * line: the same POST, the same body shape, the same client pre-check, the same
  * error mapping, the same honeypot, the same `?src=` campaign effect. Only the
- * presentation is new. That old component is NOT imported and NOT edited, it
- * still renders the Protocol 01 identity (pink #ff2d7a, cyan glow shadows,
- * Orbitron via font-display), components/CTA.tsx renders it on the home page,
- * and __tests__/components/WaitlistForm.test.tsx asserts its DOM.
+ * presentation is new. That old component (Protocol 01 identity, rendered only
+ * by the old home page) was deleted on 2026-09-23, and its DOM test was ported
+ * to __tests__/waitlist/WaitlistJoin.test.tsx, which asserts this form.
  *
  * WHY THE HEADING LIVES HERE and not in page.tsx: t() is a context hook, and
  * page.tsx has to stay a server component so it can export metadata. A heading
@@ -50,10 +49,8 @@ import { SERIF_DISPLAY, SERIF_SMALL } from "./serif";
  * submit button. The mail behaviour it leaves out (five resends, a ten minute
  * cooldown, one reminder) is stated in bands 01 and 02 of ./WaitlistBands.tsx.
  *
- * Both subtitle keys are still rendered elsewhere (app/_home/HomeSections.tsx and
- * components/CTA.tsx), so routing around them here only protects this page.
- * Rewording them is a dictionary edit and is reported upward with the new keys
- * this hero needs, since one agent applies every i18n change at the end.
+ * Nothing else rendered either key after the old home page and components/CTA.tsx
+ * went, so both were deleted from the dictionaries on 2026-09-23.
  *
  * Things that look cosmetic here and are not:
  *
@@ -217,8 +214,7 @@ export default function WaitlistJoin({
         ) : (
           /* styx-sweep gives the panel the one hover gesture. No panel head:
              every heading available for one would have been a sentence with no
-             dictionary key, and the field labels already name the two inputs.
-             app/_home/WaitlistPanel.tsx renders the same form the same way. */
+             dictionary key, and the field labels already name the two inputs. */
           <div id="join" className="styx-panel styx-sweep">
             <div className="styx-panel-body">
               <form onSubmit={handleSubmit} noValidate className="styx-stack">

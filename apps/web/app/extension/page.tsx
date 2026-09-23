@@ -11,9 +11,15 @@ import Reveal from "../_styx/Reveal";
  * install it yet.
  *
  * Ported from the Protocol 01 identity to Styx. Presentation only: the two
- * navigations (/#download and /), the version and archive literals, the paused
- * download block and every i18n key that survived the honesty pass behave
- * exactly as before.
+ * navigations (/#download and /), the version literal and every i18n key that
+ * survived the honesty pass behave exactly as before.
+ *
+ * The 0.5.0 archive itself (public/protocol01-extension-0.5.0.zip) was DELETED
+ * on 2026-09-23, with its paused download block, the ZIP and FOLDER literals
+ * and the extensionPage.download key. It shipped Groth16 artifacts and a STARK
+ * worker without circuit 7, which the chain has rejected since 2026-08-04, so
+ * it could never be offered again. A new build ships its own archive; the
+ * install steps below name no file.
  *
  * TRANSLATION RULE FOR THIS PAGE, after the first port shipped eleven English
  * strings into the French build: every visible string resolves through a key
@@ -26,8 +32,8 @@ import Reveal from "../_styx/Reveal";
  *                         devnet." No claim in it is on the forbidden list.
  *  - sdkDemo.installTitle "Install" / "Installation", the build panel row key.
  *
- * The single word left in English is the "Archive" field label, which is
- * spelled the same in French.
+ * No English field label is left on the page: the "Archive" row left with the
+ * archive.
  *
  * Three strings from the old page are still deliberately NOT rendered, and none
  * of them can be fixed here because i18n/ is shared:
@@ -43,25 +49,15 @@ import Reveal from "../_styx/Reveal";
  * extensionPage.title ("Install Protocol 01" / "Installer Protocol 01") IS
  * rendered again, as the heading of section 02, because the page had stopped
  * naming the thing it is about. "Protocol 01" is not the site brand there, it is
- * the artifact's own name: manifest.json inside
- * public/protocol01-extension-0.5.0.zip reads {"name": "Protocol 01"} (read out
- * of the zip on 2026-08-11), so that is the label Chrome prints in the
- * extensions list and the one step 5 tells the reader to pin.
+ * the artifact's own name: the manifest.json of the 0.5.0 build reads
+ * {"name": "Protocol 01"} (read out of its archive on 2026-08-11), so that is
+ * the label Chrome prints in the extensions list of anyone who installed it,
+ * and the one step 5 tells the reader to pin.
  */
 
+/* The version of the last build that was handed out, the one the amber
+   warning below is about. */
 const VERSION = "0.5.0";
-// WAITLIST MODE: direct .zip download disabled, restore at public launch.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-const ZIP = `/protocol01-extension-${VERSION}.zip`;
-/* FROZEN LITERAL, and it names the ARCHIVE, not a directory packed inside it.
-   Measured on 2026-08-11: public/protocol01-extension-0.5.0.zip holds 38 entries
-   with no top-level folder at all (assets/, circuits/, icons/, manifest.json sit
-   at the root), so the folder the reader ends up loading is the one their unzip
-   tool creates, and both Windows Explorer and the macOS Archive Utility name
-   that folder after the archive. Which is exactly why this literal has to keep
-   matching the file on disk: rebranding it would print a folder name that nobody
-   has. */
-const FOLDER = `protocol01-extension-${VERSION}`;
 
 /* Inline evidence: a file extension, a folder name, a browser URL. styx.css has
    no inline-code token, so this composes the two shared classes that come
@@ -127,7 +123,7 @@ export default function ExtensionPage() {
       body: (
         <>
           {t("extensionPage.step1a")} <code className={codeCls}>.zip</code>{" "}
-          {t("extensionPage.step1b")} <code className={codeCls}>{FOLDER}</code>.
+          {t("extensionPage.step1b")}
         </>
       ),
     },
@@ -157,7 +153,7 @@ export default function ExtensionPage() {
       body: (
         <>
           {t("extensionPage.step4a")} <strong>{t("extensionPage.step4action")}</strong>{" "}
-          {t("extensionPage.step4b")} <code className={codeCls}>{FOLDER}</code>.
+          {t("extensionPage.step4b")}.
         </>
       ),
     },
@@ -193,16 +189,15 @@ export default function ExtensionPage() {
             <div className="styx-prose" style={{ marginTop: "1.35rem" }}>
               <p>{t("hero.desc3")}</p>
             </div>
-            {/* The download link above this page has been commented out since
-                the waitlist pause, so nobody NEW can install 0.5.0 from here.
-                The exposure is the other direction: the archive is still served
-                at its literal URL, and whoever installed the build before the
-                pause has had a client the chain rejects since 2026-08-04 with
-                no way to learn it from us. The founder's call is to keep the
-                page and the archive and to warn instead, so the warning is the
-                first thing under the lede, in the same amber the /app page uses
-                for its own admission, and it carries the web app as the way out
-                rather than leaving the reader with only bad news. */}
+            {/* Nobody NEW can install 0.5.0 from here: the download was
+                paused for the waitlist and the archive was deleted on
+                2026-09-23. The exposure is the other direction: whoever
+                installed the build before the pause has had a client the chain
+                rejects since 2026-08-04 with no way to learn it from us. So the
+                warning is the first thing under the lede, in the same amber the
+                /app page uses for its own admission, and it carries the web app
+                as the way out rather than leaving the reader with only bad
+                news. */}
             <div className="styx-admission" style={{ marginTop: "1.75rem" }}>
               <p className="styx-admission-title">
                 {t("waitlist.extensionIncompatTitle")}
@@ -244,16 +239,6 @@ export default function ExtensionPage() {
                   {t("extensionPage.step3mode")}
                 </span>
               </div>
-              {/* The archive gets a full-width line rather than a row value:
-                  .styx-row-value ellipsises, and a truncated file name is a
-                  useless instruction. "Archive" is the one English field label
-                  left on the page, and it is the same word in French. */}
-              <p className="styx-card-label" style={{ margin: "1.35rem 0 0.4rem" }}>
-                Archive
-              </p>
-              <p className="styx-mono" style={{ margin: 0 }}>
-                {FOLDER}.zip
-              </p>
               <p className="styx-note" style={{ marginTop: "1.35rem" }}>
                 {t("extensionPage.compat")}
               </p>
@@ -311,29 +296,13 @@ export default function ExtensionPage() {
             </h2>
           </div>
           <div>
-            {/* Step 1 says to take the .zip "above". There is no .zip above
+            {/* Step 1 says to download the build's .zip. No archive is offered
                 while downloads are paused, so the localized notice repeats
                 here: it is the honest label for a procedure nobody can run
-                yet. The step strings themselves are shared and frozen. */}
+                yet. */}
             <p className="styx-overline" id="extension-steps-paused">
               {t("waitlist.extensionNoticeTitle")}
             </p>
-
-            {/* WAITLIST MODE: direct .zip download disabled, restore at public
-                launch. Re-enable this block (and drop the paused notice above)
-                to bring back the one-click extension download. Restoring it
-                also means importing the lucide Download icon again: the icon
-                imports left with the Protocol 01 tiles.
-            <div className="styx-btn-row" style={{ marginTop: "1.5rem" }}>
-              <a href={ZIP} download className="styx-btn">
-                <Download size={16} aria-hidden />
-                {t("extensionPage.download")}
-              </a>
-              <span className="styx-mono" style={{ alignSelf: "center" }}>
-                {FOLDER}.zip
-              </span>
-            </div>
-            WAITLIST MODE end */}
 
             {/* The caveat is wired to the list so a screen reader hears it as
                 the description of the procedure, not as a stray line. */}

@@ -25,11 +25,9 @@ import Reveal from "../../_styx/Reveal";
  * from ./layout.tsx, which is metadata and nothing else.
  *
  * Ported OFF app/waitlist/WaitlistResult.tsx rather than through it. That file
- * sits outside this directory and was shared with /waitlist/invalid and
- * /waitlist/removed, so it is left byte-for-byte intact and simply no longer
- * imported here. Its two other consumers have since been ported the same way,
- * which leaves it orphaned; deleting it belongs to whoever owns app/waitlist,
- * not to this page.
+ * was shared with /waitlist/invalid and /waitlist/removed; once all three
+ * pages had been ported the same way it was orphaned, and it was deleted on
+ * 2026-09-23.
  *
  * Copy discipline: every sentence on the page is a t() call with its original
  * key, so French keeps working. Nothing new is asserted. In particular the port

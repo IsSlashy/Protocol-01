@@ -55,8 +55,8 @@ interface WhitelistData {
 }
 
 /* styx.css has one button size and no icon-button. Until it gains them, the
-   compact variants are inline, which is the idiom styx-kit already uses for
-   one-off metrics on a shared class. */
+   compact variants are inline, the idiom for one-off metrics on a shared
+   class. */
 const BTN_SMALL: CSSProperties = { padding: "0.5rem 0.95rem", gap: "0.45rem" };
 const BTN_ICON: CSSProperties = { padding: "0.4rem 0.5rem", gap: 0 };
 const NOWRAP: CSSProperties = { whiteSpace: "nowrap" };

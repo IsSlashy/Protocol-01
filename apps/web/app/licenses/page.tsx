@@ -41,8 +41,9 @@ const P01_PACKAGES = [
    2026-08-11: github.com/vimwitch/poseidon-lite 301s to
    github.com/chancehudson/poseidon-lite, and that target is a 404 because the
    chancehudson account itself no longer exists. The package is a real direct
-   dependency (the root package.json plus six workspace manifests: zk-sdk,
-   zkspl-sdk, privacy-sdk, privacy-toolkit, specter-sdk, apps/mobile), so the row
+   dependency (the root package.json plus specter-sdk and apps/mobile; the
+   zk-sdk, zkspl-sdk and privacy-toolkit manifests were deleted and privacy-sdk
+   dropped it on 2026-09-23), so the row
    stays and points at the npm page, which is live and declares MIT. Do not
    "restore" either GitHub URL without re-measuring it. */
 const DEPENDENCIES = [
@@ -59,8 +60,6 @@ const DEPENDENCIES = [
       { name: "@noble/post-quantum", license: "MIT", url: "https://github.com/paulmillr/noble-post-quantum" },
       { name: "tweetnacl", license: "Unlicense", url: "https://github.com/dchest/tweetnacl-js" },
       { name: "circom / snarkjs", license: "GPL-3.0", url: "https://github.com/iden3/circom" },
-      { name: "ark-circom", license: "MIT / Apache-2.0", url: "https://github.com/arkworks-rs/circom-compat" },
-      { name: "ark-groth16", license: "MIT / Apache-2.0", url: "https://github.com/arkworks-rs/groth16" },
     ],
   },
   {
@@ -265,12 +264,10 @@ export default function Licenses() {
                 registry page where that repository no longer exists.
               </p>
               <p>
-                Two proof stacks appear below and they are not the same thing.
-                The on-chain verifier is hash-based: winterfell, SHA-256 and
+                The proof stack is hash-based: winterfell, SHA-256 and
                 Poseidon, with no elliptic curve anywhere in the proof. The
-                older native Groth16 prover kept in <code>services/prover</code>{" "}
-                does use a curve, BN254, which is why ark-bn254, ark-groth16 and
-                ark-circom are listed here.
+                circom / snarkjs row covers the older Groth16 tooling that the
+                repository&apos;s legacy root test scripts still install.
               </p>
             </div>
 

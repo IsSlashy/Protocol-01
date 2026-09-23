@@ -12,8 +12,8 @@ import { Search, CornerDownLeft } from "lucide-react";
 /**
  * DocsPalette — the Ctrl/Cmd+K topic picker, in the Styx voice.
  *
- * A restyle of components/docs/DocsSearch.tsx, which stays untouched for the pages
- * still on the Protocol 01 identity. The keyboard model is reproduced verbatim
+ * A restyle of the old components/docs/DocsSearch.tsx (deleted on 2026-09-23,
+ * nothing imported it any more). The keyboard model is reproduced verbatim
  * because it IS the component:
  *
  *  - filter on title OR group, case-insensitive, empty query shows everything

@@ -13,7 +13,7 @@ import { SERIF_TITLE, SERIF_SMALL } from "./serif";
  * bands used to be written inline up there, which made them ~1,400 words of
  * hardcoded English underneath a hero that was fully translated: a French visitor
  * got a French heading and then an English page. Moving them here is what lets
- * every sentence be a t() call. app/_home/HomeSections.tsx is the same split for
+ * every sentence be a t() call. app/_home/HomeSimple.tsx is the same split for
  * the same reason.
  *
  * Every string a reader can read comes from the dictionary. The literals left in

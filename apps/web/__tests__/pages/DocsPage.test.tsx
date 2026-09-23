@@ -5,11 +5,11 @@ import { TOPIC_ORDER } from '@/components/docs/nav';
 import en from '@/i18n/en';
 
 /**
- * /docs was rebuilt as a documentation SHELL: a grouped sidebar (components/docs/Sidebar)
+ * /docs was rebuilt as a documentation SHELL: a grouped sidebar (app/docs/_components/DocsRail)
  * drives a single active topic at a time, plus a Ctrl+K search, an "on this page" ToC and a
  * prev/next pager. It no longer renders every technology section stacked on one long page,
- * and it no longer draws its own header/footer — it mounts the shared <SiteHeader /> and
- * <Footer />.
+ * and it no longer draws its own header/footer — it mounts the shared Styx chrome
+ * (StyxShell: StyxHeader and StyxFooter).
  *
  * So a lot of copy that used to be visible on first paint now lives one sidebar click away.
  * `openTopic()` performs that click, which keeps these assertions on real, user-visible copy
@@ -221,12 +221,15 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     // 2026-09-02 slot and its CU figures. The figure now is the circuit-7 proof
     // from the shipped blob accepted on 2026-09-20, read back off that
     // transaction (packages/stark-prover/deployed-verifier.json,
-    // accepts_client_blob_sha256_evidence_2026_09_20).
+    // accepts_client_blob_sha256_evidence_2026_09_20). 889,691 CU is phase 1
+    // only (VerifyStarkProofV2); the transaction, both phases, used 1,082,158 CU
+    // (getTransaction 5Kp9dMnU..., slot 501,407,541), so the line must say both.
     it('mentions the custom on-chain FRI verifier and its measured CU cost', () => {
       openTopic('STARK Proofs (Goldilocks)');
       expect(
-        screen.getByText(/both phases in one transaction at 889,691 CU/),
+        screen.getByText(/both phases in one transaction at 1,082,158 CU \(phase 1 889,691 CU, phase 2 192,317 CU/),
       ).toBeInTheDocument();
+      expect(screen.queryAllByText(/both phases in one transaction at 889,691 CU/)).toHaveLength(0);
       expect(screen.getByText(/redeployed on devnet 2026-09-12 in slot 497,235,406/)).toBeInTheDocument();
       expect(screen.queryAllByText(/809,812 CU/)).toHaveLength(0);
       expect(screen.queryAllByText(/slot 491,973,056/)).toHaveLength(0);
@@ -417,7 +420,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       openTopic('Client SDK Architecture');
       expect(
         screen.getByText(
-          '@protocol-01/specter-sdk. Registry, subscription and relay clients, client-side proving, off-chain stealth-address math',
+          '@protocol-01/specter-sdk. Registry, subscription and relay clients, off-chain stealth-address math (0.5.0 in this repository has no prover)',
         ),
       ).toBeInTheDocument();
 

@@ -157,8 +157,8 @@ describe('F19: Grover is not "mitigated by digest size" in French either', () =>
 
 describe('F20 / F21 / F26: the blob, the deployment and the FRI parameters in French', () => {
   it('names the shipped blob, not the retired 36c1fd4e', () => {
-    expect(F('docs.sections.zkProofs.detail5')).toMatch(/d5583d41/);
-    expect(F('docs.sections.zkProofs.detail5')).toMatch(/262 363/);
+    expect(F('docs.sections.zkProofs.detail5')).toMatch(/241caaab/);
+    expect(F('docs.sections.zkProofs.detail5')).toMatch(/240 172/);
     expect(F('docs.sections.zkProofs.detail5')).not.toMatch(/36c1fd4e|274 224/);
   });
   it('names the current verifier deployment', () => {
@@ -272,11 +272,13 @@ describe('F05: the deposit card does not describe the C1 + C3 pair as this app�
 });
 
 describe('F68: the privacy-toolkit captions say BN254, legacy, not the pool hash, in both languages', () => {
-  it('sdkDemo.sdkPrivacyToolkitDesc', () => {
-    expect(E('sdkDemo.sdkPrivacyToolkitDesc')).not.toMatch(/WOTS\+/);
-    expect(E('sdkDemo.sdkPrivacyToolkitDesc')).toMatch(/BN254[\s\S]*not the pool hash/);
-    expect(F('sdkDemo.sdkPrivacyToolkitDesc')).not.toMatch(/WOTS\+/);
-    expect(F('sdkDemo.sdkPrivacyToolkitDesc')).toMatch(/BN254[\s\S]*pas le hachage du pool/);
+  // The sdkDemo.* toolkit captions went with the sdk-demo toolkit block on
+  // 2026-09-23 (privacy-toolkit's source was deleted); the docs page keys stay.
+  it('the sdk-demo toolkit keys are gone in both languages', () => {
+    for (const k of ['sdkDemo.sdkPrivacyToolkitDesc', 'sdkDemo.privacyToolkitDesc', 'sdkDemo.privacyToolkitCodeTitle']) {
+      expect(() => E(k)).toThrow(/is not a string/);
+      expect(() => F(k)).toThrow(/is not a string/);
+    }
   });
   it('docs.nodePrivacyToolkitSub', () => {
     expect(E('docs.nodePrivacyToolkitSub')).toMatch(/BN254/);
@@ -289,17 +291,6 @@ describe('F68: the privacy-toolkit captions say BN254, legacy, not the pool hash
     expect(E('docs.sections.clientSdk.detail8')).toMatch(/BN254[\s\S]*not the pool’s Goldilocks Poseidon/);
     expect(F('docs.sections.clientSdk.detail8')).not.toMatch(/Arbre de Merkle incrémental/);
     expect(F('docs.sections.clientSdk.detail8')).toMatch(/BN254[\s\S]*pas le Poseidon Goldilocks du pool/);
-  });
-  it('sdkDemo.privacyToolkitDesc', () => {
-    expect(E('sdkDemo.privacyToolkitDesc')).not.toMatch(/WOTS\+/);
-    expect(E('sdkDemo.privacyToolkitDesc')).toMatch(/BN254[\s\S]*Not the pool hash/);
-    expect(F('sdkDemo.privacyToolkitDesc')).not.toMatch(/WOTS\+/);
-    expect(F('sdkDemo.privacyToolkitDesc')).toMatch(/BN254[\s\S]*Pas le hachage du pool/);
-  });
-  it('sdkDemo.privacyToolkitCodeTitle', () => {
-    expect(E('sdkDemo.privacyToolkitCodeTitle')).toMatch(/BN254[\s\S]*legacy/);
-    expect(F('sdkDemo.privacyToolkitCodeTitle')).not.toMatch(/arbre de Merkle/i);
-    expect(F('sdkDemo.privacyToolkitCodeTitle')).toMatch(/BN254[\s\S]*legacy/);
   });
 });
 

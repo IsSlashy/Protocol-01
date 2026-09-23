@@ -96,7 +96,10 @@ describe('/licenses: the licence texts are the files, verbatim', () => {
     const pkgs = readdirSync(path.join(REPO_ROOT, 'packages')).filter((d) =>
       existsSync(path.join(REPO_ROOT, 'packages', d, 'LICENSE')),
     );
-    expect(pkgs.length).toBeGreaterThanOrEqual(15);
+    // 15 until 2026-09-23, when eight packages nothing used were deleted
+    // (arcium-sdk, privacy-toolkit, react-native-zk, specter-js, ui,
+    // whitelist-sdk, zk-sdk, zkspl-sdk). Seven packages carry a LICENSE today.
+    expect(pkgs.length).toBeGreaterThanOrEqual(7);
     for (const d of pkgs) {
       expect(repoFile(path.join('packages', d, 'LICENSE')), d).toBe(PROJECT_LICENSE_TEXT);
     }

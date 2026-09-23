@@ -639,18 +639,16 @@ function PrivacySDKSection() {
 
   const packages = [
     { name: "@protocol-01/specter-sdk", desc: t('sdkDemo.sdkSpecterDesc') },
-    { name: "@protocol-01/zk-sdk", desc: t('sdkDemo.sdkZkDesc') },
-    { name: "@protocol-01/zkspl-sdk", desc: t('sdkDemo.sdkZksplDesc') },
-    { name: "@protocol-01/privacy-toolkit", desc: t('sdkDemo.sdkPrivacyToolkitDesc') },
     { name: "@protocol-01/auth-sdk", desc: t('sdkDemo.sdkAuthDesc') },
     { name: "@protocol-01/p01-js", desc: t('sdkDemo.sdkP01JsDesc') },
     { name: "@protocol-01/rpc-config", desc: t('sdkDemo.sdkRpcConfigDesc') },
   ];
 
   // Sub-labels are the checkable kind. The old "14 Anchor Programs" was a count
-  // no reader could verify, so it is gone.
+  // no reader could verify, so it is gone. zk-sdk, zkspl-sdk and privacy-toolkit
+  // were dropped from this tab on 2026-09-23 with their source.
   const stack = [
-    { label: t('sdkDemo.archClientSdks'), sub: "specter · zk · zkspl" },
+    { label: t('sdkDemo.archClientSdks'), sub: "specter · p01-js · auth" },
     { label: t('sdkDemo.archProofLayer'), sub: "STARK · Poseidon · Merkle" },
     { label: t('sdkDemo.archOnChain'), sub: "Solana devnet" },
   ];
@@ -712,85 +710,6 @@ const keypair = deriveStealthPrivateKey(spendingPubKey, viewingPrivateKey, ephem
         />
       </Block>
 
-      {/* The note was sdkDemo.zkProofsDesc, which quoted "~9-15KB per proof".
-          No benchmark on this page backs a size, so it is gone; these two
-          existing keys state what the proof system is instead. */}
-      <Block
-        title={t('sdkDemo.zkProofsTitle')}
-        note={`${t('sdkDemo.sdkZkDesc')} · ${t('docs.sections.zkProofs.detail7')}`}
-      >
-        <CodeBlock
-          title={t('sdkDemo.zkProofsCodeTitle')}
-          code={`import { proveTransfer, verifyProof } from '@protocol-01/zk-sdk';
-
-// Generate a STARK proof for a confidential transfer
-const { proof, publicSignals } = await proveTransfer({
-  senderNote: myShieldedNote,
-  recipientPubKey: recipientStealthAddress,
-  amount: 100_000_000, // 0.1 SOL in lamports
-  merkleProof: treePath,
-});
-
-// Submit proof to on-chain verifier (zk_shielded program)
-const tx = await submitShieldedTransfer(connection, wallet, {
-  proof,
-  publicSignals,
-  nullifier: publicSignals.nullifier,
-});`}
-        />
-      </Block>
-
-      <Block title={t('sdkDemo.confSplTitle')} note={t('sdkDemo.confSplDesc')}>
-        <CodeBlock
-          title={t('sdkDemo.confSplCodeTitle')}
-          code={`import { shieldTokens, unshieldTokens } from '@protocol-01/zkspl-sdk';
-
-// Shield 100 USDC into a denominated pool
-const shieldResult = await shieldTokens({
-  connection, wallet,
-  mint: USDC_MINT,
-  amount: 100_000_000, // 100 USDC (6 decimals)
-  pool: 'pool_100',    // 100 USDC denomination
-});
-
-// Later: unshield behind a STARK proof.
-// Measured, and true today: the withdrawal republishes the deposit
-// commitment, so a reader can still pair a deposit with its withdrawal.
-// Do not read this as unlinkable.
-const unshieldResult = await unshieldTokens({
-  connection, wallet,
-  note: shieldResult.note,
-  recipient: myStealthAddress,
-  proof: await generateUnshieldProof(shieldResult.note),
-});`}
-        />
-      </Block>
-
-      <Block title={t('sdkDemo.privacyToolkitTitle')} note={t('sdkDemo.privacyToolkitDesc')}>
-        <CodeBlock
-          title={t('sdkDemo.privacyToolkitCodeTitle')}
-          code={`import {
-  createCommitment,
-  computeNullifier,
-  getZeroHashes,
-  generateSecret,
-  generateNullifierPreimage,
-} from '@protocol-01/privacy-toolkit';
-
-// BN254 Poseidon (poseidon-lite), from the earlier Groth16 design.
-// Not the pool hash: the Styx pool, its STARK circuits and the on-chain
-// verifier use Poseidon over Goldilocks, so a value built here is not
-// accepted there.
-const nullifierPreimage = generateNullifierPreimage();
-const secret = generateSecret();
-const commitment = createCommitment(nullifierPreimage, secret, epoch, tokenId);
-const nullifier = computeNullifier(nullifierPreimage, secret);
-
-// Empty-subtree hashes of a depth-20 BN254 Merkle tree.
-const zeros = getZeroHashes(20);`}
-        />
-      </Block>
-
       <div>
         <p className="styx-card-label">{t('sdkDemo.archTitle')}</p>
         <div className="styx-grid styx-grid-3">
@@ -821,7 +740,7 @@ const zeros = getZeroHashes(20);`}
 pnpm add @protocol-01/p01-js @protocol-01/rpc-config
 
 # Privacy layer
-pnpm add @protocol-01/specter-sdk @protocol-01/zk-sdk @protocol-01/zkspl-sdk @protocol-01/privacy-toolkit
+pnpm add @protocol-01/specter-sdk
 
 # Optional: Auth
 pnpm add @protocol-01/auth-sdk`}

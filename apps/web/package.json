@@ -41,7 +41,6 @@
     "react-qr-code": "^2.0.21",
     "resend": "^6.12.4",
     "starknet": "^10.0.2",
-    "tailwind-merge": "^2.6.1",
     "three": "^0.185.1",
     "tweetnacl": "^1.0.3"
   },

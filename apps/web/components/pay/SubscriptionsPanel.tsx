@@ -11,7 +11,8 @@
  * is the right one, so clicking a merchant shows its key and remaining time
  * without navigation or context loss. Below lg the list stands alone and a
  * selection replaces it with the detail plus a back button, the same shape as
- * mobile's subscription-vaults -> vault-detail pair. Long strings (key, vault
+ * the mobile subscription-vaults -> vault-detail pair had (both screens were
+ * deleted on 2026-09-23). Long strings (key, vault
  * address) are truncated with copy buttons; the page never scrolls
  * horizontally.
  *

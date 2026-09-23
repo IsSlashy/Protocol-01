@@ -6,9 +6,9 @@ import { Search, X } from "lucide-react";
 /**
  * DocsRail — the grouped topic rail, in the Styx voice.
  *
- * A behaviour-identical restyle of components/Sidebar (components/docs/Sidebar.tsx).
- * That file is shared with pages still carrying the Protocol 01 identity, so it is
- * left untouched and this local copy is what /docs mounts. Same props, same types,
+ * A behaviour-identical restyle of the old components/docs/Sidebar.tsx, which was
+ * deleted on 2026-09-23 once nothing imported it; this local copy is what /docs
+ * mounts. Same props, same types,
  * same `memo`, same mobile-drawer contract (a selection inside the drawer also
  * closes it).
  *

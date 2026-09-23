@@ -162,34 +162,3 @@ export function useT() {
 export function useLocale() {
   return useContext(I18nContext);
 }
-
-/**
- * Compact language switcher.
- *
- * Deliberately NOT rendered in the Styx header: the locale follows the
- * visitor's country. Kept exported because components/SiteHeader.tsx (the old
- * Protocol 01 bar) still imports it, and because a footer switcher is a
- * plausible thing to want back. Japanese is gone, so it offers two languages.
- */
-export function LanguageSwitcher({ className = "" }: { className?: string }) {
-  const { locale, setLocale } = useLocale();
-  const locales: Locale[] = ["en", "fr"];
-
-  return (
-    <div className={`flex items-center gap-1 ${className}`}>
-      {locales.map((l) => (
-        <button
-          key={l}
-          onClick={() => setLocale(l)}
-          className={`px-2 py-1 text-[10px] font-mono uppercase tracking-wider transition-colors ${
-            locale === l
-              ? "text-[#39c5bb] border border-[#39c5bb]/40 bg-[#39c5bb]/10"
-              : "text-[#555560] hover:text-[#888892]"
-          }`}
-        >
-          {l.toUpperCase()}
-        </button>
-      ))}
-    </div>
-  );
-}

@@ -18,8 +18,8 @@ import Reveal from "../../_styx/Reveal";
  * It stays a client component for exactly one reason: useT() is a context hook.
  *
  * Ported off app/waitlist/WaitlistResult.tsx rather than through it. That
- * component is shared with /waitlist/confirmed and /waitlist/invalid, so the
- * presentation is rebuilt here and the shared file is left untouched.
+ * component was shared with /waitlist/confirmed and /waitlist/invalid, so the
+ * presentation was rebuilt here; the old component was deleted on 2026-09-23.
  *
  * Copy discipline: the two sentences of meaning are t() calls, unchanged keys,
  * so French still works. Nothing is added around them. In particular the port
@@ -65,9 +65,9 @@ export default function WaitlistRemovedPage() {
         <Reveal className="styx-stack-lg styx-reveal">
           <p className="styx-lede">{t("waitlist.removedBody")}</p>
           <div className="styx-btn-row">
-            {/* "/" verbatim, as it was before the port. Re-joining happens on
-                the home page, where components/CTA.tsx mounts
-                components/WaitlistForm.tsx. Do not retarget this at /waitlist. */}
+            {/* "/" verbatim, as it was before the port: the label is
+                waitlist.backHome, so the link goes home. Re-joining happens at
+                /waitlist (the home-page form was deleted on 2026-09-23). */}
             <Link href="/" className="styx-btn">
               {t("waitlist.backHome")}
             </Link>

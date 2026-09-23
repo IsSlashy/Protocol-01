@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import DepthBackground from '@/components/DepthBackground';
-import GridBackground from '@/components/GridBackground';
 
 describe('DepthBackground -- Multi-layered cyberpunk atmosphere', () => {
   it('renders without crashing', () => {
@@ -66,55 +65,5 @@ describe('DepthBackground -- Multi-layered cyberpunk atmosphere', () => {
     // which is applied only to the noise layer.
     const noiseDiv = container.querySelector('.mix-blend-overlay');
     expect(noiseDiv).toBeTruthy();
-  });
-});
-
-describe('GridBackground -- Geometric grid with floating symbols', () => {
-  it('renders without crashing', () => {
-    const { container } = render(<GridBackground />);
-    expect(container.firstElementChild).toBeTruthy();
-  });
-
-  it('renders the main grid pattern with cyan grid lines', () => {
-    const { container } = render(<GridBackground />);
-    const gridDivs = Array.from(container.querySelectorAll('div')).filter(
-      el => el.style.backgroundSize === '60px 60px'
-    );
-    expect(gridDivs.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('renders the secondary finer grid pattern', () => {
-    const { container } = render(<GridBackground />);
-    const finerGrid = Array.from(container.querySelectorAll('div')).find(
-      el => el.style.backgroundSize === '20px 20px'
-    );
-    expect(finerGrid).toBeTruthy();
-  });
-
-  it('renders 8 floating "+" symbols with CSS animations', () => {
-    const { container } = render(<GridBackground />);
-    const symbols = container.querySelectorAll('span.float-symbol');
-    expect(symbols.length).toBe(8);
-  });
-
-  it('renders 4 corner bracket SVG decorations', () => {
-    const { container } = render(<GridBackground />);
-    const svgs = container.querySelectorAll('svg');
-    expect(svgs.length).toBe(4);
-  });
-
-  it('includes a vignette effect for depth', () => {
-    const { container } = render(<GridBackground />);
-    const vignette = Array.from(container.querySelectorAll('div')).find(
-      el => el.style.background?.includes('radial-gradient') && el.style.background?.includes('rgba(10, 10, 12')
-    );
-    expect(vignette).toBeTruthy();
-  });
-
-  it('injects CSS keyframes for symbol floating animation', () => {
-    const { container } = render(<GridBackground />);
-    const style = container.querySelector('style');
-    expect(style?.innerHTML).toContain('float-symbol');
-    expect(style?.innerHTML).toContain('grid-scan');
   });
 });

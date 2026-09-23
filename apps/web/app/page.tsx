@@ -9,7 +9,7 @@ import HomeSimple from "./_home/HomeSimple";
  * This file is a SERVER component on purpose. The old page was "use client"
  * because it needed useT(), and a client component cannot export `metadata`,
  * which left the tab title as the root layout's "PROTOCOL-01", and
- * app/layout.tsx is off limits. So the copy moved to ./_home/HomeSections.tsx
+ * app/layout.tsx is off limits. So the copy lives in ./_home/HomeSimple.tsx
  * ("use client", where useT() belongs) and the page keeps only the metadata and
  * the StyxShell frame.
  *
@@ -30,9 +30,8 @@ import HomeSimple from "./_home/HomeSimple";
  * Styx share image is an asset decision and stays upstream: there is no
  * Styx-branded file in public/ to point at yet.
  *
- * chrome defaults to true: StyxHeader and StyxFooter replace components/
- * SiteHeader.tsx and components/Footer.tsx, and the footer keeps the discreet
- * /admin/waitlist entrance.
+ * chrome defaults to true: StyxHeader and StyxFooter are the site chrome, and the
+ * footer keeps the discreet /admin/waitlist entrance.
  */
 
 const DESCRIPTION =

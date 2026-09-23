@@ -44,8 +44,8 @@ import StyxShell from "../../_styx/StyxShell";
        pre-fund transfer is untouched and still ties the wallet to this
        withdrawal. Do not read a fresh payout address as unlinkability."
        app/(pay)/app/page.tsx states the same house standard.
-     · THE WITHDRAWAL IS CIRCUITS 1 AND 3, not circuit 5. Circuit 5 is
-       CIRCUIT_TRANSFER (lib/privacy/pool/stark.ts:40).
+     · THE WITHDRAWAL IS CIRCUITS 1 AND 3, not circuit 5. Circuit 5 is the
+       transfer circuit, which no client proves since the 2026-09-23 reship.
        programs/zk_shielded/src/instructions/unshield_denominated_stark_v3.rs
        requires `c1_circuit_id == 1` and `c3_circuit_id == 3`. A deposit carries
        circuit 6, merkle_update (shield_denominated_v3 binds the C6 buffer).
@@ -424,7 +424,7 @@ function Slide3Stack() {
     {
       title: "Privacy SDK",
       icon: <Layers size={15} />,
-      items: ["zk-sdk", "specter-sdk", "p01-js", "stark-prover"],
+      items: ["privacy-sdk", "specter-sdk", "p01-js", "stark-prover"],
     },
     {
       title: "Cryptography",

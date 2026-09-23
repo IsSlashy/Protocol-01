@@ -6,9 +6,8 @@ import { useT } from "@/i18n";
 /**
  * The Observer Test, in the Styx voice.
  *
- * A local restyle of components/explorer/ObserverTest.tsx. That file is shared
- * territory and is left byte-for-byte untouched; it simply stops being imported
- * here.
+ * A local restyle of the old components/explorer/ObserverTest.tsx, which was
+ * deleted on 2026-09-23 once nothing imported it.
  *
  * WHAT THIS MODULE MAY SAY, AND WHY IT NOW SAYS LESS.
  *
@@ -43,8 +42,8 @@ import { useT } from "@/i18n";
  * French: the retired brand, in both locales. Worse, the state it produced
  * sealed From and Amount on the standard column, which is the same untrue claim
  * as above with a button on it. There is nothing left for the control to toggle
- * now that both columns print what an observer really reads, so it is the render
- * that goes, and the replacement wording for the two keys is reported upward.
+ * now that both columns print what an observer really reads, so the render went,
+ * and the two keys were deleted from both dictionaries on 2026-09-23.
  *
  * The footnote under the grid IS rendered, on explorer.observer.footnote, the
  * key that belongs in the slot. Its current sentence, "We cannot, by design.
@@ -64,9 +63,8 @@ import { useT } from "@/i18n";
  * The right column is headed with the wordmark rather than
  * explorer.observer.protocol01, whose value is the identical string
  * "Protocol 01" in en.ts and fr.ts. Swapping a proper noun that both
- * dictionaries spell the same way costs no French, and the key itself is
- * reported for rewrite because a dead retired-brand string is still a
- * retired-brand string.
+ * dictionaries spell the same way costs no French. The key itself was deleted
+ * on 2026-09-23: a dead retired-brand string is still a retired-brand string.
  */
 
 /** The new wordmark. Same in both locales, which is why it can be a literal. */
