@@ -36,11 +36,25 @@ removed rather than left pointing at a closed account:
   `StreamStatus`, `StreamCreateOptions`, `StreamWithdrawOptions`,
   `TransactionType`, `TransactionRecord` and the event types.
 
+- [2026-09-23] the `./proving` sub-path and its root exports:
+  `StarkClientProver`, `buildBalanceCircuitInputs`,
+  `buildSufficiencyCircuitInputs`, `validateInputs`, `circuitIdForOperation`,
+  `ProofInputValidationError` and the types `ZkFieldElement`,
+  `ZkSplOperation`, `ConfidentialBalancePublicInputs`,
+  `ConfidentialBalancePrivateInputs`, `BalanceProofPublicInputs`,
+  `BalanceProofPrivateInputs`, `DepositProofInputs`, `WithdrawProofInputs`,
+  `TransferProofInputs`, `BalanceSufficiencyProofInputs`, `ZkSplProofInputs`,
+  `StarkProofOutcome`, `StarkProverConfig`, `StarkClientProverInit`,
+  `StarkPrivateInputMap`. It proved zkSPL circuits 4 (confidential balance)
+  and 2 (balance proof) for a program that is not deployed, and nothing
+  imported it. The package no longer inlines `@protocol-01/stark-prover` and
+  no longer ships a `wasm/` copy of the prover blob (`files` drops `wasm`).
+
 What stays, unchanged: wallet creation and import, the off-chain stealth key
 math (`generate`, `derive`, `quantum`, `utils/crypto`), `sendPublic`, the
 service registry and registry clients (`p01_registry`), the relay module
-(`p01_relayer`), private subscriptions (`zk_shielded`), the STARK client
-prover, the commitment indexer and the WOTS+ / hash-commitment helpers.
+(`p01_relayer`), private subscriptions (`zk_shielded`), the commitment
+indexer and the WOTS+ / hash-commitment helpers.
 `scripts/sync-program-ids.ts` no longer emits a specter entry.
 
 Measured after the cut: `vitest run` and `tsc --noEmit` in this package — the

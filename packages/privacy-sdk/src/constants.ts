@@ -11,27 +11,15 @@ import type { Network, ProgramIds, TokenInfo } from './types';
 export const PROGRAM_IDS: Record<Network, ProgramIds> = {
   devnet: {
     zkShielded: new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c'),
-    trustless: new PublicKey('11111111111111111111111111111111'), // not yet deployed
-    zkspl: new PublicKey('AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT'),
     relayer: new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
     registry: new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
-    stream: new PublicKey('C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx'),
-    subscription: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'),
     starkVerifier: new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs'),
-    whitelist: new PublicKey('5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33'),
-    bundler: new PublicKey('FzhzTRz8DZDESoCm851n1qB6sSSCTBGV3aZtLVbDfGGX'), // not in Anchor.toml
   },
   mainnet: {
     zkShielded: new PublicKey('8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY'),
-    trustless: new PublicKey('11111111111111111111111111111111'), // not yet deployed
-    zkspl: new PublicKey('EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah'),
     relayer: new PublicKey('11111111111111111111111111111111'), // not yet deployed
     registry: new PublicKey('11111111111111111111111111111111'), // not yet deployed
-    stream: new PublicKey('2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs'),
-    subscription: new PublicKey('Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS'),
     starkVerifier: new PublicKey('11111111111111111111111111111111'), // not yet deployed
-    whitelist: new PublicKey('AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE'),
-    bundler: new PublicKey('11111111111111111111111111111111'), // not yet deployed
   },
 };
 // </auto-generated-program-ids>
@@ -48,13 +36,15 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
  * Re-checked with `solana account <id> --url devnet` on 2026-08-18:
  *
  *   zkShielded  GbVM5yve…  EXISTS, executable  (upgraded that day)
- *   zkspl       AY38smtd…  ABSENT
- *   subscription 3eDvPJTK… ABSENT — superseded; subscriptions live inside
- *                                    zk_shielded as vaults, there is no
- *                                    separate program to call
- * ⛔ Do not deploy `subscription` or `zkspl` to make these resolve. Absent is
- * the correct state for both; a caller that reaches them is a caller on a path
- * that should not exist.
+ *
+ * [2026-09-23] `trustless`, `zkspl`, `stream`, `subscription`, `whitelist`
+ * and `bundler` LEFT this table (2.0.0). None of them had a program deployed
+ * on devnet (zkspl AY38smtd…, stream C92xDDAt…, subscription 3eDvPJTK… and
+ * whitelist 5PSYrjBK… read ABSENT; trustless was a placeholder; bundler was in
+ * no Anchor.toml), and the modules that read them (confidential, streams,
+ * subscriptions, payroll, shield) were removed with them. Subscriptions live
+ * inside zk_shielded as vaults. ⛔ `scripts/sync-program-ids.ts` must not
+ * re-emit these keys either; `ProgramIds` no longer has them.
  *
  * [2026-09-13] `specter`, `feeSplitter`, `quantumVault` and `arcium` LEFT this
  * table (2.0.0). The founder had specter `FgKhXakZ…`, p01_fee_splitter
@@ -73,8 +63,8 @@ export const PROGRAM_IDS: Record<Network, ProgramIds> = {
  * Programs with placeholder IDs (System Program) are excluded and a warning is logged for each.
  *
  * It does not check the chain: an id it returns comes from Anchor.toml and may
- * have no program behind it (on devnet zkspl, stream, subscription and
- * whitelist are declared but not deployed; nothing is deployed on mainnet).
+ * have no program behind it (the mainnet zkShielded id is declared but nothing
+ * is deployed on mainnet).
  * Read the account on the cluster before relying on a module.
  *
  * @param network - The target network ('devnet' or 'mainnet')
@@ -163,13 +153,6 @@ export const SEEDS = {
   PRIVACY_ROUTE: 'privacy_route',
   AUCTION_ESCROW: 'auction_escrow',
 
-  // stream
-  STREAM: 'stream',
-
-  // trustless
-  TRUSTLESS_POOL: 'trustless_pool',
-  CONFIDENTIAL_ACCOUNT: 'confidential_account',
-
   // relayer
   RELAYER_CONFIG: 'relayer_config',
   RELAYER: 'relayer',
@@ -177,9 +160,6 @@ export const SEEDS = {
 
   // registry
   REGISTRY: 'registry',
-
-  // subscription
-  SUBSCRIPTION: 'subscription',
 
   // stark verifier
   PROOF_BUFFER: 'proof_buffer',
@@ -221,41 +201,10 @@ export const DENOMINATIONS = {
  *     → `require!(tree_depth == 15, ...)`
  *   - `stark/src/air/merkle_path.rs` → `CANONICAL_DEPTH: usize = 15`
  *
- * Every root computation in this package (see `computeNewRoot` in
- * `modules/shield.ts`) cascades the zero-hash chain exactly this many levels.
- * A value other than 15 produces a root that can never match the chain and the
- * insert is rejected.
+ * No module of this package computes roots since 2.0.0 (the shield module
+ * left); the constant stays as the published mirror of the on-chain depth.
+ * A client that cascades the zero-hash chain any other number of levels gets a
+ * root that can never match the chain, and the insert is rejected.
  */
 export const MERKLE_TREE_DEPTH = 15;
 export const MAX_LEAVES = 2 ** MERKLE_TREE_DEPTH; // 32,768
-
-// ─── Fee Config ───────────────────────────────────────────────────────────────
-
-export const SHIELD_FEE_BPS = 30;   // 0.3%
-export const UNSHIELD_FEE_BPS = 50; // 0.5%
-export const MAX_FEE_BPS = 500;     // 5%
-export const FEE_WALLET = new PublicKey('AcY6cJfncdXBT19UfwemsfAmrNVrxWcsd5FU1B5jAFoh');
-
-// ─── STARK Circuit IDs ────────────────────────────────────────────────────────
-
-export const STARK_CIRCUITS = {
-  SUBSCRIBER_OWNERSHIP: 0,
-  POOL_COMMITMENT: 1,
-  BALANCE_PROOF: 2,
-  MERKLE_PATH: 3,
-  CONFIDENTIAL_BALANCE: 4,
-  TRANSFER: 5,
-  MERKLE_UPDATE: 6,
-} as const;
-
-// ─── Compute Budget ───────────────────────────────────────────────────────────
-
-export const COMPUTE_UNITS = {
-  SHIELD: 200_000,
-  UNSHIELD: 400_000,
-  TRANSFER: 400_000,
-  STARK_VERIFY: 1_400_000,
-  STREAM_CREATE: 200_000,
-  SUBSCRIPTION_CREATE: 300_000,
-  MPC_VOTE: 300_000,
-} as const;

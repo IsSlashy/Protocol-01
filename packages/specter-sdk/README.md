@@ -1,8 +1,8 @@
 # @protocol-01/specter-sdk
 
-TypeScript SDK for Protocol 01 on Solana: wallet and stealth-key derivation, the on-chain service registry, the relay module, private subscriptions through the shielded pool, and the STARK client prover.
+TypeScript SDK for Protocol 01 on Solana: wallet and stealth-key derivation, the on-chain service registry, the relay module and private subscriptions through the shielded pool.
 
-**0.5.0 (2026-09-13).** The on-chain `specter` program that carried stealth announcements, stealth claims and payment streams was closed on devnet on 2026-09-13 (`FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL`). Every function that sent it an instruction or read its accounts is gone from this package; `CHANGELOG.md` lists them. The stealth key math stays, as client-side derivation only. Private payments are the shielded pool's job (`createPrivateSubscription` below, and `@protocol-01/privacy-sdk`).
+**0.5.0 (2026-09-13).** The on-chain `specter` program that carried stealth announcements, stealth claims and payment streams was closed on devnet on 2026-09-13 (`FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL`). Every function that sent it an instruction or read its accounts is gone from this package; `CHANGELOG.md` lists them. The stealth key math stays, as client-side derivation only. Private payments are the shielded pool's job (`createPrivateSubscription` below).
 
 ## Installation
 
@@ -41,7 +41,7 @@ const oneTime = client.generateStealthAddress();
 const signature = await client.sendPublic(recipientPublicKey, 1.5);
 
 // Private payments go through the shielded pool: see "Private Subscriptions"
-// below and @protocol-01/privacy-sdk.
+// below (createPrivateSubscription).
 ```
 
 ## Configuration
@@ -137,43 +137,6 @@ const oneTimeKeypair = deriveStealthPrivateKey(
   viewingPrivateKey,
   stealth.ephemeralPubKey,
 );
-```
-
-### ZK Proving (Client-Side)
-
-> **Heads up — proving system migration.** All shipping clients (mobile + extension) generate **STARK** proofs on-device via the Winterfell-derived WASM prover bundled in `@protocol-01/privacy-sdk` (Goldilocks field, Poseidon hash, ~9–12 KB proofs verified by the on-chain FRI verifier). The Groth16 path documented below is the **legacy** snarkjs flow kept for migration tooling and the few callers that have not yet cut over. New integrations should use `privacy-sdk` and not import `ClientProver` from this package.
-
-The spending key, balance, and salt never leave the user's device — true for both proving systems.
-
-For the legacy Groth16 prover (zkSPL confidential balance circuit), circuit files (.wasm and .zkey) must be served from a URL or filesystem path:
-
-```typescript
-import { ClientProver, CircuitLoader } from '@protocol-01/specter-sdk';
-
-// Check what files are needed
-console.log(CircuitLoader.listRequiredCircuits());
-// ['confidential_balance.wasm', 'confidential_balance_final.zkey',
-//  'balance_proof.wasm', 'balance_proof_final.zkey']
-
-// Initialize the prover with a base URL
-const prover = new ClientProver({
-  circuitBaseUrl: 'https://cdn.example.com/circuits/',
-  balanceCircuit: {
-    wasmUrl: 'confidential_balance.wasm',
-    zkeyUrl: 'confidential_balance_final.zkey',
-  },
-  sufficiencyCircuit: {
-    wasmUrl: 'balance_proof.wasm',
-    zkeyUrl: 'balance_proof_final.zkey',
-  },
-});
-
-// Preload circuit files (recommended on app startup)
-await prover.preloadCircuits();
-
-// Generate a deposit proof
-const result = await prover.proveDeposit(publicInputs, privateInputs);
-// result.proof, result.publicSignals, result.provingTimeMs
 ```
 
 ### Blockchain Indexing
@@ -402,7 +365,6 @@ Main client class for all Protocol 01 operations.
 import { createWallet } from '@protocol-01/specter-sdk/wallet';
 import { generateStealthAddress, deriveStealthPrivateKey } from '@protocol-01/specter-sdk/stealth';
 import { sendPublic } from '@protocol-01/specter-sdk/transfer';
-import { ClientProver, CircuitLoader } from '@protocol-01/specter-sdk/proving';
 import { CommitmentIndexer } from '@protocol-01/specter-sdk/indexing';
 import { submitRelayJob } from '@protocol-01/specter-sdk/relay';
 ```
@@ -450,7 +412,6 @@ try {
 |---|---|---|
 | "Using public Solana RPC" | Default endpoint | Set a custom `rpcEndpoint` (Helius, QuickNode) |
 | "not yet deployed on mainnet-beta" | Mainnet program ID requested | Use `cluster: 'devnet'` for testing |
-| "Circuit files not found" | Missing .wasm/.zkey | Set `circuitBaseUrl` or download from GitHub |
 | "Invalid wallet adapter" | Adapter missing methods | Ensure wallet has `publicKey` and `signTransaction` |
 | "Relayer config not initialized" | ENABLE_RELAYER flag off | Call `setFeature('ENABLE_RELAYER', true)` |
 
@@ -473,8 +434,8 @@ Override at runtime with `setFeature(name, enabled)` or at client creation via t
 
 ## Security Model
 
-- **All proofs generated locally** -- The spending key, balance, and salt never leave the user's device. Production proofs are STARK (FRI-based, post-quantum, no trusted setup), generated by the Winterfell-derived WASM prover in `@protocol-01/privacy-sdk`. The legacy Groth16 path in this package uses snarkjs WASM running in-process and is being phased out.
-- **Spending keys never leave device** -- There is no remote prover fallback. If local proving fails, the operation fails.
+- **No prover in this package** -- 0.5.0 removed the `./proving` module (the zkSPL client prover for circuits 2 and 4). Pool proofs are generated by the apps with `@protocol-01/stark-prover`.
+- **Spending keys never leave device** -- This package derives and uses them in memory only.
 - **ML-KEM-768 hybrid encryption** -- v2 stealth addresses combine X25519 (classical) with ML-KEM-768 (post-quantum) for defense against future quantum computers.
 - **On-chain nullifier records** -- Every spend writes a `NullifierRecord` PDA in the pool program, and a second spend with the same nullifier fails at that account. This does not guarantee that one deposit is spent only once in v1: a v1 leaf commitment is a single 64-bit Goldilocks element, so a depositor who finds two openings of one commitment (a collision search of about 2^32 Poseidon evaluations, classical birthday bound; about 2^21.3 for a quantum collision search, BHT) holds two different nullifiers for one deposit (finding F2, `docs/SECURITY-LEVELS.md` in the repository). The v2 design widens the commitment to four elements.
 

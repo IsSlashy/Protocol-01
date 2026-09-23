@@ -14,20 +14,16 @@ import { PrivacyError, PrivacyErrorCode } from './errors';
 import { PROGRAM_IDS, TOKENS } from './constants';
 import { asSpendingKey, type SpendingKey } from './identity/spendingKey';
 
-import { ShieldModule } from './modules/shield';
-import { ConfidentialModule } from './modules/confidential';
-import { StreamsModule } from './modules/streams';
-import { SubscriptionsModule } from './modules/subscriptions';
 import { RegistryModule } from './modules/registry';
 import { RelayModule } from './modules/relay';
-import { ComplianceModule } from './modules/compliance';
-import { AirdropModule } from './modules/airdrop';
-import { OTCModule } from './modules/otc';
-import { PayrollModule } from './modules/payroll';
-import { TreasuryModule } from './modules/treasury';
 
 /**
- * Protocol 01 Privacy SDK — unified entry point for all privacy operations on Solana.
+ * Protocol 01 Privacy SDK client: the stealth meta-address registry and the
+ * privacy relay, on one connection and one wallet.
+ *
+ * 2.0.0 removed the shield, confidential, streams, subscriptions, compliance,
+ * airdrop, otc, payroll and treasury modules: each one built instructions for a
+ * program that is not deployed or does not register them (CHANGELOG.md).
  *
  * @example
  * ```typescript
@@ -36,14 +32,12 @@ import { TreasuryModule } from './modules/treasury';
  * const sdk = new PrivacySDK({
  *   connection: new Connection('https://api.devnet.solana.com'),
  *   wallet: myKeypair, // or WalletAdapter
+ *   spendingKey: await deriveSpendingKeyFromSignature(myKeypair, { domain: 'my-app' }),
  *   network: 'devnet',
  * });
  *
- * // Shield 1 SOL
- * const receipt = await sdk.shield.shield({ amount: 1e9, token: 'SOL' });
- *
- * // Create payment stream
- * await sdk.streams.create({ recipient, totalAmount: 10e9, duration: 86400 });
+ * // Is this wallet's stealth meta-address registered?
+ * const registered = await sdk.registry.isRegistered(someWallet);
  * ```
  */
 export class PrivacySDK {
@@ -53,28 +47,10 @@ export class PrivacySDK {
   readonly network: Network;
   readonly programIds: ProgramIds;
 
-  /** Shield, unshield, and private transfer operations */
-  readonly shield: ShieldModule;
-  /** Confidential token balances (zkSPL) */
-  readonly confidential: ConfidentialModule;
-  /** Payment streaming */
-  readonly streams: StreamsModule;
-  /** Recurring subscription payments */
-  readonly subscriptions: SubscriptionsModule;
   /** Stealth meta-address registry */
   readonly registry: RegistryModule;
   /** Privacy relay for transaction submission */
   readonly relay: RelayModule;
-  /** Compliance gateway (range proofs, sanctions innocence) */
-  readonly compliance: ComplianceModule;
-  /** Stealth airdrops (Merkle-based private token distribution) */
-  readonly airdrop: AirdropModule;
-  /** Private OTC desk (atomic P2P swaps) */
-  readonly otc: OTCModule;
-  /** Confidential payroll (batch private salary payments) */
-  readonly payroll: PayrollModule;
-  /** Private DAO treasury (shield + vote + audit) */
-  readonly treasury: TreasuryModule;
 
   private listeners: Map<PrivacyEventType, Set<PrivacyEventCallback>> = new Map();
   private tokenCache: Map<string, TokenInfo> = new Map();
@@ -129,17 +105,8 @@ export class PrivacySDK {
 
     const resolveToken = this.resolveToken.bind(this);
 
-    this.shield = new ShieldModule(this.connection, this.wallet, this.network, this.programIds, resolveToken, this.spendingKey);
-    this.confidential = new ConfidentialModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.streams = new StreamsModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.subscriptions = new SubscriptionsModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.registry = new RegistryModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
     this.relay = new RelayModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.compliance = new ComplianceModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.airdrop = new AirdropModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.otc = new OTCModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.payroll = new PayrollModule(this.connection, this.wallet, this.network, this.programIds, resolveToken);
-    this.treasury = new TreasuryModule(this.connection, this.wallet, this.network, this.programIds, resolveToken, this.spendingKey);
   }
 
   /**

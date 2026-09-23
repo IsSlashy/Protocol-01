@@ -40,7 +40,7 @@ import { sendPublic } from './transfer/send';
  * `getStream`, `getMyStreams`, and the `programId` option. What remains is
  * wallet creation and import, balances, stealth meta-address and one-time
  * address derivation (off-chain math), and plain transfers. Private payments
- * go through the shielded pool (`./subscription`, `@protocol-01/privacy-sdk`).
+ * go through the shielded pool (`./subscription`, `createPrivateSubscription`).
  *
  * @example
  * ```typescript

@@ -4,7 +4,13 @@ All notable changes to the `p-01` SDK will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [Unreleased] — ships as 0.4.0
+
+### Removed (breaking)
+
+- **The `shielded-pool` module.** `shield`, `unshield`, `getPoolInfo`, `getPools`, `validateShieldParams`, `validateUnshieldParams`, `resolveTokenMintForPool`, `computeCommitmentPlaceholder`, `estimateDelayTier`, `isValidDenomination` and the constants `ZK_SHIELDED_PROGRAM_ID`, `STANDARD_DENOMINATIONS`, `MERKLE_TREE_DEPTH`, `MAX_LEAVES`, `DELAY_TIERS`, plus the types `ShieldParams`, `UnshieldParams` and `PoolInfo`. Its `ZK_SHIELDED_PROGRAM_ID` was `EqppogLB…`, the old zkSPL program, not the pool; `shield()` returned a locally built placeholder receipt and sent nothing; `unshield`, `getPoolInfo` and `getPools` always threw. The pool id `GbVM5y…` stays exported as `VAULT_PROGRAM_ID`.
+- `ShieldReceipt` stays exported (it moved to `types.ts`): `PrivateStream`, `PrivateSubscription` and the receipt-manager helpers carry it.
+- The optional peer dependency on `@protocol-01/privacy-sdk` (nothing imported it).
 
 ### Fixed (audit v1, not yet on npm: 0.3.2 still has the old behaviour)
 

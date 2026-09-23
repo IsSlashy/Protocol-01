@@ -56,16 +56,6 @@
         "default": "./dist/transfer/index.js"
       }
     },
-    "./proving": {
-      "import": {
-        "types": "./dist/proving/index.d.mts",
-        "default": "./dist/proving/index.mjs"
-      },
-      "require": {
-        "types": "./dist/proving/index.d.ts",
-        "default": "./dist/proving/index.js"
-      }
-    },
     "./indexing": {
       "import": {
         "types": "./dist/indexing/index.d.mts",
@@ -100,7 +90,6 @@
   "files": [
     "dist",
     "src",
-    "wasm",
     "LICENSE"
   ],
   "scripts": {
@@ -120,9 +109,6 @@
     "crypto",
     "blockchain",
     "web3",
-    "zero-knowledge",
-    "zk-stark",
-    "stark",
     "post-quantum"
   ],
   "author": "Protocol 01 Team",
@@ -149,8 +135,7 @@
     "eslint": "^8.57.1",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4",
-    "@protocol-01/stark-prover": "workspace:^"
+    "vitest": "^3.2.4"
   },
   "peerDependencies": {
     "@solana/web3.js": "^1.98.0"
@@ -171,12 +156,6 @@
       ],
       "transfer": [
         "./dist/transfer/index.d.ts"
-      ],
-      "streams": [
-        "./dist/streams/index.d.ts"
-      ],
-      "proving": [
-        "./dist/proving/index.d.ts"
       ],
       "indexing": [
         "./dist/indexing/index.d.ts"

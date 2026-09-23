@@ -229,46 +229,6 @@ export {
 } from './utils';
 
 // ============================================================================
-// Proving Module (Client-Side zkSPL STARK Prover)
-// ============================================================================
-//
-// TRUST THE MATH, NOT THE NODES.
-// Generate zkSPL STARK proofs entirely on the client device via
-// `@protocol-01/stark-prover` — post-quantum safe, no trusted setup, Goldilocks
-// field. The spending_key, balance, and salt NEVER leave the user's machine.
-//
-export {
-  // Main prover class
-  StarkClientProver,
-
-  // Input builders + validation helpers
-  buildBalanceCircuitInputs,
-  buildSufficiencyCircuitInputs,
-  validateInputs,
-  circuitIdForOperation,
-
-  // Error class
-  ProofInputValidationError,
-
-  // Types (re-exported from proving/types.ts)
-  type FieldElement as ZkFieldElement,
-  type ZkSplOperation,
-  type ConfidentialBalancePublicInputs,
-  type ConfidentialBalancePrivateInputs,
-  type BalanceProofPublicInputs,
-  type BalanceProofPrivateInputs,
-  type DepositProofInputs,
-  type WithdrawProofInputs,
-  type TransferProofInputs,
-  type BalanceSufficiencyProofInputs,
-  type ZkSplProofInputs,
-  type StarkProofOutcome,
-  type StarkProverConfig,
-  type StarkClientProverInit,
-  type StarkPrivateInputMap,
-} from './proving';
-
-// ============================================================================
 // Relay Module (Decentralized Transaction Relay)
 // ============================================================================
 //

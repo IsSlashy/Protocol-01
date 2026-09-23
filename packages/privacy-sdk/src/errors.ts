@@ -7,40 +7,10 @@ export enum PrivacyErrorCode {
   TRANSACTION_FAILED = 1005,
   TIMEOUT = 1006,
 
-  // ─── Shield (2xxx) ──────────────────────────────────────────────────
-  SHIELD_FAILED = 2001,
-  UNSHIELD_FAILED = 2002,
-  INSUFFICIENT_SHIELDED_BALANCE = 2003,
-  PROOF_GENERATION_FAILED = 2004,
-  INVALID_MERKLE_PROOF = 2005,
-  NULLIFIER_ALREADY_SPENT = 2006,
-  POOL_NOT_FOUND = 2007,
-  DENOMINATION_MISMATCH = 2008,
-  /** The deployed p01_liquidity program is drainable: the SDK refuses to route through it (audit v1 F27). */
-  LIQUIDITY_DISABLED = 2009,
-
-  // ─── 3xxx: retired with the stealth module (specter program closed 2026-09-13)
-  // ─── 7xxx: retired with the vault module (quantum vault program closed 2026-09-13)
-
-  // ─── Confidential (4xxx) ────────────────────────────────────────────
-  CONFIDENTIAL_DEPOSIT_FAILED = 4001,
-  CONFIDENTIAL_TRANSFER_FAILED = 4002,
-  CONFIDENTIAL_WITHDRAW_FAILED = 4003,
-  ACCOUNT_NOT_INITIALIZED = 4004,
-  BALANCE_PROOF_FAILED = 4005,
-
-  // ─── Streams (5xxx) ─────────────────────────────────────────────────
-  STREAM_CREATE_FAILED = 5001,
-  STREAM_WITHDRAW_FAILED = 5002,
-  STREAM_CANCEL_FAILED = 5003,
-  STREAM_NOT_FOUND = 5004,
-  STREAM_EXHAUSTED = 5005,
-
-  // ─── Subscriptions (6xxx) ───────────────────────────────────────────
-  SUBSCRIPTION_CREATE_FAILED = 6001,
-  SUBSCRIPTION_CANCEL_FAILED = 6002,
-  SUBSCRIPTION_PAUSE_FAILED = 6003,
-  SUBSCRIPTION_NOT_FOUND = 6004,
+  // ─── Retired in 2.0.0, with the modules that threw them (CHANGELOG.md):
+  //   2xxx shield / liquidity, 3xxx stealth, 4xxx confidential, 5xxx streams,
+  //   6xxx subscriptions, 7xxx vault, 9xxx private governance (MPC).
+  //   The numbers are not reused.
 
   // ─── Relay (8xxx) ───────────────────────────────────────────────────
   RELAY_SUBMIT_FAILED = 8001,
@@ -48,19 +18,10 @@ export enum PrivacyErrorCode {
   RELAY_JOB_EXPIRED = 8003,
   RELAY_ENCRYPTION_FAILED = 8004,
 
-  // ─── MPC (9xxx) ─────────────────────────────────────────────────────
-  MPC_VOTE_FAILED = 9001,
-  MPC_AUDIT_FAILED = 9002,
-  MPC_PROPOSAL_EXPIRED = 9003,
-  MPC_ALREADY_VOTED = 9004,
-  MPC_AUCTION_FAILED = 9005,
-  MPC_NOT_AVAILABLE = 9006,
-
   // ─── Registry (10xxx) ───────────────────────────────────────────────
   REGISTRY_NOT_FOUND = 10001,
   REGISTRY_ALREADY_EXISTS = 10002,
   REGISTRY_UPDATE_FAILED = 10003,
-
 }
 
 export class PrivacyError extends Error {
@@ -88,33 +49,11 @@ export class PrivacyError extends Error {
     );
   }
 
-  static proofFailed(circuit: string, cause?: Error): PrivacyError {
-    return new PrivacyError(
-      PrivacyErrorCode.PROOF_GENERATION_FAILED,
-      `Proof generation failed for circuit "${circuit}".`,
-      cause,
-    );
-  }
-
   static txFailed(operation: string, cause?: Error): PrivacyError {
     return new PrivacyError(
       PrivacyErrorCode.TRANSACTION_FAILED,
       `Transaction failed during ${operation}.`,
       cause,
-    );
-  }
-
-  static poolNotFound(token: string, denominated?: boolean): PrivacyError {
-    return new PrivacyError(
-      PrivacyErrorCode.POOL_NOT_FOUND,
-      `No ${denominated ? 'denominated ' : ''}pool found for token "${token}".`,
-    );
-  }
-
-  static nullifierSpent(): PrivacyError {
-    return new PrivacyError(
-      PrivacyErrorCode.NULLIFIER_ALREADY_SPENT,
-      'Note has already been spent (nullifier exists on-chain).',
     );
   }
 }

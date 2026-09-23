@@ -44,7 +44,7 @@ function makeConfig(
   };
 }
 
-/** Create `n` mock ShieldReceipts matching the shielded-pool ShieldReceipt type. */
+/** Create `n` mock ShieldReceipts matching the ShieldReceipt type. */
 function makeReceipts(n: number): ShieldReceipt[] {
   return Array.from({ length: n }, (_, i) => ({
     secret: `secret-hex-${i}`,

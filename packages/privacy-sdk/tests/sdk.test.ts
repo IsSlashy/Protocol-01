@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Connection, Keypair, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import {
   PrivacySDK,
   PrivacyError,
@@ -10,15 +12,8 @@ import {
   DENOMINATIONS,
   MERKLE_TREE_DEPTH,
   MAX_LEAVES,
-  SHIELD_FEE_BPS,
-  UNSHIELD_FEE_BPS,
-  STARK_CIRCUITS,
-  COMPUTE_UNITS,
-  LiquidityModule,
-  P01_LIQUIDITY_PROGRAM_ID,
+  getDeployedProgramIds,
 } from '../src';
-import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 // ─── Test Setup ───────────────────────────────────────────────────────────────
 
@@ -26,6 +21,28 @@ const DEVNET_URL = 'https://api.devnet.solana.com';
 const mockConnection = new Connection(DEVNET_URL, 'confirmed');
 const testKeypair = Keypair.generate();
 const testSpendingKey = new Uint8Array(32).fill(7);
+
+const PKG = resolve(__dirname, '..');
+const REPO = resolve(PKG, '..', '..');
+
+/**
+ * Modules removed in 2.0.0. Each built instructions for a program that is not
+ * deployed, or that the deployed zk_shielded program does not register
+ * (CHANGELOG.md). `stealth`, `vault` and `mpc` left earlier.
+ */
+const REMOVED_MODULES = [
+  'shield',
+  'confidential',
+  'streams',
+  'subscriptions',
+  'compliance',
+  'airdrop',
+  'otc',
+  'payroll',
+  'treasury',
+  'liquidity',
+  'instantUnshield',
+] as const;
 
 function createSDK(overrides: Partial<Parameters<typeof PrivacySDK>[0]> = {}) {
   return new PrivacySDK({
@@ -35,6 +52,12 @@ function createSDK(overrides: Partial<Parameters<typeof PrivacySDK>[0]> = {}) {
     spendingKey: testSpendingKey,
     ...overrides,
   } as any);
+}
+
+/** Mainnet rejects placeholder program ids: supply the undeployed ones. */
+function mainnetOverrides() {
+  const dummy = Keypair.generate().publicKey;
+  return { relayer: dummy, registry: dummy, starkVerifier: dummy };
 }
 
 // ─── SDK Initialization ──────────────────────────────────────────────────────
@@ -88,21 +111,13 @@ describe('PrivacySDK', () => {
       expect(sdk.network).toBe('devnet');
     });
 
-    it('should accept mainnet config', () => {
-      // Mainnet rejects placeholder program IDs, so supply custom IDs for all
-      // modules that aren't yet deployed on mainnet.
-      const dummy = Keypair.generate().publicKey;
-      const sdk = createSDK({
-        network: 'mainnet',
-        programIds: {
-          trustless: dummy,
-          relayer: dummy,
-          registry: dummy,
-          starkVerifier: dummy,
-          bundler: dummy,
-        },
-      });
+    it('should accept mainnet config once the undeployed ids are overridden', () => {
+      const sdk = createSDK({ network: 'mainnet', programIds: mainnetOverrides() });
       expect(sdk.network).toBe('mainnet');
+    });
+
+    it('should refuse mainnet while a program id is still a placeholder', () => {
+      expect(() => createSDK({ network: 'mainnet' })).toThrow(PrivacyError);
     });
 
     it('should allow program ID overrides', () => {
@@ -121,48 +136,6 @@ describe('PrivacySDK', () => {
       sdk = createSDK();
     });
 
-    it('should expose shield module', () => {
-      expect(sdk.shield).toBeDefined();
-      expect(typeof sdk.shield.shield).toBe('function');
-      expect(typeof sdk.shield.unshield).toBe('function');
-      expect(typeof sdk.shield.transfer).toBe('function');
-      expect(typeof sdk.shield.getPoolInfo).toBe('function');
-      expect(typeof sdk.shield.getShieldedBalance).toBe('function');
-    });
-
-    it('has no stealth module: the specter program it spoke to was closed on devnet 2026-09-13', () => {
-      expect((sdk as unknown as { stealth?: unknown }).stealth).toBeUndefined();
-    });
-
-    it('should expose confidential module', () => {
-      expect(sdk.confidential).toBeDefined();
-      expect(typeof sdk.confidential.deposit).toBe('function');
-      expect(typeof sdk.confidential.transfer).toBe('function');
-      expect(typeof sdk.confidential.withdraw).toBe('function');
-      expect(typeof sdk.confidential.getBalance).toBe('function');
-    });
-
-    it('should expose streams module', () => {
-      expect(sdk.streams).toBeDefined();
-      expect(typeof sdk.streams.create).toBe('function');
-      expect(typeof sdk.streams.withdraw).toBe('function');
-      expect(typeof sdk.streams.cancel).toBe('function');
-      expect(typeof sdk.streams.getStream).toBe('function');
-      expect(typeof sdk.streams.listStreams).toBe('function');
-    });
-
-    it('should expose subscriptions module', () => {
-      expect(sdk.subscriptions).toBeDefined();
-      expect(typeof sdk.subscriptions.create).toBe('function');
-      expect(typeof sdk.subscriptions.cancel).toBe('function');
-      expect(typeof sdk.subscriptions.pause).toBe('function');
-      expect(typeof sdk.subscriptions.resume).toBe('function');
-    });
-
-    it('has no vault module: the quantum vault program it spoke to was closed on devnet 2026-09-13', () => {
-      expect((sdk as unknown as { vault?: unknown }).vault).toBeUndefined();
-    });
-
     it('should expose registry module', () => {
       expect(sdk.registry).toBeDefined();
       expect(typeof sdk.registry.register).toBe('function');
@@ -177,8 +150,11 @@ describe('PrivacySDK', () => {
       expect(typeof sdk.relay.getJobStatus).toBe('function');
     });
 
-    it('does not expose an mpc module (Arcium removed from Protocol 01)', () => {
-      expect((sdk as unknown as { mpc?: unknown }).mpc).toBeUndefined();
+    it('has none of the removed modules, nor stealth, vault or mpc', () => {
+      const bag = sdk as unknown as Record<string, unknown>;
+      for (const name of [...REMOVED_MODULES, 'stealth', 'vault', 'mpc']) {
+        expect(bag[name], `sdk.${name}`).toBeUndefined();
+      }
     });
   });
 
@@ -234,17 +210,7 @@ describe('PrivacySDK', () => {
     });
 
     it('should resolve mainnet tokens', () => {
-      const dummy = Keypair.generate().publicKey;
-      const mainnetSdk = createSDK({
-        network: 'mainnet',
-        programIds: {
-          trustless: dummy,
-          relayer: dummy,
-          registry: dummy,
-          starkVerifier: dummy,
-          bundler: dummy,
-        },
-      });
+      const mainnetSdk = createSDK({ network: 'mainnet', programIds: mainnetOverrides() });
       const usdc = mainnetSdk.resolveToken('USDC');
       expect(usdc.mint.toBase58()).toBe('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
     });
@@ -255,13 +221,13 @@ describe('PrivacySDK', () => {
       const sdk = createSDK();
       const handler = vi.fn();
 
-      sdk.on('shield', handler);
-      sdk.emit('shield', { amount: 1000 });
+      sdk.on('relay:submit', handler);
+      sdk.emit('relay:submit', { jobId: 'j1' });
 
       expect(handler).toHaveBeenCalledTimes(1);
       expect(handler).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'shield',
-        data: { amount: 1000 },
+        type: 'relay:submit',
+        data: { jobId: 'j1' },
         timestamp: expect.any(Number),
       }));
     });
@@ -270,9 +236,9 @@ describe('PrivacySDK', () => {
       const sdk = createSDK();
       const handler = vi.fn();
 
-      sdk.on('shield', handler);
-      sdk.off('shield', handler);
-      sdk.emit('shield', {});
+      sdk.on('relay:complete', handler);
+      sdk.off('relay:complete', handler);
+      sdk.emit('relay:complete', {});
 
       expect(handler).not.toHaveBeenCalled();
     });
@@ -312,45 +278,38 @@ describe('Constants', () => {
   it('should have devnet program IDs', () => {
     const ids = PROGRAM_IDS.devnet;
     expect(ids.zkShielded).toBeInstanceOf(PublicKey);
-    expect(ids.trustless).toBeInstanceOf(PublicKey);
-    expect(ids.zkspl).toBeInstanceOf(PublicKey);
     expect(ids.relayer).toBeInstanceOf(PublicKey);
     expect(ids.registry).toBeInstanceOf(PublicKey);
-    expect(ids.stream).toBeInstanceOf(PublicKey);
-    expect(ids.subscription).toBeInstanceOf(PublicKey);
     expect(ids.starkVerifier).toBeInstanceOf(PublicKey);
-    expect(ids.bundler).toBeInstanceOf(PublicKey);
-    expect(ids.whitelist).toBeInstanceOf(PublicKey);
-    // Closed on devnet 2026-09-13 and removed in 2.0.0: a caller that still
-    // reads these keys gets undefined, never a closed program's address.
-    const gone = ids as unknown as Record<string, unknown>;
-    for (const key of ['specter', 'feeSplitter', 'quantumVault', 'arcium']) {
-      expect(gone[key]).toBeUndefined();
-    }
   });
 
-  it('should have correct fee configuration', () => {
-    expect(SHIELD_FEE_BPS).toBe(30);
-    expect(UNSHIELD_FEE_BPS).toBe(50);
+  it('carries no key for a closed or never-deployed program', () => {
+    // specter/feeSplitter/quantumVault/arcium: closed on devnet 2026-09-13.
+    // trustless/zkspl/stream/subscription/whitelist/bundler: nothing deployed
+    // behind them; removed with their modules. A caller that still reads one
+    // gets undefined, never an address.
+    for (const network of ['devnet', 'mainnet'] as const) {
+      const bag = PROGRAM_IDS[network] as unknown as Record<string, unknown>;
+      for (const key of [
+        'specter', 'feeSplitter', 'quantumVault', 'arcium',
+        'trustless', 'zkspl', 'stream', 'subscription', 'whitelist', 'bundler',
+      ]) {
+        expect(bag[key], `${network}.${key}`).toBeUndefined();
+      }
+      expect(Object.keys(bag).sort()).toEqual(['registry', 'relayer', 'starkVerifier', 'zkShielded']);
+    }
   });
 
   // These MUST equal the on-chain constant. The shielded pool is created with
   // `DEFAULT_TREE_DEPTH = 15` (programs/zk_shielded/src/state/pool_v3.rs) and the
   // STARK verifier rejects any proof whose depth public input is not
   // `CANONICAL_DEPTH = 15` (programs/p01_stark_verifier/src/verify.rs).
-  // If this drifts, every root this SDK computes desyncs from the chain and
-  // inserts/proofs are rejected. Mirrors packages/p01-js/src/shielded-pool.test.ts.
   it('should have correct merkle depth', () => {
     expect(MERKLE_TREE_DEPTH).toBe(15);
   });
 
   it('should have correct max leaves', () => {
     expect(MAX_LEAVES).toBe(32768); // 2^15
-  });
-
-  it('should have STARK circuit IDs', () => {
-    expect(STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP).toBe(0);
-    expect(STARK_CIRCUITS.TRANSFER).toBe(5);
   });
 
   it('should have SOL denominations', () => {
@@ -363,11 +322,13 @@ describe('Constants', () => {
     expect(SEEDS.MERKLE_TREE).toBe('merkle_tree');
     expect(SEEDS.NULLIFIER).toBe('nullifier');
     expect(SEEDS.REGISTRY).toBe('registry');
+    expect(SEEDS.RELAYER).toBe('relayer');
+    expect(SEEDS.JOB).toBe('job');
   });
 
-  it('should have compute unit budgets', () => {
-    expect(COMPUTE_UNITS.SHIELD).toBe(200_000);
-    expect(COMPUTE_UNITS.STARK_VERIFY).toBe(1_400_000);
+  it('should have the token registry for both networks', () => {
+    expect(TOKENS.devnet.SOL).toBeDefined();
+    expect(TOKENS.mainnet.USDC).toBeDefined();
   });
 });
 
@@ -375,8 +336,8 @@ describe('Constants', () => {
 
 describe('PrivacyError', () => {
   it('should create error with code and message', () => {
-    const err = new PrivacyError(PrivacyErrorCode.SHIELD_FAILED, 'test');
-    expect(err.code).toBe(PrivacyErrorCode.SHIELD_FAILED);
+    const err = new PrivacyError(PrivacyErrorCode.RELAY_SUBMIT_FAILED, 'test');
+    expect(err.code).toBe(PrivacyErrorCode.RELAY_SUBMIT_FAILED);
     expect(err.message).toBe('test');
     expect(err.name).toBe('PrivacyError');
   });
@@ -390,29 +351,31 @@ describe('PrivacyError', () => {
   it('should have static factory methods', () => {
     expect(PrivacyError.walletNotConnected().code).toBe(PrivacyErrorCode.WALLET_NOT_CONNECTED);
     expect(PrivacyError.unsupportedToken('FOO').code).toBe(PrivacyErrorCode.UNSUPPORTED_TOKEN);
-    expect(PrivacyError.proofFailed('transfer').code).toBe(PrivacyErrorCode.PROOF_GENERATION_FAILED);
-    expect(PrivacyError.txFailed('shield').code).toBe(PrivacyErrorCode.TRANSACTION_FAILED);
-    expect(PrivacyError.poolNotFound('SOL').code).toBe(PrivacyErrorCode.POOL_NOT_FOUND);
-    expect(PrivacyError.nullifierSpent().code).toBe(PrivacyErrorCode.NULLIFIER_ALREADY_SPENT);
+    expect(PrivacyError.txFailed('register').code).toBe(PrivacyErrorCode.TRANSACTION_FAILED);
   });
 
   it('should have correct error code ranges', () => {
     // General: 1xxx
     expect(PrivacyErrorCode.WALLET_NOT_CONNECTED).toBe(1001);
-    // Shield: 2xxx
-    expect(PrivacyErrorCode.SHIELD_FAILED).toBe(2001);
-    // Confidential: 4xxx
-    expect(PrivacyErrorCode.CONFIDENTIAL_DEPOSIT_FAILED).toBe(4001);
-    // Streams: 5xxx
-    expect(PrivacyErrorCode.STREAM_CREATE_FAILED).toBe(5001);
-    // Subscriptions: 6xxx
-    expect(PrivacyErrorCode.SUBSCRIPTION_CREATE_FAILED).toBe(6001);
     // Relay: 8xxx
     expect(PrivacyErrorCode.RELAY_SUBMIT_FAILED).toBe(8001);
-    // MPC: 9xxx
-    expect(PrivacyErrorCode.MPC_VOTE_FAILED).toBe(9001);
     // Registry: 10xxx
     expect(PrivacyErrorCode.REGISTRY_NOT_FOUND).toBe(10001);
+  });
+
+  it('has retired the codes of the removed modules and does not reuse their numbers', () => {
+    const codes = PrivacyErrorCode as unknown as Record<string, unknown>;
+    for (const name of [
+      'SHIELD_FAILED', 'LIQUIDITY_DISABLED', 'CONFIDENTIAL_DEPOSIT_FAILED',
+      'STREAM_CREATE_FAILED', 'SUBSCRIPTION_CREATE_FAILED', 'MPC_VOTE_FAILED',
+    ]) {
+      expect(codes[name], name).toBeUndefined();
+    }
+    const numbers = Object.values(PrivacyErrorCode).filter((v): v is number => typeof v === 'number');
+    for (const n of numbers) {
+      const range = Math.floor(n / 1000);
+      expect([1, 8, 10], `code ${n}`).toContain(range);
+    }
   });
 });
 
@@ -440,19 +403,24 @@ describe('WalletAdapter compatibility', () => {
 // ─── Export Completeness ──────────────────────────────────────────────────────
 
 describe('Exports', () => {
-  it('should export all module classes via ESM', async () => {
+  it('should export the kept module classes via ESM', async () => {
     const mod = await import('../src');
-
-    expect(mod.ShieldModule).toBeDefined();
-    expect(mod.ConfidentialModule).toBeDefined();
-    expect(mod.StreamsModule).toBeDefined();
-    expect(mod.SubscriptionsModule).toBeDefined();
     expect(mod.RegistryModule).toBeDefined();
     expect(mod.RelayModule).toBeDefined();
-    expect((mod as unknown as { MPCModule?: unknown }).MPCModule).toBeUndefined();
-    // 2.0.0: both spoke only to programs closed on devnet 2026-09-13.
-    expect((mod as unknown as { StealthModule?: unknown }).StealthModule).toBeUndefined();
-    expect((mod as unknown as { VaultModule?: unknown }).VaultModule).toBeUndefined();
+    expect(mod.splitAmount).toBeDefined();
+  });
+
+  it('exports none of the removed module classes or flows', async () => {
+    const mod = (await import('../src')) as unknown as Record<string, unknown>;
+    for (const name of [
+      'ShieldModule', 'ConfidentialModule', 'StreamsModule', 'SubscriptionsModule',
+      'ComplianceModule', 'AirdropModule', 'OTCModule', 'PayrollModule', 'TreasuryModule',
+      'LiquidityModule', 'P01_LIQUIDITY_PROGRAM_ID', 'InstantUnshieldFlow', 'buildInstantUnshield',
+      'MPCModule', 'StealthModule', 'VaultModule',
+      'SHIELD_FEE_BPS', 'UNSHIELD_FEE_BPS', 'FEE_WALLET', 'STARK_CIRCUITS', 'COMPUTE_UNITS',
+    ]) {
+      expect(mod[name], name).toBeUndefined();
+    }
   });
 
   it('should export error system', async () => {
@@ -469,227 +437,147 @@ describe('Exports', () => {
     expect(mod.DENOMINATIONS).toBeDefined();
   });
 
-  it('should export LiquidityModule', async () => {
-    const mod = await import('../src');
-    expect(mod.LiquidityModule).toBeDefined();
-    expect(mod.P01_LIQUIDITY_PROGRAM_ID).toBeDefined();
+  it('the React entry exposes only the hooks of the kept modules', async () => {
+    const react = (await import('../src/react')) as unknown as Record<string, unknown>;
+    expect(react.usePrivacy).toBeDefined();
+    expect(react.useRegistry).toBeDefined();
+    expect(react.useRelay).toBeDefined();
+    for (const name of ['useShield', 'useConfidential', 'useStreams', 'useSubscriptions', 'useStealth', 'useVault']) {
+      expect(react[name], name).toBeUndefined();
+    }
   });
 });
 
-// ─── LiquidityModule ─────────────────────────────────────────────────────────
+// ─── Package surface: no dangling entry point for a removed module ────────────
 
-function disc(name: string): Buffer {
-  return Buffer.from(sha256(utf8ToBytes(`global:${name}`))).subarray(0, 8);
+describe('package surface', () => {
+  const pkg = JSON.parse(readFileSync(resolve(PKG, 'package.json'), 'utf8')) as {
+    exports: Record<string, unknown>;
+    dependencies: Record<string, string>;
+  };
+  const tsup = readFileSync(resolve(PKG, 'tsup.config.ts'), 'utf8');
+
+  it('every subpath export is built by a tsup entry whose source exists', () => {
+    for (const sub of Object.keys(pkg.exports)) {
+      if (sub === '.') continue;
+      const name = sub.slice(2); // './registry' -> 'registry'
+      const entry = name === 'react' ? 'react/index' : `modules/${name}`;
+      expect(tsup, `tsup entry for ${sub}`).toContain(`'${entry}'`);
+      const src = name === 'react' ? 'src/react/index.ts' : `src/modules/${name}.ts`;
+      expect(existsSync(resolve(PKG, src)), `${src} for ${sub}`).toBe(true);
+    }
+  });
+
+  it('no export, tsup entry or source file remains for a removed module', () => {
+    for (const name of REMOVED_MODULES) {
+      expect(pkg.exports[`./${name}`], `export ./${name}`).toBeUndefined();
+      expect(tsup).not.toContain(`'modules/${name}'`);
+      expect(existsSync(resolve(PKG, 'src', 'modules', `${name}.ts`)), `src/modules/${name}.ts`).toBe(false);
+    }
+  });
+
+  it('does not depend on the deleted privacy-toolkit or on a Groth16 prover', () => {
+    for (const dep of ['@protocol-01/privacy-toolkit', 'snarkjs', 'poseidon-lite']) {
+      expect(pkg.dependencies[dep], dep).toBeUndefined();
+    }
+  });
+});
+
+// ─── READMEs: no removed call advertised, no deployment overclaim ─────────────
+
+const REMOVED_CALL = new RegExp(
+  `^\\s*(const\\s+\\w+\\s*=\\s*)?(await\\s+)?sdk\\.(${REMOVED_MODULES.join('|')}|transfer|unshield)\\b`,
+);
+
+function privacySdkCodeBlocks(markdown: string): string[] {
+  return [...markdown.matchAll(/```(?:typescript|tsx)\n([\s\S]*?)```/g)]
+    .map((m) => m[1]!)
+    .filter((b) => b.includes('@protocol-01/privacy-sdk') || /\bsdk\./.test(b));
 }
 
-describe('LiquidityModule', () => {
-  const liquidity = new LiquidityModule(mockConnection);
-  // Audit v1 F27: deposit / prefund / settle refuse against the DEPLOYED id
-  // (drainable reserve; tests/liquidityDisabled.test.ts). Their encoding is
-  // checked against another program id, as a localnet or a fixed redeploy at a
-  // new address would have.
-  const liquidityAtTestId = new LiquidityModule(
-    mockConnection,
-    new PublicKey('LiqTest111111111111111111111111111111111111'),
-  );
-
-  describe('PDAs', () => {
-    it('should derive pool PDA deterministically', () => {
-      const [a, bumpA] = liquidity.getPoolPDA();
-      const [b, bumpB] = liquidity.getPoolPDA();
-      expect(a.toBase58()).toBe(b.toBase58());
-      expect(bumpA).toBe(bumpB);
-    });
-
-    it('should derive prefund record PDA from denom_pool + nullifier', () => {
-      const denomPool = Keypair.generate().publicKey;
-      const nullifier = new Uint8Array(32).fill(1);
-      const [pda1] = liquidity.getPrefundRecordPDA(denomPool, nullifier);
-      const [pda2] = liquidity.getPrefundRecordPDA(denomPool, nullifier);
-      expect(pda1.toBase58()).toBe(pda2.toBase58());
-
-      const other = new Uint8Array(32).fill(2);
-      const [pda3] = liquidity.getPrefundRecordPDA(denomPool, other);
-      expect(pda1.toBase58()).not.toBe(pda3.toBase58());
-    });
-
-    it('should derive lp share PDA per (owner, pool)', () => {
-      const owner = Keypair.generate().publicKey;
-      const [poolPda] = liquidity.getPoolPDA();
-      const [sharePda1] = liquidity.getLpSharePDA(owner, poolPda);
-      const [sharePda2] = liquidity.getLpSharePDA(owner, poolPda);
-      expect(sharePda1.toBase58()).toBe(sharePda2.toBase58());
-
-      const other = Keypair.generate().publicKey;
-      const [sharePda3] = liquidity.getLpSharePDA(other, poolPda);
-      expect(sharePda1.toBase58()).not.toBe(sharePda3.toBase58());
-    });
-
-    it('should use the default p01_liquidity program ID', () => {
-      expect(liquidity.programId.toBase58()).toBe(
-        P01_LIQUIDITY_PROGRAM_ID.toBase58(),
-      );
-    });
+describe('README.md files do not advertise the removed calls as working', () => {
+  it('the package README code samples call no removed module', () => {
+    const readme = readFileSync(resolve(PKG, 'README.md'), 'utf8');
+    for (const b of privacySdkCodeBlocks(readme)) {
+      const live = b.split('\n').filter((l) => REMOVED_CALL.test(l));
+      expect(live, 'README shows removed calls as working').toEqual([]);
+    }
   });
 
-  describe('instruction discriminators', () => {
-    it('buildInitPoolIx → sha256("global:init_pool")[..8]', () => {
-      const ix = liquidity.buildInitPoolIx(testKeypair.publicKey, 80, 20);
-      expect(ix.data.subarray(0, 8).equals(disc('init_pool'))).toBe(true);
-      expect(ix.data.readUInt16LE(8)).toBe(80);
-      expect(ix.data.readUInt16LE(10)).toBe(20);
-      expect(ix.data.length).toBe(12);
-    });
-
-    it('buildDepositIx → disc + amount LE', () => {
-      const amount = 1_500_000_000n;
-      const ix = liquidityAtTestId.buildDepositIx(testKeypair.publicKey, amount);
-      expect(ix.data.subarray(0, 8).equals(disc('deposit'))).toBe(true);
-      expect(ix.data.readBigUInt64LE(8)).toBe(amount);
-    });
-
-    it('buildWithdrawIx → disc + shares (u128 LE)', () => {
-      const shares = 42n;
-      const ix = liquidity.buildWithdrawIx(testKeypair.publicKey, shares);
-      expect(ix.data.subarray(0, 8).equals(disc('withdraw'))).toBe(true);
-      expect(ix.data.readBigUInt64LE(8)).toBe(shares); // lo
-      expect(ix.data.readBigUInt64LE(16)).toBe(0n);    // hi
-    });
-
-    it('buildPrefundIx → disc + nullifier + root + minEpoch + starkCommitment + amount', () => {
-      const nullifier = new Uint8Array(32).fill(0xaa);
-      const merkleRoot = new Uint8Array(32).fill(0xbb);
-      const minEpoch = 123n;
-      const starkCommitment = 0xDEADBEEFn;
-      const amount = 1_000_000_000n;
-
-      const ix = liquidityAtTestId.buildPrefundIx({
-        ephemeralSigner:  Keypair.generate().publicKey,
-        recipient:        Keypair.generate().publicKey,
-        denominatedPool:  Keypair.generate().publicKey,
-        starkProofBuffer: Keypair.generate().publicKey,
-        nullifier,
-        merkleRoot,
-        minEpoch,
-        starkCommitment,
-        amount,
-      });
-
-      expect(ix.data.subarray(0, 8).equals(disc('prefund'))).toBe(true);
-      expect(ix.data.subarray(8, 40).equals(Buffer.from(nullifier))).toBe(true);
-      expect(ix.data.subarray(40, 72).equals(Buffer.from(merkleRoot))).toBe(true);
-      expect(ix.data.readBigUInt64LE(72)).toBe(minEpoch);
-      expect(ix.data.readBigUInt64LE(80)).toBe(starkCommitment);
-      expect(ix.data.readBigUInt64LE(88)).toBe(amount);
-      expect(ix.data.length).toBe(8 + 32 + 32 + 8 + 8 + 8);
-      expect(ix.keys).toHaveLength(7);
-      expect(ix.keys[0]!.isSigner).toBe(true);
-    });
-
-    it('buildSettleIx → disc only, 10 accounts', () => {
-      const ix = liquidityAtTestId.buildSettleIx({
-        settler:           testKeypair.publicKey,
-        denominatedPool:   Keypair.generate().publicKey,
-        merkleTree:        Keypair.generate().publicKey,
-        nullifierRecord:   Keypair.generate().publicKey,
-        starkProofBuffer:  Keypair.generate().publicKey,
-        nullifier:         new Uint8Array(32),
-        zkShieldedProgram: PROGRAM_IDS.devnet.zkShielded,
-        protocolFeeWallet: Keypair.generate().publicKey,
-      });
-      expect(ix.data.equals(disc('settle'))).toBe(true);
-      expect(ix.keys).toHaveLength(10);
-      expect(ix.keys[0]!.isSigner).toBe(true);
-    });
+  it('the root README privacy-sdk code samples call no removed module', () => {
+    const readme = readFileSync(resolve(REPO, 'README.md'), 'utf8');
+    const blocks = [...readme.matchAll(/```typescript\n([\s\S]*?)```/g)]
+      .map((m) => m[1]!)
+      .filter((b) => b.includes('@protocol-01/privacy-sdk'));
+    for (const b of blocks) {
+      const live = b.split('\n').filter((l) => REMOVED_CALL.test(l));
+      expect(live, 'root README shows removed calls as working').toEqual([]);
+    }
   });
 
-  describe('parsers', () => {
-    it('parsePoolState round-trips admin + fees + flags', () => {
-      const admin = Keypair.generate().publicKey;
-      const data = Buffer.alloc(70);
-      // skip disc (bytes 0..8)
-      admin.toBuffer().copy(data, 8);
-      data.writeBigUInt64LE(500_000_000n, 40); // total_shares lo
-      data.writeBigUInt64LE(0n,            48); // total_shares hi
-      data.writeBigUInt64LE(BigInt(LAMPORTS_PER_SOL), 56); // reserve
-      data.writeUInt16LE(80, 64); // prefund_fee
-      data.writeUInt16LE(20, 66); // settler_reward
-      data[68] = 1;               // is_active
-      data[69] = 254;             // bump
+  it('the root README architecture line for privacy-sdk does not say shield/unshield/subscribe work', () => {
+    const line = readFileSync(resolve(REPO, 'README.md'), 'utf8')
+      .split('\n')
+      .find((l) => /│\s+├── privacy-sdk\//.test(l));
+    expect(line).toBeDefined();
+    expect(line!).not.toMatch(/shield\/unshield\/subscribe with STARK proofs/);
+  });
+});
 
-      const s = LiquidityModule.parsePoolState(data);
-      expect(s.admin.toBase58()).toBe(admin.toBase58());
-      expect(s.totalShares).toBe(500_000_000n);
-      expect(s.reserveLamports).toBe(BigInt(LAMPORTS_PER_SOL));
-      expect(s.prefundFeeBps).toBe(80);
-      expect(s.settlerRewardBps).toBe(20);
-      expect(s.isActive).toBe(true);
-      expect(s.bump).toBe(254);
-    });
+describe('the package README does not claim any program of this SDK is deployed on mainnet', () => {
+  it('no Mainnet cell of the Network Support table says Deployed', () => {
+    const readme = readFileSync(resolve(PKG, 'README.md'), 'utf8');
+    const at = readme.indexOf('## Network Support');
+    expect(at, 'README has no "## Network Support" section').toBeGreaterThanOrEqual(0);
+    const lines = readme.slice(at).split('\n');
+    const first = lines.findIndex((l) => l.startsWith('|'));
+    const end = lines.findIndex((l, k) => k > first && !l.startsWith('|'));
+    const rows = lines.slice(first, end < 0 ? undefined : end).filter((l) => !/^\|\s*-/.test(l)).slice(1);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      const cells = r.split('|').map((c) => c.trim());
+      expect(cells[3], r).not.toMatch(/^Deployed/);
+    }
+  });
+});
 
-    it('parsePrefundRecord round-trips the 273-byte layout', () => {
-      const pool = Keypair.generate().publicKey;
-      const denomPool = Keypair.generate().publicKey;
-      const proofBuffer = Keypair.generate().publicKey;
-      const ephemeral = Keypair.generate().publicKey;
-      const nullifier = new Uint8Array(32).fill(1);
-      const root = new Uint8Array(32).fill(2);
-      const inputsHash = new Uint8Array(32).fill(3);
+describe('getDeployedProgramIds is not presented as a deployment check (F45/F27 verifier finding)', () => {
+  const readme = readFileSync(resolve(PKG, 'README.md'), 'utf8');
+  const constantsSrc = readFileSync(resolve(PKG, 'src', 'constants.ts'), 'utf8');
 
-      const data = Buffer.alloc(273);
-      pool.toBuffer().copy(data, 8);
-      denomPool.toBuffer().copy(data, 40);
-      Buffer.from(nullifier).copy(data, 72);
-      Buffer.from(root).copy(data, 104);
-      Buffer.from(inputsHash).copy(data, 136);
-      data.writeBigUInt64LE(999n, 168);            // commitment
-      data.writeBigUInt64LE(1_000_000_000n, 176);  // amount
-      data.writeBigUInt64LE(42n, 184);             // min_epoch
-      proofBuffer.toBuffer().copy(data, 192);
-      ephemeral.toBuffer().copy(data, 224);
-      data.writeBigUInt64LE(2_000_000n, 256);      // settler_reward
-      data.writeBigUInt64LE(1234567n, 264);        // opened_at_slot
-      data[272] = 253;
-
-      const r = LiquidityModule.parsePrefundRecord(data);
-      expect(r.pool.toBase58()).toBe(pool.toBase58());
-      expect(r.denominatedPool.toBase58()).toBe(denomPool.toBase58());
-      expect(Buffer.from(r.nullifier).equals(Buffer.from(nullifier))).toBe(true);
-      expect(Buffer.from(r.merkleRoot).equals(Buffer.from(root))).toBe(true);
-      expect(Buffer.from(r.publicInputsHash).equals(Buffer.from(inputsHash))).toBe(true);
-      expect(r.starkCommitment).toBe(999n);
-      expect(r.amount).toBe(1_000_000_000n);
-      expect(r.minEpoch).toBe(42n);
-      expect(r.proofBuffer.toBase58()).toBe(proofBuffer.toBase58());
-      expect(r.ephemeralSigner.toBase58()).toBe(ephemeral.toBase58());
-      expect(r.settlerReward).toBe(2_000_000n);
-      expect(r.openedAtSlot).toBe(1234567n);
-      expect(r.bump).toBe(253);
-    });
+  it('behaviour pin: it returns declared ids minus System-program placeholders, including one the table says is not deployed', () => {
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      // The Network Support table says "Not deployed" for mainnet zk_shielded.
+      expect(getDeployedProgramIds('mainnet').zkShielded).toBeDefined();
+      expect(getDeployedProgramIds('mainnet').registry).toBeUndefined(); // placeholder
+      expect(getDeployedProgramIds('devnet').starkVerifier).toBeDefined();
+    } finally {
+      console.warn = warn;
+    }
   });
 
-  describe('computePrefundFees', () => {
-    it('matches on-chain fee math (80/20 bps on 1 SOL)', () => {
-      const oneSol = BigInt(LAMPORTS_PER_SOL);
-      const { prefundFee, settlerReward, recipientAmount } =
-        LiquidityModule.computePrefundFees(oneSol, 80, 20);
-      expect(prefundFee).toBe(8_000_000n);      // 0.8% of 1e9
-      expect(settlerReward).toBe(2_000_000n);   // 0.2% of 1e9
-      expect(recipientAmount).toBe(oneSol - prefundFee - settlerReward);
-    });
+  it('no README line tells the reader to rely on it, or says it returns what is actually deployed', () => {
+    expect(readme).not.toMatch(/getDeployedProgramIds\(network\)`? before relying on a module/i);
+    expect(readme).not.toMatch(/only programs that are actually deployed/i);
+  });
 
-    it('handles zero fees', () => {
-      const { prefundFee, settlerReward, recipientAmount } =
-        LiquidityModule.computePrefundFees(1_000_000n, 0, 0);
-      expect(prefundFee).toBe(0n);
-      expect(settlerReward).toBe(0n);
-      expect(recipientAmount).toBe(1_000_000n);
-    });
+  it('the README says it filters placeholders only and does not check the chain', () => {
+    const mentions = [...readme.matchAll(/getDeployedProgramIds\(/g)].map((m) => m.index!);
+    expect(mentions.length).toBeGreaterThan(0);
+    for (const at of mentions) {
+      const around = readme.slice(Math.max(0, at - 600), at + 600);
+      expect(around, `mention at offset ${at}`).toMatch(/placeholder/i);
+      expect(around, `mention at offset ${at}`).toMatch(/does not (check|query|read) the chain/i);
+    }
+  });
 
-    it('floors via integer bigint division', () => {
-      // 999 * 80 / 10000 = 7.992 → 7
-      const { prefundFee } = LiquidityModule.computePrefundFees(999n, 80, 0);
-      expect(prefundFee).toBe(7n);
-    });
+  it('its JSDoc does not call the result the deployed programs', () => {
+    const at = constantsSrc.indexOf('export function getDeployedProgramIds');
+    const doc = constantsSrc.slice(constantsSrc.lastIndexOf('/**', at), at);
+    expect(doc).not.toMatch(/Get only the deployed program IDs/);
+    expect(doc).not.toMatch(/containing only deployed programs/);
+    expect(doc).toMatch(/does not (check|query|read) the chain/i);
   });
 });

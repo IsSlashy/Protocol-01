@@ -32,9 +32,10 @@ export interface PrivacySDKConfig {
   /** Wallet used to sign transactions. Accepts Keypair or WalletAdapter. */
   wallet: Signer;
   /**
-   * 32-byte spending key used to derive the Goldilocks owner identity for
-   * shielded notes. The SDK never derives this implicitly. Integrators may
-   * either:
+   * 32-byte spending key, validated and held as `sdk.spendingKey`. Since 2.0.0
+   * no module of this SDK builds shielded notes with it; it stays required so
+   * one config shape serves every host. The SDK never derives this implicitly.
+   * Integrators may either:
    *   - call `deriveSpendingKeyFromSignature(signer, { domain })` and pass
    *     the result here (recommended default, cross-app portable), or
    *   - supply their own 32-byte material (hardware wallet, seed derivation,
@@ -50,28 +51,22 @@ export interface PrivacySDKConfig {
   commitment?: 'processed' | 'confirmed' | 'finalized';
 }
 
-/** On-chain program addresses for each Protocol 01 module. */
+/**
+ * On-chain program addresses, per network.
+ *
+ * 2.0.0 dropped `trustless`, `zkspl`, `stream`, `subscription`, `whitelist`
+ * and `bundler`: no program is deployed behind any of them, and the modules
+ * that read them were removed.
+ */
 export interface ProgramIds {
-  /** ZK shielded pool program (shield/unshield/transfer). */
+  /** zk_shielded pool program. No module of this SDK builds pool instructions. */
   zkShielded: PublicKey;
-  /** Trustless pool program (no-relayer nullifier verification). */
-  trustless: PublicKey;
-  /** Confidential SPL token program (encrypted balances). */
-  zkspl: PublicKey;
   /** On-chain relayer program (transaction relay). */
   relayer: PublicKey;
   /** Stealth meta-address registry program. */
   registry: PublicKey;
-  /** Payment streaming program. */
-  stream: PublicKey;
-  /** Recurring subscription payment program. */
-  subscription: PublicKey;
-  /** STARK proof verifier program (quantum-resistant proofs). */
+  /** STARK proof verifier program. */
   starkVerifier: PublicKey;
-  /** Transaction bundler program. */
-  bundler: PublicKey;
-  /** Whitelist program (access control). */
-  whitelist: PublicKey;
 }
 
 // ─── Token ────────────────────────────────────────────────────────────────────
@@ -96,232 +91,6 @@ export interface TxResult {
   slot?: number;
   /** Number of confirmations at time of return. */
   confirmations?: number;
-}
-
-// ─── Shield Module ────────────────────────────────────────────────────────────
-
-/** Parameters for shielding (depositing) funds into a privacy pool. */
-export interface ShieldParams {
-  /** Amount in base units (lamports for SOL, smallest unit for SPL). */
-  amount: number | bigint;
-  /** Token to shield. */
-  token: TokenSymbol;
-  /** Use denominated pool (fixed-amount, Tornado-style) instead of variable-amount pool. */
-  denominated?: boolean;
-}
-
-/** Parameters for unshielding (withdrawing) funds from a privacy pool. */
-export interface UnshieldParams {
-  /** Amount in base units to withdraw. */
-  amount: number | bigint;
-  /** Token to unshield. */
-  token: TokenSymbol;
-  /** Recipient public key. Defaults to the connected wallet. */
-  recipient?: PublicKey;
-  /**
-   * Use STARK proof (quantum-resistant) for variable-pool unshield.
-   * Denominated-pool unshield is always STARK after P3.7 (Groth16 removed on-chain).
-   */
-  useStark?: boolean;
-  /** Withdraw from denominated pool. */
-  denominated?: boolean;
-}
-
-/** Parameters for a private transfer within the shielded pool. */
-export interface PrivateTransferParams {
-  /** Amount in base units. */
-  amount: number | bigint;
-  /** Token to transfer. */
-  token: TokenSymbol;
-  /** Recipient stealth meta-address (st:...) or raw public key. */
-  to: string | PublicKey;
-}
-
-/** Receipt returned after a successful shield operation. */
-export interface ShieldReceipt {
-  tx: TxResult;
-  /** Poseidon commitment of the newly created note. */
-  commitment: bigint;
-  /** Merkle tree leaf index of the commitment. */
-  leafIndex: number;
-  /** Encrypted note data (must be stored to later unshield). */
-  note: EncryptedNote;
-}
-
-/** Receipt returned after a successful unshield operation. */
-export interface UnshieldReceipt {
-  tx: TxResult;
-  /** Nullifier that was revealed (prevents double-spend). */
-  nullifier: bigint;
-  /** Amount withdrawn in base units. */
-  amount: bigint;
-}
-
-/** Receipt returned after a successful private transfer. */
-export interface TransferReceipt {
-  tx: TxResult;
-  /** The two new output note commitments [change, recipient]. */
-  outputCommitments: [bigint, bigint];
-  /** The two input nullifiers that were spent. */
-  nullifiers: [bigint, bigint];
-}
-
-/** Encrypted note data that must be persisted to later spend the note. */
-export interface EncryptedNote {
-  /** Encrypted note payload (contains secret, nullifier preimage, amount). */
-  ciphertext: Uint8Array;
-  /** Ephemeral public key for ECDH decryption. */
-  ephemeralPubkey: Uint8Array;
-  /** Note commitment (for indexing). */
-  commitment: Uint8Array;
-  /** Encryption nonce. */
-  nonce: Uint8Array;
-}
-
-/** On-chain privacy pool state. */
-export interface PoolInfo {
-  /** Pool account address. */
-  address: PublicKey;
-  /** SPL token mint for this pool. */
-  tokenMint: PublicKey;
-  /** Number of leaves (notes) inserted into the Merkle tree. */
-  leafCount: number;
-  /** Current Merkle root. */
-  merkleRoot: bigint;
-  /** Fixed denomination in base units (only for denominated pools). */
-  denomination?: bigint;
-  /** Minimum epoch delay before unshielding (anti-timing-attack). */
-  epochDelay?: number;
-}
-
-// ─── Confidential Balances ────────────────────────────────────────────────────
-
-/** Parameters for depositing into a confidential (encrypted) balance account. */
-export interface ConfidentialDepositParams {
-  amount: number | bigint;
-  token: TokenSymbol;
-}
-
-/** Parameters for transferring between confidential balance accounts. */
-export interface ConfidentialTransferParams {
-  /** Recipient's public key. */
-  to: PublicKey;
-  amount: number | bigint;
-  token: TokenSymbol;
-}
-
-/** Parameters for withdrawing from a confidential balance back to a normal account. */
-export interface ConfidentialWithdrawParams {
-  amount: number | bigint;
-  token: TokenSymbol;
-  /** Recipient public key. Defaults to the connected wallet. */
-  recipient?: PublicKey;
-}
-
-/** Result of querying a confidential balance. */
-export interface ConfidentialBalanceResult {
-  /** On-chain Poseidon commitment of the balance. */
-  commitment: bigint;
-  /** Decrypted balance (only available if the spending key is provided). */
-  balance?: bigint;
-  /** Token mint address. */
-  tokenMint: PublicKey;
-}
-
-/** Parameters for generating a range proof over a confidential balance. */
-export interface ConfidentialProveBalanceParams {
-  token: TokenSymbol;
-  /** Prove balance >= threshold without revealing exact amount. */
-  threshold: number | bigint;
-}
-
-// ─── Streams ──────────────────────────────────────────────────────────────────
-
-/** Parameters for creating a payment stream. */
-export interface CreateStreamParams {
-  /** Stream recipient. */
-  recipient: PublicKey;
-  /** Total amount to stream in base units. */
-  totalAmount: number | bigint;
-  /** Token to stream (defaults to SOL). */
-  token?: TokenSymbol;
-  /** Stream duration in seconds. */
-  duration: number;
-  /** Route the stream through a stealth address for sender/recipient privacy. */
-  private?: boolean;
-}
-
-/** On-chain state of a payment stream. */
-export interface StreamInfo {
-  /** Stream account address. */
-  address: PublicKey;
-  sender: PublicKey;
-  recipient: PublicKey;
-  /** Total stream amount in base units. */
-  totalAmount: bigint;
-  /** Amount already withdrawn by the recipient. */
-  withdrawnAmount: bigint;
-  /** Stream start time (Unix timestamp). */
-  startTime: number;
-  /** Stream end time (Unix timestamp). */
-  endTime: number;
-  /** Currently claimable amount in base units. */
-  claimable: bigint;
-  tokenMint: PublicKey;
-  /** Whether the stream uses stealth addresses. */
-  isPrivate: boolean;
-}
-
-/** Receipt from creating a stream. */
-export interface StreamReceipt {
-  tx: TxResult;
-  /** Address of the created stream account. */
-  streamAddress: PublicKey;
-}
-
-// ─── Subscriptions ────────────────────────────────────────────────────────────
-
-/** Parameters for creating a recurring subscription. */
-export interface CreateSubscriptionParams {
-  /** Merchant (payee) public key. */
-  merchant: PublicKey;
-  /** Payment amount per interval in base units. */
-  amount: number | bigint;
-  /** Token to pay with (defaults to SOL). */
-  token?: TokenSymbol;
-  /** Payment interval in seconds (e.g., 2592000 for ~30 days). */
-  interval: number;
-  /** Maximum number of payments before auto-cancellation. */
-  maxPayments?: number;
-  /** Human-readable subscription label. */
-  name?: string;
-  /** Route payments through the shielded pool for privacy. */
-  private?: boolean;
-}
-
-/** On-chain state of a subscription. */
-export interface SubscriptionInfo {
-  address: PublicKey;
-  subscriber: PublicKey;
-  merchant: PublicKey;
-  /** Amount per payment in base units. */
-  amount: bigint;
-  /** Payment interval in seconds. */
-  interval: number;
-  /** Unix timestamp of the next payment due date. */
-  nextPaymentDue: number;
-  paymentsCompleted: number;
-  maxPayments: number;
-  isActive: boolean;
-  /** Whether payments are routed through the shielded pool. */
-  isPrivate: boolean;
-  tokenMint: PublicKey;
-}
-
-/** Receipt from creating a subscription. */
-export interface SubscriptionReceipt {
-  tx: TxResult;
-  subscriptionAddress: PublicKey;
 }
 
 // ─── Registry ─────────────────────────────────────────────────────────────────
@@ -397,82 +166,12 @@ export interface RelayJobStatus {
   txSignature?: string;
 }
 
-// ─── Retired: private governance ──────────────────────────────────────────────
-//
-// These described an external multi-party-computation network that left
-// Protocol 01. Nothing constructs or consumes them any more; the treasury
-// methods that took them throw MPC_NOT_AVAILABLE. Kept so 1.0.x type imports
-// still resolve, deleted in the next major.
-
-/** @deprecated Retired with private governance. */
-export interface MPCVoteParams {
-  /** Proposal to vote on. */
-  proposalId: string;
-  /** Vote choice index (0-based). */
-  choice: number;
-  /** Token-weighted voting amount (optional, for token-weighted governance). */
-  weight?: number | bigint;
-}
-
-/** Parameters for creating an MPC voting proposal. */
-export interface MPCCreateProposalParams {
-  proposalId: string;
-  /** Number of vote options. */
-  optionCount: number;
-  /** Voting deadline as Unix timestamp. */
-  deadline: number;
-}
-
-/** Parameters for an MPC-private audit (prove solvency without revealing balances). */
-export interface MPCAuditParams {
-  /** Encrypted balance data to audit. */
-  encryptedBalance: Uint8Array;
-}
-
-/** Parameters for submitting a sealed bid in an MPC auction. */
-export interface MPCSealedBidParams {
-  /** Auction account address. */
-  auctionId: PublicKey;
-  /** Bid amount in base units. */
-  bidAmount: number | bigint;
-}
-
-/** On-chain MPC proposal state. */
-export interface MPCProposalInfo {
-  address: PublicKey;
-  proposalId: string;
-  optionCount: number;
-  /** Voting deadline as Unix timestamp. */
-  deadline: number;
-  /** Whether tallying has been finalized. */
-  isFinalized: boolean;
-  /** Decrypted vote tallies per option (only available after finalization). */
-  results?: number[];
-}
-
-/** On-chain MPC auction state. */
-export interface MPCAuctionInfo {
-  address: PublicKey;
-  isFinalized: boolean;
-  /** Commitment of the winning bid (only available after finalization). */
-  winnerCommitment?: bigint;
-}
-
 // ─── Events ───────────────────────────────────────────────────────────────────
 
 /** Event types emitted by the SDK. Subscribe with `sdk.on(type, callback)`. */
 export type PrivacyEventType =
-  | 'shield'
-  | 'unshield'
-  | 'transfer'
-  | 'stream:create'
-  | 'stream:withdraw'
-  | 'subscription:create'
-  | 'subscription:payment'
   | 'relay:submit'
   | 'relay:complete'
-  | 'mpc:vote'
-  | 'mpc:tally'
   | 'error';
 
 /** Callback function for SDK events. */
@@ -484,81 +183,4 @@ export interface PrivacyEvent {
   data: any;
   /** Unix timestamp (ms) when the event was emitted. */
   timestamp: number;
-}
-
-// ─── Proof Types ──────────────────────────────────────────────────────────────
-
-/** Groth16 proof as output by snarkjs. Used internally for ZK operations. */
-export interface Groth16Proof {
-  /** G1 point A: [x, y, z] as decimal strings. */
-  pi_a: [string, string, string];
-  /** G2 point B: [[c0_x, c1_x], [c0_y, c1_y], [c0_z, c1_z]] as decimal strings. */
-  pi_b: [[string, string], [string, string], [string, string]];
-  /** G1 point C: [x, y, z] as decimal strings. */
-  pi_c: [string, string, string];
-  protocol: string;
-  curve: string;
-}
-
-/** Result from generating a ZK proof. */
-export interface ProofResult {
-  proof: Groth16Proof;
-  /** Public signals as decimal strings. */
-  publicSignals: string[];
-  /** Time taken to generate the proof in milliseconds. */
-  durationMs?: number;
-}
-
-/**
- * STARK proof outcome returned by a host-supplied generator.
- *
- * The host is responsible for:
- *  1. Running the WASM prover (mobile/extension/Node-native).
- *  2. Uploading the proof bytes to p01_stark_verifier (chunked writes).
- *  3. Invoking the two-phase on-chain verify (DEEP-ALI phase 1 + phase 2).
- *  4. Returning the PDA of the verified proof buffer so the SDK can reference
- *     it from the zk_shielded instruction.
- *
- * Using a callback keeps the privacy-sdk free of Rust/WASM dependencies while
- * still letting callers compose shield/transfer/unshield_stark instructions.
- */
-export interface StarkProofOutcome {
-  /** PDA of the verified STARK proof buffer held by p01_stark_verifier. */
-  proofBuffer: import('@solana/web3.js').PublicKey;
-  /** Circuit identifier (0–6). Informational — callers may log / assert. */
-  circuitId: number;
-  /** Public inputs bound into the STARK transcript, for downstream checks. */
-  publicInputs?: bigint[];
-}
-
-/**
- * Host-supplied STARK prover + verifier submitter.
- *
- * `circuitId` uses the values from {@link STARK_CIRCUITS}:
- *   5 = transfer (width 6, trace 512) — used for variable-pool transfer/unshield.
- *   6 = merkle_update (depth 15)     — used for variable-pool shield root update.
- */
-export type StarkProofGenerator = (
-  circuitId: number,
-  privateInputs: Record<string, string | string[] | number[]>,
-) => Promise<StarkProofOutcome>;
-
-/** Configuration for the ZK prover. */
-export interface ProverConfig {
-  /**
-   * Host-supplied STARK prover + verifier submitter. Required for
-   * shield/transfer/unshield on the variable-amount pool (all paths are STARK
-   * post-migration). Denominated-pool operations may still route through a
-   * pre-verified buffer supplied out-of-band.
-   */
-  generateStarkProof?: StarkProofGenerator;
-  /** Use local-only proving -- no remote prover fallback (default: true). */
-  localOnly?: boolean;
-  /** Proof generation + verification timeout in ms (default: 120000). */
-  timeout?: number;
-
-  /** @deprecated Groth16 circuit WASM — kept for compliance.ts only. */
-  wasmPath?: string;
-  /** @deprecated Groth16 zkey — kept for compliance.ts only. */
-  zkeyPath?: string;
 }

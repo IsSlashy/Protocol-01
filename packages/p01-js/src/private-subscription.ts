@@ -14,9 +14,9 @@
  * @module private-subscription
  */
 
-// Re-export ShieldReceipt from the shielded-pool module for convenience
-import type { ShieldReceipt } from './shielded-pool';
-export type { ShieldReceipt } from './shielded-pool';
+// Re-export ShieldReceipt for convenience
+import type { ShieldReceipt } from './types';
+export type { ShieldReceipt } from './types';
 
 // ============ Configuration ============
 

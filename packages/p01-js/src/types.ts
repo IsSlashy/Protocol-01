@@ -483,3 +483,32 @@ export interface InternalSubscriptionRequest {
   startDate?: number;
   webhookUrl?: string;
 }
+
+// ============ Shielded notes ============
+
+/**
+ * A shielded note, as the host application recorded it when it deposited
+ * into a denominated pool. `PrivateStream`, `PrivateSubscription` and the
+ * receipt-manager helpers carry these; this SDK does not create them (the
+ * `shielded-pool` module that built placeholder receipts left in 0.4.0).
+ *
+ * IMPORTANT: Store this securely. Loss of the receipt means loss of funds.
+ */
+export interface ShieldReceipt {
+  /** Hex-encoded random bigint used as the secret input to the commitment */
+  secret: string;
+  /** Hex-encoded random bigint used to derive the nullifier */
+  nullifierPreimage: string;
+  /** Solana slot at the time of deposit, used in the commitment */
+  depositEpoch: number;
+  /** Base58-encoded token mint public key */
+  tokenMint: string;
+  /** Hex-encoded 32-byte Poseidon commitment hash */
+  commitment: string;
+  /** Index of this note's leaf in the Merkle tree */
+  leafIndex: number;
+  /** Human-readable denomination (e.g. 1, 10, 100, 1000) */
+  denomination: number;
+  /** Base58-encoded pool PDA address */
+  pool: string;
+}

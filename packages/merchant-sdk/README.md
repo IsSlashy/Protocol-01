@@ -57,7 +57,7 @@ The programs are currently live on **devnet only** — mainnet deployment is pen
 instruction builders and account decoders from specter-sdk are bundled into its
 dist — JS and type declarations both — so the merchant tarball alone installs
 and typechecks. Install specter-sdk as well only if you want its wider surface
-(stealth addresses, shielded transfers, client-side proving).
+(stealth addresses, shielded transfers).
 
 ```bash
 # From the repo root

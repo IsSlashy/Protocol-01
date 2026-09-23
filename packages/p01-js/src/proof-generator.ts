@@ -4,9 +4,7 @@
  * Thin wrapper around `@protocol-01/stark-prover`. The host application
  * builds a `StarkProofGenerator` once (typically via `createStarkProver`)
  * and passes it in here. This module exposes a circuit-1 (POOL_COMMITMENT)
- * convenience that mirrors the privacy-sdk shield/unshield pattern so
- * merchants can plug a single generator into both the merchant SDK and
- * `@protocol-01/privacy-sdk`.
+ * convenience on top of that generator.
  *
  * Circuit details (POOL_COMMITMENT, id 1):
  * - System: STARK over the Goldilocks field (DEEP-ALI), Blake3 Merkle.
@@ -70,8 +68,8 @@ export interface ProofGeneratorConfig {
  *
  * Field elements are decimal strings; `pathElements` / `pathIndices` are
  * accepted but ignored by circuit 1 (kept for transitional compatibility
- * with callers wiring up the legacy 0.2.x shape — they are consumed by
- * MERKLE_PATH / MERKLE_UPDATE on the privacy-sdk side instead).
+ * with callers wiring up the legacy 0.2.x shape — they belong to the
+ * MERKLE_PATH / MERKLE_UPDATE circuits instead).
  */
 export interface DenominatedPoolInputs {
   /** Nullifier preimage as a decimal field element. */
@@ -83,8 +81,8 @@ export interface DenominatedPoolInputs {
   /** Token mint as a decimal field element. */
   tokenMint: string;
   /**
-   * (Unused by POOL_COMMITMENT; supplied to MERKLE_PATH on the privacy-sdk
-   * unshield path.) Merkle path elements as decimal strings.
+   * (Unused by POOL_COMMITMENT; a MERKLE_PATH input.) Merkle path elements
+   * as decimal strings.
    */
   pathElements?: string[];
   /**

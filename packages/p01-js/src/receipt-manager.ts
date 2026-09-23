@@ -15,7 +15,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { randomBytes } from '@noble/hashes/utils.js';
 
-import type { ShieldReceipt } from './shielded-pool';
+import type { ShieldReceipt } from './types';
 
 // ============ Constants ============
 

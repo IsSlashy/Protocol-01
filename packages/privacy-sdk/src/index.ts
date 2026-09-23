@@ -35,87 +35,14 @@ export {
 } from './identity/constants';
 
 // ─── Modules ──────────────────────────────────────────────────────────────────
-export { ShieldModule } from './modules/shield';
-export { ConfidentialModule } from './modules/confidential';
-export { StreamsModule } from './modules/streams';
-export { SubscriptionsModule } from './modules/subscriptions';
+//
+// 2.0.0 removed every module that spoke to a program that is not deployed or
+// does not register the instruction it built: shield, confidential, streams,
+// subscriptions, compliance, airdrop, otc, payroll, treasury, liquidity and the
+// instant-unshield flow (see CHANGELOG.md). What remains talks to the registry
+// and relayer programs, or is pure computation (the denomination split).
 export { RegistryModule } from './modules/registry';
 export { RelayModule } from './modules/relay';
-export { ComplianceModule } from './modules/compliance';
-export type {
-  ComplianceRangeParams,
-  ComplianceInnocenceParams,
-  ComplianceAttestation,
-  ComplianceRangeResult,
-  ComplianceInnocenceResult,
-  ComplianceCircuitPaths,
-} from './modules/compliance';
-export { AirdropModule } from './modules/airdrop';
-export type {
-  AirdropRecipient,
-  AirdropCampaignConfig,
-  AirdropCampaign,
-  AirdropLeaf,
-  AirdropMerkleTree,
-  AirdropClaimParams,
-  AirdropCreateResult,
-  AirdropClaimResult,
-} from './modules/airdrop';
-export { OTCModule } from './modules/otc';
-export type {
-  OTCOrderParams,
-  OTCOrder,
-  OTCFillParams,
-  OTCCreateResult,
-  OTCFillResult,
-} from './modules/otc';
-export { PayrollModule } from './modules/payroll';
-export type {
-  PayrollEmployee,
-  PayrollBatchConfig,
-  PayrollBatch,
-  PayrollPayment,
-  PayrollResult,
-} from './modules/payroll';
-export { TreasuryModule } from './modules/treasury';
-export type {
-  TreasuryConfig,
-  TreasuryInfo,
-  TreasurySpendProposal,
-  TreasurySpendResult,
-  TreasurySolvencyProof,
-} from './modules/treasury';
-export { LiquidityModule, P01_LIQUIDITY_PROGRAM_ID } from './modules/liquidity';
-export type {
-  LiquidityPoolState,
-  PrefundRecordState,
-  PrefundIxArgs,
-  SettleIxArgs,
-  PrefundFeeBreakdown,
-} from './modules/liquidity';
-export {
-  InstantUnshieldFlow,
-  buildInstantUnshield,
-  buildCloseStarkProofBufferIx,
-  goldilocksU64ToNullifierBytes,
-  keypairSigner,
-  adapterSigner,
-  P01_STARK_VERIFIER_PROGRAM_ID,
-  CIRCUIT_POOL_COMMITMENT,
-  STARK_MAX_CHUNK_SIZE,
-  STARK_PROOF_DATA_OFFSET,
-  STARK_MAX_INIT_SIZE,
-  STARK_MAX_REALLOC_STEP,
-  STARK_VERIFY_CU,
-  PREFUND_CU,
-  SLOTS_PER_EPOCH,
-} from './modules/instantUnshield';
-export type {
-  GenericSigner,
-  InstantUnshieldInput,
-  InstantUnshieldPlan,
-  InstantUnshieldInstructionList,
-} from './modules/instantUnshield';
 export {
   splitAmount,
   CANONICAL_DENOMINATIONS,
@@ -139,11 +66,6 @@ export {
   DENOMINATIONS,
   MERKLE_TREE_DEPTH,
   MAX_LEAVES,
-  SHIELD_FEE_BPS,
-  UNSHIELD_FEE_BPS,
-  FEE_WALLET,
-  STARK_CIRCUITS,
-  COMPUTE_UNITS,
   getDeployedProgramIds,
 } from './constants';
 
@@ -163,33 +85,6 @@ export type {
   // Transaction
   TxResult,
 
-  // Shield
-  ShieldParams,
-  UnshieldParams,
-  PrivateTransferParams,
-  ShieldReceipt,
-  UnshieldReceipt,
-  TransferReceipt,
-  EncryptedNote,
-  PoolInfo,
-
-  // Confidential
-  ConfidentialDepositParams,
-  ConfidentialTransferParams,
-  ConfidentialWithdrawParams,
-  ConfidentialBalanceResult,
-  ConfidentialProveBalanceParams,
-
-  // Streams
-  CreateStreamParams,
-  StreamInfo,
-  StreamReceipt,
-
-  // Subscriptions
-  CreateSubscriptionParams,
-  SubscriptionInfo,
-  SubscriptionReceipt,
-
   // Registry
   RegisterParams,
   RegistryEntry,
@@ -204,9 +99,4 @@ export type {
   PrivacyEventType,
   PrivacyEventCallback,
   PrivacyEvent,
-
-  // Proofs
-  Groth16Proof,
-  ProofResult,
-  ProverConfig,
 } from './types';

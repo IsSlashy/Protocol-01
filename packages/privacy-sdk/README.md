@@ -2,38 +2,27 @@
 
 # @protocol-01/privacy-sdk
 
-**The complete privacy SDK for Solana.**
-
-Shield funds, send privately, create payment streams, and more.
+**Stealth meta-address registry and privacy relay client for Solana.**
 
 [![License: PolyForm Strict 1.0.0](https://img.shields.io/badge/License-PolyForm%20Strict%201.0.0-blue.svg)](LICENSE)
 
-Built by [Protocol 01](https://protocol-01.dev) -- The Privacy Layer for Solana
+Built by [Protocol 01](https://styx.cash)
 
 </div>
 
 ## Status (2026-09-23): read before you build on it
 
-- **Pool calls refuse on the deployed program.** `shield`, `transfer` and
-  `unshield` target instructions the deployed `zk_shielded` program does not
-  register, so each call throws a `PrivacyError` before it asks for a proof or
-  sends anything (`UNREGISTERED_ZK_SHIELDED_INSTRUCTIONS` lists the reasons).
-  The live pool instructions (`shield_denominated_v3`,
-  `unshield_denominated_stark_v3` / `_v4`) are not built by this SDK yet; the
-  web app builds them. `getPoolInfo` and `getShieldedBalance` only read.
-- **Instant unshield and the liquidity pool are disabled.** The deployed
-  `p01_liquidity` program (`6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg`)
-  pays a prefund against a proof buffer whose phase-2 verification it does not
-  check, with no Merkle membership, so its reserve can be drained. Against
-  that id, `InstantUnshieldFlow`, `buildInstantUnshield` and
-  `LiquidityModule.buildDepositIx` / `buildPrefundIx` / `buildSettleIx` throw
-  `PrivacyError(LIQUIDITY_DISABLED)` before any RPC call. `buildWithdrawIx`
-  still builds, so liquidity already in the pool can leave. The path stays
-  disabled until the program is fixed and redeployed.
+- **This SDK does not move funds in the shielded pool.** 2.0.0 removed the
+  `shield`, `confidential`, `streams`, `subscriptions`, `compliance`,
+  `airdrop`, `otc`, `payroll`, `treasury` and `liquidity` modules and the
+  instant-unshield flow: each one built instructions for a program that is not
+  deployed, or that the deployed `zk_shielded` program does not register
+  (`CHANGELOG.md`). The live pool instructions are built by the web app, not
+  by this package.
+- **What is left:** the stealth meta-address registry (`sdk.registry`), the
+  privacy relay (`sdk.relay`), the denomination split (`splitAmount`) and the
+  identity key helpers.
 - **Nothing of this SDK is deployed on mainnet.** See Network Support below.
-
-The examples further down show the API shape; on devnet today the pool calls
-in them throw as described above.
 
 ## Install
 
@@ -52,15 +41,13 @@ npm install react
 ## Quick Start
 
 ```typescript
-import { Connection, Keypair } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import { PrivacySDK, deriveSpendingKeyFromSignature } from '@protocol-01/privacy-sdk';
 
 // Derive the 32-byte spending key from a wallet signature (recommended default).
-// Cross-app portable: re-signing the same domain on another device yields the
-// same key, so notes created in app A remain spendable in app B.
+// Re-signing the same domain on another device yields the same key.
 const spendingKey = await deriveSpendingKeyFromSignature(myKeypair);
 
-// Initialize
 const sdk = new PrivacySDK({
   connection: new Connection('https://api.devnet.solana.com'),
   wallet: myKeypair,    // Keypair, or any WalletAdapter exposing signMessage
@@ -68,64 +55,31 @@ const sdk = new PrivacySDK({
   network: 'devnet',    // always specify explicitly
 });
 
-// Shield 1 SOL into the privacy pool
-const shieldReceipt = await sdk.shield.shield({
-  amount: 1_000_000_000,
-  token: 'SOL',
-});
-console.log('Shielded:', shieldReceipt.commitment);
+// Look up a wallet's stealth meta-address
+const entry = await sdk.registry.lookup(new PublicKey(someWallet));
 
-// Send a private transfer
-await sdk.shield.transfer({
-  to: recipientAddress,
-  amount: 500_000_000,
-  token: 'SOL',
-});
-
-// Unshield back to your wallet
-await sdk.shield.unshield({
-  amount: 500_000_000,
-  token: 'SOL',
-});
+// List the relayers registered on-chain
+const relayers = await sdk.relay.listRelayers();
 ```
 
 ## Modules
 
-| Module | What It Does | Import |
+| Module | What it does | Import |
 |--------|-------------|--------|
-| **Shield** | Deposit/withdraw from privacy pools | `@protocol-01/privacy-sdk/shield` |
-| **Confidential** | Private balances with ZK proofs | `@protocol-01/privacy-sdk/confidential` |
-| **Streams** | Continuous payment streams | `@protocol-01/privacy-sdk/streams` |
-| **Subscriptions** | Recurring private payments | `@protocol-01/privacy-sdk/subscriptions` |
-| **Registry** | On-chain stealth address directory | `@protocol-01/privacy-sdk/registry` |
-| **Relay** | Transaction relay for sender privacy | `@protocol-01/privacy-sdk/relay` |
-| **Compliance** | ZK-KYC proofs (range proofs, sanctions innocence) -- *optional Groth16 overlay, not on the post-quantum hot path* | `@protocol-01/privacy-sdk/compliance` |
-| **Airdrop** | Private token distribution (Merkle-based) | `@protocol-01/privacy-sdk/airdrop` |
-| **OTC** | Private OTC trading desk (atomic P2P swaps) | `@protocol-01/privacy-sdk/otc` |
-| **Payroll** | Confidential salary payments (batch) | `@protocol-01/privacy-sdk/payroll` |
-| **Treasury** | Multi-sig treasury with privacy | `@protocol-01/privacy-sdk/treasury` |
+| **Registry** | On-chain stealth meta-address directory: `register`, `update`, `deregister`, `lookup`, `lookupMultiple`, `isRegistered` | `@protocol-01/privacy-sdk/registry` |
+| **Relay** | Encrypted relay jobs: `submitJob`, `getJobStatus`, `cancelJob`, `listRelayers`, `awaitCompletion` | `@protocol-01/privacy-sdk/relay` |
+| **Denomination** | `splitAmount`: split an amount into the pool's fixed denominations | `@protocol-01/privacy-sdk` |
 
-Removed in 2.0.0 (see `CHANGELOG.md`): `stealth` and `vault`. Both spoke
-only to programs the founder closed on devnet on 2026-09-13 (`specter`
-`FgKhXakZ…`, `p01_quantum_vault` `9yVr79Xk…`); the `specter`, `feeSplitter`,
-`quantumVault` and `arcium` keys left `ProgramIds` with them.
-
-All modules are accessible through the main SDK instance:
+Both on-chain modules are reachable through the main SDK instance:
 
 ```typescript
-sdk.shield.shield(...)
-sdk.confidential.deposit(...)
-sdk.streams.create(...)
-sdk.subscriptions.create(...)
 sdk.registry.register(...)
 sdk.relay.submitJob(...)
-sdk.compliance.proveRange(...)
-sdk.airdrop.create(...)
-sdk.otc.createOrder(...)
-sdk.payroll.createBatch(...)
-sdk.treasury.propose(...)
-sdk.exchange.createOrder(...)
 ```
+
+Removed in 2.0.0 (see `CHANGELOG.md`): `shield`, `confidential`, `streams`,
+`subscriptions`, `compliance`, `airdrop`, `otc`, `payroll`, `treasury`,
+`liquidity`, the instant-unshield flow, `stealth` and `vault`.
 
 ## Configuration
 
@@ -148,24 +102,12 @@ const sdk = new PrivacySDK({
   network: 'devnet',         // 'devnet' | 'mainnet' (warns if omitted)
   commitment: 'confirmed',   // 'processed' | 'confirmed' | 'finalized'
   programIds: {              // Override any program ID
-    zkShielded: myCustomProgramId,
+    registry: myCustomProgramId,
   },
 });
 
 // Check SDK health
 const { balance, network, walletAddress } = await sdk.healthCheck();
-```
-
-### Custom Tokens
-
-```typescript
-import { PublicKey } from '@solana/web3.js';
-
-// Register a custom SPL token
-sdk.registerToken('BONK', new PublicKey('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'), 5);
-
-// Use it like any built-in token
-await sdk.shield.shield({ amount: 1_000_000, token: 'BONK' });
 ```
 
 ### Checking Deployed Programs
@@ -184,35 +126,22 @@ const declared = getDeployedProgramIds('mainnet');
 Wrap your app with `PrivacyProvider` and use the hooks:
 
 ```tsx
-import { PrivacyProvider, usePrivacy, useShield } from '@protocol-01/privacy-sdk/react';
+import { PrivacyProvider, usePrivacy, useRegistry } from '@protocol-01/privacy-sdk/react';
 
 function App() {
   return (
-    <PrivacyProvider config={{ connection, wallet, network: 'devnet' }}>
+    <PrivacyProvider config={{ connection, wallet, spendingKey, network: 'devnet' }}>
       <MyComponent />
     </PrivacyProvider>
   );
 }
 
-function MyComponent() {
-  // Full SDK access
-  const sdk = usePrivacy();
-
-  // Shield operations with loading/error state
-  const { shield, shieldState, unshield, transfer, getBalance } = useShield();
-
-  const handleShield = async () => {
-    try {
-      const receipt = await shield({ amount: 1e9, token: 'SOL' });
-      console.log('Shielded!', receipt.commitment);
-    } catch (err) {
-      console.error('Shield failed:', err);
-    }
-  };
+function MyComponent({ wallet }) {
+  const { isRegistered, registeredState } = useRegistry();
 
   return (
-    <button onClick={handleShield} disabled={shieldState.loading}>
-      {shieldState.loading ? 'Shielding...' : 'Shield 1 SOL'}
+    <button onClick={() => isRegistered(wallet)} disabled={registeredState.loading}>
+      {registeredState.loading ? 'Checking...' : 'Is this wallet registered?'}
     </button>
   );
 }
@@ -223,10 +152,6 @@ function MyComponent() {
 | Hook | Module | Operations |
 |------|--------|-----------|
 | `usePrivacy()` | All | Full SDK instance |
-| `useShield()` | Shield | `shield`, `unshield`, `transfer`, `getBalance` |
-| `useConfidential()` | Confidential | `deposit`, `transfer`, `withdraw`, `getBalance` |
-| `useStreams()` | Streams | `create`, `withdraw`, `cancel`, `getStream`, `listStreams` |
-| `useSubscriptions()` | Subscriptions | `create`, `cancel`, `pause`, `resume` |
 | `useRegistry()` | Registry | `register`, `lookup`, `isRegistered` |
 | `useRelay()` | Relay | `submitJob`, `listRelayers` |
 
@@ -240,21 +165,15 @@ All SDK errors use the `PrivacyError` class with typed error codes:
 import { PrivacyError, PrivacyErrorCode } from '@protocol-01/privacy-sdk';
 
 try {
-  await sdk.shield.shield({ amount: 1e9, token: 'SOL' });
+  await sdk.registry.register({ spendingPubKey, viewingPubKey });
 } catch (err) {
   if (err instanceof PrivacyError) {
     switch (err.code) {
       case PrivacyErrorCode.WALLET_NOT_CONNECTED:
         // Prompt user to connect wallet
         break;
-      case PrivacyErrorCode.PROOF_GENERATION_FAILED:
-        // ZK proof failed -- retry or check circuit files
-        break;
-      case PrivacyErrorCode.NULLIFIER_ALREADY_SPENT:
-        // Note already spent (double-spend attempt)
-        break;
-      case PrivacyErrorCode.TRANSACTION_FAILED:
-        // On-chain transaction failed
+      case PrivacyErrorCode.REGISTRY_ALREADY_EXISTS:
+        // Use sdk.registry.update(...) instead
         break;
       default:
         console.error(`[${err.code}] ${err.message}`);
@@ -268,28 +187,19 @@ try {
 | Range | Module | Example Codes |
 |-------|--------|--------------|
 | 1xxx | General | `WALLET_NOT_CONNECTED`, `INVALID_CONFIG`, `TRANSACTION_FAILED` |
-| 2xxx | Shield | `SHIELD_FAILED`, `NULLIFIER_ALREADY_SPENT`, `POOL_NOT_FOUND` |
-| 3xxx | Retired (stealth) | none — the module and the `specter` program it spoke to left in 2.0.0 |
-| 4xxx | Confidential | `CONFIDENTIAL_DEPOSIT_FAILED`, `BALANCE_PROOF_FAILED` |
-| 5xxx | Streams | `STREAM_CREATE_FAILED`, `STREAM_EXHAUSTED` |
-| 6xxx | Subscriptions | `SUBSCRIPTION_CREATE_FAILED`, `SUBSCRIPTION_NOT_FOUND` |
-| 7xxx | Retired (vault) | none — the module and the quantum vault program it spoke to left in 2.0.0 |
 | 8xxx | Relay | `RELAY_SUBMIT_FAILED`, `RELAY_NO_ACTIVE_RELAYERS` |
-| 9xxx | Retired (private governance) | `MPC_NOT_AVAILABLE` — thrown by every `treasury` governance call; the feature was removed from Protocol 01 |
 | 10xxx | Registry | `REGISTRY_NOT_FOUND`, `REGISTRY_ALREADY_EXISTS` |
-| 11xxx | Exchange | `EXCHANGE_ORDER_NOT_FOUND`, `EXCHANGE_ESCROW_EXPIRED` |
+
+2xxx to 7xxx and 9xxx are retired with the modules that threw them; the
+numbers are not reused.
 
 ## Events
 
-Subscribe to SDK events for real-time updates:
+`sdk.on` / `sdk.off` / `sdk.emit` give the host one event bus for relay work:
 
 ```typescript
-sdk.on('shield', (event) => {
-  console.log('Shielded at', event.timestamp, event.data);
-});
-
-sdk.on('unshield', (event) => {
-  console.log('Unshielded at', event.timestamp, event.data);
+sdk.on('relay:complete', (event) => {
+  console.log('Relay job done at', event.timestamp, event.data);
 });
 
 sdk.on('error', (event) => {
@@ -299,26 +209,21 @@ sdk.on('error', (event) => {
 
 ## Network Support
 
-As read in the repository's root README on 2026-09-23 (devnet only):
+As read on devnet on 2026-09-23:
 
 | Program | Devnet | Mainnet |
 |---------|--------|---------|
-| Shield (zk_shielded) | Deployed; this SDK's pool calls refuse (see Status) | Not deployed |
-| STARK Verifier | Deployed | Not deployed |
 | Registry | Deployed | Not deployed |
 | Relayer | Deployed; no node has operated it since 2026-08-28 | Not deployed |
-| Liquidity (p01_liquidity) | Deployed; disabled in this SDK (drainable reserve, see Status) | Not deployed |
-| Confidential (p01_zkspl) | Not deployed | Not deployed |
-| Streams | Not deployed | Not deployed |
-| Subscriptions | Not deployed | Not deployed |
-| Whitelist | Not deployed | Not deployed |
+| zk_shielded (id only; no module of this SDK calls it) | Deployed | Not deployed |
+| STARK Verifier (id only) | Deployed | Not deployed |
 
-`getDeployedProgramIds(network)` returns the declared ids minus System-program placeholders; it does not check the chain. It still returns zkspl, stream, subscription and whitelist on devnet, and zkShielded, zkspl, stream, subscription and whitelist on mainnet, which the table above lists as not deployed. Go by this table, or read the account on the cluster, before relying on a module.
+`getDeployedProgramIds(network)` returns the declared ids minus System-program placeholders; it does not check the chain. On mainnet it still returns the declared `zkShielded` id, which the table above lists as not deployed. Go by this table, or read the account on the cluster, before relying on a module.
 
 ## Security
 
-- **Spending keys never leave the client.** Proofs are generated by a prover the host supplies (`ProverConfig.generateStarkProof`); the SDK has no remote prover fallback.
-- **Nullifier preimages are the spending authority.** Whoever knows the nullifier preimage can spend the note. Treat them like private keys.
+- **Spending keys never leave the client.** The SDK derives or wraps them in memory and does not send them anywhere.
+- **Relay jobs are encrypted to the relayer's X25519 key** before they are submitted.
 - **The SDK warns loudly if no network is specified** (defaults to devnet). Always set `network` explicitly in production.
 
 ## Architecture
@@ -327,28 +232,20 @@ As read in the repository's root README on 2026-09-23 (devnet only):
 @protocol-01/privacy-sdk
   |
   +-- PrivacySDK (main client)
-  |     |-- shield      (ShieldModule)
-  |     |-- confidential (ConfidentialModule)
-  |     |-- streams     (StreamsModule)
-  |     |-- subscriptions (SubscriptionsModule)
   |     |-- registry    (RegistryModule)
-  |     |-- relay       (RelayModule)
-  |     |-- compliance  (ComplianceModule)
-  |     |-- airdrop     (AirdropModule)
-  |     |-- otc         (OTCModule)
-  |     |-- payroll     (PayrollModule)
-  |     +-- treasury    (TreasuryModule)
+  |     +-- relay       (RelayModule)
+  |
+  +-- splitAmount (denomination split)
+  +-- identity (spending-key and HKDF identity helpers)
   |
   +-- react/
   |     |-- PrivacyProvider
-  |     +-- useShield, useConfidential, ...
+  |     +-- usePrivacy, useRegistry, useRelay
   |
   +-- errors (PrivacyError, PrivacyErrorCode)
-  +-- constants (PROGRAM_IDS, TOKENS, SEEDS, ...)
+  +-- constants (PROGRAM_IDS, TOKENS, SEEDS, DENOMINATIONS, MERKLE_TREE_DEPTH)
   +-- types (all TypeScript interfaces)
 ```
-
-The SDK depends on `@protocol-01/privacy-toolkit` for low-level cryptographic primitives (Poseidon commitments, Merkle trees, proof format conversion).
 
 ## License
 
@@ -367,4 +264,4 @@ published from 2026-09-22 on ship under PolyForm Strict 1.0.0.
 
 ---
 
-[Website](https://protocol-01.dev) · [Twitter](https://x.com/Styx_PQ) · [Discord](https://discord.gg/EfqnVmb2dV) · [GitHub](https://github.com/IsSlashy/Protocol-01)
+[Website](https://styx.cash) · [Twitter](https://x.com/Styx_PQ) · [Discord](https://discord.gg/EfqnVmb2dV) · [GitHub](https://github.com/IsSlashy/Protocol-01)

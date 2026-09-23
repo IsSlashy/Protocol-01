@@ -4,9 +4,8 @@
  * Drop-in vanilla-JS + React widgets for accepting privacy-first crypto
  * payments and Stream Secure subscriptions on your site.
  *
- * For the full privacy stack (shielded pool, stealth scanning, MPC, etc.)
- * use `@protocol-01/privacy-sdk` directly. `p01-js` is the merchant
- * surface — pay buttons, subscription widgets, webhook helpers.
+ * `p01-js` is the merchant surface — pay buttons, subscription widgets,
+ * webhook helpers. It does not build shielded-pool transactions.
  *
  * Privacy backend: post-quantum STARK proofs (Goldilocks field, Blake3
  * Merkle, DEEP-ALI) generated and verified via `@protocol-01/stark-prover`
@@ -165,35 +164,11 @@ export {
 // Security (privacy features)
 export * from './security';
 
-// Shielded Pool (Privacy Layer)
-export {
-  // Core functions
-  shield,
-  unshield,
-  getPoolInfo,
-  getPools,
-
-  // Helpers
-  validateShieldParams,
-  validateUnshieldParams,
-  resolveTokenMintForPool,
-  computeCommitmentPlaceholder,
-  estimateDelayTier,
-  isValidDenomination,
-
-  // Constants
-  ZK_SHIELDED_PROGRAM_ID,
-  STANDARD_DENOMINATIONS,
-  MERKLE_TREE_DEPTH,
-  MAX_LEAVES,
-  DELAY_TIERS,
-
-  // Types
-  type ShieldReceipt,
-  type ShieldParams,
-  type UnshieldParams,
-  type PoolInfo,
-} from './shielded-pool';
+// Shielded notes: the receipt type PrivateStream / PrivateSubscription and the
+// receipt manager carry. (The `shielded-pool` module — shield, unshield,
+// getPoolInfo, getPools and their helpers — left in 0.4.0: its program id was
+// the zkSPL one, its shield() returned a placeholder receipt and the rest threw.)
+export type { ShieldReceipt } from './types';
 
 // Relayer Client
 export {

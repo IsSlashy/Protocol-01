@@ -31,8 +31,8 @@ export const REGISTRY_PROGRAM_ID = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoL
 // [2026-09-13] `PROGRAM_IDS` and `DEFAULT_PROGRAM_ID` named the `specter`
 // program (`FgKhXakZGsd4PdiGgACYy8gwj1JLMYA691yQr2PhUNfL`), closed on devnet on
 // 2026-09-13. The registry and relayer ids above are the programs this SDK
-// still talks to; the pool and the verifier are addressed by `./subscription`
-// and `./proving` through their own constants.
+// still talks to; the pool is addressed by `./subscription` through its own
+// constants.
 
 /**
  * Get a program ID for the given cluster, with a safety check for mainnet-beta.

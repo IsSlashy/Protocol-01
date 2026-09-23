@@ -1,19 +1,50 @@
 # Changelog — @protocol-01/privacy-sdk
 
-## Unreleased
+## Unreleased (ships in 2.0.0, not yet published)
 
-- `shield`, `transfer` and `unshield` refuse before any proof request or RPC
-  call: each targets an instruction the deployed `zk_shielded` program does not
-  register (`UNREGISTERED_ZK_SHIELDED_INSTRUCTIONS`).
-- Instant unshield and the liquidity pool are disabled against the deployed
-  `p01_liquidity` program (`6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg`),
-  whose reserve can be drained (audit v1 F27): `InstantUnshieldFlow`,
-  `buildInstantUnshield`, `LiquidityModule.buildDepositIx`, `buildPrefundIx`
-  and `buildSettleIx` throw `PrivacyError(LIQUIDITY_DISABLED)` (new code 2009)
-  for that id. `buildWithdrawIx` still builds. `buildInstantUnshield` takes an
-  optional third argument, the liquidity program id.
-- README: status section; the network table now lists what is deployed
-  (devnet only, nothing on mainnet).
+API break, on top of the 2.0.0 removals below. Every module that built
+instructions for a program that is not deployed, or that the deployed program
+does not register, is gone. Nothing in the repository imported any of them.
+
+- Removed `ShieldModule` (`sdk.shield`, `./shield`): `shield`, `transfer` and
+  `unshield` targeted `shield_stark`, `transfer_stark`, `unshield_stark`,
+  `shield_denominated` and `unshield_denominated_stark`, none of which the
+  deployed `zk_shielded` program registers. The refusal guard added for them
+  earlier in this cycle went with the module.
+- Removed `ConfidentialModule` (`sdk.confidential`, `./confidential`; zkspl
+  `AY38smtd…` is not deployed), `StreamsModule` (`sdk.streams`, `./streams`;
+  stream `C92xDDAt…` not deployed), `SubscriptionsModule`
+  (`sdk.subscriptions`, `./subscriptions`; subscription `3eDvPJTK…` not
+  deployed, subscriptions live in `zk_shielded` vaults) and `PayrollModule`
+  (`./payroll`, built on streams).
+- Removed `ComplianceModule` (`./compliance`, Groth16 with no deployed
+  verifier), `AirdropModule` (`./airdrop`) and `OTCModule` (`./otc`), whose
+  instructions exist in no program, and `TreasuryModule` (`./treasury`),
+  which wrapped shield and compliance.
+- Removed `LiquidityModule`, `P01_LIQUIDITY_PROGRAM_ID`, `InstantUnshieldFlow`,
+  `buildInstantUnshield` and the rest of the instant-unshield exports: the
+  `p01_liquidity` program they drove is deactivated. The refusal added for it
+  earlier in this cycle (`LIQUIDITY_DISABLED`, code 2009) went with them.
+- Removed the React hooks `useShield`, `useConfidential`, `useStreams` and
+  `useSubscriptions`.
+- Removed from `ProgramIds` and `PROGRAM_IDS`: `trustless`, `zkspl`, `stream`,
+  `subscription`, `whitelist` and `bundler`. What remains: `zkShielded`,
+  `relayer`, `registry`, `starkVerifier`.
+- Removed the constants `SHIELD_FEE_BPS`, `UNSHIELD_FEE_BPS`, `MAX_FEE_BPS`,
+  `FEE_WALLET`, `STARK_CIRCUITS` (use `STARK_CIRCUITS` from
+  `@protocol-01/stark-prover`) and `COMPUTE_UNITS`; the seeds `STREAM`,
+  `TRUSTLESS_POOL`, `CONFIDENTIAL_ACCOUNT` and `SUBSCRIPTION`.
+- Removed the error codes 2001–2009, 4001–4005, 5001–5005, 6001–6004 and
+  9001–9006, and the factories `PrivacyError.proofFailed`, `poolNotFound` and
+  `nullifierSpent`. The numbers are not reused.
+- Removed the types of the removed modules (shield, confidential, streams,
+  subscriptions and their receipts, `EncryptedNote`, `PoolInfo`), the retired
+  `MPC*` types, `Groth16Proof`, `ProofResult`, `StarkProofOutcome`,
+  `StarkProofGenerator` and `ProverConfig`; the events `shield`, `unshield`,
+  `transfer`, `stream:*`, `subscription:*` and `mpc:*`.
+- Dependencies dropped: `@protocol-01/privacy-toolkit` (the package is
+  deleted from the repository), `snarkjs`, `poseidon-lite`, `@coral-xyz/anchor`,
+  `@solana/spl-token`, `@noble/post-quantum`, `bs58`.
 
 ## 2.0.0 — 2026-09-13
 

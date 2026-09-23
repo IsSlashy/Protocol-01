@@ -24,10 +24,10 @@ const requireFrom = createRequire(
  *     failed to load config from packages/p01-js/vitest.config.ts
  *     Error: Cannot find module '@storybook/addon-vitest/vitest-plugin'
  *
- * That is how `src/shielded-pool.test.ts:740` — `expect(MERKLE_TREE_DEPTH)
- * .toBe(15)` — stopped running. It is one of the guards on the constant that
- * must match `DEFAULT_TREE_DEPTH` on chain, and on 2026-08-18 a sibling package
- * was found shipping 20. The guard was correct, present, and silent, and nothing
+ * That is how the `shielded-pool.test.ts` guard `expect(MERKLE_TREE_DEPTH)
+ * .toBe(15)` stopped running (the module and its test left in 0.4.0). It was
+ * one of the guards on the constant that must match `DEFAULT_TREE_DEPTH` on
+ * chain, and on 2026-08-18 a sibling package was found shipping 20. The guard was correct, present, and silent, and nothing
  * in CI distinguished "this package passes" from "this package never ran".
  *
  * A component-story runner must never be able to take the unit tests down with

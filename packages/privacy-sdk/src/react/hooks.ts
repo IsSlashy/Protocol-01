@@ -2,28 +2,8 @@ import { useContext, useCallback, useState } from 'react';
 import { PrivacyContext } from './provider';
 import type { PrivacySDK } from '../client';
 import type {
-  ShieldParams,
-  UnshieldParams,
-  PrivateTransferParams,
-  ShieldReceipt,
-  UnshieldReceipt,
-  TransferReceipt,
-  ConfidentialDepositParams,
-  ConfidentialTransferParams,
-  ConfidentialWithdrawParams,
-  ConfidentialBalanceResult,
-  CreateStreamParams,
-  StreamReceipt,
-  StreamInfo,
-  CreateSubscriptionParams,
-  SubscriptionReceipt,
-  SubscriptionInfo,
   RegisterParams,
-  RegistryEntry,
   RelayJobParams,
-  RelayJobReceipt,
-  TxResult,
-  TokenSymbol,
 } from '../types';
 import type { PublicKey } from '@solana/web3.js';
 
@@ -69,110 +49,6 @@ function useAsyncAction<TParams extends any[], TResult>(
 /** Access the full Privacy SDK instance */
 export function usePrivacy(): PrivacySDK {
   return useSDK();
-}
-
-/** Shield, unshield, and private transfer hooks */
-export function useShield() {
-  const sdk = useSDK();
-
-  const [shield, shieldState] = useAsyncAction(
-    useCallback((params: ShieldParams) => sdk.shield.shield(params), [sdk]),
-  );
-  const [unshield, unshieldState] = useAsyncAction(
-    useCallback((params: UnshieldParams) => sdk.shield.unshield(params), [sdk]),
-  );
-  const [transfer, transferState] = useAsyncAction(
-    useCallback((params: PrivateTransferParams) => sdk.shield.transfer(params), [sdk]),
-  );
-  const [getBalance, balanceState] = useAsyncAction(
-    useCallback((token: TokenSymbol) => sdk.shield.getShieldedBalance(token), [sdk]),
-  );
-
-  return {
-    shield, shieldState,
-    unshield, unshieldState,
-    transfer, transferState,
-    getBalance, balanceState,
-  };
-}
-
-/** Confidential balance hooks */
-export function useConfidential() {
-  const sdk = useSDK();
-
-  const [deposit, depositState] = useAsyncAction(
-    useCallback((params: ConfidentialDepositParams) => sdk.confidential.deposit(params), [sdk]),
-  );
-  const [transfer, transferState] = useAsyncAction(
-    useCallback((params: ConfidentialTransferParams) => sdk.confidential.transfer(params), [sdk]),
-  );
-  const [withdraw, withdrawState] = useAsyncAction(
-    useCallback((params: ConfidentialWithdrawParams) => sdk.confidential.withdraw(params), [sdk]),
-  );
-  const [getBalance, balanceState] = useAsyncAction(
-    useCallback((token: TokenSymbol) => sdk.confidential.getBalance(token), [sdk]),
-  );
-
-  return {
-    deposit, depositState,
-    transfer, transferState,
-    withdraw, withdrawState,
-    getBalance, balanceState,
-  };
-}
-
-/** Payment stream hooks */
-export function useStreams() {
-  const sdk = useSDK();
-
-  const [create, createState] = useAsyncAction(
-    useCallback((params: CreateStreamParams) => sdk.streams.create(params), [sdk]),
-  );
-  const [withdraw, withdrawState] = useAsyncAction(
-    useCallback((address: PublicKey) => sdk.streams.withdraw(address), [sdk]),
-  );
-  const [cancel, cancelState] = useAsyncAction(
-    useCallback((address: PublicKey) => sdk.streams.cancel(address), [sdk]),
-  );
-  const [getStream, streamState] = useAsyncAction(
-    useCallback((address: PublicKey) => sdk.streams.getStream(address), [sdk]),
-  );
-  const [listStreams, listState] = useAsyncAction(
-    useCallback((role: 'sender' | 'recipient') => sdk.streams.listStreams(role), [sdk]),
-  );
-
-  return {
-    create, createState,
-    withdraw, withdrawState,
-    cancel, cancelState,
-    getStream, streamState,
-    listStreams, listState,
-  };
-}
-
-/** Subscription hooks */
-export function useSubscriptions() {
-  const sdk = useSDK();
-
-  const [create, createState] = useAsyncAction(
-    useCallback((params: CreateSubscriptionParams) => sdk.subscriptions.create(params), [sdk]),
-  );
-  const [cancel, cancelState] = useAsyncAction(
-    useCallback((address: PublicKey) => sdk.subscriptions.cancel(address), [sdk]),
-  );
-  const [pause, pauseState] = useAsyncAction(
-    useCallback((address: PublicKey) => sdk.subscriptions.pause(address), [sdk]),
-  );
-  const [resume, resumeState] = useAsyncAction(
-    useCallback((address: PublicKey) => sdk.subscriptions.resume(address), [sdk]),
-  );
-
-  return {
-    create, createState,
-    cancel, cancelState,
-    pause, pauseState,
-    resume, resumeState,
-  };
 }
 
 /** Stealth registry hooks */

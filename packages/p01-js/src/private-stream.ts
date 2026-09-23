@@ -21,10 +21,10 @@ import {
   generateStealthAddress,
 } from './security/stealth';
 import type { StealthMetaAddress } from './security/types';
-import type { ShieldReceipt } from './shielded-pool';
+import type { ShieldReceipt } from './types';
 
 // Re-export ShieldReceipt so consumers of private-stream don't need a separate import
-export type { ShieldReceipt } from './shielded-pool';
+export type { ShieldReceipt } from './types';
 
 /**
  * Configuration for creating a private stream.
