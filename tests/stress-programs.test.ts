@@ -1,8 +1,7 @@
 /**
- * STRESS TEST: All 12+ On-Chain Programs (Devnet)
+ * STRESS TEST: the four live on-chain programs (Devnet)
  *
- * Comprehensive stress test covering every instruction across all deployed
- * Solana programs in the Protocol 01 ecosystem. Uses ts-mocha + chai +
+ * Stress test covering the Solana programs Protocol 01 runs on devnet today. Uses ts-mocha + chai +
  * @coral-xyz/anchor patterns matching existing test files.
  *
  * Run:
@@ -11,18 +10,15 @@
  *   pnpm test:stress
  *
  * Programs tested:
- *   1.  zk_shielded        - GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
- *   2.  p01_zkspl          - EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah
- *   3.  specter            - 2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp
- *   4.  p01_relayer        - 2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW
- *   5.  p01_quantum_vault  - 9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv
- *   6.  p01_registry       - QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB
- *   7.  p01_stark_verifier - DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
- *   8.  p01_arcium         - FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT
- *   9.  p01_fee_splitter   - UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM
- *   10. p01_stream         - C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx
- *   11. p01_subscription   - 3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW
- *   12. p01_whitelist      - 5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33
+ *   1. zk_shielded        - GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c
+ *   2. p01_relayer        - 2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW
+ *   3. p01_registry       - QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB
+ *   4. p01_stark_verifier - DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs
+ *
+ * [2026-09-23] The sections for p01_zkspl, p01_arcium, p01_stream,
+ * p01_subscription and p01_whitelist left with those programs (deleted from the
+ * tree), and those for specter, p01_quantum_vault and p01_fee_splitter (closed
+ * on devnet on 2026-09-13) went with them.
  */
 
 import * as anchor from '@coral-xyz/anchor';
@@ -41,12 +37,9 @@ import {
 } from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
   createMint,
   mintTo,
   getOrCreateAssociatedTokenAccount,
-  getAssociatedTokenAddress,
-  getAccount,
 } from '@solana/spl-token';
 import { expect } from 'chai';
 import * as crypto from 'crypto';
@@ -59,17 +52,9 @@ import * as path from 'path';
 
 const PROGRAM_IDS = {
   ZK_SHIELDED: new PublicKey('GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c'),
-  ZKSPL: new PublicKey('EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah'),
-  SPECTER: new PublicKey('2tuztgD9RhdaBkiP79fHkrFbfWBX75v7UjSNN4ULfbSp'),
   RELAYER: new PublicKey('2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW'),
-  QUANTUM_VAULT: new PublicKey('9yVr79XkwGabckVxedz4UH78twzkgmGqXHBAX7vfJvYv'),
   REGISTRY: new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB'),
   STARK_VERIFIER: new PublicKey('DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs'),
-  ARCIUM: new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT'),
-  FEE_SPLITTER: new PublicKey('UdxXEvcAzmGsqUtoBgnNkbmfnky4En2kLxNnsVQU5BM'),
-  STREAM: new PublicKey('C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx'),
-  SUBSCRIPTION: new PublicKey('3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW'),
-  WHITELIST: new PublicKey('5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33'),
 };
 
 // =============================================================================
@@ -86,13 +71,6 @@ function computeDiscriminator(name: string): Buffer {
 /** Generate a random 32-byte buffer. */
 function randomBytes32(): Buffer {
   return crypto.randomBytes(32);
-}
-
-/** Encode a u64 as 8-byte LE buffer. */
-function u64ToLeBytes(value: bigint): Buffer {
-  const buf = Buffer.alloc(8);
-  buf.writeBigUInt64LE(value);
-  return buf;
 }
 
 /** Encode a u32 as 4-byte LE buffer. */
@@ -134,37 +112,6 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   throw lastError;
 }
 
-/** Transfer SOL from payer to a target. */
-async function fundAccount(
-  provider: AnchorProvider,
-  to: PublicKey,
-  solAmount: number,
-): Promise<void> {
-  if (solAmount <= 0) return;
-  const tx = new Transaction().add(
-    SystemProgram.transfer({
-      fromPubkey: provider.wallet.publicKey,
-      toPubkey: to,
-      lamports: Math.round(solAmount * LAMPORTS_PER_SOL),
-    }),
-  );
-  await provider.sendAndConfirm(tx);
-}
-
-/** Advance slots by sending self-transfers. */
-async function advanceSlots(provider: AnchorProvider, count: number): Promise<void> {
-  for (let i = 0; i < count; i++) {
-    const tx = new Transaction().add(
-      SystemProgram.transfer({
-        fromPubkey: provider.wallet.publicKey,
-        toPubkey: provider.wallet.publicKey,
-        lamports: 1,
-      }),
-    );
-    await provider.sendAndConfirm(tx);
-  }
-}
-
 /** Generate a random 32-byte key as number[]. */
 function randomKey32(): number[] {
   return Array.from(crypto.randomBytes(32));
@@ -177,112 +124,6 @@ function zeroKey32(): number[] {
 
 /** Unique test run ID to avoid PDA conflicts. */
 const TEST_RUN_ID = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-
-// =============================================================================
-// WOTS+ Helpers (mirrors specter-sdk/src/quantum/wots.ts)
-// =============================================================================
-
-const WOTS_MSG_CHAINS = 64;
-const WOTS_CHECKSUM_CHAINS = 3;
-const WOTS_CHAINS = WOTS_MSG_CHAINS + WOTS_CHECKSUM_CHAINS; // 67
-const WOTS_MAX_VAL = 15;
-const HASH_SIZE = 32;
-
-function sha256Hash(data: Uint8Array): Uint8Array {
-  return new Uint8Array(crypto.createHash('sha256').update(data).digest());
-}
-
-function concatBytes(...arrays: Uint8Array[]): Uint8Array {
-  const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const arr of arrays) {
-    result.set(arr, offset);
-    offset += arr.length;
-  }
-  return result;
-}
-
-interface WotsKeypair {
-  secretKey: Uint8Array;
-  publicKey: Uint8Array;
-  publicKeyHash: Uint8Array;
-}
-
-interface WotsSignature {
-  signature: Uint8Array;
-  publicKey: Uint8Array;
-}
-
-function generateWotsKeypair(seed: Uint8Array): WotsKeypair {
-  const secretKey = new Uint8Array(WOTS_CHAINS * HASH_SIZE);
-  const publicKey = new Uint8Array(WOTS_CHAINS * HASH_SIZE);
-
-  for (let i = 0; i < WOTS_CHAINS; i++) {
-    const indexBuf = new Uint8Array(4);
-    new DataView(indexBuf.buffer).setUint32(0, i, true);
-    const chainSecret = sha256Hash(concatBytes(seed, indexBuf));
-    secretKey.set(chainSecret, i * HASH_SIZE);
-
-    let current: Uint8Array = chainSecret;
-    for (let step = 0; step < WOTS_MAX_VAL; step++) {
-      current = sha256Hash(current);
-    }
-    publicKey.set(current, i * HASH_SIZE);
-  }
-
-  const publicKeyHash = sha256Hash(publicKey);
-  return { secretKey, publicKey, publicKeyHash };
-}
-
-function deriveWotsKeypair(masterSeed: Uint8Array, index: number): WotsKeypair {
-  const indexBuf = new Uint8Array(4);
-  new DataView(indexBuf.buffer).setUint32(0, index, true);
-  const keySeed = sha256Hash(
-    concatBytes(new TextEncoder().encode('wots-key'), masterSeed, indexBuf),
-  );
-  return generateWotsKeypair(keySeed);
-}
-
-function computeWithdrawMessage(
-  amount: bigint,
-  destination: Uint8Array,
-  withdrawalCount: bigint,
-): Uint8Array {
-  const amountBuf = new Uint8Array(8);
-  new DataView(amountBuf.buffer).setBigUint64(0, amount, true);
-  const countBuf = new Uint8Array(8);
-  new DataView(countBuf.buffer).setBigUint64(0, withdrawalCount, true);
-  return sha256Hash(concatBytes(amountBuf, destination, countBuf));
-}
-
-function wotsSign(message: Uint8Array, keypair: WotsKeypair): WotsSignature {
-  const signature = new Uint8Array(WOTS_CHAINS * HASH_SIZE);
-
-  const nibbles = new Array<number>(WOTS_CHAINS);
-  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
-    const byteIdx = i >> 1;
-    const byte = message[byteIdx]!;
-    nibbles[i] = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
-  }
-  let checksum = 0;
-  for (let i = 0; i < WOTS_MSG_CHAINS; i++) {
-    checksum += WOTS_MAX_VAL - nibbles[i]!;
-  }
-  nibbles[WOTS_MSG_CHAINS] = (checksum >> 8) & 0x0f;
-  nibbles[WOTS_MSG_CHAINS + 1] = (checksum >> 4) & 0x0f;
-  nibbles[WOTS_MSG_CHAINS + 2] = checksum & 0x0f;
-
-  for (let i = 0; i < WOTS_CHAINS; i++) {
-    const stepsToHash = WOTS_MAX_VAL - nibbles[i]!;
-    let current: Uint8Array = keypair.secretKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
-    for (let step = 0; step < stepsToHash; step++) {
-      current = sha256Hash(current);
-    }
-    signature.set(current, i * HASH_SIZE);
-  }
-  return { signature, publicKey: keypair.publicKey };
-}
 
 // =============================================================================
 // STARK Helpers
@@ -480,18 +321,10 @@ async function uploadStarkProofChunks(
 }
 
 // =============================================================================
-// Fee Calculation Helper
-// =============================================================================
-
-function calculateFee(amount: bigint, feeBps: number): bigint {
-  return (amount * BigInt(feeBps)) / BigInt(10_000);
-}
-
-// =============================================================================
 // Main Test Suite
 // =============================================================================
 
-describe('STRESS TEST: All 12+ On-Chain Programs', function () {
+describe('STRESS TEST: live on-chain programs', function () {
   this.timeout(600_000); // 10 minutes global timeout
 
   const provider = AnchorProvider.env();
@@ -725,160 +558,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 2. p01_zkspl -- Confidential Balance
+  // 2. p01_relayer -- Decentralized Relay Network
   // ===========================================================================
 
-  describe('2. p01_zkspl -- Confidential Balance', () => {
-    const PROG = PROGRAM_IDS.ZKSPL;
-    const SEEDS = {
-      ZKSPL_MINT: Buffer.from('zkspl_mint'),
-      ZKSPL_ACCOUNT: Buffer.from('zkspl_account'),
-      ZKSPL_VK: Buffer.from('zkspl_vk'),
-    };
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_zkspl deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('derives correct PDA seeds for mint config', () => {
-      const tokenMint = Keypair.generate().publicKey;
-      const [mintConfigPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.ZKSPL_MINT, tokenMint.toBuffer()],
-        PROG,
-      );
-      expect(mintConfigPDA).to.not.be.null;
-    });
-
-    it('derives unique PDAs for different mints', () => {
-      const mint1 = Keypair.generate().publicKey;
-      const mint2 = Keypair.generate().publicKey;
-      const [pda1] = PublicKey.findProgramAddressSync([SEEDS.ZKSPL_MINT, mint1.toBuffer()], PROG);
-      const [pda2] = PublicKey.findProgramAddressSync([SEEDS.ZKSPL_MINT, mint2.toBuffer()], PROG);
-      expect(pda1.toBase58()).to.not.equal(pda2.toBase58());
-    });
-
-    it('derives confidential account PDA for owner+mint', () => {
-      const owner = Keypair.generate().publicKey;
-      const mint = Keypair.generate().publicKey;
-      const [accountPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.ZKSPL_ACCOUNT, owner.toBuffer(), mint.toBuffer()],
-        PROG,
-      );
-      expect(accountPDA).to.not.be.null;
-    });
-
-    it('derives VK data PDA correctly', () => {
-      const mint = Keypair.generate().publicKey;
-      const [mintPDA] = PublicKey.findProgramAddressSync([SEEDS.ZKSPL_MINT, mint.toBuffer()], PROG);
-      const [vkPDA] = PublicKey.findProgramAddressSync([SEEDS.ZKSPL_VK, mintPDA.toBuffer()], PROG);
-      expect(vkPDA).to.not.be.null;
-    });
-
-    it('validates field modulus for BN254', () => {
-      const FIELD_MODULUS = BigInt(
-        '21888242871839275222246405745257275088548364400416034343698204186575808495617',
-      );
-      expect(FIELD_MODULUS > BigInt(0)).to.be.true;
-      // Values must be < FIELD_MODULUS for Groth16
-      const testValue = BigInt('12345678901234567890');
-      expect(testValue < FIELD_MODULUS).to.be.true;
-    });
-  });
-
-  // ===========================================================================
-  // 3. specter -- Stealth Payments v1/v2 + Streams
-  // ===========================================================================
-
-  describe('3. specter -- Stealth Payments v1/v2 + Streams', () => {
-    const PROG = PROGRAM_IDS.SPECTER;
-    const SEEDS = {
-      WALLET: Buffer.from('p01_wallet'),
-      STEALTH: Buffer.from('stealth'),
-      STREAM: Buffer.from('stream'),
-      ESCROW_AUTHORITY: Buffer.from('escrow_authority'),
-      STREAM_ESCROW: Buffer.from('stream_escrow'),
-    };
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    specter deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('init_wallet: derives wallet PDA correctly', () => {
-      const owner = Keypair.generate().publicKey;
-      const [walletPDA, bump] = PublicKey.findProgramAddressSync(
-        [SEEDS.WALLET, owner.toBuffer()],
-        PROG,
-      );
-      expect(walletPDA).to.not.be.null;
-      expect(bump).to.be.a('number');
-    });
-
-    it('send_private: derives stealth PDA for v1 X25519', () => {
-      const stealthAddr = randomBytes32();
-      const [stealthPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.STEALTH, stealthAddr],
-        PROG,
-      );
-      expect(stealthPDA).to.not.be.null;
-    });
-
-    it('send_private_v2: derives stealth PDA for hybrid X25519+ML-KEM', () => {
-      // v2 stealth addresses include ML-KEM ephemeral key material
-      const stealthAddr = randomBytes32();
-      const [stealthPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.STEALTH, stealthAddr],
-        PROG,
-      );
-      expect(stealthPDA).to.not.be.null;
-      // Unique from v1
-      const stealthAddr2 = randomBytes32();
-      const [stealthPDA2] = PublicKey.findProgramAddressSync(
-        [SEEDS.STEALTH, stealthAddr2],
-        PROG,
-      );
-      expect(stealthPDA.toBase58()).to.not.equal(stealthPDA2.toBase58());
-    });
-
-    it('create_stream: derives stream PDA', () => {
-      const sender = Keypair.generate().publicKey;
-      const recipient = Keypair.generate().publicKey;
-      const startTime = new BN(Math.floor(Date.now() / 1000));
-      const [streamPDA] = PublicKey.findProgramAddressSync(
-        [SEEDS.STREAM, sender.toBuffer(), recipient.toBuffer(), startTime.toArrayLike(Buffer, 'le', 8)],
-        PROG,
-      );
-      expect(streamPDA).to.not.be.null;
-    });
-
-    it('validates stream linear vesting calculations', () => {
-      function unlockedAmount(total: number, start: number, end: number, now: number): number {
-        if (now <= start) return 0;
-        if (now >= end) return total;
-        return Math.floor((total * (now - start)) / (end - start));
-      }
-      expect(unlockedAmount(1000, 100, 200, 50)).to.equal(0);
-      expect(unlockedAmount(1000, 100, 200, 150)).to.equal(500);
-      expect(unlockedAmount(1000, 100, 200, 200)).to.equal(1000);
-      expect(unlockedAmount(1000, 100, 200, 300)).to.equal(1000);
-    });
-
-    it('validates claim proof structure (Ed25519 64-byte signature)', () => {
-      const proof = Buffer.alloc(64, 0xab);
-      expect(proof.length).to.equal(64);
-    });
-  });
-
-  // ===========================================================================
-  // 4. p01_relayer -- Decentralized Relay Network
-  // ===========================================================================
-
-  describe('4. p01_relayer -- Decentralized Relay Network', () => {
+  describe('2. p01_relayer -- Decentralized Relay Network', () => {
     const PROG = PROGRAM_IDS.RELAYER;
 
     it('verifies program is deployed', async () => {
@@ -928,148 +611,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 5. p01_quantum_vault -- Quantum-Safe Vault (3 Layers)
+  // 3. p01_registry -- Stealth Meta-Address Directory
   // ===========================================================================
 
-  describe('5. p01_quantum_vault -- Quantum-Safe Vault (3 Layers)', () => {
-    const PROG = PROGRAM_IDS.QUANTUM_VAULT;
-    const SEEDS = {
-      WOTS_VAULT: Buffer.from('wots_vault'),
-      HASH_VAULT: Buffer.from('hash_vault'),
-      COMMIT: Buffer.from('commit'),
-    };
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_quantum_vault deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    describe('WOTS+ Vault', () => {
-      const masterSeed = sha256Hash(Buffer.from(`stress-wots-${TEST_RUN_ID}`));
-      const keypair0 = deriveWotsKeypair(masterSeed, 0);
-      const keypair1 = deriveWotsKeypair(masterSeed, 1);
-
-      it('generates valid WOTS+ keypair', () => {
-        expect(keypair0.publicKeyHash.length).to.equal(32);
-        expect(keypair0.secretKey.length).to.equal(WOTS_CHAINS * HASH_SIZE);
-        expect(keypair0.publicKey.length).to.equal(WOTS_CHAINS * HASH_SIZE);
-      });
-
-      it('derives wots vault PDA', () => {
-        const owner = Keypair.generate().publicKey;
-        const [vaultPDA] = PublicKey.findProgramAddressSync(
-          [SEEDS.WOTS_VAULT, owner.toBuffer()],
-          PROG,
-        );
-        expect(vaultPDA).to.not.be.null;
-      });
-
-      it('validates WOTS+ signature/verification cycle', () => {
-        const withdrawAmount = BigInt(2 * LAMPORTS_PER_SOL);
-        const destination = Keypair.generate().publicKey.toBytes();
-        const withdrawalCount = BigInt(0);
-
-        const message = computeWithdrawMessage(withdrawAmount, destination, withdrawalCount);
-        const sig = wotsSign(message, keypair0);
-
-        expect(sig.signature.length).to.equal(WOTS_CHAINS * HASH_SIZE);
-        expect(sig.publicKey.length).to.equal(WOTS_CHAINS * HASH_SIZE);
-
-        // Verify each chain: hash sig[i] (nibble times) should equal pubkey[i]
-        for (let i = 0; i < WOTS_CHAINS; i++) {
-          const byteIdx = Math.floor(i / 2);
-          const byte = message[byteIdx]!;
-          const nibble = i % 2 === 0 ? (byte >> 4) & 0x0f : byte & 0x0f;
-
-          let current: Uint8Array = new Uint8Array(sig.signature.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE));
-          for (let step = 0; step < nibble; step++) {
-            current = sha256Hash(current);
-          }
-          const expected = keypair0.publicKey.slice(i * HASH_SIZE, (i + 1) * HASH_SIZE);
-          expect(Buffer.from(current)).to.deep.equal(Buffer.from(expected));
-        }
-      });
-
-      it('rejects stale key (keypair0 after rotation to keypair1)', () => {
-        // After key rotation, keypair0 hash should NOT match keypair1 hash
-        expect(Buffer.from(keypair0.publicKeyHash)).to.not.deep.equal(
-          Buffer.from(keypair1.publicKeyHash),
-        );
-      });
-    });
-
-    describe('Hash-Timelock Vault', () => {
-      it('derives hash vault PDA', () => {
-        const owner = Keypair.generate().publicKey;
-        const [vaultPDA] = PublicKey.findProgramAddressSync(
-          [SEEDS.HASH_VAULT, owner.toBuffer()],
-          PROG,
-        );
-        expect(vaultPDA).to.not.be.null;
-      });
-
-      it('validates preimage commitment: SHA-256(secret) == commitment', () => {
-        const secret = new Uint8Array(32);
-        for (let i = 0; i < 32; i++) secret[i] = i + 1;
-        const commitment = sha256Hash(secret);
-        expect(commitment.length).to.equal(32);
-
-        // Wrong preimage should not match
-        const wrongSecret = new Uint8Array(32).fill(0xff);
-        const wrongHash = sha256Hash(wrongSecret);
-        expect(Buffer.from(wrongHash)).to.not.deep.equal(Buffer.from(commitment));
-      });
-
-      it('rejects claim without valid preimage', () => {
-        const secret = crypto.randomBytes(32);
-        const commitment = sha256Hash(secret);
-        const badPreimage = crypto.randomBytes(32);
-        const badHash = sha256Hash(badPreimage);
-        expect(Buffer.from(badHash)).to.not.deep.equal(Buffer.from(commitment));
-      });
-    });
-
-    describe('Commit-Reveal', () => {
-      it('derives commit PDA', () => {
-        const committer = Keypair.generate().publicKey;
-        const commitmentBytes = randomBytes32();
-        const [commitPda] = PublicKey.findProgramAddressSync(
-          [SEEDS.COMMIT, committer.toBuffer(), commitmentBytes],
-          PROG,
-        );
-        expect(commitPda).to.not.be.null;
-      });
-
-      it('validates commitment = SHA-256(action_data || nonce)', () => {
-        const actionData = Buffer.from('transfer:destination:1000000');
-        const nonce = crypto.randomBytes(32);
-        const commitment = sha256Hash(concatBytes(actionData, nonce));
-        expect(commitment.length).to.equal(32);
-
-        // Wrong data should mismatch
-        const wrongAction = Buffer.from('wrong_action');
-        const wrongCommitment = sha256Hash(concatBytes(wrongAction, nonce));
-        expect(Buffer.from(wrongCommitment)).to.not.deep.equal(Buffer.from(commitment));
-      });
-
-      it('rejects mismatched reveal', () => {
-        const action = Buffer.from('test');
-        const nonce = crypto.randomBytes(32);
-        const commitment = sha256Hash(concatBytes(action, nonce));
-        const wrongNonce = crypto.randomBytes(32);
-        const wrongCommitment = sha256Hash(concatBytes(action, wrongNonce));
-        expect(Buffer.from(wrongCommitment)).to.not.deep.equal(Buffer.from(commitment));
-      });
-    });
-  });
-
-  // ===========================================================================
-  // 6. p01_registry -- Stealth Meta-Address Directory
-  // ===========================================================================
-
-  describe('6. p01_registry -- Stealth Meta-Address Directory', () => {
+  describe('3. p01_registry -- Stealth Meta-Address Directory', () => {
     const PROG = PROGRAM_IDS.REGISTRY;
 
     it('verifies program is deployed', async () => {
@@ -1130,10 +675,10 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 7. p01_stark_verifier -- Multi-Circuit STARK Verifier
+  // 4. p01_stark_verifier -- Multi-Circuit STARK Verifier
   // ===========================================================================
 
-  describe('7. p01_stark_verifier -- Multi-Circuit STARK Verifier', () => {
+  describe('4. p01_stark_verifier -- Multi-Circuit STARK Verifier', () => {
     const program = new Program(STARK_IDL, provider);
     const authority = payer;
 
@@ -1331,426 +876,16 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
   });
 
   // ===========================================================================
-  // 8. p01_arcium -- MPC Confidential Computation
+  // 5. Concurrent Operations Stress
   // ===========================================================================
 
-  describe('8. p01_arcium -- MPC Confidential Computation', () => {
-    it('verifies program is deployed and accessible', async () => {
-      const accountInfo = await withRetry(() =>
-        connection.getAccountInfo(PROGRAM_IDS.ARCIUM),
-      );
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_arcium deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('verifies MXE account exists', async () => {
-      // MXE account PDA derived from program ID
-      const [mxeAddress] = PublicKey.findProgramAddressSync(
-        [Buffer.from('mxe')],
-        PROGRAM_IDS.ARCIUM,
-      );
-
-      const mxeAccount = await connection.getAccountInfo(mxeAddress);
-      if (mxeAccount) {
-        console.log(`    MXE account found: ${mxeAddress.toBase58()} (${mxeAccount.data.length} bytes)`);
-      } else {
-        console.log(`    MXE account not initialized at ${mxeAddress.toBase58()} (normal for fresh deploy)`);
-      }
-      // Note: actual MPC computation requires Arcium network running
-    });
-
-    it('derives proposal PDA for governance votes', () => {
-      const proposalId = crypto.randomBytes(32);
-      const [proposalPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('p01_proposal'), proposalId],
-        PROGRAM_IDS.ARCIUM,
-      );
-      expect(proposalPDA).to.not.be.null;
-    });
-
-    it('derives ballot PDA for voter', () => {
-      const proposalId = crypto.randomBytes(32);
-      const voter = Keypair.generate().publicKey;
-      const [ballotPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('p01_ballot'), proposalId, voter.toBuffer()],
-        PROGRAM_IDS.ARCIUM,
-      );
-      expect(ballotPDA).to.not.be.null;
-    });
-
-    it('derives nullifier set PDA', () => {
-      const poolId = crypto.randomBytes(32);
-      const [nullifierSetPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('p01_nullifier_set'), poolId],
-        PROGRAM_IDS.ARCIUM,
-      );
-      expect(nullifierSetPDA).to.not.be.null;
-    });
-  });
-
-  // ===========================================================================
-  // 9. p01_fee_splitter -- Fee Splitting
-  // ===========================================================================
-
-  describe('9. p01_fee_splitter -- Fee Splitting', () => {
-    const PROG = PROGRAM_IDS.FEE_SPLITTER;
-    const DEFAULT_FEE_BPS = 50;
-    const MAX_FEE_BPS = 500;
-    const MIN_TRANSFER_LAMPORTS = 10_000;
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_fee_splitter deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('derives FeeConfig PDA correctly', () => {
-      const [configPDA, bump] = PublicKey.findProgramAddressSync(
-        [Buffer.from('p01-fee-config')],
-        PROG,
-      );
-      expect(configPDA).to.not.be.null;
-      expect(bump).to.be.a('number');
-    });
-
-    it('split_sol_direct: calculates 0.5% fee correctly', () => {
-      const amount = BigInt(1_000_000_000); // 1 SOL
-      const fee = calculateFee(amount, DEFAULT_FEE_BPS);
-      expect(Number(fee)).to.equal(5_000_000); // 0.005 SOL
-    });
-
-    it('validates hardcoded PROTOCOL_FEE_WALLET constraint', () => {
-      const feeWallet = Keypair.generate().publicKey;
-      const wrongWallet = Keypair.generate().publicKey;
-      expect(feeWallet.toBase58()).to.not.equal(wrongWallet.toBase58());
-    });
-
-    it('rejects arbitrary fee wallet address', () => {
-      // Fee wallet must match the config's fee_wallet
-      const correctFeeWallet = Keypair.generate().publicKey;
-      const arbitraryWallet = Keypair.generate().publicKey;
-      expect(correctFeeWallet.toBase58()).to.not.equal(arbitraryWallet.toBase58());
-    });
-
-    it('correctly calculates fee for small amounts', () => {
-      const amount = BigInt(MIN_TRANSFER_LAMPORTS);
-      const fee = calculateFee(amount, DEFAULT_FEE_BPS);
-      expect(Number(fee)).to.equal(50); // 10000 * 50 / 10000 = 50 lamports
-    });
-
-    it('correctly calculates fee for large amounts', () => {
-      const amount = BigInt('18446744073709551615'); // max u64
-      const fee = calculateFee(amount, DEFAULT_FEE_BPS);
-      expect(fee > BigInt(0)).to.be.true;
-      // fee + recipient_amount == total
-      const recipientAmount = amount - fee;
-      expect(fee + recipientAmount === amount).to.be.true;
-    });
-
-    it('rejects fee_bps exceeding MAX_FEE_BPS', () => {
-      const invalidBps = [501, 1000, 10000];
-      for (const bps of invalidBps) {
-        expect(bps).to.be.greaterThan(MAX_FEE_BPS);
-      }
-    });
-
-    it('handles zero-fee case (0 bps)', () => {
-      const amount = BigInt(1_000_000_000);
-      const fee = calculateFee(amount, 0);
-      expect(Number(fee)).to.equal(0);
-    });
-  });
-
-  // ===========================================================================
-  // 10. p01_stream -- Payment Streams
-  // ===========================================================================
-
-  describe('10. p01_stream -- Payment Streams', () => {
-    const PROG = PROGRAM_IDS.STREAM;
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_stream deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('derives stream PDA for sender-recipient-mint', () => {
-      const sender = Keypair.generate().publicKey;
-      const recipient = Keypair.generate().publicKey;
-      const mint = Keypair.generate().publicKey;
-
-      const [streamPDA, bump] = PublicKey.findProgramAddressSync(
-        [Buffer.from('stream'), sender.toBuffer(), recipient.toBuffer(), mint.toBuffer()],
-        PROG,
-      );
-      expect(streamPDA).to.not.be.null;
-      expect(bump).to.be.a('number');
-    });
-
-    it('create_stream: validates interval-based parameters', () => {
-      const amountPerInterval = 1_000_000;
-      const intervalSeconds = 3600;
-      const totalIntervals = 24;
-      expect(amountPerInterval).to.be.greaterThan(0);
-      expect(intervalSeconds).to.be.greaterThan(0);
-      expect(totalIntervals).to.be.greaterThan(0);
-    });
-
-    it('withdraw_from_stream: calculates elapsed intervals correctly', () => {
-      function intervalsElapsed(lastAt: number, now: number, interval: number): number {
-        return Math.floor((now - lastAt) / interval);
-      }
-      expect(intervalsElapsed(1000, 10000, 3600)).to.equal(2);
-      expect(intervalsElapsed(0, 259200, 86400)).to.equal(3);
-      expect(intervalsElapsed(0, 1800, 3600)).to.equal(0);
-    });
-
-    it('cancel_stream: calculates refund correctly', () => {
-      const amountPerInterval = 1_000_000;
-      const totalIntervals = 10;
-      const intervalsPaid = 4;
-      const remaining = totalIntervals - intervalsPaid;
-      const refund = amountPerInterval * remaining;
-      expect(refund).to.equal(6_000_000);
-    });
-
-    it('rejects withdrawal before interval elapsed', () => {
-      const lastWithdrawalAt = 1000;
-      const currentTime = 1500;
-      const intervalSeconds = 3600;
-      const elapsed = Math.floor((currentTime - lastWithdrawalAt) / intervalSeconds);
-      expect(elapsed).to.equal(0);
-    });
-
-    it('handles multiple concurrent streams (different PDAs)', () => {
-      const sender = Keypair.generate().publicKey;
-      const recipient = Keypair.generate().publicKey;
-      const mint1 = Keypair.generate().publicKey;
-      const mint2 = Keypair.generate().publicKey;
-      const mint3 = Keypair.generate().publicKey;
-
-      const pdas = [mint1, mint2, mint3].map((mint) =>
-        PublicKey.findProgramAddressSync(
-          [Buffer.from('stream'), sender.toBuffer(), recipient.toBuffer(), mint.toBuffer()],
-          PROG,
-        )[0],
-      );
-
-      const uniquePdas = new Set(pdas.map((p) => p.toBase58()));
-      expect(uniquePdas.size).to.equal(3);
-    });
-
-    it('simulates full lifecycle: create -> withdraw -> complete', () => {
-      const amountPerInterval = 100;
-      const totalIntervals = 3;
-      let intervalsPaid = 0;
-
-      intervalsPaid += 2;
-      expect(intervalsPaid).to.equal(2);
-
-      intervalsPaid += 1;
-      expect(intervalsPaid).to.equal(3);
-      expect(intervalsPaid >= totalIntervals).to.be.true;
-    });
-  });
-
-  // ===========================================================================
-  // 11. p01_subscription -- Recurring Payments
-  // ===========================================================================
-
-  describe('11. p01_subscription -- Recurring Payments', () => {
-    const PROG = PROGRAM_IDS.SUBSCRIPTION;
-
-    enum SubscriptionStatus {
-      Active = 0,
-      Paused = 1,
-      Cancelled = 2,
-      Completed = 3,
-    }
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_subscription deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('derives subscription PDA for subscriber-merchant-id', () => {
-      const subscriber = Keypair.generate().publicKey;
-      const merchant = Keypair.generate().publicKey;
-      const subscriptionId = 'sub_001';
-      const [subPDA] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from('subscription'),
-          subscriber.toBuffer(),
-          merchant.toBuffer(),
-          Buffer.from(subscriptionId),
-        ],
-        PROG,
-      );
-      expect(subPDA).to.not.be.null;
-    });
-
-    it('create_subscription: validates amount and interval', () => {
-      const amount = 1_000_000;
-      const interval = 86400;
-      expect(amount).to.be.greaterThan(0);
-      expect(interval).to.be.at.least(60);
-    });
-
-    it('process_payment: rejects early payment', () => {
-      const nextPaymentDue = 2000;
-      const currentTime = 1500;
-      expect(currentTime < nextPaymentDue).to.be.true;
-    });
-
-    it('pause_subscription / resume_subscription: state transitions', () => {
-      let status = SubscriptionStatus.Active;
-      status = SubscriptionStatus.Paused;
-      expect(status).to.equal(SubscriptionStatus.Paused);
-      status = SubscriptionStatus.Active;
-      expect(status).to.equal(SubscriptionStatus.Active);
-    });
-
-    it('update_privacy_settings: validates noise bounds', () => {
-      expect(0).to.be.at.most(20); // amount_noise max
-      expect(20).to.be.at.most(20);
-      expect(21).to.be.greaterThan(20);
-      expect(0).to.be.at.most(24); // timing_noise max
-      expect(24).to.be.at.most(24);
-      expect(25).to.be.greaterThan(24);
-    });
-
-    it('cancel_subscription: revokes delegation', () => {
-      let status = SubscriptionStatus.Active;
-      status = SubscriptionStatus.Cancelled;
-      expect(status).to.equal(SubscriptionStatus.Cancelled);
-    });
-
-    it('close_subscription: only allowed for cancelled/completed', () => {
-      const canClose = (s: SubscriptionStatus) =>
-        s === SubscriptionStatus.Cancelled || s === SubscriptionStatus.Completed;
-      expect(canClose(SubscriptionStatus.Cancelled)).to.be.true;
-      expect(canClose(SubscriptionStatus.Completed)).to.be.true;
-      expect(canClose(SubscriptionStatus.Active)).to.be.false;
-      expect(canClose(SubscriptionStatus.Paused)).to.be.false;
-    });
-
-    it('simulates full lifecycle: create -> process x3 -> complete', () => {
-      const maxPayments = 3;
-      let paymentsMade = 0;
-      let status = SubscriptionStatus.Active;
-
-      for (let i = 0; i < 3; i++) {
-        paymentsMade += 1;
-        if (maxPayments > 0 && paymentsMade >= maxPayments) {
-          status = SubscriptionStatus.Completed;
-        }
-      }
-      expect(paymentsMade).to.equal(3);
-      expect(status).to.equal(SubscriptionStatus.Completed);
-    });
-  });
-
-  // ===========================================================================
-  // 12. p01_whitelist -- Developer Access Control
-  // ===========================================================================
-
-  describe('12. p01_whitelist -- Developer Access Control', () => {
-    const PROG = PROGRAM_IDS.WHITELIST;
-
-    enum WhitelistStatus {
-      Pending = 0,
-      Approved = 1,
-      Rejected = 2,
-      Revoked = 3,
-    }
-
-    it('verifies program is deployed', async () => {
-      const accountInfo = await withRetry(() => connection.getAccountInfo(PROG));
-      expect(accountInfo).to.not.be.null;
-      expect(accountInfo!.executable).to.be.true;
-      console.log(`    p01_whitelist deployed: ${accountInfo!.data.length} bytes`);
-    });
-
-    it('derives whitelist PDA (global config)', () => {
-      const [whitelistPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('whitelist')],
-        PROG,
-      );
-      expect(whitelistPDA).to.not.be.null;
-    });
-
-    it('derives entry PDA for developer', () => {
-      const developer = Keypair.generate().publicKey;
-      const [entryPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('entry'), developer.toBuffer()],
-        PROG,
-      );
-      expect(entryPDA).to.not.be.null;
-    });
-
-    it('request_access: validates IPFS CID length (max 64)', () => {
-      const validCid = 'QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG';
-      expect(validCid.length).to.be.at.most(64);
-      const tooLongCid = 'Q'.repeat(65);
-      expect(tooLongCid.length).to.be.greaterThan(64);
-    });
-
-    it('approve_request: requires Pending status', () => {
-      const status = WhitelistStatus.Approved;
-      expect(status).to.not.equal(WhitelistStatus.Pending);
-    });
-
-    it('check_access: returns true only for Approved entries', () => {
-      const isApproved = (s: WhitelistStatus) => s === WhitelistStatus.Approved;
-      expect(isApproved(WhitelistStatus.Approved)).to.be.true;
-      expect(isApproved(WhitelistStatus.Pending)).to.be.false;
-      expect(isApproved(WhitelistStatus.Rejected)).to.be.false;
-      expect(isApproved(WhitelistStatus.Revoked)).to.be.false;
-    });
-
-    it('revoke_access: transitions Approved -> Revoked', () => {
-      let status = WhitelistStatus.Approved;
-      status = WhitelistStatus.Revoked;
-      expect(status).to.equal(WhitelistStatus.Revoked);
-    });
-
-    it('reject_request: validates reason length (max 128)', () => {
-      const validReason = 'Project does not meet privacy requirements';
-      expect(validReason.length).to.be.at.most(128);
-      const tooLong = 'X'.repeat(129);
-      expect(tooLong.length).to.be.greaterThan(128);
-    });
-
-    it('state machine: valid transitions only', () => {
-      // Pending -> Approved -> Revoked (valid)
-      let status = WhitelistStatus.Pending;
-      status = WhitelistStatus.Approved;
-      status = WhitelistStatus.Revoked;
-      expect(status).to.equal(WhitelistStatus.Revoked);
-
-      // Rejected -> Approved should NOT be allowed (not Pending)
-      const rejected: number = WhitelistStatus.Rejected;
-      expect(rejected === (WhitelistStatus.Pending as number)).to.be.false;
-    });
-  });
-
-  // ===========================================================================
-  // 14. Concurrent Operations Stress
-  // ===========================================================================
-
-  describe('13. Concurrent Operations Stress', () => {
-    it('handles 5 simultaneous program deployment checks', async () => {
+  describe('5. Concurrent Operations Stress', () => {
+    it('handles 4 simultaneous program deployment checks', async () => {
       const programs = [
         PROGRAM_IDS.ZK_SHIELDED,
-        PROGRAM_IDS.SPECTER,
         PROGRAM_IDS.RELAYER,
-        PROGRAM_IDS.QUANTUM_VAULT,
         PROGRAM_IDS.REGISTRY,
+        PROGRAM_IDS.STARK_VERIFIER,
       ];
 
       const results = await Promise.all(
@@ -1763,64 +898,7 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
         expect(results[i]).to.not.be.null;
         expect(results[i]!.executable).to.be.true;
       }
-      console.log(`    All 5 programs verified as deployed concurrently`);
-    });
-
-    it('handles 3 concurrent PDA derivations across programs', () => {
-      const owner = Keypair.generate().publicKey;
-
-      // Derive PDAs from 3 different programs simultaneously
-      const [walletPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('p01_wallet'), owner.toBuffer()],
-        PROGRAM_IDS.SPECTER,
-      );
-      const [registryPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('user_registry'), owner.toBuffer()],
-        PROGRAM_IDS.REGISTRY,
-      );
-      const [wotsVaultPDA] = PublicKey.findProgramAddressSync(
-        [Buffer.from('wots_vault'), owner.toBuffer()],
-        PROGRAM_IDS.QUANTUM_VAULT,
-      );
-
-      // All PDAs should be unique (different programs, different seeds)
-      const pdaSet = new Set([
-        walletPDA.toBase58(),
-        registryPDA.toBase58(),
-        wotsVaultPDA.toBase58(),
-      ]);
-      expect(pdaSet.size).to.equal(3);
-    });
-
-    it('handles rapid subscription create+cancel cycle validation', () => {
-      const amountPerPeriod = 1_000_000;
-      const intervalSeconds = 3600;
-      const maxPayments = 12;
-
-      // Simulate rapid lifecycle transitions
-      const cycles = 5;
-      for (let i = 0; i < cycles; i++) {
-        let status = 0; // Active
-        let paymentsMade = 0;
-
-        // Create (Active)
-        expect(status).to.equal(0);
-
-        // Maybe process one payment
-        if (i % 2 === 0) {
-          paymentsMade += 1;
-          expect(paymentsMade).to.equal(1);
-        }
-
-        // Cancel
-        status = 2; // Cancelled
-        expect(status).to.equal(2);
-
-        // Close
-        const canClose = status === 2 || status === 3;
-        expect(canClose).to.be.true;
-      }
-      console.log(`    ${cycles} rapid create+cancel cycles validated`);
+      console.log(`    All 4 programs verified as deployed concurrently`);
     });
 
     it('handles 5 simultaneous shield commitment generations', () => {
@@ -1834,35 +912,14 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
       expect(uniqueSet.size).to.equal(5);
       console.log(`    5 unique shield commitments generated`);
     });
-
-    it('handles concurrent stream PDA derivation (3 streams)', () => {
-      const sender = Keypair.generate().publicKey;
-      const recipients = [
-        Keypair.generate().publicKey,
-        Keypair.generate().publicKey,
-        Keypair.generate().publicKey,
-      ];
-      const mint = Keypair.generate().publicKey;
-
-      const pdas = recipients.map((r) =>
-        PublicKey.findProgramAddressSync(
-          [Buffer.from('stream'), sender.toBuffer(), r.toBuffer(), mint.toBuffer()],
-          PROGRAM_IDS.STREAM,
-        )[0],
-      );
-
-      const uniquePdas = new Set(pdas.map((p) => p.toBase58()));
-      expect(uniquePdas.size).to.equal(3);
-      console.log(`    3 concurrent stream PDAs derived (all unique)`);
-    });
   });
 
   // ===========================================================================
-  // 15. Cross-Program Invariants
+  // 6. Cross-Program Invariants
   // ===========================================================================
 
-  describe('14. Cross-Program Invariants', () => {
-    it('all 13 programs are deployed and executable', async () => {
+  describe('6. Cross-Program Invariants', () => {
+    it('every program in PROGRAM_IDS is deployed and executable', async () => {
       const entries = Object.entries(PROGRAM_IDS);
       const results = await Promise.all(
         entries.map(async ([name, pubkey]) => {
@@ -1897,7 +954,7 @@ describe('STRESS TEST: All 12+ On-Chain Programs', function () {
       // Different program, same seed => different PDA
       const [fakePDA] = PublicKey.findProgramAddressSync(
         [Buffer.from('user_registry'), owner.toBuffer()],
-        PROGRAM_IDS.SPECTER,
+        PROGRAM_IDS.ZK_SHIELDED,
       );
 
       expect(registryPDA.toBase58()).to.not.equal(fakePDA.toBase58());

@@ -1,6 +1,4 @@
 # External projects / hackathon repos (not part of Protocol-01)
-arcium-auction-rtg/
-arcium-review/
 p01-ows-zkkyc/
 protocol-01-video/
 
@@ -71,6 +69,8 @@ apps/mobile/android/app/build/
 # leaves the directory readable, and the two `!` rules below then work.
 /scripts/*
 !/scripts/ci/
+!/scripts/ci/workflow-pins.test.mjs
+!/scripts/ci/sync-all-injection.test.mjs
 !/scripts/bench/
 /services/
 /tools/*
@@ -285,7 +285,6 @@ docs/lp-simulation.md
 docs/migration-plan.md
 docs/on-chain-migration.md
 docs/stark-migration-assessment.md
-docs/assets/screenshots/SCREENSHOTS_A_PRENDRE.md
 
 # Demo service retailer keypairs — regenerated per env, never commit
 scripts/seed-services/keypairs/

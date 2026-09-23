@@ -1,11 +1,11 @@
 /**
  * STRESS TEST: Cryptographic Primitives & SDK
  *
- * Off-chain comprehensive test of ALL crypto primitives used by Protocol-01.
- * Covers: Poseidon, stealth addresses (v1 + v2), WOTS+, hash-timelock,
- * commit-reveal, note commitment/nullifier, Merkle tree, viewing keys,
- * note encryption, amount hash, balance commitment, NaCl secretbox/box,
- * SHA-256, Ed25519->X25519 conversion, HKDF, RPC config, and edge cases.
+ * Off-chain test of the crypto primitives in the live specter-sdk and
+ * rpc-config packages: Poseidon, stealth addresses (v1 + v2), WOTS+,
+ * hash-timelock, commit-reveal, NaCl secretbox/box, SHA-256,
+ * Ed25519->X25519 conversion, HKDF, RPC config, and edge cases.
+ * (The zk-sdk and privacy-toolkit sections were removed with those packages.)
  *
  * Run:
  *   ts-mocha -p tsconfig.test.json tests/stress-crypto-sdk.test.ts --timeout 300000
@@ -20,9 +20,7 @@ import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { poseidon2, poseidon4 } from 'poseidon-lite';
 
 // BigInt-safe chai helpers (chai .greaterThan/.lessThan don't support BigInt)
-function expectGt(a: bigint, b: bigint) { expect(a > b).to.be.true; }
 function expectLt(a: bigint, b: bigint) { expect(a < b).to.be.true; }
-function expectGte(a: bigint, b: bigint) { expect(a >= b).to.be.true; }
 
 // ── specter-sdk: crypto utilities ──
 import {
@@ -84,40 +82,6 @@ import {
   generateNonce,
   computeCommitment as computeCommitRevealCommitment,
 } from '../packages/specter-sdk/src/quantum/helpers';
-
-// ── privacy-toolkit: Poseidon commitment, amount hash, balance commitment ──
-import {
-  createCommitment as ptCreateCommitment,
-  computeNullifier as ptComputeNullifier,
-  createBalanceCommitment,
-  deriveOwnerPubkey as ptDeriveOwnerPubkey,
-} from '../packages/privacy-toolkit/src/commitment/poseidon';
-import { createAmountHash, zeroAmountHash } from '../packages/privacy-toolkit/src/commitment/amountHash';
-import { randomFieldElement, generateSecret } from '../packages/privacy-toolkit/src/utils/random';
-
-// ── zk-sdk: Merkle tree, note, circuit helpers ──
-import { MerkleTree } from '../packages/zk-sdk/src/merkle/index';
-import {
-  poseidonHash as zkPoseidonHash,
-  computeCommitment as zkComputeCommitment,
-  computeNullifier as zkComputeNullifier,
-  FIELD_MODULUS,
-  bytesToField,
-  fieldToBytes,
-} from '../packages/zk-sdk/src/circuits/index';
-import { ZERO_VALUE, MERKLE_TREE_DEPTH } from '../packages/zk-sdk/src/constants';
-import {
-  Note,
-  createNote,
-  encryptNote,
-  decryptNote,
-  generateSpendingKeyPair,
-} from '../packages/zk-sdk/src/notes/index';
-
-// ── zk-sdk: viewing keys ──
-// Note: viewKeys.ts functions call async poseidonHash without await (circomlibjs),
-// so they return Promises inside objects. We test viewing key derivation using
-// poseidon-lite (synchronous) directly, which produces identical results.
 
 // ── rpc-config ──
 import {
@@ -633,384 +597,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 7. Note Commitment & Nullifier (ZK-SDK)
+  // 7. NaCl Encryption (Secretbox)
   // ─────────────────────────────────────────────────────────────
-  describe('7. Note Commitment & Nullifier (ZK-SDK)', () => {
-    it('commitment = Poseidon(amount, owner, randomness, token)', async () => {
-      const amount = 1000n;
-      const owner = 12345n;
-      const randomness = 67890n;
-      const token = 11111n;
-      const c = await zkComputeCommitment(amount, owner, randomness, token);
-      expect(typeof c).to.equal('bigint');
-
-      expectLt(c, BN254_P);
-    });
-
-    it('nullifier = Poseidon(commitment, spendingKeyHash)', async () => {
-      const commitment = 99999n;
-      const skHash = 11111n;
-      const nullifier = await zkComputeNullifier(commitment, skHash);
-      expect(typeof nullifier).to.equal('bigint');
-
-    });
-
-    it('same inputs -> same commitment (deterministic)', async () => {
-      const c1 = await zkComputeCommitment(100n, 200n, 300n, 400n);
-      const c2 = await zkComputeCommitment(100n, 200n, 300n, 400n);
-      expect(c1).to.equal(c2);
-    });
-
-    it('different randomness -> different commitment', async () => {
-      const c1 = await zkComputeCommitment(100n, 200n, 300n, 400n);
-      const c2 = await zkComputeCommitment(100n, 200n, 301n, 400n);
-      expect(c1).to.not.equal(c2);
-    });
-
-    it('nullifier uniqueness: 100 random nullifiers all unique', async () => {
-      const nullifiers = new Set<string>();
-      for (let i = 0; i < 100; i++) {
-        const n = await zkComputeNullifier(BigInt(i + 1), BigInt(i * 7 + 3));
-        nullifiers.add(n.toString());
-      }
-      expect(nullifiers.size).to.equal(100);
-    });
-
-    it('commitment within BN254 field', async () => {
-      const c = await zkComputeCommitment(
-        BN254_P - 1n,
-        BN254_P - 2n,
-        BN254_P - 3n,
-        BN254_P - 4n
-      );
-
-      expectLt(c, BN254_P);
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // 8. Merkle Tree (Sparse, Poseidon)
-  // ─────────────────────────────────────────────────────────────
-  describe('8. Merkle Tree (Sparse, Poseidon)', () => {
-    it('empty tree has known zero root', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      expect(tree.root).to.be.a('bigint');
-
-      expect(tree.leafCount).to.equal(0);
-    });
-
-    it('insert single leaf -> updated root', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      const emptyRoot = tree.root;
-      tree.insert(42n);
-      expect(tree.root).to.not.equal(emptyRoot);
-      expect(tree.leafCount).to.equal(1);
-    });
-
-    it('insert 10 leaves -> consistent root', async () => {
-      const tree1 = new MerkleTree(20);
-      await tree1.initialize();
-      const tree2 = new MerkleTree(20);
-      await tree2.initialize();
-
-      for (let i = 0; i < 10; i++) {
-        tree1.insert(BigInt(i + 1));
-        tree2.insert(BigInt(i + 1));
-      }
-
-      expect(tree1.root).to.equal(tree2.root);
-      expect(tree1.leafCount).to.equal(10);
-    });
-
-    it('generate proof for leaf at index 0', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      tree.insert(42n);
-      const proof = tree.generateProof(0);
-      expect(proof.pathIndices).to.have.lengthOf(20);
-      expect(proof.pathElements).to.have.lengthOf(20);
-      expect(proof.leafIndex).to.equal(0);
-    });
-
-    it('verify valid proof', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      tree.insert(42n);
-      const proof = tree.generateProof(0);
-      const valid = tree.verifyProof(proof, 42n, tree.root);
-      expect(valid).to.be.true;
-    });
-
-    it('reject proof for wrong leaf', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      tree.insert(42n);
-      const proof = tree.generateProof(0);
-      const valid = tree.verifyProof(proof, 43n, tree.root);
-      expect(valid).to.be.false;
-    });
-
-    it('reject proof with wrong root', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      tree.insert(42n);
-      const proof = tree.generateProof(0);
-      const valid = tree.verifyProof(proof, 42n, 99999n);
-      expect(valid).to.be.false;
-    });
-
-    it('tree depth 20 handles inserts correctly', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      // Insert a few leaves — we can't insert 2^20 in a test but we verify depth
-      for (let i = 0; i < 20; i++) {
-        tree.insert(BigInt(i + 1));
-      }
-      expect(tree.leafCount).to.equal(20);
-      const proof = tree.generateProof(19);
-      expect(proof.pathElements).to.have.lengthOf(20);
-    });
-
-    it('50 sequential inserts maintain valid roots', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-
-      for (let i = 0; i < 50; i++) {
-        tree.insert(BigInt(i + 100));
-        const proof = tree.generateProof(i);
-        const valid = tree.verifyProof(proof, BigInt(i + 100), tree.root);
-        expect(valid).to.be.true;
-      }
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // 9. Viewing Key Derivation
-  // ─────────────────────────────────────────────────────────────
-  describe('9. Viewing Key Derivation', () => {
-    // Note: generateSpendingKey and deriveFullViewingKey in viewKeys.ts call
-    // poseidonHash which is async (returns Promise<bigint>). The functions
-    // themselves are NOT marked async, so the returned values contain Promises
-    // rather than resolved bigints. We use the privacy-toolkit Poseidon
-    // (poseidon-lite, synchronous) directly for these tests.
-
-    it('derives full viewing key components from spending key', () => {
-      const sk = 12345678n;
-      const publicKey = poseidon2([sk, 0n]);
-
-      // Derive FVK components using the same domain separators as viewKeys.ts
-      const DOMAIN_FVK = 1n;
-      const DOMAIN_OVK = 3n;
-      const DOMAIN_DK = 4n;
-
-      // poseidonHash in viewKeys uses 2 or 3 inputs
-      // ak = poseidonHash([sk, DOMAIN_FVK, 1n]) — 3 inputs not supported by poseidon2
-      // We'll use poseidon from poseidon-lite which supports variable inputs
-      // poseidon-lite has poseidon2, poseidon4, but not poseidon3.
-      // The viewKeys.ts code uses poseidonHash from circomlibjs which supports any arity.
-      // For this test, we verify the structure is valid.
-
-      expect(publicKey).to.be.a('bigint');
-
-      expectLt(publicKey, BN254_P);
-    });
-
-    it('derives incoming viewing key from FVK', async () => {
-      // Use circomlibjs-based async poseidonHash from zk-sdk
-      const sk = 12345678n;
-      const publicKey = await zkPoseidonHash([sk, 0n]);
-
-      const ak = await zkPoseidonHash([sk, 1n, 1n]);
-      const nk = await zkPoseidonHash([sk, 1n, 2n]);
-      const ovk = await zkPoseidonHash([sk, 3n]);
-      const dk = await zkPoseidonHash([sk, 4n]);
-
-      // Derive IVK from ak and nk
-      const ivk = await zkPoseidonHash([ak, nk, 2n]);
-
-      expect(ivk).to.be.a('bigint');
-
-      expect(ivk).to.not.equal(ak);
-      expect(ivk).to.not.equal(nk);
-    });
-
-    it('consistent across multiple derivations', async () => {
-      const sk = 999n;
-      const pk1 = await zkPoseidonHash([sk, 0n]);
-      const pk2 = await zkPoseidonHash([sk, 0n]);
-      expect(pk1).to.equal(pk2);
-    });
-
-    it('different spending keys -> different FVKs', async () => {
-      const pk1 = await zkPoseidonHash([111n, 0n]);
-      const pk2 = await zkPoseidonHash([222n, 0n]);
-      expect(pk1).to.not.equal(pk2);
-
-      const ak1 = await zkPoseidonHash([111n, 1n, 1n]);
-      const ak2 = await zkPoseidonHash([222n, 1n, 1n]);
-      expect(ak1).to.not.equal(ak2);
-    });
-
-    it('owner pubkey = Poseidon(sk, 0)', async () => {
-      const sk = 42n;
-      const ownerPubkey = await zkPoseidonHash([sk, 0n]);
-      const ownerPubkey2 = poseidon2([sk, 0n]);
-      // circomlibjs and poseidon-lite should produce same results
-      expect(ownerPubkey).to.equal(ownerPubkey2);
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // 10. Note Encryption/Decryption
-  // ─────────────────────────────────────────────────────────────
-  describe('10. Note Encryption/Decryption', () => {
-    it('encrypt note -> decrypt roundtrip', async () => {
-      const viewingKeypair = nacl.box.keyPair();
-      const note = await createNote(1000n, 12345n, 67890n, 99999n);
-
-      const encrypted = encryptNote(note, viewingKeypair.publicKey);
-      const decrypted = decryptNote(encrypted, viewingKeypair.secretKey);
-
-      expect(decrypted).to.not.be.null;
-      expect(decrypted!.amount).to.equal(note.amount);
-      expect(decrypted!.ownerPubkey).to.equal(note.ownerPubkey);
-      expect(decrypted!.randomness).to.equal(note.randomness);
-      expect(decrypted!.tokenMint).to.equal(note.tokenMint);
-    });
-
-    it('encrypted note != plaintext', async () => {
-      const viewingKeypair = nacl.box.keyPair();
-      const note = await createNote(1000n, 12345n, 67890n);
-
-      const encrypted = encryptNote(note, viewingKeypair.publicKey);
-      expect(encrypted.ciphertext.length).to.be.greaterThan(0);
-      // Ciphertext should not contain raw amount bytes
-      const amountBytes = fieldToBytes(1000n);
-      const ciphertextHex = toHex(encrypted.ciphertext);
-      const amountHex = toHex(amountBytes.slice(0, 8));
-      // Very unlikely to match randomly
-      expect(encrypted.ciphertext.length).to.not.equal(128);
-    });
-
-    it('wrong key fails decryption (MAC check)', async () => {
-      const viewingKeypair = nacl.box.keyPair();
-      const wrongKeypair = nacl.box.keyPair();
-      const note = await createNote(500n, 111n, 222n);
-
-      const encrypted = encryptNote(note, viewingKeypair.publicKey);
-      const decrypted = decryptNote(encrypted, wrongKeypair.secretKey);
-      expect(decrypted).to.be.null;
-    });
-
-    it('v2 notes include MAC (additive masking + Poseidon MAC)', () => {
-      // Reproduce viewKeys.ts encryptFieldWithMac logic using poseidon-lite (sync)
-      const decryptionKey = 42n;
-      const amount = 1000n;
-      const randomness = 2000n;
-
-      // Encrypt amount: mask = Poseidon(key, 0), mac = Poseidon(key, 0, encrypted)
-      const maskAmount = poseidon2([decryptionKey, 0n]);
-      const encAmount = (amount + maskAmount) % BN254_P;
-      // poseidon-lite doesn't have poseidon3 — use poseidon4 with a padding zero
-      // Actually, viewKeys.ts calls poseidonHash([key, index, encrypted]) which is 3-input
-      // poseidon-lite only exports poseidon2..poseidon16, but not poseidon3
-      // We verify the structure: encrypted is a valid field element
-      expect(typeof encAmount).to.equal('bigint');
-
-      expectLt(encAmount, BN254_P);
-
-      // Decrypt: plain = (encrypted - mask + P) mod P
-      const decAmount = (encAmount - maskAmount + BN254_P) % BN254_P;
-      expect(decAmount).to.equal(amount);
-
-      // Same for randomness with index=1
-      const maskRand = poseidon2([decryptionKey, 1n]);
-      const encRand = (randomness + maskRand) % BN254_P;
-      const decRand = (encRand - maskRand + BN254_P) % BN254_P;
-      expect(decRand).to.equal(randomness);
-    });
-
-    it('100 encrypt/decrypt cycles', async () => {
-      const viewingKeypair = nacl.box.keyPair();
-      for (let i = 0; i < 100; i++) {
-        const note = await createNote(BigInt(i + 1), BigInt(i * 7), BigInt(i * 13));
-        const encrypted = encryptNote(note, viewingKeypair.publicKey);
-        const decrypted = decryptNote(encrypted, viewingKeypair.secretKey);
-        expect(decrypted).to.not.be.null;
-        expect(decrypted!.amount).to.equal(BigInt(i + 1));
-      }
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // 11. Amount Hash (Privacy Toolkit)
-  // ─────────────────────────────────────────────────────────────
-  describe('11. Amount Hash (Privacy Toolkit)', () => {
-    it('amountHash = Poseidon(amount, salt)', () => {
-      const h = createAmountHash(100n, 42n);
-      const expected = poseidon2([100n, 42n]);
-      expect(h).to.equal(expected);
-    });
-
-    it('same amount + same salt = same hash', () => {
-      const h1 = createAmountHash(500n, 999n);
-      const h2 = createAmountHash(500n, 999n);
-      expect(h1).to.equal(h2);
-    });
-
-    it('different salt = different hash', () => {
-      const h1 = createAmountHash(500n, 111n);
-      const h2 = createAmountHash(500n, 222n);
-      expect(h1).to.not.equal(h2);
-    });
-
-    it('hash is deterministic', () => {
-      const hashes: bigint[] = [];
-      for (let i = 0; i < 10; i++) {
-        hashes.push(createAmountHash(42n, 7n));
-      }
-      expect(new Set(hashes.map(h => h.toString())).size).to.equal(1);
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // 12. Balance Commitment (Privacy Toolkit)
-  // ─────────────────────────────────────────────────────────────
-  describe('12. Balance Commitment (Privacy Toolkit)', () => {
-    it('commitment = Poseidon(balance, Poseidon(salt, nonce), owner, token)', () => {
-      const balance = 1000n;
-      const salt = 42n;
-      const nonce = 7n;
-      const owner = 123n;
-      const token = 456n;
-
-      const c = createBalanceCommitment(balance, salt, nonce, owner, token);
-
-      // Manual verification
-      const augSalt = poseidon2([salt, nonce]);
-      const expected = poseidon4([balance, augSalt, owner, token]);
-      expect(c).to.equal(expected);
-    });
-
-    it('different nonce = different commitment', () => {
-      const c1 = createBalanceCommitment(1000n, 42n, 1n, 123n, 456n);
-      const c2 = createBalanceCommitment(1000n, 42n, 2n, 123n, 456n);
-      expect(c1).to.not.equal(c2);
-    });
-
-    it('commitment is within field', () => {
-      const c = createBalanceCommitment(BN254_P - 1n, 0n, 0n, 0n, 0n);
-
-      expectLt(c, BN254_P);
-    });
-  });
-
-  // ─────────────────────────────────────────────────────────────
-  // 13. NaCl Encryption (Secretbox)
-  // ─────────────────────────────────────────────────────────────
-  describe('13. NaCl Encryption (Secretbox)', () => {
+  describe('7. NaCl Encryption (Secretbox)', () => {
     it('encrypt/decrypt roundtrip with secretbox', () => {
       const key = randomSeed();
       const plaintext = new TextEncoder().encode('Hello, Protocol 01!');
@@ -1059,9 +648,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 14. NaCl Box (ECDH Encryption)
+  // 8. NaCl Box (ECDH Encryption)
   // ─────────────────────────────────────────────────────────────
-  describe('14. NaCl Box (ECDH Encryption)', () => {
+  describe('8. NaCl Box (ECDH Encryption)', () => {
     it('box: sender encrypts, recipient decrypts', () => {
       const sender = nacl.box.keyPair();
       const recipient = nacl.box.keyPair();
@@ -1113,9 +702,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 15. SHA-256 & Constant-Time Comparison
+  // 9. SHA-256 & Constant-Time Comparison
   // ─────────────────────────────────────────────────────────────
-  describe('15. SHA-256 & Constant-Time Comparison', () => {
+  describe('9. SHA-256 & Constant-Time Comparison', () => {
     it('SHA-256 matches known test vectors', () => {
       // SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
       const emptyHash = hash(new Uint8Array(0));
@@ -1157,9 +746,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 16. Ed25519 -> X25519 Conversion
+  // 10. Ed25519 -> X25519 Conversion
   // ─────────────────────────────────────────────────────────────
-  describe('16. Ed25519 -> X25519 Conversion', () => {
+  describe('10. Ed25519 -> X25519 Conversion', () => {
     it('converts Ed25519 public key to X25519', () => {
       const edKeypair = nacl.sign.keyPair();
       const x25519Pub = ed25519PublicKeyToX25519(edKeypair.publicKey);
@@ -1202,9 +791,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 17. HKDF Key Derivation
+  // 11. HKDF Key Derivation
   // ─────────────────────────────────────────────────────────────
-  describe('17. HKDF Key Derivation', () => {
+  describe('11. HKDF Key Derivation', () => {
     it('produces 32-byte key from shared secret', () => {
       const sharedSecret = randomSeed();
       const key = deriveKey(sharedSecret, 'test-info', 32);
@@ -1234,9 +823,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 18. RPC Config (@protocol-01/rpc-config)
+  // 12. RPC Config (@protocol-01/rpc-config)
   // ─────────────────────────────────────────────────────────────
-  describe('18. RPC Config (@protocol-01/rpc-config)', () => {
+  describe('12. RPC Config (@protocol-01/rpc-config)', () => {
     it('getEndpoints returns sorted by priority', () => {
       const eps = getEndpoints('devnet');
       expect(eps.length).to.be.greaterThanOrEqual(1);
@@ -1327,9 +916,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 19. Amount Noise (Privacy)
+  // 13. Amount Noise (Privacy)
   // ─────────────────────────────────────────────────────────────
-  describe('19. Amount Noise (Privacy)', () => {
+  describe('13. Amount Noise (Privacy)', () => {
     // Simple noise application: add random noise within +/- percentage
     function applyNoise(amount: number, pct: number): number {
       const noise = (Math.random() * 2 - 1) * pct * amount;
@@ -1410,9 +999,9 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 20. Edge Cases & Adversarial Inputs
+  // 14. Edge Cases & Adversarial Inputs
   // ─────────────────────────────────────────────────────────────
-  describe('20. Edge Cases & Adversarial Inputs', () => {
+  describe('14. Edge Cases & Adversarial Inputs', () => {
     it('Poseidon: max field value (p-1)', () => {
       const pMinus1 = BN254_P - 1n;
       const h = poseidon2([pMinus1, pMinus1]);
@@ -1434,17 +1023,6 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
       expect(wotsVerify(message, sig, kp.publicKeyHash)).to.be.true;
     });
 
-    it('Merkle: proof at high index', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-      // Insert at specific index
-      tree.insertAt(1000, 42n);
-      const proof = tree.generateProof(1000);
-      expect(proof.pathElements).to.have.lengthOf(20);
-      const valid = tree.verifyProof(proof, 42n, tree.root);
-      expect(valid).to.be.true;
-    });
-
     it('stealth: self-payment (sender = recipient meta-address)', () => {
       const kp = nacl.box.keyPair();
       const kem = kemGenerateKeypair();
@@ -1453,31 +1031,12 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
       const stealth = generateStealthAddress(meta);
       expect(stealth.address).to.be.instanceOf(PublicKey);
     });
-
-    it('commitment: amount = 0', () => {
-      const c = ptCreateCommitment(0n, 42n, 7n, 1n);
-      expect(c).to.be.a('bigint');
-
-    });
-
-    it('commitment: max u64 amount', () => {
-      const maxU64 = (1n << 64n) - 1n;
-      const c = ptCreateCommitment(maxU64, 42n, 7n, 1n);
-
-      expectLt(c, BN254_P);
-    });
-
-    it('nullifier: reuse prevention (same preimage -> same nullifier)', () => {
-      const n1 = ptComputeNullifier(42n, 7n);
-      const n2 = ptComputeNullifier(42n, 7n);
-      expect(n1).to.equal(n2);
-    });
   });
 
   // ─────────────────────────────────────────────────────────────
-  // 21. Performance Benchmarks
+  // 15. Performance Benchmarks
   // ─────────────────────────────────────────────────────────────
-  describe('21. Performance Benchmarks', () => {
+  describe('15. Performance Benchmarks', () => {
     it('Poseidon 2-input: 1000 hashes < 5s', () => {
       const start = Date.now();
       for (let i = 0; i < 1000; i++) {
@@ -1537,34 +1096,6 @@ describe('STRESS TEST: Cryptographic Primitives & SDK', function () {
       const elapsed = Date.now() - start;
       console.log(`    WOTS+ sign+verify x50: ${elapsed}ms`);
       expect(elapsed).to.be.lessThan(10000);
-    });
-
-    it('Merkle insert+proof: 100 < 10s', async () => {
-      const tree = new MerkleTree(20);
-      await tree.initialize();
-
-      const start = Date.now();
-      for (let i = 0; i < 100; i++) {
-        tree.insert(BigInt(i + 1));
-        tree.generateProof(i);
-      }
-      const elapsed = Date.now() - start;
-      console.log(`    Merkle insert+proof x100: ${elapsed}ms`);
-      expect(elapsed).to.be.lessThan(10000);
-    });
-
-    it('Note encrypt/decrypt: 1000 < 5s', async () => {
-      const viewingKeypair = nacl.box.keyPair();
-      const note = await createNote(1000n, 12345n, 67890n, 42n);
-
-      const start = Date.now();
-      for (let i = 0; i < 1000; i++) {
-        const enc = encryptNote(note, viewingKeypair.publicKey);
-        decryptNote(enc, viewingKeypair.secretKey);
-      }
-      const elapsed = Date.now() - start;
-      console.log(`    Note encrypt/decrypt x1000: ${elapsed}ms`);
-      expect(elapsed).to.be.lessThan(5000);
     });
   });
 });

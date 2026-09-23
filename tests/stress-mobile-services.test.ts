@@ -2,7 +2,7 @@
  * STRESS TEST: Mobile Services & Crypto Utils
  *
  * Tests the TypeScript service layer (connection, crypto, STARK instructions,
- * Arcium MPC, denominated pool, BLE sharing) without requiring React Native.
+ * denominated pool, BLE sharing) without requiring React Native.
  *
  * All RN-specific APIs (expo-secure-store, expo-crypto, expo-clipboard, etc.)
  * are mocked with Node.js equivalents before any source modules are loaded.
@@ -1302,87 +1302,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 8. Arcium MPC Client
+  // 8. Receipt Serialization
   // =========================================================================
-  describe('8. Arcium MPC Client', () => {
-    it('MPC client module structure is valid', () => {
-      // We cannot import the real mpcClient (depends on walletStore, arcium-sdk, etc.)
-      // Instead, verify the expected interface matches what we know from the source.
-      const expectedFunctions = [
-        'getMpcClient', 'resetMpcClient', 'getMpcInitError',
-        'isMpcClientReady', 'getProxyIdentifier', 'getProxyPDA',
-        'getArciumProgram',
-      ];
-      // Just verify we can construct the expected types
-      for (const fn of expectedFunctions) {
-        assert.isString(fn);
-      }
-    });
-
-    it('getProxyIdentifier concept: SHA-256 returns 32-byte hash', () => {
-      // Test the concept: proxy identifier is SHA-256 of session key
-      const sessionKey = crypto.randomBytes(32);
-      const hash = crypto.createHash('sha256').update(sessionKey).digest();
-      assert.lengthOf(hash, 32);
-    });
-
-    it('getProxyPDA concept: PDA derivation from 32-byte seed', () => {
-      const seed = crypto.randomBytes(32);
-      const programId = new PublicKey('FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT');
-      const [pda, bump] = PublicKey.findProgramAddressSync(
-        [Buffer.from('proxy'), seed],
-        programId,
-      );
-      assert.doesNotThrow(() => pda.toBase58());
-      assert.isAtLeast(bump, 0);
-      assert.isAtMost(bump, 255);
-    });
-
-    it('debug logs are __DEV__ gated', () => {
-      // __DEV__ is set to false in our test env
-      assert.isFalse((global as any).__DEV__);
-      // The source code gates console.log with `if (__DEV__)`
-      // so in production/test mode, no debug logging occurs
-    });
-
-    it('Anchor discriminator: SHA-256("global:<name>")[0..8]', () => {
-      // Test the discriminator derivation used by mpcClient
-      const methodName = 'commit_nullifier';
-      const snakeName = methodName; // already snake_case
-      const hash = sha256(new TextEncoder().encode(`global:${snakeName}`));
-      const disc = hash.slice(0, 8);
-      assert.lengthOf(disc, 8);
-    });
-
-    it('privateLookup registry PDA derivation', () => {
-      const targetWallet = Keypair.generate().publicKey;
-      const registryProgramId = new PublicKey('QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB');
-      const [pda] = PublicKey.findProgramAddressSync(
-        [Buffer.from('user_registry'), targetWallet.toBuffer()],
-        registryProgramId,
-      );
-      assert.doesNotThrow(() => pda.toBase58());
-    });
-
-    it('wallet adapter supports signAllTransactions', () => {
-      const kp = Keypair.generate();
-      const adapter = {
-        publicKey: kp.publicKey,
-        signTransaction: async (tx: Transaction) => { tx.sign(kp); return tx; },
-        signAllTransactions: async (txs: Transaction[]) => {
-          for (const tx of txs) tx.sign(kp);
-          return txs;
-        },
-      };
-      assert.isFunction(adapter.signTransaction);
-      assert.isFunction(adapter.signAllTransactions);
-    });
-  });
-
-  // =========================================================================
-  // 9. Receipt Serialization
-  // =========================================================================
-  describe('9. Receipt Serialization', () => {
+  describe('8. Receipt Serialization', () => {
     function makeTestReceipt(): ShieldReceipt {
       const secret = BigInt('0x' + crypto.randomBytes(16).toString('hex'));
       const nullifierPreimage = BigInt('0x' + crypto.randomBytes(16).toString('hex'));
@@ -1492,9 +1414,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 10. Store Logic (Unit Tests)
+  // 9. Store Logic (Unit Tests)
   // =========================================================================
-  describe('10. Store Logic (Unit Tests)', () => {
+  describe('9. Store Logic (Unit Tests)', () => {
     it('note deduplication: removes duplicate commitments', () => {
       const notes = [
         { id: '1', commitment: '111', status: 'mature' },
@@ -1576,9 +1498,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 11. Clipboard Auto-Clear
+  // 10. Clipboard Auto-Clear
   // =========================================================================
-  describe('11. Clipboard Auto-Clear', () => {
+  describe('10. Clipboard Auto-Clear', () => {
     afterEach(() => {
       if (_clipboardTimerId) {
         clearTimeout(_clipboardTimerId);
@@ -1644,9 +1566,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 12. Session Security
+  // 11. Session Security
   // =========================================================================
-  describe('12. Session Security', () => {
+  describe('11. Session Security', () => {
     it('session timeout triggers lock after configured period', () => {
       const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
       const lastActivity = Date.now() - (6 * 60 * 1000); // 6 minutes ago
@@ -1684,9 +1606,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 13. Multi-Provider AI (Logic Only)
+  // 12. Multi-Provider AI (Logic Only)
   // =========================================================================
-  describe('13. Multi-Provider AI (Logic Only)', () => {
+  describe('12. Multi-Provider AI (Logic Only)', () => {
     it('provider priority: Groq -> Gemini -> Llama', () => {
       const providers = ['groq', 'gemini', 'llama'];
       assert.equal(providers[0], 'groq');
@@ -1757,9 +1679,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 14. BLE/NFC Sharing Crypto
+  // 13. BLE/NFC Sharing Crypto
   // =========================================================================
-  describe('14. BLE/NFC Sharing Crypto', () => {
+  describe('13. BLE/NFC Sharing Crypto', () => {
     it('session key generation: random 32 bytes', () => {
       const kp = generateEphemeralKeyPair();
       assert.lengthOf(kp.publicKey, 32);
@@ -1898,9 +1820,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 15. Edge Cases & Error Handling
+  // 14. Edge Cases & Error Handling
   // =========================================================================
-  describe('15. Edge Cases & Error Handling', () => {
+  describe('14. Edge Cases & Error Handling', () => {
     it('vault decrypt of non-encrypted string passes through', () => {
       const vault = new NoteVault();
       vault.unlockWithKey(new Uint8Array(32));
@@ -1984,9 +1906,9 @@ describe('STRESS TEST: Mobile Services & Crypto Utils', function () {
   });
 
   // =========================================================================
-  // 16. Performance Benchmarks
+  // 15. Performance Benchmarks
   // =========================================================================
-  describe('16. Performance Benchmarks', () => {
+  describe('15. Performance Benchmarks', () => {
     it('vault encrypt/decrypt 1000 notes < 5s', async () => {
       _secureStoreMap.clear();
       const vault = new NoteVault();

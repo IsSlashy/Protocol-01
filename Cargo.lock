@@ -1942,37 +1942,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "p01-stream"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
-]
-
-[[package]]
-name = "p01-subscription"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
-]
-
-[[package]]
-name = "p01-whitelist"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
-]
-
-[[package]]
-name = "p01_liquidity"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "solana-sha256-hasher 2.3.0",
-]
-
-[[package]]
 name = "p01_registry"
 version = "0.1.0"
 dependencies = [
@@ -2004,16 +1973,6 @@ dependencies = [
  "solana-signer 3.0.1",
  "solana-transaction",
  "solana-transaction-error 3.3.1",
-]
-
-[[package]]
-name = "p01_zkspl"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "anchor-spl",
- "bytemuck",
- "solana-sha256-hasher 2.3.0",
 ]
 
 [[package]]

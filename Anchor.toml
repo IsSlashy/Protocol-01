@@ -6,38 +6,19 @@ solana_version = "3.1.9"
 resolution = true
 skip-lint = false
 
-# Scope `anchor build` to skip p01_arcium. Anchor scans programs/* by default;
-# p01_arcium needs Arcium's .arcis artifacts (produced by `arcium build`, not in
-# CI) so a bare `anchor build` fails to expand its macros. It is already excluded
-# from the Cargo workspace; this mirrors that for Anchor's program discovery.
-[workspace]
-exclude = ["programs/p01_arcium", "programs/p01_arcium/encrypted-ixs"]
-
 [programs.devnet]
 p01_registry = "QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB"
 p01_relayer = "2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW"
 p01_stark_verifier = "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs"
-p01_stream = "C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx"
-p01_subscription = "3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW"
-p01_whitelist = "5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33"
-p01_zkspl = "AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT"
 zk_shielded = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c"
 
 [programs.localnet]
 p01_registry = "QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB"
 p01_relayer = "2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW"
 p01_stark_verifier = "DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs"
-p01_stream = "2yH26XmXwgPuHMvV1NbmgJin32rfP3msQt18W6168mws"
-p01_subscription = "5kDjD9LSB1j8V6yKsZLC9NmnQ11PPvAY6Ryz4ucRC5Pt"
-p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
-p01_zkspl = "EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah"
 zk_shielded = "GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c"
 
 [programs.mainnet]
-p01_stream = "2ko4FQSTj3Bqrmy3nvWeGx1KEhs5f2dFCy7JYY6wyxbs"
-p01_subscription = "Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS"
-p01_whitelist = "AjHD9r4VubPvxJapd5zztf1Yqym1QYiZaQ4SF5h3FPQE"
-p01_zkspl = "EqppogLBFqoVfYR2t6WVswaGo7cHxvWmgsgLDnaUPpah"
 zk_shielded = "8dK17NxQUFPWsLg7eJphiCjSyVfBk2ywC5GU6ctK4qrY"
 
 [registry]

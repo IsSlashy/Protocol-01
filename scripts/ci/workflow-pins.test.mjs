@@ -1,9 +1,8 @@
 // Tests for every workflow under .github/workflows that holds a secret.
 // Run: node --test scripts/ci/workflow-pins.test.mjs
 //
-// Audit v1, finding F43 (and the F12 residual). run-settler.yml was fixed in
-// round 2 (scripts/ci/run-settler-pins.test.mjs), but the other workflows that
-// hold a secret still ran code chosen on the day of the run:
+// Audit v1, finding F43 (and the F12 residual). The workflows that hold a
+// secret ran code chosen on the day of the run:
 //
 //   - third-party actions referenced by a MOVING ref (`actions/checkout@v4`,
 //     `pnpm/action-setup@v2`, `dtolnay/rust-toolchain@stable`, and
@@ -15,9 +14,10 @@
 //     .../anchor avm` (the default branch HEAD) beside SOLANA_KEYPAIR, and
 //     `npx` in the restock steps, which fetches from the registry whenever the
 //     name does not resolve in the installed tree.
-//   - deploy-anchor.yml used `dtolnay/rust-action@stable`, a repository that
-//     does not exist under that name: whoever registers it runs next to the
-//     program-upgrade key.
+//   - a deploy workflow (deploy-anchor.yml, deleted 2026-09-23 with the
+//     programs it deployed) used `dtolnay/rust-action@stable`, a repository
+//     that does not exist under that name: whoever registers it runs next to
+//     the program-upgrade key.
 //
 // The rules below apply to every workflow whose text references `secrets.`.
 
@@ -34,8 +34,7 @@ const PNPM = String(pkg.packageManager ?? '').replace(/^pnpm@/, '');
 
 const indentOf = (l) => l.length - l.trimStart().length;
 
-// Same step parser as run-settler-pins.test.mjs, for the YAML subset these
-// workflows use: `- name:` / `- uses:` / `- run:` opens a step; `run:` (inline
+// A step parser for the YAML subset these workflows use: `- name:` / `- uses:` / `- run:` opens a step; `run:` (inline
 // or `|` block), `uses:`, `with:` and `env:` maps sit at the step's key indent.
 function parseSteps(text) {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
@@ -140,7 +139,7 @@ const SHA = /^[0-9a-f]{40}$/;
 
 test('the secret-holding workflows are the ones this file expects', () => {
   const names = SECRET_WORKFLOWS.map((w) => w.file).sort();
-  for (const must of ['ci.yml', 'deploy-anchor.yml', 'deploy-web.yml', 'restock-inventory.yml', 'run-settler.yml', 'settle-till.yml', 'sync-all.yml', 'sync-repos.yml']) {
+  for (const must of ['ci.yml', 'deploy-web.yml', 'restock-inventory.yml', 'settle-till.yml', 'sync-all.yml', 'sync-repos.yml']) {
     assert.ok(names.includes(must), `${must} no longer references a secret, or was renamed: review this test (found ${names.join(', ')})`);
   }
 });

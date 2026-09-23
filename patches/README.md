@@ -1,32 +1,18 @@
 # patches/
 
-This directory holds two categories of files.
+Patches consumed by the `pnpm.patchedDependencies` field of the root
+`package.json`. pnpm applies them on every `pnpm install`:
 
-## pnpm patchedDependencies
-
-Patches consumed by the `pnpm.patchedDependencies` field in the root
-`package.json`. They are applied automatically on every `pnpm install`:
-
-- `llama.rn@0.11.2.patch`
 - `react-native-worklets@0.8.1.patch`
-- `react-native-ble-plx@3.5.0.patch`
 
-The companion script `patch-arcium-client.js` is a postinstall step that
-patches `@arcium-hq/client` after dependencies are resolved.
+That is the only patch wired today. Anything else dropped in this directory is
+not applied unless it is also listed in `pnpm.patchedDependencies`.
 
-## Brace-expansion runtime backups (incident 2026-04-28)
+Two earlier workarounds no longer live here:
 
-The following loose `.js` files are backups of an in-memory fix applied
-during a gradle build incident in late April 2026, where `balanced-match@4`
-was hoisted under `brace-expansion@1` and broke its function-export
-contract:
-
-- `brace-expansion-codegen.js` — patched `index.js` for `brace-expansion@1`
-- `babel-helper-compilation-targets-index.js` — Babel internal CommonJS
-  module captured at the time of the incident
-- `babel-plugin-module-resolver-normalizeOptions.js` — same
-
-These files are NOT yet wired into `pnpm.patchedDependencies`. Promoting
-the brace-expansion fix to a formal `pnpm patch brace-expansion@1.1.12`
-is a TODO for the next maintenance pass; until then, keep these as
-historical references for anyone debugging a similar regression.
+- the `brace-expansion@1` incident of 2026-04-28 is fixed by the root
+  `pnpm.overrides` entry `"brace-expansion@1>balanced-match": "1.0.2"`, so the
+  loose `.js` backups captured during that incident were removed on 2026-09-23;
+- the `react-native-ble-plx` `SafePromise` crash is handled in the Android app
+  (`MainApplication.kt`, RxJava error handler); the old `@3.5.0` patch targeted
+  a version the lockfile no longer resolves and was removed on 2026-09-23.

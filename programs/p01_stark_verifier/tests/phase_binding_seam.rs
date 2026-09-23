@@ -185,17 +185,19 @@ fn the_verifier_arity_equals_what_every_consumer_rebuilds() {
     let consumers: [(u8, usize, &str); 8] = [
         (0, 1, "p01_quantum_wallet::state::commitment_public_input_bytes \
                 (8 bytes = 1 u64); zk_shielded pause/resume/cancel_private_stark"),
-        // [2026-08-25] `p01_liquidity::prefund` moved here from the C6 row. It
-        // was attributed to circuit 6 and it pins `circuit_id == 1`
-        // (`prefund.rs:28,121`) and rebuilds `sha256(nullifier_u64 ||
-        // commitment_u64)` — two felts, C1's arity, not five.
+        // [2026-09-23] `p01_liquidity::prefund` (a second C1 consumer) left
+        // this row with the p01_liquidity program, deleted from the tree.
         (1, 2, "zk_shielded::{subscribe,split_note,unshield_denominated_v3,\
-                transfer_denominated_v3}_stark, p01_liquidity::prefund \
-                -> [nullifier, commitment]"),
-        (2, 2, "p01_zkspl::prove_balance -> [balance_commitment, token_mint]"),
+                transfer_denominated_v3}_stark -> [nullifier, commitment]"),
+        // [2026-09-23] C2 and C4 have no consumer in the tree since p01_zkspl
+        // was deleted. The deployed verifier still accepts both ids, so their
+        // arities stay pinned here until the v2 verifier drops them.
+        (2, 2, "no in-tree consumer (was p01_zkspl::prove_balance) \
+                -> [balance_commitment, token_mint]"),
         (3, 3, "zk_shielded::{subscribe,split_note,unshield_denominated_v3,\
                 transfer_denominated_v3}_stark -> [leaf, root, depth=15]"),
-        (4, 4, "p01_zkspl::{deposit,withdraw,apply_pending,confidential_transfer} \
+        (4, 4, "no in-tree consumer (was p01_zkspl::{deposit,withdraw,\
+                apply_pending,confidential_transfer}) \
                 -> [old_commitment, new_commitment, amount_hash, token_mint]"),
         (5, 6, "zk_shielded::{transfer,unshield}_stark -> [n1, n2, oc1, oc2, \
                 public_amount, token_mint]"),
@@ -298,7 +300,8 @@ fn the_phase_two_flag_is_the_last_byte_before_the_proof_data() {
     assert_eq!(ProofBuffer::PROOF_DATA_OFFSET, 83);
     // A consumer whose minimum length is 82 cannot observe byte 82 at all — no
     // gate it writes against phase 2 could ever fire. `p01_zkspl` and
-    // `p01_liquidity` were both moved off 82 for this reason.
+    // `p01_liquidity` were both moved off 82 for this reason (both programs
+    // were deleted from the tree on 2026-09-23).
     assert_eq!(ProofBuffer::PROOF_DATA_OFFSET - 1, 82);
 
     // Every field gets a value no other field could produce, so a swap is
@@ -362,10 +365,11 @@ fn the_phase_two_flag_is_the_last_byte_before_the_proof_data() {
 /// **This is a SOURCE scan, and it is worth exactly what it reads.** It cannot
 /// tell whether a `require!` is on a reachable path, whether it guards the
 /// right buffer when an instruction reads several, or whether the bytecode
-/// deployed to devnet matches this tree. The instruction-level gates live in
+/// deployed to devnet matches this tree. The instruction-level gates lived in
 /// `p01_zkspl/tests/deep_ali_gate.rs` and `p01_liquidity/tests/deep_ali_gate.rs`
-/// (litesvm, real `.so`); this one exists because those cover two programs and
-/// a new consumer can be added to any of the four.
+/// (litesvm, real `.so`), and both programs left the tree on 2026-09-23; this
+/// one exists because a new consumer can be added to any program under
+/// `programs/`.
 ///
 /// What it does buy: the trigger is the hard-coded `ProofBuffer` discriminator,
 /// which a new consumer CANNOT omit — reading the account requires it. So the
@@ -511,13 +515,15 @@ fn no_consumer_requires_phase_one_without_phase_two() {
         }
     }
 
-    // 15 files hard-code the discriminator; 2 of them are the commented-out v2
-    // handlers, leaving 13 live consumers across 4 programs. The floor is what
-    // stops a trigger or layout change from turning this into a green that
-    // scans nothing.
+    // [2026-09-23] 12 live consumers, all in zk_shielded, plus the 2
+    // commented-out v2 handlers counted as dormant. The 13th,
+    // `p01_liquidity/src/instructions/prefund.rs`, left the tree with its
+    // program, so the floor moved from 13 to 12 in the same change. The floor
+    // is what stops a trigger or layout change from turning this into a green
+    // that scans nothing.
     assert!(
-        checked.len() >= 13,
-        "expected at least 13 live ProofBuffer consumers under programs/*/src, found {}: \
+        checked.len() >= 12,
+        "expected at least 12 live ProofBuffer consumers under programs/*/src, found {}: \
          {checked:#?} (dormant: {dormant:#?}). The scan found too few files — the trigger \
          or the tree layout changed and this guard has stopped guarding.",
         checked.len()

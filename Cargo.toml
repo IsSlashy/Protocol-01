@@ -1,25 +1,12 @@
 [workspace]
 members = [
     "programs/zk_shielded",
-    "programs/stream",
-    "programs/subscription",
-    "programs/whitelist",
-    "programs/p01_zkspl",
     "programs/p01_relayer",
     "programs/p01_stark_verifier",
     "programs/p01_registry",
-    "programs/p01_liquidity",
     "stark",
     # [A8] dev-only feature shim; see stark/test-support/Cargo.toml.
     "stark/test-support",
-]
-# p01_arcium pulls arcium-primitives → serde_with 3.18 → time 0.3.47 which
-# requires edition2024, incompatible with Solana SBF cargo 1.84. The program
-# is not on the critical path; build it standalone with its own toolchain
-# via `cd programs/p01_arcium && cargo build` if needed.
-exclude = [
-    "programs/p01_arcium",
-    "programs/p01_arcium/encrypted-ixs",
 ]
 
 resolver = "2"
@@ -54,15 +41,6 @@ borsh = "1.5"
 # Common utilities
 thiserror = "1.0"
 bytemuck = { version = "1.14", features = ["derive"] }
-
-# ZK dependencies for shielded transactions
-ark-bn254 = "0.4.0"
-ark-groth16 = "0.4.0"
-ark-serialize = "0.4.0"
-ark-ff = "0.4.0"
-ark-ec = "0.4.0"
-ark-std = "0.4.0"
-sha3 = "0.10"
 
 # Pin blake3 to avoid edition2024 (Solana platform-tools cargo is 1.84)
 blake3 = "=1.8.2"

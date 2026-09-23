@@ -190,15 +190,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-target-
 
-      # p01-arcium is excluded because its Arcium macros
-      # (init_computation_definition_accounts, queue_computation_accounts,
-      # callback_accounts, arcium_callback) read .arcis bytecode files from
-      # programs/p01_arcium/build/ at proc-macro expansion time. Those files
-      # are produced by `arcium build` (Arcium CLI / Arcis compiler), not by
-      # cargo, and are gitignored. CI does not have the Arcium toolchain.
-      # Local devs run `arcium build` once, then `cargo check` works there.
-      - name: cargo check (workspace, excl. p01-arcium)
-        run: cargo check --workspace --all-targets --exclude p01-arcium --exclude encrypted-ixs
+      - name: cargo check (workspace)
+        run: cargo check --workspace --all-targets
 
       # 🚨 THE SHIPPED PROVER IS NOT COVERED BY THE STEP ABOVE, and it took a
       # broken build to notice. `mod wasm_api` is behind `#[cfg(feature =
@@ -756,9 +749,8 @@ jobs:
 
       # Also node-builtins only, so also here. The workflows that hold a secret
       # reference every action by commit SHA and install no tool at a floating
-      # version (audit v1 F43); the settler installs from the lockfile only;
-      # sync-all passes the commit subject through env, never inline in a script
-      # (F12). Before this step those three files ran only inside the manual
-      # workflow they check, or nowhere.
+      # version (audit v1 F43); sync-all passes the commit subject through env,
+      # never inline in a script (F12). Before this step those files ran only
+      # inside the manual workflow they check, or nowhere.
       - name: Workflow hygiene — pinned actions and tools beside secrets
-        run: node --test scripts/ci/workflow-pins.test.mjs scripts/ci/run-settler-pins.test.mjs scripts/ci/sync-all-injection.test.mjs
+        run: node --test scripts/ci/workflow-pins.test.mjs scripts/ci/sync-all-injection.test.mjs

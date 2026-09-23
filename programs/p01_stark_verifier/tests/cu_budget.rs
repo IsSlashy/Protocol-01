@@ -245,9 +245,9 @@ fn repo_root() -> PathBuf {
 /// `CARGO_TARGET_DIR` (so it never contends for the target lock held by the
 /// `cargo test` that invoked it, and never reads or writes anchor's
 /// `target/deploy/`), cached on a content fingerprint of `src/` AND of the
-/// compiler that will consume it. Same mechanism as
-/// `p01_liquidity`/`p01_zkspl`'s `deep_ali_gate` harnesses, plus the compiler
-/// term — see `build_fingerprint`.
+/// compiler that will consume it. Same mechanism as the `deep_ali_gate`
+/// harnesses of `p01_liquidity`/`p01_zkspl` (both programs deleted from the
+/// tree on 2026-09-23), plus the compiler term — see `build_fingerprint`.
 ///
 /// `P01_VERIFIER_SO` still points the harness at a prebuilt artifact — that is
 /// the "measure exactly what is on devnet" use case and it is legitimate — but
