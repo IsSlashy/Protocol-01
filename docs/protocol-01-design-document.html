@@ -900,8 +900,9 @@ pre {
     Engineering, not research. The unique&#8209;decoding column moves with the query
     count. The conjectured one is floor bound by the 64&#8209;bit challenge, so a
     wider challenge is a design direction, not a result. Both cost compute: the
-    last accepted circuit&#8209;7 verification used 889,691 units (blob d5583d41,
-    slot 501,407,541) of the 1,400,000 a transaction allows, and that ceiling is
+    last accepted circuit&#8209;7 verification used 1,083,301 units in one
+    transaction (phase 1 889,882, phase 2 193,269; blob 241caaab, slot
+    502,692,190) of the 1,400,000 a transaction allows, and that ceiling is
     fixed.
   </p>
 </div>
@@ -1243,12 +1244,13 @@ pre {
   <div class="headrule"></div>
 
   <div class="eyebrow">Programs on devnet</div>
-  <h2>Four programs carry the product. Six resolve at the address they declare.</h2>
+  <h2>Four programs carry the product. They are the only ones left in the repository.</h2>
 
   <p class="lede">
-    Ten program directories sit in the repository. Six of them resolve to an
-    executable devnet account at the exact address their own declare_id! names,
-    read on 14 September 2026. Four of those six are on the path a payment takes.
+    Four program directories sit in the repository, down from ten on
+    23 September 2026. Each resolves to an executable devnet account at the
+    exact address its own declare_id! names, read on 14 September 2026, and all
+    four are on the path a payment takes.
   </p>
 
   <table>
@@ -1286,18 +1288,6 @@ pre {
         <td>Relay jobs and heartbeat</td>
         <td class="n">product</td>
       </tr>
-      <tr>
-        <td class="m">p01_arcium</td>
-        <td class="m">FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT</td>
-        <td>MPC bridge; no client calls it</td>
-        <td class="n faint">off path</td>
-      </tr>
-      <tr>
-        <td class="m">p01_liquidity</td>
-        <td class="m">6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg</td>
-        <td>Instant-unshield liquidity pool</td>
-        <td class="n faint">off path</td>
-      </tr>
     </tbody>
   </table>
 
@@ -1319,20 +1309,23 @@ pre {
     Closing a program is irreversible; the rent came back to the upgrade
     authority and the four crates left the repository the same day
     (HANDOFF-2026-09-13 §11 and §12). Stealth announcements and payment
-    streams, which specter carried, are parked until a replacement ships.
+    streams, which specter carried, have no on&#8209;chain replacement.
   </p>
 
-  <h4>Declared, and not deployed</h4>
+  <h4>Removed from the repository, 23 September 2026</h4>
 
+  <div class="row"><span class="row-key">p01_arcium</span><span class="row-lead"></span><span class="row-val">FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT</span></div>
+  <div class="row"><span class="row-key">p01_liquidity</span><span class="row-lead"></span><span class="row-val">6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg</span></div>
   <div class="row"><span class="row-key">p01_zkspl</span><span class="row-lead"></span><span class="row-val">AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT</span></div>
   <div class="row"><span class="row-key">subscription</span><span class="row-lead"></span><span class="row-val">3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW</span></div>
   <div class="row"><span class="row-key">stream</span><span class="row-lead"></span><span class="row-val">C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx</span></div>
   <div class="row"><span class="row-key">whitelist</span><span class="row-lead"></span><span class="row-val">5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33</span></div>
 
   <p style="margin-top:3mm;">
-    Those four addresses return null on devnet: nothing is deployed where the
-    source says it is. The recurring payment path that does run lives inside
-    zk_shielded.
+    No shipping flow called any of the six. The MPC bridge was closed on devnet
+    on 2026-09-22 (slot 502,629,197); the liquidity pool is still deployed, deactivated,
+    and called by nothing; the last four addresses never held a program on
+    devnet. The recurring payment path that does run lives inside zk_shielded.
   </p>
 
   <div class="admission">
@@ -1354,7 +1347,7 @@ pre {
   <div class="headrule"></div>
 
   <div class="eyebrow">Packages</div>
-  <h2>Twelve packages install from npm. Seven days is not a track record.</h2>
+  <h2>Seven packages ship from this repository. Seven days is not a track record.</h2>
 
   <p class="lede">
     The client surface is published under the @protocol-01 scope on the public
@@ -1385,8 +1378,11 @@ pre {
   <p class="note" style="margin-top:2.5mm;">
     Four more names carry the scope: an authentication helper, an RPC helper, one
     left over from an integration removed in July 2026 and not yet deprecated,
-    and streams 0.1.0, an orphan with no directory in the repository. Four
-    packages that are in the repository are unpublished.
+    and streams 0.1.0, an orphan with no directory in the repository. On
+    23 September 2026 the source of privacy-toolkit, zk-sdk, zkspl-sdk and that
+    left-over helper was deleted from the repository, since nothing in the
+    product used them; their npm versions stay as published. The repository
+    now holds eight packages: seven published, and pay-core, unpublished.
   </p>
 
   <div class="cols">
@@ -1412,9 +1408,10 @@ pre {
   <p style="margin-top:4.5mm;">
     The prover blob inside stark-prover 0.1.3 on npm is 229,640 bytes with
     sha256 51a947e3, and specter-sdk 0.4.3 ships the identical blob. Since
-    20 September 2026 the working tree carries a newer blob,
-    262,363 bytes, digest d5583d41, from which the redeployed verifier accepted
-    a circuit-7 proof on devnet (slot 501407541; deployed-verifier.json); stark-prover 0.2.0, privacy-sdk 2.0.0 and
+    23 September 2026 the repository carries a newer blob,
+    240,172 bytes, digest 241caaab, which proves only the five circuits the
+    product uses and from which the redeployed verifier accepted
+    a circuit-7 proof on devnet (slot 502692190; deployed-verifier.json); stark-prover 0.2.0, privacy-sdk 2.0.0 and
     specter-sdk 0.5.0 are built around it and not yet published.
   </p>
 
@@ -1455,7 +1452,7 @@ pre {
       </tr>
       <tr>
         <td>Browser extension</td>
-        <td>Stealth sends, encrypted notes, relayer transport, merchant entitlement. ML&#8209;KEM&#8209;768 is imported in three of its own files. The packaged zip in the repository is 0.1.1 from March 2026 and is in no store.</td>
+        <td>Stealth sends, encrypted notes, relayer transport, merchant entitlement. ML&#8209;KEM&#8209;768 is imported in three of its own files. No packaged build is in the repository since 23 September 2026, and none is in a store.</td>
         <td class="n">170</td>
       </tr>
       <tr>
@@ -1695,8 +1692,10 @@ pre {
       pairing or Groth16, and no .ptau or .zkey is tracked. No Powers of Tau
       ceremony took place. Two published artefacts still imply one:
       @protocol-01/privacy-sdk 1.0.4 lists snarkjs as a dependency, and the
-      @protocol-01/zkspl-sdk README describes ceremony output. Both are text to
-      correct, not running code.
+      @protocol-01/zkspl-sdk README describes ceremony output. Neither is
+      running code, and neither is in the repository any more: privacy-sdk
+      2.0.0 drops snarkjs, and the zkspl-sdk source was deleted on 23 September
+      2026.
     </p>
   </div>
 </div>
@@ -1815,8 +1814,8 @@ pre {
     </thead>
     <tbody>
       <tr>
-        <td>Six programs run on devnet at the address their own source declares, four of them on the product path</td>
-        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives ten addresses (read 14 September 2026). Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
+        <td>Four programs run on devnet at the address their own source declares, all four on the product path</td>
+        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives four addresses (ten until 23 September 2026, when six crates no shipping flow called were deleted). Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
       </tr>
       <tr>
         <td>A STARK proof verified in one instruction, 809,662 CU of 1,399,850</td>
@@ -1832,7 +1831,7 @@ pre {
       </tr>
       <tr>
         <td>The prover on npm emits the bytes the 4 August verifier accepted; master carries a blob the 12 September verifier accepts</td>
-        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 20 September 2026: 262,363 bytes, <span class="mono">d5583d41</span> (before it, <span class="mono">0ad6d7f1</span>).</td>
+        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 23 September 2026: 240,172 bytes, <span class="mono">241caaab</span> (before it, <span class="mono">d5583d41</span> and <span class="mono">0ad6d7f1</span>).</td>
       </tr>
       <tr>
         <td>Soundness is 41 to 45 bits under unique decoding and 13 to 16 under the headline Johnson bound, as shipped</td>

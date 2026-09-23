@@ -151,17 +151,14 @@ Four programs carry the product path today:
 | Registry (merchant services + stealth meta-addresses) | `QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB` |
 | Relayer (deployed, no node operating it since 2026-08-28) | `2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW` |
 
-Two more are declared by a crate and deployed, but no shipping flow calls them:
-
-| Program | ID |
-|---|---|
-| Arcium MPC Bridge (client integration removed 2026-07) | `FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT` |
-| Liquidity Pool (instant unshield, SDK module + mobile service) | `6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg` |
-
-`p01_zkspl`, `stream`, `subscription` and `whitelist` are in the repo but their
-declared IDs are not deployed on devnet. Four programs were **closed on devnet
-on 2026-09-13** and their crates deleted from the repo: `specter`,
-`p01_quantum_vault`, `p01_quantum_wallet` and `p01_fee_splitter`
+These four are the only crates left in `programs/`. On 2026-09-23 six crates
+that no shipping flow called were deleted from the repo: `p01_arcium` (its
+program `FH1JiQRU…` was closed on devnet on 2026-09-22, slot 502,629,197), `p01_liquidity` (still
+deployed at `6PfFkvjX…`, deactivated, and called by nothing), and `p01_zkspl`,
+`stream`, `subscription` and `whitelist`, whose declared IDs were never
+deployed on devnet. Four programs were **closed on devnet on 2026-09-13** and
+their crates deleted from the repo: `specter`, `p01_quantum_vault`,
+`p01_quantum_wallet` and `p01_fee_splitter`
 ([`docs/HANDOFF-2026-09-13.md`](docs/HANDOFF-2026-09-13.md) §11 and §12).
 Older deployments of some of these under superseded IDs still exist on devnet;
 no crate declares them and no product path calls them.
@@ -194,9 +191,6 @@ what the code does rather than what a mixer brochure would say:
 - **Stealth payments create a unique one-time address per payment** — an
   observer cannot connect two payments to the same recipient from the addresses
   alone.
-- **zkSPL balances and transfer amounts** sit behind Poseidon commitments; the
-  chain stores the commitment, not the number. The `p01_zkspl` program is not
-  deployed on devnet, so this layer is SDK and program source today.
 - **Note contents** (owner, blinding) are never posted in clear on-chain, and
   since the 2026-08-31 masks the proof bytes no longer allow trace recovery by
   interpolation on any of the eight circuits (see the hiding paragraph above
@@ -239,7 +233,7 @@ breaking the chain — verified against both real transfers on devnet, two for
 two. Anything stronger will be claimed here when it ships, not before.
 
 ```
-User generates a STARK proof (Winterfell prover, Goldilocks/Poseidon)
+User generates a STARK proof (Rust prover compiled to WASM, Goldilocks/Poseidon)
     -> Proof submitted to the on-chain FRI verifier
         -> Shielded program applies the state transition
             -> Funds land at a fresh payout address, one per note; the web app
@@ -252,8 +246,9 @@ User generates a STARK proof (Winterfell prover, Goldilocks/Poseidon)
 ```
 
 > **Groth16 was fully retired in the March 2026 migration.** The Circom
-> circuits themselves have since been deleted too — `circuits/` now holds only
-> a design note. All runtime proofs are STARK.
+> circuits have since been deleted, and on 2026-09-23 so were the last Groth16
+> artefacts the apps still bundled (proving keys and circuit files no code
+> loaded). All runtime proofs are STARK.
 
 ---
 
@@ -265,37 +260,24 @@ protocol-01/
 │   ├── extension/          # Chrome MV3 wallet + privacy UI
 │   ├── mobile/             # React Native (Expo) wallet + full STARK prover (WebView WASM)
 │   └── web/                # Next.js 16 marketing site + docs
-├── packages/                   # 16 packages, 11 published to npm under @protocol-01
+├── packages/                   # 8 packages, 7 published to npm under @protocol-01
 │   ├── specter-sdk/        # npm 0.4.3 (0.5.0 in repo, publish pending) — service registry, stealth meta-addresses
 │   ├── merchant-sdk/       # npm 0.1.3 — server-side: register, payment polling, vaults, permissionless claims, access tokens
-│   ├── privacy-sdk/        # npm 1.0.5 (2.0.0 in repo, publish pending) — pool client; shield/transfer/unshield target instructions the deployed program does not register, subscriptions a program not on devnet (see SDK below)
-│   ├── zkspl-sdk/          # npm 0.1.3 — confidential SPL balances (Poseidon commitments)
-│   ├── zk-sdk/             # npm 1.0.2 — low-level note + Merkle primitives
-│   ├── arcium-sdk/         # npm 0.1.2 — MPC compute client (client integration removed 2026-07, see below)
+│   ├── privacy-sdk/        # npm 1.0.5 (2.0.0 in repo, publish pending) — identity, denominations, registry and relay helpers; builds no pool instruction (see SDK below)
 │   ├── auth-sdk/           # npm 0.1.1 — "Login with P-01"
 │   ├── p01-js/             # npm 0.3.2 — merchant pay button & browser SDK
-│   ├── privacy-toolkit/    # npm 1.0.4 — Merkle trees, Goldilocks-Poseidon, commitment helpers
 │   ├── rpc-config/         # npm 0.1.2 — shared RPC connection manager
-│   ├── stark-prover/       # npm 0.1.3 (0.2.0 in repo, publish pending) — WASM STARK prover bindings, 262,363-byte blob
-│   ├── whitelist-sdk/      # unpublished — developer whitelist
-│   ├── react-native-zk/    # unpublished — STARK prover packaged for React Native
-│   ├── pay-core/           # unpublished — /pay page core
-│   ├── specter-js/         # unpublished
-│   └── ui/                 # unpublished — shared design tokens + components
-├── circuits/                   # One design note (ZKSPL.md). The legacy Circom circuits are gone.
-├── programs/                   # 10 Anchor crates (declared IDs; deployment status in the table above)
+│   ├── stark-prover/       # npm 0.1.3 (0.2.0 in repo, publish pending) — WASM STARK prover bindings, 240,172-byte blob
+│   └── pay-core/           # unpublished — /pay page core
+│   # arcium-sdk, zkspl-sdk, zk-sdk, privacy-toolkit, whitelist-sdk, react-native-zk, specter-js, ui: deleted 2026-09-23
+├── programs/                   # 4 Anchor crates, all deployed on devnet (table above)
 │   ├── zk_shielded/            # Shielded pool V4 — shield/unshield/subscribe/pause/resume/claim (STARK)
 │   ├── p01_stark_verifier/     # On-chain FRI verifier (8 circuit AIRs, Goldilocks)
 │   ├── p01_registry/           # Stealth meta-address directory + Service Registry (retailers)
-│   ├── p01_relayer/            # On-chain relay + chunked submit + reputation decay
-│   ├── p01_arcium/             # MPC bridge program (deployed; clients no longer call it)
-│   ├── p01_liquidity/          # Instant-unshield liquidity pool (deployed; SDK module + mobile service)
-│   ├── p01_zkspl/              # (in repo, not deployed) Confidential SPL balances (Poseidon commitments)
-│   ├── subscription/           # (in repo, not deployed; logic merged into zk_shielded)
-│   ├── stream/                 # (in repo, not deployed) Time-locked payment streaming
-│   └── whitelist/              # (in repo, not deployed) Developer access control
+│   └── p01_relayer/            # On-chain relay + chunked submit + reputation decay
 │   # specter, p01_quantum_vault, p01_quantum_wallet, p01_fee_splitter: closed on devnet and deleted 2026-09-13
-└── stark/                      # Winterfell STARK prover (Goldilocks field, Poseidon AIR, WASM)
+│   # p01_arcium, p01_liquidity, p01_zkspl, stream, subscription, whitelist: deleted 2026-09-23
+└── stark/                      # STARK prover and its 8 AIRs (Goldilocks field, Poseidon, WASM build)
 ```
 
 ---
@@ -312,8 +294,8 @@ Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony
 | Field | Goldilocks (`p = 2^64 − 2^32 + 1`) |
 | Hash function | Poseidon (full S-box `x^7`, 30 rounds) |
 | Configured FRI parameters | 22 queries on C0 `subscriber_ownership`, C3 `merkle_path`, C4 `confidential_balance`, C5 `transfer`, C6 `merkle_update` and C7 `spend`; 27 on C1 `pool_commitment` and C2 `balance_proof`; blowup 16; FRI rate 1/16 enforced by the verifier on every circuit (final-polynomial degree bound over its size); grinding `GRINDING_BITS = 22`. Read from `programs/p01_stark_verifier/src/compact_proof.rs`. The soundness figures derived from them, each beside its regime and assumptions, are generated in [`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md); this README copies none of them |
-| On-chain verification cost | Two instructions. The per-phase figures were measured on devnet 2026-09-02/03 against the verifier deployed in slot 491,973,056, which has since been replaced twice (2026-09-06, then 2026-09-12 in slot 497,235,406): **phase 1 878,756 CU**, **phase 2 193,200 CU** (193,026 on the black-box honest run), against the 1,400,000 transaction budget. No per-phase split has been recorded on the current deployment; `packages/stark-prover/deployed-verifier.json` records its circuit-7 acceptances at 889,570 CU (blob `0ad6d7f1`, slot 497,236,376) and 889,691 CU (blob `d5583d41`, slot 501,407,541) |
-| Circuits | 8 AIRs — C0 subscriber ownership, C1 denominated pool (pool commitment), C2 balance proof, C3 Merkle path, C4 confidential balance, C5 transfer, C6 Merkle update (shield), C7 spend (unshield v4, subscription v4). All eight were proved by the previous blob (`0ad6d7f1`, 265,324 B) and verified on devnet 2026-09-12 (`docs/BENCHMARK-2026-09-13.md` §6, §6b). The blob shipped since 2026-09-20 (`d5583d41`, 262,363 B, NTT prover) matches the Rust prover's wire format on every circuit (`packages/stark-prover/src/wireFormat.test.ts`), but on devnet only one circuit-7 proof from it has been verified (slot 501,407,541), and no proving time has been measured on it |
+| On-chain verification cost | Two instructions. The per-phase figures were measured on devnet 2026-09-02/03 against the verifier deployed in slot 491,973,056, which has since been replaced twice (2026-09-06, then 2026-09-12 in slot 497,235,406): **phase 1 878,756 CU**, **phase 2 193,200 CU** (193,026 on the black-box honest run), against the 1,400,000 transaction budget. On the current deployment `packages/stark-prover/deployed-verifier.json` records the per-phase split of two circuit-7 acceptances: blob `d5583d41` (slot 501,407,541) phase 1 889,691 CU + phase 2 192,317 CU = 1,082,158 CU for the transaction, and blob `241caaab` (slot 502,692,190) phase 1 889,882 CU + phase 2 193,269 CU = 1,083,301 CU. The earlier acceptance of blob `0ad6d7f1` (slot 497,236,376) is recorded at 889,570 CU |
+| Circuits | 8 AIRs — C0 subscriber ownership, C1 denominated pool (pool commitment), C2 balance proof, C3 Merkle path, C4 confidential balance, C5 transfer, C6 Merkle update (shield), C7 spend (unshield v4, subscription v4). All eight were proved by the 2026-09-12 blob (`0ad6d7f1`, 265,324 B) and verified on devnet 2026-09-12 (`docs/BENCHMARK-2026-09-13.md` §6, §6b). The product uses five of the eight: C0 (subscriber ownership), C1, C3, C6 and C7. The blob shipped since 2026-09-23 (`241caaab`, 240,172 B) exports only those five, and matches the Rust prover's wire format on each (`packages/stark-prover/src/wireFormat.test.ts`); on devnet one circuit-7 proof from it has been verified (slot 502,692,190), and no proving time has been measured on it or on its predecessor `d5583d41` (262,363 B, NTT prover, 2026-09-20). No client proves C2, C4 or C5 since then; their AIRs stay in `stark/`, and the deployed verifier accepts them, until the v2 redeploy |
 
 **On soundness, plainly:** an earlier revision of this README advertised
 "124-bit" security. That figure was wrong — it was never implemented, and the
@@ -397,27 +379,21 @@ On-chain Anchor program (`zk_shielded`). Stores encrypted notes in a sparse Merk
 | `pause_private_stark` / `resume_private_stark` | Control a vault's billing clock |
 | `claim_period` | Retailer claims accrued periods; closes the vault and sweeps the sub-period remainder + rent to the retailer once its funding is spent |
 
-### zkSPL — Confidential SPL Balances
+### zkSPL — removed on 2026-09-23
 
-Account-model privacy layer. Hides balances and transfer amounts using Poseidon commitments (no elliptic-curve blinding, quantum-resistant). The `p01_zkspl` program is not deployed on devnet: what ships today is the SDK and the program source.
-
-```
-Balance on-chain = Poseidon(balance, salt, owner_pubkey, token_mint)
-                   ↑ nobody can reverse this without the salt
-```
-
-Circuits: `confidential_balance` and `balance_proof`, both STARK AIRs (the constraint counts previously quoted here were from the retired Circom versions).
-
-What the program source does **not** do, and must before it is deployed
-(audit v1, finding F46): the threshold of `prove_balance` is not enforced
-(the handler records `verified: true` and emits the threshold, while the
-`balance_proof` AIR binds only the commitment, not `balance >= threshold`;
-`programs/p01_zkspl/src/instructions/prove_balance.rs`), and conservation is
-not enforced on `withdraw` (the proof's amount hash is pinned to zero and the
-public `amount` is never tied to the old or new commitment, so a holder can
-withdraw any amount the vault holds; `withdraw.rs`). Since the program is not
-deployed, no funds are exposed today; the SDK's balance and threshold helpers
-describe the intended design, not an enforced one.
+The confidential-SPL layer is gone from the repo: the `p01_zkspl` program, which
+was not deployed on devnet, `@protocol-01/zkspl-sdk` and the confidential-balance
+screens of the extension and the mobile app were deleted on 2026-09-23. Its
+source did not do what it described (audit v1, finding F46): the threshold of
+`prove_balance` was not enforced (the handler recorded `verified: true` while
+the `balance_proof` AIR bound only the commitment, not `balance >= threshold`),
+and conservation was not enforced on `withdraw` (the public `amount` was never
+tied to the old or new commitment, so a holder could withdraw any amount the
+vault held). No funds were ever exposed, since the program never ran on devnet.
+`zkspl-sdk` 0.1.3 stays on npm as published and describes that intended design,
+not an enforced one. The `balance_proof` (C2) and `confidential_balance` (C4)
+AIRs stay in `stark/` and in the deployed verifier until the v2 redeploy; no
+client proves them.
 
 ### Service Registry + Private Subscriptions
 
@@ -458,16 +434,6 @@ Two paths ship in its place, and both are submitted by the spender:
   and collects an older issued note in return
   ([`docs/NOTE-IN-EXCHANGE-2026-09-02.md`](docs/NOTE-IN-EXCHANGE-2026-09-02.md)).
 
-### Multi-Party Computation (Arcium MPC) — program and SDK only
-
-The `p01_arcium` bridge program and `@protocol-01/arcium-sdk` (9 Arcis
-circuits) exist and are published, but **the client integration was removed
-from the shipping apps in July 2026** — no mobile or extension flow calls MPC
-today. The circuits cover confidential relay, anonymous registry lookup, hidden
-nullifier, confidential balance audit, threshold stealth scan, and private
-governance vote; they are available to developers who want to build on them,
-and nothing in the current privacy claims of this README depends on MPC.
-
 ---
 
 ## Products
@@ -494,8 +460,10 @@ and nothing in the current privacy claims of this README depends on MPC.
 ### Browser Extension
 
 - Full Solana wallet (Manifest V3)
-- STARK prover bundled (35 MB of circuit/proof assets)
-- Privacy Zone + Confidential balances + Payment streams + dApp connection
+- STARK prover bundled (the WASM blob; the Groth16 circuit files it used to
+  carry were deleted on 2026-09-23)
+- Denominated pool (shield, withdraw, send and import a note) + subscriptions +
+  dApp connection
 
 **Stack:** React 19, TypeScript, Zustand, Vite, TailwindCSS v4.
 
@@ -507,17 +475,21 @@ Marketing site, SDK docs, weekly update videos (Remotion).
 
 ## SDK
 
-11 of the 16 packages are published to npm under the `@protocol-01` scope
-(every version already published is available under MIT; all but arcium-sdk
-0.1.0-0.1.2 and stark-prover 0.1.0-0.1.1 declare MIT in their manifest, and the
-same grant covers those five), versions read from the registry on 2026-09-14: arcium-sdk 0.1.2,
-auth-sdk 0.1.1, merchant-sdk 0.1.3, p01-js 0.3.2, privacy-sdk 1.0.5,
-privacy-toolkit 1.0.4, rpc-config 0.1.2, specter-sdk 0.4.3, stark-prover
-0.1.3, zk-sdk 1.0.2, zkspl-sdk 0.1.3. The repo carries newer builds not yet
-published: privacy-sdk 2.0.0 and specter-sdk 0.5.0 (the modules that spoke to
-the four programs closed on 2026-09-13 are gone) and stark-prover 0.2.0 (paired
-with the 2026-09-12 verifier; its blob is `d5583d41` since the 2026-09-20
-reship, `0ad6d7f1` before). The packed tarballs also
+The repo holds 8 packages; 7 of them are published to npm under the
+`@protocol-01` scope (versions read from the registry on 2026-09-14): auth-sdk
+0.1.1, merchant-sdk 0.1.3, p01-js 0.3.2, privacy-sdk 1.0.5, rpc-config 0.1.2,
+specter-sdk 0.4.3 and stark-prover 0.1.3; pay-core is unpublished. Four more
+published packages lost their source on 2026-09-23, when nothing in the product
+used them any more, and stay on npm as published: arcium-sdk 0.1.2,
+privacy-toolkit 1.0.4, zk-sdk 1.0.2 and zkspl-sdk 0.1.3. Every version already
+published is available under MIT; all but arcium-sdk 0.1.0-0.1.2 and
+stark-prover 0.1.0-0.1.1 declare MIT in their manifest, and the same grant
+covers those five. The repo carries newer builds not yet published:
+privacy-sdk 2.0.0 and specter-sdk 0.5.0 (the modules that spoke to the programs
+closed on 2026-09-13 and to the crates deleted on 2026-09-23 are gone) and
+stark-prover 0.2.0 (paired with the 2026-09-12 verifier; its blob is `241caaab`
+since the 2026-09-23 reship, which dropped C2, C4 and C5; `d5583d41` from
+2026-09-20, `0ad6d7f1` before). The packed tarballs also
 install and typecheck standalone, outside any workspace (verified 2026-08-04).
 New npm versions, those unpublished builds included, will ship under PolyForm
 Strict 1.0.0.
@@ -572,29 +544,18 @@ const token = issueAccessToken({
 });
 ```
 
-**`@protocol-01/privacy-sdk` cannot move funds on the deployed pool today.**
-Its `sdk.shield.shield`, `sdk.shield.transfer` and `sdk.shield.unshield` build
-`shield_stark`, `transfer_stark`, `unshield_stark`, `shield_denominated` and
-`unshield_denominated_stark`, and the deployed `zk_shielded` program registers
-none of them (`programs/zk_shielded/src/lib.rs`: the base-pool and v2
-instructions are commented out, the `_stark` names never existed). Since
-2026-09-22 each of those calls throws a `PrivacyError` before it asks for a
-proof or sends anything (`UNREGISTERED_ZK_SHIELDED_INSTRUCTIONS` in
-`packages/privacy-sdk/src/modules/shield.ts`). Its subscriptions module
-targets the `subscription` program, which is not deployed on devnet. The live
-pool instructions (`shield_denominated_v3`, `unshield_denominated_stark_v3` /
-`_v4`) are built by the web app (`apps/web/lib/privacy/pool`), not by this
-SDK.
-
-```typescript
-// @protocol-01/arcium-sdk — MPC confidential compute
-import { ArciumClient } from '@protocol-01/arcium-sdk';
-
-const mpc = new ArciumClient({ connection, wallet });
-await mpc.initialize();
-await mpc.confidentialRelay(encryptedTx);
-await mpc.privateLookup(targetHash);
-```
+**`@protocol-01/privacy-sdk` builds no pool instruction.** Its 1.0.5 release
+on npm carries a shield module whose `shield_stark`, `transfer_stark`,
+`unshield_stark`, `shield_denominated` and `unshield_denominated_stark` calls
+target instructions the deployed `zk_shielded` program has not registered
+(`programs/zk_shielded/src/lib.rs`: the base-pool and v2 instructions are
+commented out, the `_stark` names never existed), and a subscriptions module
+for the `subscription` program, which was never deployed on devnet. Version
+2.0.0 in the repo drops both modules, with the other ones that targeted
+programs no longer in the repo, and keeps the identity, denomination, registry
+and relay helpers. The live pool instructions (`shield_denominated_v3`,
+`unshield_denominated_stark_v3` / `_v4`) are built by the web app
+(`apps/web/lib/privacy/pool`), not by this SDK.
 
 ---
 
@@ -637,7 +598,7 @@ cd Protocol-01
 pnpm install
 
 pnpm dev:mobile     # Expo dev client
-pnpm dev:extension  # Extension dev server
+pnpm --filter @protocol-01/extension dev  # Extension dev server
 pnpm dev:web        # Next.js dev server
 ```
 
@@ -650,8 +611,8 @@ cd apps/mobile/android
 # output: apps/mobile/android/app/build2/outputs/apk/release/app-release.apk
 
 # Extension + web
-pnpm build:extension
-pnpm build:web
+pnpm --filter @protocol-01/extension build
+pnpm --filter @protocol-01/web build
 ```
 
 ### On-chain programs
@@ -677,18 +638,13 @@ the web pool suite as of 2026-09-13, see
 |---|---|---|---|
 | specter-sdk | Stealth, wallet, transfers, registry | 240 | Passing |
 | merchant-sdk | Registry, vaults, entitlement, permissionless claims, licenses | 273 | Passing |
-| privacy-sdk | SDK wiring, constants, denominations, identity, liquidity and instant-unshield instruction encoding; since 2026-09-22 also the refusal of every pool call whose instruction is not registered (the tests never reach the program) | 124 | Passing — measured 2026-09-22 |
-| privacy-toolkit | Merkle, Goldilocks-Poseidon, commitments | 44 | Passing |
-| zk-sdk | Note + Merkle primitives | 99 | Passing |
-| arcium-sdk | MPC client, encryption | 0 | **No test suite** — its only suite tested the P2P exchange and went with it on 2026-08-19 |
+| privacy-sdk | SDK wiring, constants, denominations, identity. The 124 counted on 2026-09-22 also covered liquidity and instant-unshield encoding and the refusal of every pool call whose instruction is not registered (those tests never reached the program); the modules and their tests were removed on 2026-09-23 | 124 | Passing — measured 2026-09-22; not re-counted since the removal |
 | auth-sdk | Login with P-01 | 123 | Passing |
-| whitelist-sdk | Encrypted access requests + IPFS | 40 | Passing |
 | p01-js | Merchant pay button + browser SDK | 393 | Passing |
 | stark-prover | WASM packaging + license keys | 23 | Passing |
 | pay-core | /pay page core | 3 (+4 skipped) | Passing |
-| ui | Shared components | 85 | Passing |
 | Web app | API + lib utils | 399 (+29 skipped) | Passing |
-| rpc-config / zkspl-sdk / specter-js | — | 0 | **No test suite** — an earlier revision claimed 361 for rpc-config; that suite does not exist |
+| rpc-config | — | 0 | **No test suite** — an earlier revision claimed 361 for rpc-config; that suite does not exist |
 | Mobile app / Extension | Jest / vitest CI suites | not re-measured 2026-08-04 | — |
 | STARK prover/verifier (Rust) | verifier lib 81, CU-pin suite 21, DEEP-binding 26 | 128 | Passing — measured 2026-08-04 on the coset branch (`b7-drop-aligned-checks`, unmerged) |
 | E2E devnet | Shield → subscribe → recover | — | **Stale — its `cancel` step no longer exists in the program** |
@@ -724,8 +680,8 @@ anchor test                           # on-chain programs (localnet)
 - [x] **On-chain Service Registry** (retailers register as first-class merchants)
 - [x] **Subscription vaults are one-way** — cancellation and refunds removed from the program; `claim_period` closes an exhausted vault and pays the remainder + rent to the retailer
 - [x] **Boot-time auto-recovery** (blocking lazy-load rescan from seed)
-- [x] Instant unshield via `p01_liquidity` prefund pool
-- [x] Arcium MPC bridge program + SDK (9 circuits — client integration later removed, 2026-07)
+- [x] ~~Instant unshield via `p01_liquidity` prefund pool~~ deactivated; crate deleted 2026-09-23
+- [x] ~~Arcium MPC bridge program + SDK (9 circuits)~~ client integration removed 2026-07; program closed on devnet and crate and SDK deleted 2026-09-23
 - [x] On-chain relayer program + Tor-routed RPC middleware (both hosted nodes retired 2026-08-28; the program is deployed, nobody operates it)
 - [x] **Permissionless `claim_period` + close-on-exhaustion** (2026-08-04, proven on devnet by a third-party signer: the program pins where the money goes, not who sends the claim)
 - [x] **MIT license everywhere** (2026-08-04 — root LICENSE, site, and docs now agree with what npm shipped)
@@ -745,7 +701,7 @@ anchor test                           # on-chain programs (localnet)
 - [ ] **Ship the masked prover blob to every client.** The chain runs the
   uniform-mask verifier since 2026-09-12 and the web app on `master` carries
   a blob it accepts: `0ad6d7f1` from 2026-09-12 (`docs/HANDOFF-2026-09-13.md`
-  §7), `d5583d41` since 2026-09-20 (`apps/web/lib/privacy/pool/starkWasmData.ts`). The APK tagged
+  §7), `d5583d41` from 2026-09-20, `241caaab` since 2026-09-23 (`apps/web/lib/privacy/pool/starkWasmData.ts`). The APK tagged
   v1.0.3 (2026-06-16) and `@protocol-01/stark-prover@0.1.3` on npm predate it
   and their proofs are **rejected by the chain** until a new APK is released and
   stark-prover 0.2.0 is published. This line exists so nobody reads the redeploy
@@ -753,7 +709,6 @@ anchor test                           # on-chain programs (localnet)
 - [ ] **Soundness hardening** of the FRI/DEEP construction (see the plain-language note in the STARK section)
 - [ ] **Subscribe_private renewal** live validation (Pay Now flow under logcat)
 - [ ] Universal `LeafInserted` canonical event
-- [ ] DeFi composability spec (balance proof verification for lending/DEX)
 
 ### Future
 

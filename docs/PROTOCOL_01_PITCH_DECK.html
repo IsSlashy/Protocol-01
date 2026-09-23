@@ -333,7 +333,7 @@
         <li>4 Anchor programs on the devnet product path &middot; 8 STARK AIRs in a custom 801 KB FRI verifier (BENCHMARK-2026-09-13)</li>
         <li>Registry program live: <span class="mono micro">QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB</span></li>
         <li>22/22 live-devnet E2E checks: register &rarr; fetch &rarr; deregister, every field byte-equal, rent refunded</li>
-        <li>11 packages on npm &middot; 26/26 fresh-project tarball install &middot; per-suite test counts in HANDOFF-2026-09-13 &sect;4c</li>
+        <li>7 packages on npm with their source in the repo &middot; 26/26 fresh-project tarball install &middot; per-suite test counts in HANDOFF-2026-09-13 &sect;4c</li>
         <li>Mobile (Android), Chrome extension, web &mdash; all three clients shipped</li>
       </ul>
       <div class="code micro" style="margin-top: 4mm;">
@@ -420,17 +420,14 @@ setInterval(<span class="kw">async</span> () =&gt; {
         <tr><td><span class="badge badge-cyan">VERIFIER</span></td><td class="small mono">p01_stark_verifier &mdash; FRI, 8 AIRs</td></tr>
         <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">zk_shielded &mdash; pool + sub vault</td></tr>
         <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">p01_registry &mdash; merchant directory</td></tr>
-        <tr><td><span class="badge badge-cyan">CORE</span></td><td class="small mono">p01_zkspl &mdash; confidential SPL (in repo, not deployed)</td></tr>
-        <tr><td><span class="badge badge-pink">PQ</span></td><td class="small mono">p01_arcium &mdash; Cerberus MPC bridge</td></tr>
         <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_relayer &mdash; fee-paying relay</td></tr>
-        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">p01_liquidity &mdash; instant unshield</td></tr>
-        <tr><td><span class="badge badge-yellow">RAILS</span></td><td class="small mono">subscription / stream (in repo, not deployed); fee-splitter closed 2026-09-13</td></tr>
+        <tr><td><span class="badge badge-pink">GONE</span></td><td class="small mono">fee-splitter closed 2026-09-13; six unused crates (arcium, liquidity, zkspl, stream, subscription, whitelist) removed 2026-09-23</td></tr>
       </table>
     </div>
     <div>
       <h3>Solana primitives leveraged</h3>
       <table>
-        <tr><td class="cyan small mono">Anchor 0.32</td><td class="small">DSL/framework, all 10 program crates</td></tr>
+        <tr><td class="cyan small mono">Anchor 0.32</td><td class="small">DSL/framework, all 4 program crates</td></tr>
         <tr><td class="cyan small mono">SPL Token</td><td class="small">USDC + native SOL handling</td></tr>
         <tr><td class="cyan small mono">PDAs</td><td class="small">deterministic registry / vault keys</td></tr>
         <tr><td class="cyan small mono">Compute Budget</td><td class="small">1.4M CU for STARK verify</td></tr>
@@ -438,7 +435,6 @@ setInterval(<span class="kw">async</span> () =&gt; {
         <tr><td class="cyan small mono">Memo Program v2</td><td class="small">invoice memos for one-shots</td></tr>
         <tr><td class="cyan small mono">Helius RPC</td><td class="small">getProgramAccounts pagination</td></tr>
         <tr><td class="cyan small mono">Privy</td><td class="small">embedded wallet onboarding</td></tr>
-        <tr><td class="cyan small mono">Arcium Cerberus</td><td class="small">9 MPC circuits, threshold compute</td></tr>
       </table>
       <div class="card card-cyan" style="margin-top: 4mm;">
         <p class="small">
@@ -459,7 +455,7 @@ setInterval(<span class="kw">async</span> () =&gt; {
 
   <div class="grid-4" style="margin-top: 6mm;">
     <div class="card card-cyan stat"><div class="stat-num cyan">4</div><div class="stat-label">Programs on the product path</div></div>
-    <div class="card card-pink stat"><div class="stat-num pink">11</div><div class="stat-label">Packages on npm</div></div>
+    <div class="card card-pink stat"><div class="stat-num pink">7</div><div class="stat-label">Packages on npm, source in repo</div></div>
     <div class="card card-yellow stat"><div class="stat-num yellow">8</div><div class="stat-label">STARK AIRs</div></div>
     <div class="card card-green stat"><div class="stat-num green">18.6 s</div><div class="stat-label">Pool deposit (shield), devnet</div></div>
   </div>
@@ -468,12 +464,12 @@ setInterval(<span class="kw">async</span> () =&gt; {
     <div class="card card-cyan">
       <h3 class="cyan">Shipped</h3>
       <ul class="small muted" style="margin-top: 2mm; padding-left: 5mm; line-height: 1.7;">
-        <li>4 Anchor programs on the devnet product path, 6 deployed at their declared address</li>
+        <li>4 Anchor programs on the devnet product path, each deployed at its declared address</li>
         <li>Custom FRI/STARK verifier (801 KB SBF, 8 circuits)</li>
         <li>Mobile app v1.0.3 (Android APK, GitHub releases)</li>
         <li>Chrome extension MV3 with on-device WASM prover</li>
         <li>Relayer-submitted spends, scrubbed events, uniform proofs (v1.0)</li>
-        <li>Web marketing site &middot; design doc &middot; economic charter</li>
+        <li>Web marketing site &middot; design doc</li>
         <li>5 verified merchants on devnet registry</li>
       </ul>
     </div>
@@ -547,8 +543,7 @@ setInterval(<span class="kw">async</span> () =&gt; {
         <li>Hybrid <span class="cyan bold">X25519 + ML-KEM-768</span> stealth address construction (own design, not a reference port)</li>
         <li>Blinding masks on all 8 circuits: every committed proof value measured uniform by the X5 test; the simulation argument is being redone, since the next-row openings it treated as hidden are published (docs/zk-simulation-argument.md)</li>
         <li>Deterministic <span class="cyan bold">HKDF note-secret derivation</span> &mdash; one seed, every shielded note recoverable cross-device</li>
-        <li>Custom <span class="cyan bold">MPC bridge to Arcium Cerberus</span> &mdash; 9 Arcis circuits, threshold compute</li>
-        <li><span class="cyan bold">10 program crates</span>, 11 packages on npm, three clients &mdash; all written by the same person</li>
+        <li><span class="cyan bold">4 program crates</span>, 7 packages on npm with their source in the repo, three clients &mdash; all written by the same person</li>
       </ul>
     </div>
     <div>
@@ -600,7 +595,7 @@ setInterval(<span class="kw">async</span> () =&gt; {
     <div class="card card-yellow">
       <h3 class="yellow">Ecosystem partnerships</h3>
       <p class="small muted">
-        Helius (RPC), Privy (wallet onboarding), Arcium (MPC), Backpack
+        Helius (RPC), Privy (wallet onboarding), Backpack
         (distribution). Conversations in flight.
       </p>
     </div>

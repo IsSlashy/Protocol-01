@@ -1,7 +1,7 @@
 # Tx-Opacity Master Plan — End-to-End Anonymization on Protocol-01
 
 > **Note du 2026-09-14.** Ce document est une archive datée. Les programmes `p01_fee_splitter`, `p01_quantum_wallet`, `specter` qu'il cite ont été fermés sur devnet le 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
-> La liste des programmes en vie, le nombre de circuits (8) et les temps mesurés sont dans `README.md` et `docs/BENCHMARK-2026-09-13.md`.
+> La liste des programmes en vie, le nombre de circuits et les temps mesurés sont dans `README.md` et `docs/BENCHMARK-2026-09-13.md`.
 
 
 **Drafté** : 2026-05-06

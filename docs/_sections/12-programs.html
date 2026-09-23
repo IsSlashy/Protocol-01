@@ -2,12 +2,13 @@
   <div class="headrule"></div>
 
   <div class="eyebrow">Programs on devnet</div>
-  <h2>Four programs carry the product. Six resolve at the address they declare.</h2>
+  <h2>Four programs carry the product. They are the only ones left in the repository.</h2>
 
   <p class="lede">
-    Ten program directories sit in the repository. Six of them resolve to an
-    executable devnet account at the exact address their own declare_id! names,
-    read on 14 September 2026. Four of those six are on the path a payment takes.
+    Four program directories sit in the repository, down from ten on
+    23 September 2026. Each resolves to an executable devnet account at the
+    exact address its own declare_id! names, read on 14 September 2026, and all
+    four are on the path a payment takes.
   </p>
 
   <table>
@@ -45,18 +46,6 @@
         <td>Relay jobs and heartbeat</td>
         <td class="n">product</td>
       </tr>
-      <tr>
-        <td class="m">p01_arcium</td>
-        <td class="m">FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT</td>
-        <td>MPC bridge; no client calls it</td>
-        <td class="n faint">off path</td>
-      </tr>
-      <tr>
-        <td class="m">p01_liquidity</td>
-        <td class="m">6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg</td>
-        <td>Instant-unshield liquidity pool</td>
-        <td class="n faint">off path</td>
-      </tr>
     </tbody>
   </table>
 
@@ -78,20 +67,23 @@
     Closing a program is irreversible; the rent came back to the upgrade
     authority and the four crates left the repository the same day
     (HANDOFF-2026-09-13 §11 and §12). Stealth announcements and payment
-    streams, which specter carried, are parked until a replacement ships.
+    streams, which specter carried, have no on&#8209;chain replacement.
   </p>
 
-  <h4>Declared, and not deployed</h4>
+  <h4>Removed from the repository, 23 September 2026</h4>
 
+  <div class="row"><span class="row-key">p01_arcium</span><span class="row-lead"></span><span class="row-val">FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT</span></div>
+  <div class="row"><span class="row-key">p01_liquidity</span><span class="row-lead"></span><span class="row-val">6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg</span></div>
   <div class="row"><span class="row-key">p01_zkspl</span><span class="row-lead"></span><span class="row-val">AY38smtdsnhmfMCzmnDEefiKCeRTkEPrFXHydAF2FuCT</span></div>
   <div class="row"><span class="row-key">subscription</span><span class="row-lead"></span><span class="row-val">3eDvPJTK2gryh3GhjFgwz94iBsE3hsqZL9ChAFyiBThW</span></div>
   <div class="row"><span class="row-key">stream</span><span class="row-lead"></span><span class="row-val">C92xDDAtd21ED3MitZJ9dhuyGeig5xVx8Dgg6qrxA3vx</span></div>
   <div class="row"><span class="row-key">whitelist</span><span class="row-lead"></span><span class="row-val">5PSYrjBKke4gj8BgBgRKZNXgjmLCnojZ5yuDqUvPiG33</span></div>
 
   <p style="margin-top:3mm;">
-    Those four addresses return null on devnet: nothing is deployed where the
-    source says it is. The recurring payment path that does run lives inside
-    zk_shielded.
+    No shipping flow called any of the six. The MPC bridge was closed on devnet
+    on 2026-09-22 (slot 502,629,197); the liquidity pool is still deployed, deactivated,
+    and called by nothing; the last four addresses never held a program on
+    devnet. The recurring payment path that does run lives inside zk_shielded.
   </p>
 
   <div class="admission">

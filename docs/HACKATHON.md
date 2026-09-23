@@ -12,10 +12,10 @@ Last checked against devnet and the npm registry on 2026-09-14.
 ## TL;DR (30 seconds)
 
 - Private payments on Solana: a shielded pool where the proof is hash-based (STARK over Goldilocks / Poseidon, no trusted setup) and the stealth-address key exchange is hybrid X25519 + ML-KEM-768, the NIST post-quantum KEM. Those keys are derived from the Ed25519 wallet, not drawn on their own: the SDK derives the stealth ML-KEM seed from the same mnemonic seed as the Ed25519 keys, and the web app's note-encryption keys come from one Ed25519 wallet signature, so the keys are only as safe as that Ed25519 wallet secret: post-quantum describes the choice of primitives, not the key custody. The web withdrawal pays an address derived by HKDF from an Ed25519 wallet signature, with no KEM at all.
-- Three Anchor programs on the product path, live on devnet (verifier, shielded pool, registry), and the relayer program deployed beside them with no node operating it, so every spend is submitted by the spender's own one-time key; two more deployed but not called by any shipping flow (see the table below).
-- Eight STARK circuits, proven on the user's device from a WASM blob and verified on-chain by an FRI verifier written for Solana. All eight were proved and verified on devnet on 2026-09-12 with the previous blob `0ad6d7f1` (C7 spend: 890,643 CU, both phases in one transaction, `BENCHMARK-2026-09-13.md` §6). The blob shipped since 2026-09-20 (`d5583d41`, 262,363 bytes) has one circuit-7 proof verified on devnet (889,691 CU, slot 501,407,541) and no proving time measured yet.
-- Measured on devnet 2026-09-12 with the previous blob `0ad6d7f1` (`BENCHMARK-2026-09-13.md` §6c): shield 1 SOL 18.6 s, private subscription 23.0 s, private withdrawal 20.8 s, end to end through the app's own code. Not re-measured on `d5583d41`; `docs/BENCHMARK-METHOD.md` is the harness for that.
-- Android APK (latest tag v1.0.3), Chrome MV3 extension, Next.js web app, 11 npm packages under `@protocol-01`.
+- Three Anchor programs on the product path, live on devnet (verifier, shielded pool, registry), and the relayer program deployed beside them with no node operating it, so every spend is submitted by the spender's own one-time key. No other program is left in the repo (see the table below).
+- Five STARK circuits used by the product (C0, C1, C3, C6, C7), proven on the user's device from a WASM blob and verified on-chain by an FRI verifier written for Solana, which accepts eight: C2, C4 and C5 have no caller in any client since 2026-09-23 and stay in the verifier until the v2 redeploy. All eight were proved and verified on devnet on 2026-09-12 with the previous blob `0ad6d7f1` (C7 spend: 890,643 CU, both phases in one transaction, `BENCHMARK-2026-09-13.md` §6). The blob shipped since 2026-09-23 (`241caaab`, 240,172 bytes) proves only those five and has one circuit-7 proof verified on devnet (1,083,301 CU for the transaction: phase 1 889,882 + phase 2 193,269; slot 502,692,190); no proving time is measured on it yet.
+- Measured on devnet 2026-09-12 with the previous blob `0ad6d7f1` (`BENCHMARK-2026-09-13.md` §6c): shield 1 SOL 18.6 s, private subscription 23.0 s, private withdrawal 20.8 s, end to end through the app's own code. Not re-measured on `d5583d41` or `241caaab`; `docs/BENCHMARK-METHOD.md` is the harness for that.
+- Android APK (latest tag v1.0.3), Chrome MV3 extension, Next.js web app, 7 npm packages under `@protocol-01` with their source in this repo.
 - Built solo by Slashy Fx. Not audited, not on mainnet; both are stated on the site.
 
 ---
@@ -38,7 +38,7 @@ Pick one of the three options below. They are independent.
 2. Shield 1 SOL. The STARK proof is generated in a worker in your browser; the flow was measured at 18.6 s end to end on devnet on 2026-09-12, with the previous blob `0ad6d7f1` (`BENCHMARK-2026-09-13.md` §6c).
 3. Withdraw it to another address. The withdrawal transaction names no deposit field; the same measurement (blob `0ad6d7f1`) puts it at 20.8 s.
 
-The web app on `master` carries a prover blob the verifier deployed on 2026-09-12 accepts: `0ad6d7f1` from 2026-09-12 (`HANDOFF-2026-09-13.md` §7), `d5583d41` since 2026-09-20.
+The web app on `master` carries a prover blob the verifier deployed on 2026-09-12 accepts: `0ad6d7f1` from 2026-09-12 (`HANDOFF-2026-09-13.md` §7), `d5583d41` from 2026-09-20, `241caaab` since 2026-09-23.
 
 ### Option A'. Install the Android APK
 
@@ -81,14 +81,7 @@ Every link below points to Solana Explorer on devnet.
 | `p01_registry` | On-chain merchant registry + stealth meta-address directory | [`QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB`](https://explorer.solana.com/address/QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB?cluster=devnet) |
 | `p01_relayer` | Relay program (deployed; no hosted node operates it since 2026-08-28) | [`2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW`](https://explorer.solana.com/address/2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW?cluster=devnet) |
 
-**Deployed, not called by any shipping flow:**
-
-| Program | Role | Devnet program id |
-| --- | --- | --- |
-| `p01_arcium` | Arcium MPC bridge; client integration removed 2026-07 | [`FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT`](https://explorer.solana.com/address/FH1JiQRUhKP1ARqWw6P5aXsqhLt9DPfbg89gqLV2TLPT?cluster=devnet) |
-| `p01_liquidity` | Instant-unshield liquidity prefund pool (SDK module + mobile service) | [`6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg`](https://explorer.solana.com/address/6PfFkvjXmSV42MMVWoDrJvz6tgEpbLPvx1bznY7C5pMg?cluster=devnet) |
-
-**In the repo, declared id not deployed on devnet:** `p01_zkspl`, `stream`, `subscription`, `whitelist`.
+**Deleted from the repo on 2026-09-23**, since no shipping flow called them: `p01_arcium` (its program `FH1JiQRU…` was closed on devnet on 2026-09-22, slot 502,629,197), `p01_liquidity` (still deployed at `6PfFkvjX…`, deactivated, called by nothing), and `p01_zkspl`, `stream`, `subscription` and `whitelist`, whose declared ids were never deployed on devnet.
 
 **Closed on devnet on 2026-09-13 and deleted from the repo** ([`HANDOFF-2026-09-13.md`](./HANDOFF-2026-09-13.md) §11, §12): `specter`, `p01_quantum_vault`, `p01_quantum_wallet`, `p01_fee_splitter`. Older deployments of some of them under superseded ids still exist on devnet; no crate declares them and no product path calls them.
 
@@ -97,7 +90,7 @@ Every link below points to Solana Explorer on devnet.
 ## Architecture at a glance
 
 ```
-User generates a STARK proof on-device (Winterfell prover, Goldilocks / Poseidon, 262,363-byte WASM blob)
+User generates a STARK proof on-device (Rust prover compiled to a 240,172-byte WASM blob, Goldilocks / Poseidon)
     -> Proof uploaded in 4,096-byte transaction v1 chunks (21 to 25 per proof) and verified by the on-chain FRI verifier
        (C7 spend: 890,643 CU, both phases in one transaction, measured with blob 0ad6d7f1 on 2026-09-12)
         -> zk_shielded applies the state transition
@@ -107,18 +100,17 @@ User generates a STARK proof on-device (Winterfell prover, Goldilocks / Poseidon
 
 What the pool hides and what it does not is stated precisely in the README section "What is hidden, and what is not"; read that before relying on it.
 Three things the transaction still shows, whatever the roadmap's Tx-Opacity items say: the relayer program is deployed but no node operates it, so the spender's own one-time key submits every spend; the web client does not pad proofs, so proof length and circuit id are written in clear into the proof buffer (`init_proof_buffer_v3`); and the payee's lamport delta shows the denomination (a 1 SOL note pays 0.995 SOL).
-Groth16 was fully retired during the March 2026 migration; the legacy Circom circuits have since been deleted and `circuits/` holds one design note.
+Groth16 was fully retired during the March 2026 migration; the legacy Circom circuits have since been deleted, and on 2026-09-23 so were the last Groth16 files the apps still bundled.
 
 ---
 
 ## Code stats
 
-- 10 Anchor crates under `programs/`: 4 deployed on the product path (the relayer among them, with no node operating it), 2 deployed off-path, 4 not deployed (table above).
-- 8 STARK AIRs in `stark/src/air/`: subscriber ownership, denominated pool (pool commitment), balance proof, Merkle path, confidential balance, transfer, Merkle update (shield), spend (unshield v4, subscription v4). All eight carry a blinding mask, and every committed value of a proof is measured uniform in it by the X5 test on all eight. The simulation argument in [`zk-simulation-argument.md`](./zk-simulation-argument.md) does not hold as written (audit v1, finding F69): the next-row openings it treats as unpublished are published and Merkle-checked, so no statistical-hiding claim is made until a corrected simulator is executed; no witness leak is shown.
-- 9 Arcis MPC circuits in `@protocol-01/arcium-sdk`; no shipping client calls them.
+- 4 Anchor crates under `programs/`, all deployed on devnet on the product path (the relayer among them, with no node operating it); six more were deleted on 2026-09-23 (table above).
+- 8 STARK AIRs in `stark/src/air/`: subscriber ownership, denominated pool (pool commitment), balance proof, Merkle path, confidential balance, transfer, Merkle update (shield), spend (unshield v4, subscription v4). The product proves five of them (C0, C1, C3, C6, C7); C2, C4 and C5 stay for the deployed verifier until the v2 redeploy. All eight carry a blinding mask, and every committed value of a proof is measured uniform in it by the X5 test on all eight. The simulation argument in [`zk-simulation-argument.md`](./zk-simulation-argument.md) does not hold as written (audit v1, finding F69): the next-row openings it treats as unpublished are published and Merkle-checked, so no statistical-hiding claim is made until a corrected simulator is executed; no witness leak is shown.
 - Test counts per suite: [`README.md`](../README.md#testing) (measured 2026-08-04) and [`HANDOFF-2026-09-13.md`](./HANDOFF-2026-09-13.md) §4c (2026-09-13).
-- 11 npm packages published under `@protocol-01/*` (versions read from the registry 2026-09-14): p01-js, merchant-sdk, auth-sdk, privacy-sdk, specter-sdk, privacy-toolkit, arcium-sdk, stark-prover, zk-sdk, zkspl-sdk, rpc-config. Repo holds 16.
-- Prover bundled as a 262,363-byte WASM blob (`packages/stark-prover/wasm/p01_stark_bg.wasm`, digest prefix `d5583d41`), run in a browser worker on the web and inside a hidden WebView on Android.
+- 7 npm packages published under `@protocol-01/*` with their source in this repo (versions read from the registry 2026-09-14): p01-js, merchant-sdk, auth-sdk, privacy-sdk, specter-sdk, stark-prover, rpc-config. The repo holds 8 (pay-core is unpublished). arcium-sdk, privacy-toolkit, zk-sdk and zkspl-sdk stay on npm as published; their source was deleted on 2026-09-23.
+- Prover bundled as a 240,172-byte WASM blob (`packages/stark-prover/wasm/p01_stark_bg.wasm`, digest prefix `241caaab`), run in a browser worker on the web and inside a hidden WebView on Android.
 
 > If a number above looks off, treat the file paths as the source of truth, not this summary.
 
@@ -128,8 +120,8 @@ Groth16 was fully retired during the March 2026 migration; the legacy Circom cir
 
 These five paths give the densest view of the work in the shortest time.
 
-- [`programs/p01_stark_verifier/`](../programs/p01_stark_verifier/) — an on-chain FRI/STARK verifier written for Solana, eight circuits, Goldilocks field; C7 spend verified at 890,643 CU in one transaction with blob `0ad6d7f1` (`BENCHMARK-2026-09-13.md` §6), and at 889,691 CU with `d5583d41`.
-- [`stark/`](../stark/) — Winterfell-based prover, Poseidon AIRs, blinding masks, the X5 uniformity test (`stark/src/compact/zk_hiding.rs`), WASM build that the web, extension and mobile clients consume.
+- [`programs/p01_stark_verifier/`](../programs/p01_stark_verifier/) — an on-chain FRI/STARK verifier written for Solana, eight circuits, Goldilocks field; C7 spend verified at 890,643 CU in one merged transaction with blob `0ad6d7f1` (`BENCHMARK-2026-09-13.md` §6); with `d5583d41` at 889,691 CU for phase 1 plus 192,317 CU for phase 2 (1,082,158 CU for the transaction); with `241caaab` at 889,882 CU for phase 1 plus 193,269 CU for phase 2 (1,083,301 CU for the transaction).
+- [`stark/`](../stark/) — STARK prover (Goldilocks arithmetic from winterfell 0.10), Poseidon AIRs, blinding masks, the X5 uniformity test (`stark/src/compact/zk_hiding.rs`), WASM build that the web, extension and mobile clients consume.
 - [`programs/p01_registry/`](../programs/p01_registry/) — service registry, the surface that turns the privacy layer into a private subscriptions product.
 - [`programs/zk_shielded/`](../programs/zk_shielded/) — shielded pool, STARK-only since March 2026, including subscribe / pause / resume; there is no cancel and no refund, by design (README, "Service Registry + Private Subscriptions").
 - [`apps/web/`](../apps/web/) — the client that carries the current prover blob; the live devnet flows timed in the benchmark are its `liveDevnet*.test.ts`.

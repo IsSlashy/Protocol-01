@@ -2,7 +2,7 @@
   <div class="headrule"></div>
 
   <div class="eyebrow">Packages</div>
-  <h2>Twelve packages install from npm. Seven days is not a track record.</h2>
+  <h2>Seven packages ship from this repository. Seven days is not a track record.</h2>
 
   <p class="lede">
     The client surface is published under the @protocol-01 scope on the public
@@ -33,8 +33,11 @@
   <p class="note" style="margin-top:2.5mm;">
     Four more names carry the scope: an authentication helper, an RPC helper, one
     left over from an integration removed in July 2026 and not yet deprecated,
-    and streams 0.1.0, an orphan with no directory in the repository. Four
-    packages that are in the repository are unpublished.
+    and streams 0.1.0, an orphan with no directory in the repository. On
+    23 September 2026 the source of privacy-toolkit, zk-sdk, zkspl-sdk and that
+    left-over helper was deleted from the repository, since nothing in the
+    product used them; their npm versions stay as published. The repository
+    now holds eight packages: seven published, and pay-core, unpublished.
   </p>
 
   <div class="cols">
@@ -60,9 +63,10 @@
   <p style="margin-top:4.5mm;">
     The prover blob inside stark-prover 0.1.3 on npm is 229,640 bytes with
     sha256 51a947e3, and specter-sdk 0.4.3 ships the identical blob. Since
-    20 September 2026 the working tree carries a newer blob,
-    262,363 bytes, digest d5583d41, from which the redeployed verifier accepted
-    a circuit-7 proof on devnet (slot 501407541; deployed-verifier.json); stark-prover 0.2.0, privacy-sdk 2.0.0 and
+    23 September 2026 the repository carries a newer blob,
+    240,172 bytes, digest 241caaab, which proves only the five circuits the
+    product uses and from which the redeployed verifier accepted
+    a circuit-7 proof on devnet (slot 502692190; deployed-verifier.json); stark-prover 0.2.0, privacy-sdk 2.0.0 and
     specter-sdk 0.5.0 are built around it and not yet published.
   </p>
 

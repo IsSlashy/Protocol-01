@@ -233,7 +233,7 @@ You consume payments like any normal Solana stream. The privacy layer is below y
 | You want | Read |
 |---|---|
 | Full SDK API surfaces | [`packages/merchant-sdk/README.md`](../packages/merchant-sdk/README.md), [`packages/p01-js/README.md`](../packages/p01-js/README.md), [`packages/auth-sdk/README.md`](../packages/auth-sdk/README.md) |
-| Lower-level primitives (stealth, shielded pool, MPC) | [`packages/privacy-sdk/README.md`](../packages/privacy-sdk/README.md) |
+| Lower-level primitives (identity, denominations, registry, relay) | [`packages/privacy-sdk/README.md`](../packages/privacy-sdk/README.md) |
 | End-to-end runnable example | [`examples/merchant-netflix/`](../examples/merchant-netflix/) |
 | Chain layout (programs, deployed addresses) | [`README.md`](../README.md) |
-| Privacy/security model | [`docs/security-model.md`](./security-model.md) |
+| Privacy/security model | [`README.md`](../README.md), section "What is hidden, and what is not", and [`docs/LEAK-LEDGER.md`](./LEAK-LEDGER.md) |

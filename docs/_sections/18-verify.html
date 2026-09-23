@@ -19,8 +19,8 @@
     </thead>
     <tbody>
       <tr>
-        <td>Six programs run on devnet at the address their own source declares, four of them on the product path</td>
-        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives ten addresses (read 14 September 2026). Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
+        <td>Four programs run on devnet at the address their own source declares, all four on the product path</td>
+        <td><span class="mono">grep -rn 'declare_id!' programs/</span> gives four addresses (ten until 23 September 2026, when six crates no shipping flow called were deleted). Submit them in one <span class="mono">getMultipleAccounts</span> call and count the non-null programData.</td>
       </tr>
       <tr>
         <td>A STARK proof verified in one instruction, 809,662 CU of 1,399,850</td>
@@ -36,7 +36,7 @@
       </tr>
       <tr>
         <td>The prover on npm emits the bytes the 4 August verifier accepted; master carries a blob the 12 September verifier accepts</td>
-        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 20 September 2026: 262,363 bytes, <span class="mono">d5583d41</span> (before it, <span class="mono">0ad6d7f1</span>).</td>
+        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 23 September 2026: 240,172 bytes, <span class="mono">241caaab</span> (before it, <span class="mono">d5583d41</span> and <span class="mono">0ad6d7f1</span>).</td>
       </tr>
       <tr>
         <td>Soundness is 41 to 45 bits under unique decoding and 13 to 16 under the headline Johnson bound, as shipped</td>

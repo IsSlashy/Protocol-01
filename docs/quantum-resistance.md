@@ -1,7 +1,7 @@
 # Protocol 01 — Quantum Resistance Assessment & Migration Plan
 
 > **Note, 2026-09-14.** This document is a dated archive. The programs `p01_quantum_vault`, `specter` it names were closed on devnet on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
-> The live program list, the circuit count (8) and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
+> The live program list, the circuit count and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
 >
 > **Correction, 2026-09-22 (internal audit v1, round 2).** Two ratings below were wrong for the pool that runs today, and are corrected in place:
 > - **Pool commitments and Merkle nodes are not SAFE in v1.** The "~85-bit" Poseidon figures of this archive are those of the retired BN254 tree. The v1 pool hashes with Poseidon t=3 over Goldilocks and keeps ONE field element (64 bits) as its digest. `docs/SECURITY-LEVELS.md` (hash-collision lines) gives that digest a generic collision cost of 32.00 bits classical and 21.33 quantum: two openings of one commitment, so one deposit spent twice (finding F2, open in v1; the v2 design uses a four-element Poseidon2 digest).
@@ -175,7 +175,7 @@ This is the component Protocol 01 has the most control over and where HNDL is mo
 
 **Current implementation (3 separate implementations!):**
 
-#### Implementation A: Extension (`apps/extension/src/shared/store/shielded.ts`)
+#### Implementation A: Extension (`apps/extension/src/shared/store/shielded.ts`, removed on 2026-09-23 with the V1 client)
 ```
 Flow: nacl.box.keyPair() → nacl.box.before() → SHA-256 → stealth seed → Keypair.fromSeed()
 - Ephemeral X25519 keypair: nacl.box.keyPair() (line 167)

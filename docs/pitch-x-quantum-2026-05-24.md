@@ -74,7 +74,7 @@ style: |
 
 
 > **Note, 2026-09-14.** This document is a dated archive. The programs `p01_quantum_vault`, `specter` it names were closed on devnet on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
-> The live program list, the circuit count (8) and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
+> The live program list, the circuit count and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
 
 <!-- _class: cover -->
 

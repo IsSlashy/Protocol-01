@@ -63,8 +63,6 @@ verified	docs/protocol-01-design-document.html	it binds and the 22 bits of		GRIN
 verified	docs/protocol-01-design-document.html	that is 4.000 bits per query		log2(1/rho) = 4 at rho = 1/16, the per-query term of the conjectured regime (the term tables' 130.00 is 27 x 4 + 22)
 historical	docs/protocol-01-design-document.html	104 to 124 bits, which the project no longer stands behind		the withdrawn figures, said so; the range wraps across the line break (read whole since fix round 2)
 not-a-level	docs/protocol-01-design-document.html	floor bound by the 64&#8209;bit challenge		the challenge field width
-not-a-level	docs/arcium-integration.md	Goldilocks 64-bit field		a field width
-not-a-level	docs/arcium-integration.md	a fresh 64-bit `computation_offset`		an integer width
 stale	docs/distribution-strategy-2026-07-01.md	solo-built a 124-bit on-chain STARK verifier		the withdrawn 124-bit figure stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
 stale	docs/hackathon-pitch.md	124-bit soundness		the withdrawn 124-bit figure stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
 not-a-level	docs/pitch-x-quantum-2026-05-24.html	we use 256-bit hashes		a hash output width
@@ -114,7 +112,6 @@ not-a-level	docs/quantum-resistance.md	a 256-bit digest whose generic quantum co
 stale	docs/quantum-wallet-ux-design.md	Réduit security 124-bit → 62-bit		124 is withdrawn and 62 is half of it; no v1 quantum line reaches it: 20.98 to 23.45 as shipped (CMS19), and SHA-256's quantum collision bound is 85.33
 stale	docs/quantum-wallet-ux-design.md	infaisable (62-bit		62 is half of the withdrawn 124; the v1 quantum lines are 20.98 to 23.45 as shipped (CMS19)
 stale	docs/quantum-wallet-ux-design.md	~62-bit residual security on Poseidon		the v1 Poseidon digest's quantum collision bound is 21.33, the quantum soundness lines 20.98 to 23.45
-not-a-level	docs/security-model.md	Range proofs on all amounts (64-bit)		an amount width
 stale	docs/starknet-foundation-brief-2026-07-22.md	pas d'extension de corps → 128 bits		the brief's "exact figures, checked in the code" give Protocol 01 128 bits (and parameters that are not the deployed ones); v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
 external	docs/strk20-vs-protocol01-technique-2026-07-22.md	salt sur 120 bits		STRK20's amount salt, another system
 not-a-level	docs/strk20-vs-protocol01-technique-2026-07-22.md	Pourquoi pas un corps 64 bits		a field width
@@ -186,6 +183,8 @@ not-a-level	apps/web/i18n/fr.ts	le condensé du pool v1 est un seul élément de
 not-a-level	apps/web/i18n/fr.ts	un engagement est un seul élément de 64 bits, donc un déposant		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
 historical	apps/web/app/demo/pitch/page.tsx	a security level of 124 bits that measurement contradicts		the withdrawn figure, said so
 historical	apps/web/app/docs/page.tsx	Deleting the old "124-bit" claim		the withdrawn figure, said so
+not-a-level	apps/web/app/docs/page.tsx	deposit_epoch holds a 63-bit		the width of the random note blinding stored in deposit_epoch (noteBlinding.ts), not a level
+not-a-level	apps/web/app/docs/page.tsx	a 64-bit digest in v1		the v1 Poseidon digest width (one Goldilocks element, SECURITY-LEVELS.md finding F2), not a level
 historical	apps/web/app/parcours/page.tsx	Ma documentation annonçait 124 bits		the withdrawn figure, said so
 historical	apps/web/app/parcours/page.tsx	chaque requête valait environ 1 bit et non 4		the per-query value before the composition fix, told in the past tense
 historical	apps/web/app/parcours/page.tsx	et les 124 bits annoncés en valaient réellement		the withdrawn figure, said so

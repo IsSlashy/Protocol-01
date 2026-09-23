@@ -11,7 +11,8 @@
 //!   closed on 2026-09-13).
 //! * F46: README.md's zkSPL section announced hidden balances without saying
 //!   that `prove_balance` never checks its threshold and `withdraw` binds no
-//!   conservation (`programs/p01_zkspl/src/instructions/`).
+//!   conservation (`programs/p01_zkspl/src/instructions/`, deleted on 2026-09-23;
+//!   read it at HEAD f0f8a51b).
 //! * F60: README.md said a passphrase closes retroactive derivation, and no
 //!   screen of the web app sets one.
 //! * F15/F51: the README double-spend row must keep the F2 caveat.
@@ -375,8 +376,8 @@ fn the_evaluator_guide_labels_figures_measured_on_the_previous_blob() {
             if line.contains(measured) {
                 assert!(
                     line.contains("0ad6d7f1"),
-                    "docs/HACKATHON.md:{}: {measured} was measured on 2026-09-12 with blob 0ad6d7f1, not with the \
-                     shipped d5583d41, and the line does not say so (finding F49):\n  {}",
+                    "docs/HACKATHON.md:{}: {measured} was measured on 2026-09-12 with blob 0ad6d7f1, not with a \
+                     later blob (d5583d41, 241caaab), and the line does not say so (finding F49):\n  {}",
                     n + 1,
                     line.trim()
                 );
