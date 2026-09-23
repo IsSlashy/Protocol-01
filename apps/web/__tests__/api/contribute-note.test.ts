@@ -289,10 +289,16 @@ describe('🚨 reserve hands back a commitment and never an opening', () => {
    */
   it('never hands the same leaf to two live contributors', async () => {
     const a = await (await POST(req({ action: 'reserve' }))).json();
-    const b = await (await POST(req({ action: 'reserve' }))).json();
+    const resB = await POST(req({ action: 'reserve' }));
+    const b = await resB.json();
     expect(a.leafIndex).toBe(6);
-    expect(b.leafIndex, 'two contributors were given the same leaf').toBe(7);
-    expect(b.commitment).toBe(treasuryCommitmentAt(7).toString());
+    expect(b.leafIndex, 'two contributors were given the same leaf').not.toBe(6);
+    // Audit R4: and never a later leaf either. The second caller used to be
+    // handed 7, which the client refuses while the tree's next index is 6
+    // ("The pool advanced past this reservation"). It is told to retry instead.
+    expect(resB.status, JSON.stringify(b)).toBe(409);
+    expect(b.leafIndex).toBeUndefined();
+    expect(b.commitment).toBeUndefined();
   });
 
   it('reclaims the edge leaf only once its reservation is older than the proving window', async () => {
@@ -302,15 +308,122 @@ describe('🚨 reserve hands back a commitment and never an opening', () => {
     values.set(`p01:note:contrib-reserved:${POOL_KEY}:6:at`, String(Date.now() - 21 * 60 * 1000));
     const b = await (await POST(req({ action: 'reserve' }))).json();
     expect(b.leafIndex, 'a dead reservation at the tree edge was not reclaimed').toBe(6);
-    // And a third, live, contributor walks past it again.
-    const c = await (await POST(req({ action: 'reserve' }))).json();
-    expect(c.leafIndex).toBe(7);
+    // And a third contributor, while that reclaimed reservation is live, is
+    // not handed 6 again (nor 7, which the client refuses: audit R4).
+    const resC = await POST(req({ action: 'reserve' }));
+    const c = await resC.json();
+    expect(c.leafIndex, 'a live reclaimed reservation was handed out twice').not.toBe(6);
+    expect(resC.status, JSON.stringify(c)).toBe(409);
   });
 
   it('a marker without a recorded age (written before ages existed) is reclaimable', async () => {
     counters.set(`p01:note:contrib-reserved:${POOL_KEY}:6`, 1);
     const a = await (await POST(req({ action: 'reserve' }))).json();
     expect(a.leafIndex).toBe(6);
+  });
+});
+
+/**
+ * 🚨 AUDIT R4 (AXIS 7) · RESERVE MUST NEVER HAND OUT AN INDEX THE CLIENT REFUSES.
+ *
+ * A contribution's commitment is derived FOR one index, and the client
+ * (`prepareContribution`, `lib/privacy/pool/shieldEphemeral.ts`) refuses any
+ * reservation that is not the tree's next index: "The pool advanced past this
+ * reservation". The reserve loop used to walk past a live marker at the tree
+ * edge and hand the next caller `start + 1`, `start + 2`... every one of which
+ * that guard refuses, and every one of which left a fresh marker behind that
+ * pushed the NEXT honest buyer further out once the edge moved. One free
+ * `reserve` (the ticket ships in the bundle) therefore refused every default
+ * Shield for 20 minutes, and two honest buyers inside 20 minutes did the same
+ * to each other.
+ *
+ * These cases run the route AND the client's own guard, so the contract between
+ * the two is what is pinned, not a number copied from one side.
+ */
+describe('🚨 R4 · reserve hands out only the index the client will accept', () => {
+  const T0 = 1_800_000_000_000;
+  let now = T0;
+  let clock: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    now = T0;
+    clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  });
+  afterEach(() => clock.mockRestore());
+
+  function reserveFrom(ip: string, atMin: number) {
+    now = T0 + atMin * 60_000;
+    return POST(
+      new NextRequest('http://localhost:3000/api/contribute-note', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-p01-funder-ticket': TICKET,
+          'x-real-ip': ip,
+        },
+        body: JSON.stringify({ action: 'reserve' }),
+      } as unknown as ConstructorParameters<typeof NextRequest>[1]),
+    );
+  }
+
+  /** A tree account whose `leafCount` is `n` (the layout `parseFilledSubtrees` reads). */
+  function treeAccount(n: number) {
+    const d = Buffer.alloc(8 + 32 + 32 + 8 + 1 + 4);
+    d.writeBigUInt64LE(BigInt(n), 72);
+    return { getAccountInfo: async () => ({ data: d }) } as never;
+  }
+
+  /** The client's own guard, run for real: does it accept this reservation? */
+  async function clientGuardAccepts(leafIndex: number, commitment: string, treeNext: number) {
+    const { prepareContribution } = await import('@/lib/privacy/pool/shieldEphemeral');
+    try {
+      await prepareContribution(POOL as never, treeAccount(treeNext), new Uint8Array(32), BigInt(commitment), leafIndex);
+      return true;
+    } catch (e) {
+      // Anything past the guard fails on the fake tree (no Merkle data). Only
+      // the guard's own refusal says the reservation itself was unusable.
+      return !/advanced past this reservation/.test((e as Error).message);
+    }
+  }
+
+  it('every leaf handed out passes the client guard; a live edge answers busy, not a later leaf', async () => {
+    // t+0: someone (an attacker, or just the first buyer) holds the edge, leaf 6.
+    const first = await (await reserveFrom('203.0.113.1', 0)).json();
+    expect(first.leafIndex).toBe(6);
+    expect(await clientGuardAccepts(first.leafIndex, first.commitment, 6)).toBe(true);
+
+    // t+1, t+10, t+19: honest buyers while that marker is live.
+    for (const [ip, atMin] of [['198.51.100.2', 1], ['198.51.100.3', 10], ['198.51.100.4', 19]] as const) {
+      const res = await reserveFrom(ip, atMin);
+      const body = await res.json();
+      if (res.ok) {
+        // If a leaf is handed out at all, it must be one the client can use.
+        expect(
+          await clientGuardAccepts(body.leafIndex, body.commitment, 6),
+          `t+${atMin}min was handed leaf ${body.leafIndex} while the tree's next index is 6`,
+        ).toBe(true);
+        expect(body.leafIndex, 'two live contributors were given the same leaf').not.toBe(6);
+      } else {
+        expect(res.status, JSON.stringify(body)).toBe(409);
+        expect(body.retryAfterSeconds).toBeGreaterThan(0);
+        expect(body.leafIndex).toBeUndefined();
+      }
+    }
+  });
+
+  it('a refused reservation leaves nothing behind that blocks the next buyer once the edge moves', async () => {
+    // Buyer 1 holds 6; buyer 2 arrives a minute later.
+    expect((await (await reserveFrom('198.51.100.11', 0)).json()).leafIndex).toBe(6);
+    await reserveFrom('198.51.100.12', 1);
+    // Buyer 1's deposit lands: the tree's next index is now 7.
+    await leafSixLanded();
+    // Buyer 3, eight minutes later, must be handed 7, the one index the client
+    // accepts. The old walk left buyer 2's live marker on 7 and pushed buyer 3
+    // to 8, which the client refused, for another 20 minutes.
+    const res = await reserveFrom('198.51.100.13', 9);
+    const body = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body.leafIndex, 'a refused buyer\'s marker pushed the next buyer past the edge').toBe(7);
+    expect(await clientGuardAccepts(body.leafIndex, body.commitment, 7)).toBe(true);
   });
 });
 

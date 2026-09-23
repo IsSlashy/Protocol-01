@@ -32,7 +32,9 @@ import {
   type VersionedMessage,
 } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { hmac } from '@noble/hashes/hmac.js';
+import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import bs58 from 'bs58';
 
 const mockGetStore = vi.fn();
 const mockRateLimitExceeded = vi.fn();
@@ -44,13 +46,22 @@ vi.mock('@/lib/waitlist/store', () => ({
 
 const mockGetTransaction = vi.fn();
 const mockGetGenesisHash = vi.fn();
+/**
+ * [close-v1 F11] The relayed ephemeral's own history, read by the fallback
+ * before it mints. Served ahead of `mockGetTransaction`, so the cases that pin
+ * the payment with `mockResolvedValue` keep doing so.
+ */
+const ephemeralHistoryTx = new Map<string, unknown>();
+const mockGetSignaturesForAddress = vi.fn();
 vi.mock('@solana/web3.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return {
     ...actual,
     Connection: class {
-      getTransaction = (...a: unknown[]) => mockGetTransaction(...a);
+      getTransaction = (sig: string, ...a: unknown[]) =>
+        ephemeralHistoryTx.has(sig) ? Promise.resolve(ephemeralHistoryTx.get(sig)) : mockGetTransaction(sig, ...a);
       getGenesisHash = () => mockGetGenesisHash();
+      getSignaturesForAddress = (...a: unknown[]) => mockGetSignaturesForAddress(...a);
     },
   };
 });
@@ -160,6 +171,10 @@ function withdrawalTx(
   const postBalances = [...preBalances];
   postBalances[keys.indexOf(TILL)] += tillCredit;
   return {
+    // Before `P01_EXCHANGE_LEGACY_CUTOFF` below: since close-v1 F70 the route
+    // sells a note only against a withdrawal that landed before the exchange
+    // was switched off (`closeV1L2ClaimRoute.test.ts` pins the refusal).
+    blockTime: EXCHANGE_LANDED_AT,
     meta: { err: null, preBalances, postBalances },
     transaction: {
       message: {
@@ -264,11 +279,70 @@ function treasuryCommitmentAt(leafIndex: number): bigint {
   );
 }
 
-/** A store in which the relay has funded leaf 6 with payment SIG. */
+// ── [close-v1 F11] The key the relay funded, and the float it must repay ────
+const funderKp = Keypair.generate();
+const relayEphemeral = Keypair.generate();
+const EXCHANGE_LANDED_AT = 1_700_000_000;
+const EXCHANGE_CUTOFF = '1800000000';
+
+/** The relay's tag for (payment, ephemeral), written out: keyed by the float's secret. */
+function relayTag(sig: string, eph: string): string {
+  const key = sha256(concatBytes(utf8ToBytes('p01:relay:ephemeral-tag:v1\0'), funderKp.secretKey));
+  return bytesToHex(hmac(sha256, key, utf8ToBytes(`${sig}\n${eph}`)));
+}
+
+/** What the relayed ephemeral signs so the fallback can read its history. */
+function ephemeralProofFor(sig: string, kp = relayEphemeral) {
+  return Buffer.from(
+    nacl.sign.detached(
+      new Uint8Array(
+        Buffer.from(
+          `Protocol 01 - the deposit key this payment funded gave the float back.\nPayment: ${sig}`,
+          'utf8',
+        ),
+      ),
+      kp.secretKey,
+    ),
+  ).toString('base64');
+}
+
+/** A balance-only transaction naming `keys`. */
+function balanceTx(keys: string[], deltas: number[]) {
+  const pre = keys.map(() => 10e9);
+  return {
+    meta: { err: null, preBalances: pre, postBalances: pre.map((b, i) => b + deltas[i]) },
+    transaction: {
+      message: { getAccountKeys: () => ({ staticAccountKeys: keys.map((k) => new PublicKey(k)) }) },
+    },
+  };
+}
+
+/**
+ * The honest history of a relayed deposit that never landed: the float funded
+ * the ephemeral, then Recover swept it back, less fees.
+ */
+function repaidHistory() {
+  const float = funderKp.publicKey.toBase58();
+  const eph = relayEphemeral.publicKey.toBase58();
+  ephemeralHistoryTx.set('FUND'.padEnd(87, '1'), balanceTx([float, eph], [-1_573_491_080, 1_573_486_080]));
+  ephemeralHistoryTx.set('SWEEP'.padEnd(87, '2'), balanceTx([eph, float], [-1_573_436_080, 1_573_431_080]));
+  mockGetSignaturesForAddress.mockResolvedValue([
+    { signature: 'SWEEP'.padEnd(87, '2'), err: null },
+    { signature: 'FUND'.padEnd(87, '1'), err: null },
+  ]);
+}
+
+/** The two fields a relayed fallback adds since close-v1 F11. */
+function ephemeralFields(sig = SIG) {
+  return { ephemeral: relayEphemeral.publicKey.toBase58(), ephemeralProof: ephemeralProofFor(sig) };
+}
+
+/** A store in which the relay has funded leaf 6 with payment SIG, and tagged the key it funded. */
 function relayedStore() {
   const kv = store();
   kv.data.set(`p01:relay:payment:${SIG}`, 1);
   kv.data.set(`p01:relay:payment:${SIG}:contribution`, `${POOL_KEY}:${LEAF}`);
+  kv.data.set(`p01:relay:payment:${SIG}:ephemeral-tag`, relayTag(SIG, relayEphemeral.publicKey.toBase58()));
   return kv;
 }
 
@@ -282,7 +356,11 @@ beforeEach(() => {
   vi.stubEnv('P01_TREASURY_POOL_SEED', SEED_HEX);
   // For the cases that drive `/api/contribute-note` confirm on the same store.
   vi.stubEnv('P01_FUNDER_TICKET', CONTRIBUTE_TICKET);
+  vi.stubEnv('P01_FUNDER_SECRET_KEY', bs58.encode(funderKp.secretKey));
   delete process.env.P01_NOTE_PRICE_LAMPORTS;
+  delete process.env.P01_EXCHANGE_LEGACY_CUTOFF;
+  ephemeralHistoryTx.clear();
+  repaidHistory();
 });
 
 describe('a claim is only sold against a payment that really landed', () => {
@@ -394,6 +472,12 @@ describe('a claim is only sold against a payment that really landed', () => {
 });
 
 describe('a circuit-7 withdrawal to the till is a payment, at the withdrawal floor', () => {
+  // Every case here is a withdrawal that landed before the exchange was
+  // switched off (close-v1 F70): those are still collected, at this floor.
+  beforeEach(() => {
+    vi.stubEnv('P01_EXCHANGE_LEGACY_CUTOFF', EXCHANGE_CUTOFF);
+  });
+
   // MEASURED 2026-08-27 on the 1 SOL pool: "payee +0.995 SOL". The pool keeps
   // `UNSHIELD_FEE_BPS` = 50, so a note-in of a 1 SOL note lands 995,000,000 at
   // the till and the full-price floor would refuse every one of them.
@@ -496,7 +580,13 @@ describe('a circuit-7 withdrawal to the till is a payment, at the withdrawal flo
 
 describe('a payment that funded a relayed deposit is a contribution, and this route is only its fallback', () => {
   const claim = (over: Record<string, unknown> = {}) =>
-    post({ signature: SIG, proof: proofFor(SIG), contribution: { token: 'SOL', leafIndex: LEAF }, ...over });
+    post({
+      signature: SIG,
+      proof: proofFor(SIG),
+      contribution: { token: 'SOL', leafIndex: LEAF },
+      ...ephemeralFields(),
+      ...over,
+    });
 
   beforeEach(() => {
     mockGetTransaction.mockResolvedValue(paidTx(1_003_000_000));
@@ -719,6 +809,7 @@ describe('KV-1 · a payment that has already been redeemed', () => {
       signature: SIG,
       proof: proofFor(SIG),
       contribution: { token: 'SOL', leafIndex: LEAF },
+      ...ephemeralFields(),
       ...over,
     });
 

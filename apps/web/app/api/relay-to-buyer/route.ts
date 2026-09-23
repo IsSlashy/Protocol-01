@@ -26,6 +26,7 @@
  * the chain, and it refuses to send one more.
  */
 
+import { randomBytes } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { Connection, Keypair, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
 import nacl from 'tweetnacl';
@@ -38,11 +39,24 @@ import { namesBoth } from '@/lib/privacy/coNaming';
 import { P11_FUNDER_WALK_LIMIT, funderHistoryVerdict } from '@/lib/privacy/funderHistory';
 import {
   contributionBinding,
+  counterValue,
+  holdIsLive,
+  leafHoldKey,
+  leafHoldLockKey,
+  notePaidKey,
   parseContributionRef,
   relayPaymentClaimKey,
   relayPaymentContributionKey,
   resolveContributionPool,
+  sealHolder,
+  unsealHolder,
 } from '@/lib/privacy/paymentBinding';
+import { fetchPoolCommitments } from '@/lib/privacy/pool/denominatedPool';
+import { installKvPoolHistory } from '@/lib/privacy/pool/kvPoolHistory';
+
+// The pool history this route reads to refuse a binding on a landed leaf is
+// the same KV-shared walk contribute-note, claim-for-payment and issue-note use.
+installKvPoolHistory();
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -188,6 +202,76 @@ const FEE_BPS_DENOMINATOR = 10_000n;
 
 /** What this transaction costs to send. Deducted from the subsidy, not the payment. */
 const FEE_LAMPORTS = 5_000;
+
+/**
+ * # 🚨 ONE LEAF, ONE LIVE PAYMENT (audit v1 round 4, server axis)
+ *
+ * The binding written by `recordFunded` is the only thing `/api/contribute-note`
+ * confirm and the `/api/claim-for-payment` fallback use to decide whose payment
+ * a deposited leaf belongs to, and confirm pays whichever bound payment
+ * confirms FIRST. Until this round the relay bound a payment to any leaf the
+ * caller named. So a stranger paid the till the same amount (the float sent it
+ * straight back to a key the stranger held), bound that payment to the
+ * victim's leaf, polled confirm until the victim's deposit landed, and took the
+ * victim's claim; the victim's confirm and fallback then answered 409 for
+ * ever. Measured: scratchpad audit-v1-opus/r4-server/p1p2-head.log, P2.
+ *
+ * Four rules close it, all decided BEFORE a lamport moves:
+ *
+ *   1. A leaf already on the tree binds nobody new. An honest relay always runs
+ *      before its deposit lands, because it is what funds that deposit.
+ *   2. Only the tree's NEXT index binds (`MAX_BIND_LOOKAHEAD`), because that is
+ *      the only index `/api/contribute-note` reserve hands out and the only one
+ *      the client will deposit at (audit v1 F72, R2).
+ *   3. A leaf another payment holds binds nobody else while that hold is live.
+ *   4. 🚨 A hold stays live until its leaf is DECIDED, not for a fixed window
+ *      (audit v1 F72, round 4 residual). Past the 20-minute reservation window
+ *      it is still live while the ephemeral the relay funded holds lamports,
+ *      i.e. while its deposit can still land, and never past the hard ceiling
+ *      `leafHoldMaxMs()` (3 h by default); see `holdIsLive` in
+ *      `lib/privacy/paymentBinding.ts`. Only a holder whose key is empty (or
+ *      whose hold is past the ceiling) and
+ *      whose leaf is STILL not on the tree when the tree is read again is taken
+ *      over, and the payment that takes it over EVICTS that holder's binding,
+ *      so a binding left behind can never confirm somebody else's later
+ *      deposit. The old clock-only rule let a stranger take over a victim who
+ *      was merely slow; the victim's deposit then confirmed for the stranger.
+ *      Measured: scratchpad audit-v1-opus/r4-verify1/probe-residual.log, R1.
+ *
+ * Pinned by `__tests__/api/relayLeafBinding.test.ts` and
+ * `__tests__/api/closeV1L1LeafHold.test.ts`, which drive the real relay,
+ * confirm and fallback against one store.
+ *
+ * ⚠️ WHAT THIS DOES NOT DO. It does not tie a binding to the reservation that
+ * handed the leaf out: the reserve answer carries no secret to tie it to. Rule 3
+ * means a payer who binds a leaf first makes a later contributor's relay for
+ * that leaf refuse, before anything is forwarded and with the payment released
+ * (it still sells as a plain claim), until that leaf is decided; reserve now
+ * answers busy for such a leaf before anyone pays. A payer who binds the edge
+ * and keeps lamports on its key without depositing therefore stalls
+ * contributions, for at most the ceiling per payment. That bounded stall is the
+ * accepted cost of rule 4; past the ceiling a deposit that lands late may be
+ * claimed by the payer that took the leaf over (the trade is stated at
+ * `LEAF_HOLD_MAX_MS_DEFAULT`).
+ */
+
+/**
+ * How far past the tree a binding may reach: one, the next index. Reserve
+ * hands out only `highestOnTree + 1` and the client refuses any other index
+ * ("The pool advanced past this reservation"), so no honest binding names a
+ * leaf beyond it. It was 64, a figure copied from a reservation lookahead that
+ * no longer exists; a binding ten leaves ahead held a leaf nobody could yet
+ * deposit at (audit v1 F72, R2). The pool history is read incrementally from
+ * the chain, so the relay's view is never behind the reserve's.
+ */
+const MAX_BIND_LOOKAHEAD = 1;
+
+/** How long a hold lock outlives a request that died holding it. */
+const LEAF_HOLD_LOCK_SECONDS = 3600;
+
+// The hold helpers (`leafHoldKey`, `leafHoldLockKey`, `sealHolder`,
+// `unsealHolder`, `holdIsLive`) live in `lib/privacy/paymentBinding.ts`,
+// because `/api/contribute-note` reserve reads the same hold (audit v1 F73).
 
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
@@ -451,10 +535,17 @@ export async function GET(request: NextRequest) {
   if (funder && addresses) {
     try {
       const rpc = process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com';
+      // ⛔ AN EDGE, NOT A MENTION (audit v1 F61). Any stranger can name both
+      // addresses in one transaction of their own for one network fee, and
+      // that used to switch every relay off. Only a transaction one of the two
+      // signed, or one that moved lamports between them, is the edge this
+      // invariant is about. See `NamesBothOptions.operatorEdgeOnly`.
       sinkFundedFloat = await namesBoth(
         new Connection(rpc, 'confirmed'),
         addresses.feeWallet,
         addresses.funder,
+        undefined,
+        { operatorEdgeOnly: true },
       );
     } catch {
       sinkFundedFloat = null;
@@ -703,12 +794,18 @@ export async function POST(request: NextRequest) {
    * the honest contributor had paid a full denomination for.
    */
   let bindingFloorLamports = 0;
+  /** The pool and leaf the binding names, for the hold checks before the send. */
+  let bindingTarget: {
+    pool: NonNullable<ReturnType<typeof resolveContributionPool>>;
+    leafIndex: number;
+  } | null = null;
   if (body.contribution !== undefined && body.contribution !== null) {
     const ref = parseContributionRef(body.contribution);
     if (!ref) return bad(400, 'contribution must be { token, leafIndex } with a non-negative integer leaf');
     const pool = resolveContributionPool(ref.token);
     if (!pool) return bad(503, `no ${ref.token} pool is configured for contributions`);
     binding = contributionBinding(pool.poolPDA.toBase58(), ref.leafIndex);
+    bindingTarget = { pool, leafIndex: ref.leafIndex };
     bindingFloorLamports = Number(pool.denominationAtomic);
     // Fails CLOSED. A floor that is not a positive number would disable the
     // guard silently, which is the shape of every hole this route has had.
@@ -729,8 +826,27 @@ export async function POST(request: NextRequest) {
    * the fallback path, not the money; a throw here would replace an accurate
    * answer with a misleading one.
    */
+  /** The hold lock taken below for this binding, released with the claim. */
+  let heldLock: string | null = null;
   const recordFunded = async (): Promise<boolean> => {
     try {
+      // The hold FIRST: a binding must never exist without the hold that lets
+      // a later takeover find and evict it. If this write fails, the binding
+      // is not written either, which costs this payer the confirm path, never
+      // somebody else their leaf.
+      if (binding) {
+        await kv.set(
+          leafHoldKey(binding),
+          sealHolder(funder, {
+            s: signature,
+            t: Date.now(),
+            n: randomBytes(16).toString('base64url'),
+            // The key this payment funded, the one that signs its deposit:
+            // what tells a slow holder from a dead one (audit v1 F72).
+            e: buyer.toBase58(),
+          }),
+        );
+      }
       // ⛔ THE BUYER JOIN IS NOT WRITTEN, and it used to be.
       //
       // `p01:relay:payment:<sig>:buyer` paired a payment transaction, whose fee
@@ -830,6 +946,8 @@ export async function POST(request: NextRequest) {
   const release = async (res: NextResponse) => {
     try {
       await kv.del(claimKey);
+      // The leaf this request was about to bind is free again: nothing moved.
+      if (heldLock) await kv.del(heldLock);
     } catch {
       // Best effort. A failed release costs this buyer their retry, which is
       // the behaviour we are fixing — but a throw here would replace an
@@ -1016,6 +1134,153 @@ export async function POST(request: NextRequest) {
 
   const forward = required;
   if (forward <= FEE_LAMPORTS) return release(bad(400, 'that job asks for less than the relay fee'));
+
+  // ── ONE PAYMENT, ONE PAYOUT: a payment already sold is not forwarded ─────
+  //
+  // 🚨 THE REVERSE-ORDER DOUBLE PAYOUT (audit v1 round 4). `/api/claim-for-
+  // payment` refuses to sell a payment this route has relayed, but this route
+  // never read the sale gate, so the other order paid twice: sell the payment
+  // as a plain claim first, then have it forwarded here, and keep both the
+  // note and the float's lamports. Measured: scratchpad audit-v1-opus/
+  // r4-server/p1p2-head.log, P2b. `p01:note:paid:<sig>` is the one mint gate
+  // (`paymentBinding.ts`); any value there means this payment already bought a
+  // claim, and a relayed contribution only takes it AFTER this route has run.
+  //
+  // Read as LATE as it can be, after every chain read above, so the window in
+  // which a concurrent sale can slip past both checks is the sale's own
+  // read-then-increment, not this request's round trips.
+  //
+  // ⚠️ NOT ATOMIC ACROSS THE TWO ROUTES. The sale reads the relay claim and
+  // then increments its own gate; this route increments the relay claim and
+  // then reads the sale gate. Both pass only if this route's claim AND this
+  // read both fall inside the sale's one-round-trip gap. Closing that for good
+  // is the sale route re-reading the relay claim after its increment.
+  try {
+    if (counterValue(await kv.get(notePaidKey(signature))) >= 1) {
+      return release(
+        bad(409, 'this payment was already sold as a claim, so it is not forwarded as well', {
+          hint: 'Collect the note it bought at /api/claim-for-payment.',
+        }),
+      );
+    }
+  } catch {
+    return release(bad(503, 'the sale record for this payment could not be read'));
+  }
+
+  // ── ONE LEAF, ONE LIVE PAYMENT (see the rules above MAX_BIND_LOOKAHEAD) ──
+  if (binding && bindingTarget) {
+    let highestOnTree = -1;
+    try {
+      const commitments = await fetchPoolCommitments(connection, bindingTarget.pool.poolPDA);
+      for (const c of commitments.values()) if (c.leafIndex > highestOnTree) highestOnTree = c.leafIndex;
+    } catch {
+      return release(bad(502, "the pool's history could not be read, so the leaf could not be checked"));
+    }
+    if (bindingTarget.leafIndex <= highestOnTree) {
+      return release(
+        bad(409, 'that leaf is already on the tree; a contribution is bound before its deposit lands', {
+          leafIndex: bindingTarget.leafIndex,
+          highestOnTree,
+        }),
+      );
+    }
+    if (bindingTarget.leafIndex > highestOnTree + MAX_BIND_LOOKAHEAD) {
+      return release(
+        bad(409, 'that leaf is further past the tree than any reservation reaches', {
+          leafIndex: bindingTarget.leafIndex,
+          highestOnTree,
+          lookahead: MAX_BIND_LOOKAHEAD,
+        }),
+      );
+    }
+
+    let token = 'open';
+    let evict: string | null = null;
+    try {
+      const raw = await kv.get<string>(leafHoldKey(binding));
+      if (raw !== null && raw !== undefined) {
+        const holder = unsealHolder(funder, raw);
+        if (!holder) {
+          // Fails CLOSED: a hold nobody can read might be live, and taking it
+          // over without evicting its binding is the theft this closes.
+          return release(
+            bad(409, 'that leaf is held by a payment this deployment cannot read; reserve a new leaf'),
+          );
+        }
+        // Rule 4: live until decided, within the ceiling. `holdIsLive` answers
+        // true for any holder inside the reservation window, and past it,
+        // until the ceiling, for any holder whose funded key still holds
+        // lamports or cannot be read.
+        if (await holdIsLive(connection, holder, Date.now())) {
+          return release(
+            bad(409, 'that leaf is bound to another payment; reserve a new leaf', {
+              leafIndex: bindingTarget.leafIndex,
+              hint:
+                'Nothing was sent. This payment can be relayed again for a different leaf, or ' +
+                'sold as a plain claim.',
+            }),
+          );
+        }
+        token = holder.n;
+        evict = holder.s;
+      }
+    } catch {
+      return release(bad(503, 'the hold on that leaf could not be read'));
+    }
+
+    // 🚨 THE TREE IS READ AGAIN BEFORE A HOLDER IS EVICTED (audit v1 F72). A
+    // holder whose deposit landed and whose residue was swept home has an
+    // empty key, exactly like a dead one; only the tree tells them apart, and
+    // the read above may predate that deposit. This read comes after the
+    // balance read, so a deposit that emptied the key is on it.
+    if (evict) {
+      let highestNow = -1;
+      try {
+        const again = await fetchPoolCommitments(connection, bindingTarget.pool.poolPDA);
+        for (const c of again.values()) if (c.leafIndex > highestNow) highestNow = c.leafIndex;
+      } catch {
+        return release(bad(502, "the pool's history could not be read, so the leaf could not be checked"));
+      }
+      if (bindingTarget.leafIndex <= highestNow) {
+        return release(
+          bad(409, 'that leaf is already on the tree; a contribution is bound before its deposit lands', {
+            leafIndex: bindingTarget.leafIndex,
+            highestOnTree: highestNow,
+          }),
+        );
+      }
+    }
+
+    // `incr` decides between two requests that read the same hold (or none):
+    // only the one that creates the lock key sees 1.
+    const lockKey = leafHoldLockKey(binding, token);
+    let lock: number;
+    try {
+      lock = await kv.incr(lockKey);
+    } catch {
+      return release(bad(503, 'the hold on that leaf could not be taken'));
+    }
+    if (lock !== 1) {
+      return release(bad(409, 'another payment is binding that leaf right now; reserve a new leaf'));
+    }
+    heldLock = lockKey;
+    try {
+      await kv.expire(lockKey, LEAF_HOLD_LOCK_SECONDS);
+    } catch {
+      /* the lock still works; it only outlives a crashed request for longer */
+    }
+
+    // The stale holder's binding dies BEFORE anything is sent, and nothing is
+    // sent if it cannot be deleted: a binding left alive is a binding that can
+    // confirm this payer's deposit.
+    if (evict) {
+      try {
+        await kv.del(relayPaymentContributionKey(evict));
+      } catch {
+        return release(bad(503, 'the stale hold on that leaf could not be cleared'));
+      }
+    }
+  }
 
   // ── THE SEND AND THE CONFIRMATION ARE TWO DIFFERENT FACTS ────────────────
   //

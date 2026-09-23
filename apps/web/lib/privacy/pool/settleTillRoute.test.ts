@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Keypair, PublicKey, Transaction } from '@solana/web3.js';
 
 import type { KvLike } from '@/lib/waitlist/store';
-import { ONE_PURCHASE_LAMPORTS } from './settlementPolicy';
+import { MIN_PURCHASE_CREDIT_LAMPORTS, ONE_PURCHASE_LAMPORTS } from './settlementPolicy';
 
 const DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
 
@@ -30,7 +30,25 @@ interface FakeChain {
   genesis: string;
   balances: Map<string, number>;
   /** Newest-first signatures per address, as the RPC returns them. */
-  signatures: Map<string, { signature: string; blockTime: number | null }[]>;
+  signatures: Map<string, { signature: string; blockTime: number | null; err?: unknown }[]>;
+  /**
+   * What each till transaction credited the till, by signature. The settler
+   * reads the AMOUNT of each till transaction since audit v1 F38 (only a
+   * purchase-sized credit resets the quiet period and counts as a purchase),
+   * so a chain that lists signatures and cannot serve them no longer answers
+   * the question the route asks.
+   */
+  tillCredits: Map<string, number>;
+  /**
+   * Who paid a till credit, by signature (audit v1 F62). Unset: a fresh key
+   * with no history, which is what an honest buyer's wallet looks like to the
+   * float-funding check.
+   */
+  tillPayers: Map<string, string>;
+  /** Any other transaction, served as is (a float grant in a payer's history). */
+  txs: Map<string, { keys: string[]; pre: number[]; post: number[] }>;
+  /** Every `getSignaturesForAddress` call, to measure what a read costs. */
+  sigReads: { address: string; limit?: number }[];
   sent: { tx: Transaction; signers: Keypair[] }[];
   feeForMessage: number | null;
   throwOnGenesis?: boolean;
@@ -53,8 +71,46 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
       async getBalance(k: { toBase58(): string }) {
         return chain.balances.get(k.toBase58()) ?? 0;
       }
-      async getSignaturesForAddress(k: { toBase58(): string }) {
-        return chain.signatures.get(k.toBase58()) ?? [];
+      async getSignaturesForAddress(
+        k: { toBase58(): string },
+        o?: { limit?: number; before?: string },
+      ) {
+        chain.sigReads.push({ address: k.toBase58(), limit: o?.limit });
+        let list = chain.signatures.get(k.toBase58()) ?? [];
+        if (o?.before) {
+          const i = list.findIndex((s) => s.signature === o.before);
+          list = i < 0 ? [] : list.slice(i + 1);
+        }
+        return list.slice(0, o?.limit ?? 1000);
+      }
+      async getTransaction(sig: string) {
+        const other = chain.txs.get(sig);
+        if (other) {
+          return {
+            meta: { err: null, preBalances: other.pre, postBalances: other.post },
+            transaction: {
+              message: {
+                getAccountKeys: () => ({
+                  staticAccountKeys: other.keys.map((k) => new actual.PublicKey(k)),
+                }),
+              },
+            },
+          };
+        }
+        if (!chain.tillCredits.has(sig)) return null;
+        const credit = chain.tillCredits.get(sig)!;
+        const named = chain.tillPayers.get(sig);
+        const payer = named ? new actual.PublicKey(named) : actual.Keypair.generate().publicKey;
+        return {
+          meta: { err: null, preBalances: [1e12, 0], postBalances: [1e12 - credit, credit] },
+          transaction: {
+            message: {
+              getAccountKeys: () => ({
+                staticAccountKeys: [payer, new actual.PublicKey(process.env.P01_TILL_ADDRESS!)],
+              }),
+            },
+          },
+        };
       }
       async getLatestBlockhash() {
         return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1000 };
@@ -77,6 +133,9 @@ vi.mock('@solana/web3.js', async (importOriginal) => {
 
 // ── The fake store ──────────────────────────────────────────────────────────
 
+let failExpireOnce: string | null = null;
+const ttl = new Map<string, number>();
+
 function memoryKv(): KvLike & { map: Map<string, unknown> } {
   const map = new Map<string, unknown>();
   return {
@@ -95,7 +154,15 @@ function memoryKv(): KvLike & { map: Map<string, unknown> } {
       map.set(k, n);
       return n;
     },
-    async expire() {},
+    async expire(k, s) {
+      // audit v1 F39: a store whose `expire` can fail once, and a record of
+      // which keys were given a TTL, so a lock left without one is visible.
+      if (failExpireOnce === k) {
+        failExpireOnce = null;
+        throw new Error('transient store error');
+      }
+      ttl.set(k, s);
+    },
     async sadd() {},
     async srem() {},
     async scard() {
@@ -139,12 +206,25 @@ function req(auth?: string) {
 
 const cron = () => req(`Bearer ${CRON_SECRET}`);
 
-/** Put the till at k purchases, last credited `agoSeconds` ago. */
+/**
+ * Put the till at k purchases, last credited `agoSeconds` ago.
+ *
+ * One transaction per purchase, the newest `agoSeconds` old and each earlier
+ * one a minute older, because that is what k purchases look like on chain and
+ * the settler now counts them one per transaction (audit v1 F38). `extra`
+ * rides on the newest credit.
+ */
 function tillHolds(k: number, agoSeconds: number, extra = 0) {
   chain.balances.set(till.publicKey.toBase58(), k * ONE_PURCHASE_LAMPORTS + extra);
-  chain.signatures.set(till.publicKey.toBase58(), [
-    { signature: 'PAYMENT', blockTime: Math.floor(Date.now() / 1000) - agoSeconds },
-  ]);
+  const now = Math.floor(Date.now() / 1000);
+  const sigs = Array.from({ length: Math.max(k, 1) }, (_, i) => ({
+    signature: i === 0 ? 'PAYMENT' : `PAYMENT${i}`,
+    blockTime: now - agoSeconds - i * 60,
+  }));
+  chain.signatures.set(till.publicKey.toBase58(), sigs);
+  sigs.forEach((s, i) => {
+    if (i < k) chain.tillCredits.set(s.signature, ONE_PURCHASE_LAMPORTS + (i === 0 ? extra : 0));
+  });
 }
 
 beforeEach(() => {
@@ -155,9 +235,16 @@ beforeEach(() => {
     genesis: DEVNET_GENESIS,
     balances: new Map([[float.publicKey.toBase58(), 20_000_000_000]]),
     signatures: new Map(),
+    tillCredits: new Map(),
+    tillPayers: new Map(),
+    txs: new Map(),
+    sigReads: [],
     sent: [],
     feeForMessage: 5000,
   };
+  failExpireOnce = null;
+  ttl.clear();
+  delete process.env.P01_SETTLE_MAX_DEFERRAL_SECONDS;
   kv = memoryKv();
   process.env.CRON_SECRET = CRON_SECRET;
   delete process.env.P01_SETTLE_TRIGGER_SECRET;
@@ -657,5 +744,357 @@ describe('the policy is configurable but never off', () => {
     expect(body.policy.floatRequiredForFloorLamports).toBe(2 * ONE_PURCHASE_LAMPORTS + 1_620_000_000);
     expect(new PublicKey(body.till).toBase58()).toBe(till.publicKey.toBase58());
     expect(new PublicKey(body.float).toBase58()).toBe(float.publicKey.toBase58());
+  });
+});
+
+// ── close-v1 lane L1: audit v1 F38 and F39 ─────────────────────────────────
+//
+// F38 (round 2, server axis). The quiet period was read off the till's NEWEST
+// SIGNATURE OF ANY KIND, so one failed or empty transaction that merely lists
+// the till, once per quiet window, kept settlement off for ever; and the
+// purchase count was the till's balance over one credit, so a single
+// non-purchase credit made one real purchase settle as a batch of three.
+// Audit probe: `r2-server/probes/p3-settle-till.probe.test.ts`.
+//
+// F39 (round 2). The lock was `incr` then `expire`; one failed `expire` left a
+// lock with no TTL, and every later tick answered "a settlement is already in
+// flight". Audit probe: `r2-server/probes/p7-settle-lock.probe.test.ts`.
+//
+// Red logs: scratchpad close-v1/L1-server-money/red-F38-F39*.log.
+
+/** Newest first, as the RPC returns them. */
+function tillHistory(entries: Array<{ sig: string; ago: number; credit?: number; err?: unknown }>) {
+  const now = Math.floor(Date.now() / 1000);
+  chain.signatures.set(
+    till.publicKey.toBase58(),
+    entries.map((e) => ({ signature: e.sig, blockTime: now - e.ago, err: e.err ?? null })),
+  );
+  for (const e of entries) if (e.credit !== undefined) chain.tillCredits.set(e.sig, e.credit);
+}
+/** k real purchases, the newest `newestAgo` seconds ago, one hour apart. */
+function realPurchases(k: number, newestAgo: number) {
+  return Array.from({ length: k }, (_, i) => ({
+    sig: `PURCHASE${i}`,
+    ago: newestAgo + i * 3600,
+    credit: ONE_PURCHASE_LAMPORTS,
+  }));
+}
+/** Draw the hold, then expire it, so the next tick is decided on the clock alone. */
+async function pastTheHold() {
+  await GET(cron());
+  kv!.map.set('p01:settle:hold-until', 1);
+}
+
+describe('F38 · only a purchase resets the quiet period', () => {
+  it('control: three purchases, the newest two days old, settle once the hold expires', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    tillHistory(realPurchases(3, 2 * 86400));
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).toBe(true);
+  });
+
+  it('a FAILED transaction naming the till one hour ago does not hold settlement off', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    tillHistory([
+      { sig: 'GRIEF', ago: 3600, err: { InstructionError: [0, 'Custom'] } },
+      ...realPurchases(3, 2 * 86400),
+    ]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('settle');
+    expect(body.settled).toBe(true);
+  });
+
+  it('a successful 0-lamport transaction naming the till does not hold settlement off either', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    tillHistory([{ sig: 'DUST', ago: 3600, credit: 0 }, ...realPurchases(3, 2 * 86400)]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('settle');
+  });
+
+  it('control: a real purchase one hour ago still holds settlement off', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 4 * ONE_PURCHASE_LAMPORTS);
+    tillHistory([{ sig: 'LATE', ago: 3600, credit: ONE_PURCHASE_LAMPORTS }, ...realPurchases(3, 2 * 86400)]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict).toBe('too-soon-after-purchase');
+    expect(chain.sent).toHaveLength(0);
+  });
+
+  it('a non-purchase credit does not turn one purchase into a batch of three', async () => {
+    // (a) of the probe: one real purchase plus 2,006,000,000 lamports arriving
+    // in ONE transaction. The balance reads as three credits; the chain shows
+    // two payers, one transaction each.
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    tillHistory([
+      { sig: 'BIG', ago: 30_000, credit: 2 * ONE_PURCHASE_LAMPORTS },
+      { sig: 'REAL', ago: 40_000, credit: ONE_PURCHASE_LAMPORTS },
+    ]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('below-batch-floor');
+    expect(chain.sent).toHaveLength(0);
+  });
+
+  it('a purchase-sized credit every few hours cannot defer a met batch past the hard maximum', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const t0 = Date.parse('2026-09-23T00:00:00Z');
+      vi.setSystemTime(t0);
+      process.env.P01_SETTLE_HOLD_SPREAD_SECONDS = '1';
+      chain.balances.set(till.publicKey.toBase58(), 4 * ONE_PURCHASE_LAMPORTS);
+      tillHistory([{ sig: 'KEEPALIVE0', ago: 3600, credit: ONE_PURCHASE_LAMPORTS }, ...realPurchases(3, 2 * 86400)]);
+      const first = await (await GET(cron())).json();
+      expect(first.verdict).toBe('too-soon-after-purchase');
+
+      // Four days on, one purchase-sized credit has kept landing every few
+      // hours. At HEAD this is too-soon for ever.
+      vi.setSystemTime(t0 + 4 * 86400_000);
+      tillHistory([{ sig: 'KEEPALIVE9', ago: 3600, credit: ONE_PURCHASE_LAMPORTS }, ...realPurchases(3, 2 * 86400)]);
+      const late = await (await GET(cron())).json();
+      expect(late.settled, JSON.stringify(late)).toBe(true);
+      expect(late.reason).toMatch(/maximum deferral/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the anonymous view never carries the drawn deadline', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 4 * ONE_PURCHASE_LAMPORTS);
+    tillHistory([{ sig: 'LATE', ago: 3600, credit: ONE_PURCHASE_LAMPORTS }, ...realPurchases(3, 2 * 86400)]);
+    await GET(cron());
+    const forceAt = kv!.map.get('p01:settle:force-at');
+    expect(forceAt).toBeTypeOf('number');
+    const text = JSON.stringify(await (await GET(req())).json());
+    expect(text).not.toContain(String(forceAt));
+    expect(text).not.toContain(new Date(Number(forceAt) * 1000).toISOString());
+  });
+});
+
+describe('F39 · the settlement lock always carries a TTL', () => {
+  it('a failed expire right after the lock is taken does not wedge settlement', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    tillHistory(realPurchases(3, 2 * 86400));
+    await pastTheHold();
+    failExpireOnce = 'p01:settle:lock';
+    const first = await GET(cron());
+    expect(first.status).toBe(503);
+    expect(chain.sent).toHaveLength(0);
+    const second = await (await GET(cron())).json();
+    expect(second.settled, JSON.stringify(second)).toBe(true);
+  });
+
+  it('a lock already left without a TTL gets one back on the next tick', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    tillHistory(realPurchases(3, 2 * 86400));
+    await pastTheHold();
+    kv!.map.set('p01:settle:lock', 7); // wedged by an earlier failure, no TTL
+    const body = await (await GET(cron())).json();
+    expect(body.settled).toBe(false);
+    expect(body.note).toMatch(/already in flight/);
+    expect(ttl.get('p01:settle:lock'), 'the wedged lock was left without a TTL').toBeGreaterThan(0);
+  });
+});
+
+// ── close-v1 verify round 1: F62 one hop later, and two unpinned guards ────
+
+describe('F62 · float lamports sent to the till through a granted key are not purchases', () => {
+  /**
+   * The attack the verifier measured: a 2 SOL grant from `/api/fund-ephemeral`
+   * to a fresh key K (allowed), then two purchase-sized transfers from K to the
+   * till. Each is >= MIN_PURCHASE_CREDIT_LAMPORTS, so at the lane-L1 code the
+   * settler counted two purchases the attacker paid nothing for, and one real
+   * purchase settled as a batch of three.
+   */
+  function grantedKey(): string {
+    const k = Keypair.generate().publicKey.toBase58();
+    const f = float.publicKey.toBase58();
+    chain.txs.set('GRANT_TO_K', { keys: [f, k], pre: [20_000_000_000, 0], post: [17_999_995_000, 2_000_000_000] });
+    return k;
+  }
+  function payerHistory(k: string, sigsNewestFirst: string[]) {
+    const now = Math.floor(Date.now() / 1000);
+    chain.signatures.set(k, sigsNewestFirst.map((signature, i) => ({ signature, blockTime: now - 3 * 86400 + 60 - i })));
+  }
+
+  it('two credits paid by a key the float funded do not make one real purchase a batch of three', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    const k = grantedKey();
+    tillHistory([
+      { sig: 'FAKE2', ago: 2 * 86400, credit: ONE_PURCHASE_LAMPORTS },
+      { sig: 'FAKE1', ago: 2 * 86400 + 60, credit: ONE_PURCHASE_LAMPORTS },
+      { sig: 'REAL', ago: 2 * 86400 + 3600, credit: ONE_PURCHASE_LAMPORTS },
+    ]);
+    chain.tillPayers.set('FAKE2', k);
+    chain.tillPayers.set('FAKE1', k);
+    payerHistory(k, ['FAKE2', 'FAKE1', 'GRANT_TO_K']);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('below-batch-floor');
+    expect(body.purchasesHeld).toBe(1);
+    expect(chain.sent).toHaveLength(0);
+  });
+
+  it('control: a payer with a long history and no grant from the float in it still counts', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    const busy = Keypair.generate().publicKey.toBase58();
+    const other = Keypair.generate().publicKey.toBase58();
+    const noise = Array.from({ length: 30 }, (_, i) => `WALLET_TX${i}`);
+    for (const sig of noise) chain.txs.set(sig, { keys: [busy, other], pre: [5e9, 0], post: [5e9 - 5000, 0] });
+    tillHistory(realPurchases(3, 2 * 86400));
+    chain.tillPayers.set('PURCHASE0', busy);
+    payerHistory(busy, ['PURCHASE0', ...noise]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).toBe(true);
+    expect(body.purchases).toBe(3);
+  });
+
+  it('a payer whose history before the payment cannot be read is not counted: unknown is not a purchase', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    const k = Keypair.generate().publicKey.toBase58();
+    tillHistory(realPurchases(3, 2 * 86400));
+    chain.tillPayers.set('PURCHASE0', k);
+    payerHistory(k, ['PURCHASE0', 'UNREADABLE_TX']);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('below-batch-floor');
+    expect(chain.sent).toHaveLength(0);
+  });
+});
+
+describe('guards the report claims, pinned (verify round 1 revert mutants)', () => {
+  it('(4) a settlement clears the maximum-deferral deadline, so the next window draws its own', async () => {
+    chain.balances.set(till.publicKey.toBase58(), 9 * ONE_PURCHASE_LAMPORTS);
+    tillHistory(realPurchases(9, 30 * 86400));
+    await pastTheHold();
+    expect(kv!.map.get('p01:settle:force-at'), 'the first tick with the batch met draws a deadline').toBeTypeOf('number');
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).toBe(true);
+    expect(kv!.map.has('p01:settle:force-at'), 'a stale deadline would force the next window').toBe(false);
+  });
+
+  it('(5) a full page of cheap transactions hides no purchase: its oldest entry is the quiet time, a lower bound', async () => {
+    // 100 successful 0-lamport transactions, one a minute, the newest a minute
+    // ago; three real purchases sit behind the page. The quiet time read is
+    // about 100 minutes, under the 6 h minimum, whatever lies behind.
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    const dust = Array.from({ length: 100 }, (_, i) => ({ sig: `DUST${i}`, ago: 60 + i * 60, credit: 0 }));
+    tillHistory([...dust, ...realPurchases(3, 2 * 86400)]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('too-soon-after-purchase');
+    expect(body.lastCreditSecondsAgo).toBeLessThanOrEqual(100 * 60 + 5);
+    expect(chain.sent).toHaveLength(0);
+  });
+});
+
+describe('settle-till reads what its comments say it reads (close-v1 verify round 1)', () => {
+  it('stops at the last outflow: purchases before the previous settlement are not this batch', async () => {
+    // One purchase since the last settlement; three older ones sit behind the
+    // settlement's outflow. The till still holds three purchases' worth (what
+    // the previous settlement left behind), so only the walk can tell.
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    tillHistory([
+      { sig: 'NEW', ago: 2 * 86400, credit: ONE_PURCHASE_LAMPORTS },
+      { sig: 'OUTFLOW', ago: 3 * 86400, credit: -3 * ONE_PURCHASE_LAMPORTS },
+      ...realPurchases(3, 4 * 86400),
+    ]);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('below-batch-floor');
+    expect(body.purchasesHeld).toBe(1);
+  });
+
+  it('the anonymous status read reads at most 10 signatures and checks no payer', async () => {
+    tillHolds(9, 99999);
+    await GET(req());
+    const tillReads = chain.sigReads.filter((r) => r.address === till.publicKey.toBase58());
+    expect(tillReads.map((r) => r.limit)).toEqual([10]);
+    expect(chain.sigReads).toHaveLength(1);
+  });
+
+  it('control: the scheduler reads 100 and checks each purchase payer', async () => {
+    tillHolds(3, 99999);
+    await GET(cron());
+    const tillReads = chain.sigReads.filter((r) => r.address === till.publicKey.toBase58());
+    expect(tillReads.map((r) => r.limit)).toEqual([100]);
+    expect(chain.sigReads.length).toBe(1 + 3);
+  });
+});
+
+// ── close-v1 verify round 2: three settle-till guards the report claims ────
+//
+// Each case below turns red under the matching verify-r2 mutant
+// (close-v1/L1-server-money-verify-r2/mut/*.json): st-mincredit,
+// st-f62-direction, st-f62-unknownnoreset. Mutant-red logs:
+// close-v1/L1-server-money/r3/mut-*.log.
+
+describe('F38 · the purchase floor is the threshold, not "any credit" (verify round 2)', () => {
+  // The cheapest real grief is not a 0-lamport or a failed transaction but a
+  // SUCCESSFUL transfer of 1 lamport to the till once per quiet window. Only
+  // `delta >= MIN_PURCHASE_CREDIT_LAMPORTS` tells it from a purchase.
+  it.each([
+    ['1 lamport', 1],
+    ['MIN_PURCHASE_CREDIT_LAMPORTS - 1', MIN_PURCHASE_CREDIT_LAMPORTS - 1],
+  ])('a successful credit of %s one hour ago does not reset the quiet period: the batch settles', async (_label, credit) => {
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS + credit);
+    tillHistory([{ sig: 'SMALL_CREDIT', ago: 3600, credit }, ...realPurchases(3, 2 * 86400)]);
+    // First tick: draws the hold. Its body carries the quiet time read.
+    const first = await (await GET(cron())).json();
+    expect(first.lastCreditSecondsAgo, JSON.stringify(first)).toBeGreaterThanOrEqual(2 * 86400 - 5);
+    expect(first.lastCreditSecondsAgo).toBeLessThan(2 * 86400 + 60);
+    kv!.map.set('p01:settle:hold-until', 1);
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('settle');
+    expect(body.settled).toBe(true);
+    expect(body.purchases).toBe(3);
+  });
+});
+
+describe('F62 · the float-funding check reads direction, and an unknown payer still resets the clock (verify round 2)', () => {
+  function payerHistoryOf(k: string, sigsNewestFirst: string[]) {
+    const now = Math.floor(Date.now() / 1000);
+    chain.signatures.set(k, sigsNewestFirst.map((signature, i) => ({ signature, blockTime: now - 3 * 86400 + 60 - i })));
+  }
+
+  it('control: a payer funded from an exchange (not the float) before paying still counts, and the batch settles', async () => {
+    // Every real buyer RECEIVED lamports before paying. Only a credit that came
+    // FROM THE FLOAT marks a granted key; a check on "the payer was credited"
+    // alone would set every buyer aside and no batch would ever settle.
+    chain.balances.set(till.publicKey.toBase58(), 3 * ONE_PURCHASE_LAMPORTS);
+    const buyer = Keypair.generate().publicKey.toBase58();
+    const exchange = Keypair.generate().publicKey.toBase58();
+    chain.txs.set('EXCHANGE_TO_BUYER', {
+      keys: [exchange, buyer],
+      pre: [1_000_000_000_000, 0],
+      post: [1_000_000_000_000 - 2_000_000_000 - 5000, 2_000_000_000],
+    });
+    tillHistory(realPurchases(3, 2 * 86400));
+    chain.tillPayers.set('PURCHASE0', buyer);
+    payerHistoryOf(buyer, ['PURCHASE0', 'EXCHANGE_TO_BUYER']);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.settled, JSON.stringify(body)).toBe(true);
+    expect(body.purchases).toBe(3);
+  });
+
+  it('a credit whose payer history cannot be read is not counted, but it DOES reset the quiet period', async () => {
+    // Three real purchases two days old would settle; one hour ago a
+    // purchase-sized credit arrived from a payer whose history is unreadable.
+    // It may be a real buyer, so it must hold the batch off like one.
+    chain.balances.set(till.publicKey.toBase58(), 4 * ONE_PURCHASE_LAMPORTS);
+    const k = Keypair.generate().publicKey.toBase58();
+    tillHistory([{ sig: 'UNKNOWN_PAYER', ago: 3600, credit: ONE_PURCHASE_LAMPORTS }, ...realPurchases(3, 2 * 86400)]);
+    chain.tillPayers.set('UNKNOWN_PAYER', k);
+    payerHistoryOf(k, ['UNKNOWN_PAYER', 'UNREADABLE_TX']);
+    await pastTheHold();
+    const body = await (await GET(cron())).json();
+    expect(body.verdict, JSON.stringify(body)).toBe('too-soon-after-purchase');
+    expect(body.lastCreditSecondsAgo).toBeGreaterThanOrEqual(3600 - 5);
+    expect(body.lastCreditSecondsAgo).toBeLessThan(3600 + 60);
+    expect(chain.sent).toHaveLength(0);
   });
 });

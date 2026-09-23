@@ -7,14 +7,21 @@ import { clientIp } from '@/lib/net/clientIp';
 import { activeTreasurySeed } from '@/lib/privacy/treasurySeeds';
 import { claimChallenge } from '@/lib/privacy/claimChallenge';
 import {
+  CONTRIB_ABANDONED_KEY,
+  CONTRIB_ABANDONED_WINDOW_SECONDS,
+  FREE_RESERVATIONS_ABANDONED_LIMIT,
   contribConfirmedKey,
   contribReservedKey,
   contributionBinding,
   counterValue,
+  holdIsLive,
+  holdSealingKeypair,
   inventoryDenomination,
+  leafHoldKey,
   notePaidCodeKey,
   notePaidKey,
   relayPaymentContributionKey,
+  unsealHolder,
 } from '@/lib/privacy/paymentBinding';
 import {
   createCommitmentV3,
@@ -110,15 +117,13 @@ const CONTRIBUTIONS_PER_IP_PER_HOUR = (() => {
 // claim-for-payment: one format, one file.
 
 /**
- * How far past the tree's current height a reservation may look.
- *
- * Reservations are handed out ahead of the deposits that fill them, so the next
- * free index is not simply `leafCount` once a few are outstanding. This bounds
- * the walk: a deployment with this many unfilled reservations is not short of
- * indices, it is failing to complete deposits, and it should say so rather than
- * hand out a thousandth.
+ * What a buyer refused because the edge is held is told to wait before asking
+ * again. A constant, never the holder's remaining lease: how long ago somebody
+ * else reserved is that buyer's clock, and it is none of the next buyer's
+ * business. A minute is short against the 4-to-13-minute contribution that is
+ * holding the edge, so a retry lands soon after that deposit does.
  */
-const MAX_RESERVATION_LOOKAHEAD = 64;
+const BUSY_RETRY_AFTER_SECONDS = 60;
 
 /**
  * How long a reservation at the tree's edge is treated as LIVE before it can
@@ -278,12 +283,11 @@ export async function POST(request: NextRequest) {
   // ── reserve ───────────────────────────────────────────────────────────────
   if (action === 'reserve') {
     /**
-     * Walk forward from the first index the tree does not hold, claiming the
-     * first one nobody else has reserved.
+     * Claim the first index the tree does not hold, if nobody live holds it.
      *
      * ⛔ `incr` IS THE WHOLE CONCURRENCY ARGUMENT, exactly as it is for a note
      * claim: only the caller that creates the key sees 1. Two buyers arriving
-     * together therefore take two different leaves. Reading-then-writing would
+     * together therefore never take the same leaf. Reading-then-writing would
      * let both take the same one, and the second deposit would fail on chain
      * after the buyer had already paid the till.
      */
@@ -302,50 +306,124 @@ export async function POST(request: NextRequest) {
      * the same index, because only one `incr` returns 1 -- and it now expires
      * instead of accumulating.
      */
-    let reserved: number | null = null;
+    /**
+     * 🚨 ONLY THE TREE'S NEXT INDEX IS EVER HANDED OUT (audit R4, AXIS 7).
+     * The commitment is derived FOR one index and the client refuses any
+     * reservation that is not the tree's next one ("The pool advanced past
+     * this reservation", `prepareContribution` in `shieldEphemeral.ts`). This
+     * loop used to walk past a live marker at the edge and hand out `start +
+     * 1`, `start + 2`..., every one of them refused by that guard, and every
+     * one leaving a fresh marker that pushed the next honest buyer past the
+     * edge again once it moved. One free reserve refused every default Shield
+     * for 20 minutes, and two honest buyers did it to each other. A live edge
+     * now answers 409 with a retry delay and hands out nothing, so a refused
+     * buyer leaves nothing behind (pinned by `__tests__/api/contribute-note.
+     * test.ts` "R4 · reserve hands out only the index the client will accept").
+     */
     const start = maxLeafOnTree + 1;
-    for (let leafIndex = start; leafIndex < start + MAX_RESERVATION_LOOKAHEAD; leafIndex += 1) {
-      let taken: number;
-      const markerKey = contribReservedKey(poolKey, leafIndex);
-      const reservedAtKey = markerKey + ':at';
-      try {
-        taken = await kv.incr(markerKey);
-        if (taken !== 1 && leafIndex === start) {
-          // The tree has not reached this index. Either the holder is still
-          // proving and uploading (a LIVE attempt, which must keep its leaf), or
-          // the attempt died. Only the marker's age tells the two apart: a
-          // marker older than the proving window, or one written before ages
-          // were recorded, is reclaimed; a fresh one is walked past.
-          const at = Number((await kv.get(reservedAtKey)) ?? 0);
-          if (!at || Date.now() - at > RECLAIM_AFTER_MS) {
-            await kv.del(markerKey);
-            await kv.del(reservedAtKey);
-            taken = await kv.incr(markerKey);
-          }
-        }
-        // Self-healing: an abandoned marker stops mattering after an hour even
-        // if the branch above never runs.
-        if (taken === 1) {
-          await kv.set(reservedAtKey, Date.now(), { ex: 3600 });
-          await kv.expire?.(markerKey, 3600);
-        }
-      } catch (e) {
-        return bad(503, `the reservation could not be written: ${(e as Error).message}`);
-      }
-      if (taken === 1) {
-        reserved = leafIndex;
-        break;
-      }
-    }
-    if (reserved === null) {
-      return bad(503, 'every lookahead leaf is already reserved', {
-        lookahead: MAX_RESERVATION_LOOKAHEAD,
-        highestOnTree: maxLeafOnTree,
+    const markerKey = contribReservedKey(poolKey, start);
+    const reservedAtKey = markerKey + ':at';
+    const busy = () => {
+      const res = bad(409, 'another contribution is in progress on the pool; retry in a minute', {
+        retryAfterSeconds: BUSY_RETRY_AFTER_SECONDS,
         hint:
-          'Reservations are handed out ahead of the deposits that fill them. This many unfilled ' +
-          'means deposits are not completing, not that the tree is full.',
+          'Deposits land one at a time and each is proven for the exact index it fills. Nothing ' +
+          'was reserved and nothing was spent.',
       });
+      res.headers.set('retry-after', String(BUSY_RETRY_AFTER_SECONDS));
+      return res;
+    };
+
+    /**
+     * # 🚨 A FREE RESERVATION MUST NOT BE ABLE TO HOLD THE POOL SHUT (audit v1 F73)
+     *
+     * The reservation below is exclusive for 20 minutes and costs nothing: the
+     * ticket ships in the bundle. One call every 20 minutes therefore refused
+     * every contribution, indefinitely. Two changes, and the honest 409 stays:
+     *
+     *   1. The hold that COSTS something is read first. Once a payment has been
+     *      relayed for this index (`/api/relay-to-buyer` wrote a sealed hold),
+     *      that hold, not the free marker, decides: while its deposit can still
+     *      land (`holdIsLive`, bounded by `leafHoldMaxMs()`, 3 h by default,
+     *      so a payer who never deposits blocks this at most that long per
+     *      payment), this answers busy BEFORE the next buyer pays,
+     *      instead of handing out an index the relay will refuse after they
+     *      have. A hold that cannot be read counts as live, as the relay does.
+     *   2. A free marker that died with no payment behind it is counted, across
+     *      every caller, per rolling day. Past
+     *      `FREE_RESERVATIONS_ABANDONED_LIMIT`, a live FREE marker stops being
+     *      exclusive: the next buyer is handed the same index and the paid hold
+     *      at the relay decides who deposits there. Whoever keeps reserving
+     *      without paying then blocks nobody; an honest race in that mode costs
+     *      the slower payer a relay refusal made before any lamport is
+     *      forwarded, with the payment released and still sellable as a plain
+     *      claim, never the payment itself.
+     *
+     * ⚠️ NOT CLOSED: until the counter crosses the limit the free marker is
+     * still exclusive, so an abuser still holds the edge for about an hour per
+     * day. The complete cure is a reservation that requires a payment shown,
+     * which needs the client to pay before it reserves.
+     */
+    let paidHold: 'none' | 'live' | 'dead' = 'none';
+    try {
+      const raw = await kv.get(leafHoldKey(contributionBinding(poolKey, start)));
+      if (raw !== null && raw !== undefined) {
+        const sealer = holdSealingKeypair();
+        const holder = sealer ? unsealHolder(sealer, raw) : null;
+        paidHold = !holder || (await holdIsLive(connection, holder, Date.now())) ? 'live' : 'dead';
+      }
+    } catch {
+      return bad(503, 'the reservation could not be written');
     }
+    if (paidHold === 'live') return busy();
+
+    let abandoned = 0;
+    try {
+      abandoned = counterValue(await kv.get(CONTRIB_ABANDONED_KEY));
+    } catch {
+      // Unreadable: stay exclusive, the behaviour an honest buyer expects.
+      abandoned = 0;
+    }
+    const freeMarkersShared = abandoned >= FREE_RESERVATIONS_ABANDONED_LIMIT;
+
+    let taken: number;
+    let shared = false;
+    try {
+      taken = await kv.incr(markerKey);
+      if (taken !== 1) {
+        // The tree has not reached this index. Either the holder is still
+        // proving and uploading (a LIVE attempt, which must keep its leaf), or
+        // the attempt died. Only the marker's age tells the two apart: a
+        // marker older than the proving window, or one written before ages
+        // were recorded, is reclaimed; a fresh one is left to its holder.
+        const at = Number((await kv.get(reservedAtKey)) ?? 0);
+        if (!at || Date.now() - at > RECLAIM_AFTER_MS) {
+          // Died with no payment ever relayed for this index: a free
+          // reservation that held the edge for nothing (F73, rule 2).
+          if (paidHold === 'none') {
+            const n = await kv.incr(CONTRIB_ABANDONED_KEY);
+            if (n === 1) await kv.expire?.(CONTRIB_ABANDONED_KEY, CONTRIB_ABANDONED_WINDOW_SECONDS);
+          }
+          await kv.del(markerKey);
+          await kv.del(reservedAtKey);
+          taken = await kv.incr(markerKey);
+        } else if (freeMarkersShared && paidHold === 'none') {
+          shared = true;
+        }
+      }
+      // Self-healing: an abandoned marker stops mattering after an hour even
+      // if the branch above never runs.
+      if (taken === 1) {
+        await kv.set(reservedAtKey, Date.now(), { ex: 3600 });
+        await kv.expire?.(markerKey, 3600);
+      }
+    } catch {
+      // Fixed words: the store words a failure with the commands batched
+      // beside this one, which belong to other callers.
+      return bad(503, 'the reservation could not be written');
+    }
+    if (taken !== 1 && !shared) return busy();
+    const reserved = start;
 
     const commitment = treasuryCommitmentFor(seed, pool.poolPDA, pool.tokenMint, reserved);
     return NextResponse.json({
@@ -354,6 +432,9 @@ export async function POST(request: NextRequest) {
       commitment: commitment.toString(),
       denomination,
       token,
+      // F73: false when another free reservation of this index is live and the
+      // paid hold at the relay will decide which deposit lands there.
+      exclusive: !shared,
       disclosure:
         'This commitment belongs to the treasury, not to you. Depositing it gives you no note ' +
         'and nothing to spend — that is deliberate, and it is why nobody can be paid twice for ' +
@@ -584,11 +665,34 @@ export async function POST(request: NextRequest) {
    * code. The paid gate is given back so that payment stays claimable where it
    * belongs; nothing was minted for it here.
    */
+  /**
+   * 🚨 EVERY FAILED WRITE FROM HERE ON GIVES THE GATE BACK (audit v1 F63).
+   *
+   * `paid` is 1, so this request owns the payment. A write that fails below
+   * used to answer 503 and keep the gate: the next confirm then read a taken
+   * gate with no code behind it and answered "already redeemed" for ever, for
+   * a payment that bought nothing. Or, when only the minted marker failed, it
+   * replayed a code `issue-note` refuses. So everything this request wrote is
+   * deleted, the gate last, and the same confirm can simply be retried. The
+   * refusal carries fixed words: the store words its failures with the
+   * commands of other callers batched beside this one.
+   */
+  const rollBack = async (written: string[]) => {
+    for (const key of [...written, paidKey]) {
+      try {
+        await kv.del(key);
+      } catch {
+        /* best effort: a store that fails every write fails this too */
+      }
+    }
+  };
+
   let confirmations: number;
   try {
     confirmations = await kv.incr(contribConfirmedKey(poolKey, leafIndex));
-  } catch (e) {
-    return bad(503, `the confirmation could not be written: ${(e as Error).message}`);
+  } catch {
+    await rollBack([]);
+    return bad(503, 'the confirmation could not be written; nothing was kept, so it can be retried');
   }
   if (confirmations !== 1) {
     try {
@@ -639,8 +743,15 @@ export async function POST(request: NextRequest) {
      * trail at redemption, so the `payment:<sig>` shape is load-bearing.
      */
     await kv.set(`p01:note:claim-minted:${claimCode}`, `payment:${paymentSignature}`);
-  } catch (e) {
-    return bad(503, `the claim could not be minted: ${(e as Error).message}`);
+  } catch {
+    // The inventory row is left: the leaf IS the treasury's and on the tree,
+    // and every replay path records it too. Everything that pays is removed.
+    await rollBack([
+      `p01:note:claim-minted:${claimCode}`,
+      notePaidCodeKey(paymentSignature),
+      contribConfirmedKey(poolKey, leafIndex),
+    ]);
+    return bad(503, 'the claim could not be minted; nothing was kept, so the same confirm can be retried');
   }
 
   return NextResponse.json({

@@ -338,6 +338,44 @@ export interface SettlementInputs {
   holdUntilSeconds: number | null;
   nowSeconds: number;
   config?: SettlementConfig;
+  /**
+   * Purchase-sized credits the till received since its last outflow, counted
+   * one per transaction, or `null` when the history read did not reach back to
+   * that outflow. Absent or `null` = count from the balance alone, as before.
+   *
+   * 🚨 audit v1 F38 (a): the balance does not say how many transactions filled
+   * it, so one credit of two notes' worth next to one real purchase read as a
+   * batch of three and settled that one buyer. When the count is known, the
+   * purchases are the SMALLER of the two readings: a credit larger than one
+   * note is still one payer.
+   */
+  purchaseCredits?: number | null;
+  /**
+   * The drawn deadline, in unix seconds, after which a batch that has met its
+   * floor settles even though a purchase landed inside the quiet period.
+   * `null` or absent = no deadline.
+   *
+   * 🚨 audit v1 F38 (b): the quiet period is reset by every purchase, so a
+   * purchase every few hours (cheap for whoever does it, and they hold the
+   * note they bought) kept a met batch from settling for ever. The deadline
+   * is drawn once per window, like the hold, so it is not a constant an
+   * observer can read off the schedule; the settlement it forces may sit
+   * beside the most recent purchase, which is stated in its reason.
+   */
+  forceAtSeconds?: number | null;
+}
+
+/**
+ * How long a batch that has met its floor may be deferred by fresh purchases
+ * before it settles anyway. Three days, against a quiet period and a hold of
+ * six hours each: an honest trickle of purchases never reaches it, a
+ * deliberate one cannot hold the float empty past it.
+ */
+export const MAX_SETTLEMENT_DEFERRAL_SECONDS = 3 * 86400;
+
+/** The deferral cap from the environment: raised by the operator, never below one hour, never off. */
+export function maxDeferralSecondsFromEnv(env = process.env): number {
+  return Math.max(3600, envInt('P01_SETTLE_MAX_DEFERRAL_SECONDS', MAX_SETTLEMENT_DEFERRAL_SECONDS, env));
 }
 
 export interface SettlementDecision {
@@ -369,7 +407,12 @@ export interface SettlementDecision {
  */
 export function decideSettlement(input: SettlementInputs): SettlementDecision {
   const cfg = input.config ?? DEFAULT_SETTLEMENT_CONFIG;
-  const purchases = purchasesHeld(input.tillLamports);
+  const byBalance = purchasesHeld(input.tillLamports);
+  const credits = input.purchaseCredits;
+  const purchases =
+    typeof credits === 'number' && Number.isInteger(credits) && credits >= 0
+      ? Math.min(byBalance, credits)
+      : byBalance;
   const depositsRemaining = sequentialDepositCapacity(input.floatLamports);
   const floatAlarm = depositsRemaining <= cfg.alarmBelowDeposits;
   const needed = floatRequiredForBatch(cfg.minPurchases);
@@ -441,6 +484,21 @@ export function decideSettlement(input: SettlementInputs): SettlementDecision {
       reason:
         'The till\'s recent history could not be read, so how long ago the last purchase ' +
         'landed is unknown. Refusing: an unknown clock is not an old one.',
+    };
+  }
+
+  const forced =
+    typeof input.forceAtSeconds === 'number' && input.nowSeconds >= input.forceAtSeconds;
+  if (forced && (quiet.verdict === 'too-soon' || quiet.verdict === 'holding-off')) {
+    return {
+      ...base,
+      verdict: 'settle',
+      amountLamports: input.tillLamports,
+      reason:
+        `Settling ${purchases} purchase(s) at the maximum deferral: purchases kept arriving ` +
+        `inside the quiet period, the newest ${Math.round(since / 60)} minute(s) ago, and ` +
+        'waiting longer would hold the float empty. The newest purchase sits closer to this ' +
+        'settlement than the quiet period asks.',
     };
   }
 

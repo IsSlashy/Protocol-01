@@ -77,9 +77,11 @@ import { sendReportEmail } from '@/lib/waitlist/email';
 import {
   ONE_PURCHASE_LAMPORTS,
   PREFUND_WORST_CASE_LAMPORTS,
+  MIN_PURCHASE_CREDIT_LAMPORTS,
   decideSettlement,
   drawHoldUntil,
   floatRequiredForBatch,
+  maxDeferralSecondsFromEnv,
   settlementConfigFromEnv,
   type SettlementDecision,
 } from '@/lib/privacy/pool/settlementPolicy';
@@ -100,6 +102,11 @@ const K = {
   last: 'p01:settle:last',
   /** Set while a float alarm has already been emailed, so it does not repeat. */
   alarmed: 'p01:settle:alarm-sent',
+  /**
+   * The drawn maximum-deferral deadline for the current window, unix seconds
+   * (audit v1 F38). Withheld from the public view like the hold.
+   */
+  forceAt: 'p01:settle:force-at',
 };
 
 /** Long enough to outlive a send, short enough that a crash self-heals. */
@@ -255,55 +262,239 @@ function connection(): Connection {
   return new Connection(process.env.P01_FUNDER_RPC ?? 'https://api.devnet.solana.com', 'confirmed');
 }
 
+/** How many of the till's newest signatures one scheduler tick reads. */
+const TILL_SCAN_LIMIT = 100;
 /**
- * How long ago the till was last credited, in seconds.
- *
- * ⚠️ THE MOST RECENT SIGNATURE, AND THE SORT ORDER IS THE TRAP. This is the
- * one place in the codebase where `getSignaturesForAddress`'s newest-first
- * default is what we want — `resolveFunderOfPayer` needed the OLDEST and read
- * the newest, and `verify/deposit-walk.mjs` reproduced that same bug in the
- * tool written to detect it. Stated here so the next reader does not "fix" it
- * into consistency with those two.
- *
- * Between settlements every transaction on the till is an incoming payment, so
- * the newest transaction IS the newest credit. Returns `null` when the history
- * or its clock cannot be read, and the caller treats that as a refusal.
+ * How many an ANONYMOUS status read reads. Each signature read here costs one
+ * `getTransaction`, and the status view needs no ticket, so an unauthenticated
+ * caller must not be able to buy a hundred RPC calls with one request. The
+ * status it shows is then computed on less history (a lower bound on the quiet
+ * time, the balance for the count); only the scheduler's reading moves money.
  */
-async function secondsSinceLastTillCredit(
+const TILL_SCAN_LIMIT_PUBLIC = 10;
+
+/**
+ * How long ago the till was last credited A PURCHASE, and how many purchases
+ * it was credited since its last outflow.
+ *
+ * ⚠️ NEWEST FIRST, AND THE SORT ORDER IS THE TRAP. This is the one place in the
+ * codebase where `getSignaturesForAddress`'s newest-first default is what we
+ * want — `resolveFunderOfPayer` needed the OLDEST and read the newest, and
+ * `verify/deposit-walk.mjs` reproduced that same bug in the tool written to
+ * detect it. Stated here so the next reader does not "fix" it into consistency
+ * with those two.
+ *
+ * 🚨 audit v1 F38. This used to read the NEWEST SIGNATURE OF ANY KIND, on the
+ * belief that "between settlements every transaction on the till is an
+ * incoming payment". It is not: anyone can list the till in a transaction that
+ * fails, or that moves 0 lamports, for one network fee. One such transaction
+ * per quiet window held settlement off for ever (audit probe
+ * `r2-server/probes/p3-settle-till.probe.test.ts`, case b). So:
+ *
+ *   - a failed transaction is skipped (it moved nothing);
+ *   - a successful one counts as a purchase only when it credited the till at
+ *     least `MIN_PURCHASE_CREDIT_LAMPORTS`, and it counts as ONE, whatever it
+ *     moved (case a: a credit of two notes' worth is one payer, not two);
+ *   - the walk stops at the till's last outflow, the previous settlement:
+ *     nothing older belongs to this batch.
+ *
+ * `secondsSinceLastPurchaseCredit` is `null` when the history or a transaction
+ * in it cannot be read: the caller refuses, never assumes old. When one page is
+ * read without finding either a purchase or the last outflow (a page of
+ * someone's cheap transactions), the age of the oldest signature read is a
+ * LOWER BOUND on the quiet time and is returned as such; the purchase count is
+ * then `null` and the balance alone decides it, as before.
+ *
+ * 🚨 audit v1 F62, one hop later (close-v1 verify round 1). `/api/fund-ephemeral`
+ * refuses to pay the till directly, but its grant to a fresh key K is allowed,
+ * and K can pay the till two purchase-sized transfers: two "purchases" made of
+ * the float's own lamports, free to whoever asked for the grant, and one real
+ * buyer then settles as a batch of three (the n-1 attack, with the donation
+ * free). So, on the scheduler's reading (`float` given), each purchase-sized
+ * credit is checked: every account the transaction debited, other than the
+ * till, has the page of its history BEFORE the payment read, and a credit whose
+ * payer received lamports from the float there is not a purchase. A payer whose
+ * history cannot be read is not counted either (unknown is not a purchase),
+ * but its credit still resets the quiet period, since it may be a real buyer.
+ * `floatFundedCredits` reports how many were set aside.
+ *
+ * ⚠️ WHAT THIS DOES NOT CATCH, AND THE BOUND. It walks ONE hop: K -> K2 ->
+ * till, or more than `PAYER_HISTORY_PAGE` transactions between the grant and
+ * the payment, passes it for one more network fee each. What bounds the
+ * residual is the grant budget of `/api/fund-ephemeral` (audit v1 F37): 3 SOL
+ * per IP per clock hour and 10 SOL per hour in total, i.e. at most 3 fake
+ * purchase credits per IP-hour and 10 per hour overall, lamports that the
+ * settlement returns to the float, so the attack costs the attacker only
+ * network fees. The anonymous status read does not run the check (it would
+ * make the unauthenticated view an RPC amplifier), so its count can be higher
+ * than the scheduler's; only the scheduler's reading moves money.
+ */
+/** How many of a payer's transactions before its payment are read (F62). */
+const PAYER_HISTORY_PAGE = 10;
+/** How many debited accounts of one credit are checked (F62). */
+const PAYER_SOURCES_CHECKED = 3;
+/** How many credits one tick checks; older ones are counted unchecked (F62). */
+const PAYER_CHECKS_PER_TICK = 20;
+
+/**
+ * Did `source` receive lamports from the float in the page of its history just
+ * before `paymentSignature`? 'unknown' when that page cannot be read.
+ */
+async function floatFundedBefore(
+  conn: Connection,
+  source: string,
+  float: string,
+  paymentSignature: string,
+): Promise<'yes' | 'no' | 'unknown'> {
+  try {
+    const sigs = await conn.getSignaturesForAddress(new PublicKey(source), {
+      before: paymentSignature,
+      limit: PAYER_HISTORY_PAGE,
+    });
+    for (const s of sigs) {
+      if (s.err) continue;
+      const tx = await conn.getTransaction(s.signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed',
+      });
+      if (!tx?.meta) return 'unknown';
+      if (tx.meta.err) continue;
+      const meta = tx.meta;
+      const keys = tx.transaction.message.getAccountKeys().staticAccountKeys.map((k) => k.toBase58());
+      const d = (k: string) => {
+        const i = keys.indexOf(k);
+        return i < 0 ? 0 : (meta.postBalances[i] ?? 0) - (meta.preBalances[i] ?? 0);
+      };
+      if (d(float) < 0 && d(source) > 0) return 'yes';
+    }
+    return 'no';
+  } catch {
+    return 'unknown';
+  }
+}
+
+async function readTillHistory(
   conn: Connection,
   till: PublicKey,
   nowSeconds: number,
-): Promise<number | null> {
+  limit: number = TILL_SCAN_LIMIT,
+  float: PublicKey | null = null,
+): Promise<{
+  secondsSinceLastPurchaseCredit: number | null;
+  purchaseCredits: number | null;
+  floatFundedCredits: number;
+}> {
+  const unknown = { secondsSinceLastPurchaseCredit: null, purchaseCredits: null, floatFundedCredits: 0 };
   try {
-    const sigs = await conn.getSignaturesForAddress(till, { limit: 1 });
-    const t = sigs[0]?.blockTime;
-    if (typeof t !== 'number') return null;
-    // A clock skew that makes the last payment look like it is in the future
-    // must not read as "very old" once subtracted. Clamp at zero.
-    return Math.max(0, nowSeconds - t);
+    const sigs = await conn.getSignaturesForAddress(till, { limit });
+    if (sigs.length === 0) return unknown;
+    const tillKey = till.toBase58();
+    const floatKey = float?.toBase58() ?? null;
+    let since: number | null = null;
+    let credits = 0;
+    let checked = 0;
+    let floatFunded = 0;
+    let reachedOutflow = false;
+    let oldest: number | null = null;
+    for (const s of sigs) {
+      if (typeof s.blockTime !== 'number') return unknown;
+      oldest = s.blockTime;
+      if (s.err) continue;
+      const tx = await conn.getTransaction(s.signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed',
+      });
+      if (!tx?.meta) return unknown;
+      if (tx.meta.err) continue;
+      const keys = tx.transaction.message.getAccountKeys().staticAccountKeys.map((k) => k.toBase58());
+      const i = keys.indexOf(tillKey);
+      const delta = i < 0 ? 0 : (tx.meta.postBalances[i] ?? 0) - (tx.meta.preBalances[i] ?? 0);
+      if (delta < 0) {
+        reachedOutflow = true;
+        break;
+      }
+      if (delta >= MIN_PURCHASE_CREDIT_LAMPORTS) {
+        // F62: a credit paid with the float's own lamports is not a purchase.
+        let verdict: 'yes' | 'no' | 'unknown' = 'no';
+        if (floatKey && checked < PAYER_CHECKS_PER_TICK) {
+          checked += 1;
+          const meta = tx.meta;
+          const sources = keys
+            .filter((k, j) => k !== tillKey && (meta.postBalances[j] ?? 0) - (meta.preBalances[j] ?? 0) < 0)
+            .slice(0, PAYER_SOURCES_CHECKED);
+          for (const source of sources) {
+            const v = await floatFundedBefore(conn, source, floatKey, s.signature);
+            if (v === 'yes') {
+              verdict = 'yes';
+              break;
+            }
+            if (v === 'unknown') verdict = 'unknown';
+          }
+        }
+        if (verdict === 'yes') {
+          floatFunded += 1;
+          continue;
+        }
+        if (verdict === 'no') credits += 1;
+        // A clock skew that makes the last payment look like it is in the
+        // future must not read as "very old" once subtracted. Clamp at zero.
+        if (since === null) since = Math.max(0, nowSeconds - s.blockTime);
+      }
+    }
+    const complete = reachedOutflow || sigs.length < limit;
+    if (since === null && oldest !== null) since = Math.max(0, nowSeconds - oldest);
+    return {
+      secondsSinceLastPurchaseCredit: since,
+      purchaseCredits: complete ? credits : null,
+      floatFundedCredits: floatFunded,
+    };
+  } catch {
+    return unknown;
+  }
+}
+
+/** Read one stored unix-seconds deadline, or `null`. */
+async function readDeadline(kv: KvLike | null, key: string): Promise<number | null> {
+  if (!kv) return null;
+  try {
+    const n = Number(await kv.get<number | string>(key));
+    return Number.isFinite(n) && n > 0 ? n : null;
   } catch {
     return null;
   }
 }
 
 /** Everything the decision needs, read from the chain in one place. */
-async function observe(conn: Connection, p: Principals, nowSeconds: number, kv: KvLike | null) {
+async function observe(
+  conn: Connection,
+  p: Principals,
+  nowSeconds: number,
+  kv: KvLike | null,
+  scanLimit: number = TILL_SCAN_LIMIT,
+) {
   const [tillLamports, floatLamports] = await Promise.all([
     conn.getBalance(p.till.publicKey),
     conn.getBalance(p.funder.publicKey),
   ]);
-  const since = await secondsSinceLastTillCredit(conn, p.till.publicKey, nowSeconds);
-  let holdUntilSeconds: number | null = null;
-  if (kv) {
-    try {
-      const raw = await kv.get<number | string>(K.hold);
-      const n = Number(raw);
-      holdUntilSeconds = Number.isFinite(n) && n > 0 ? n : null;
-    } catch {
-      holdUntilSeconds = null;
-    }
-  }
-  return { tillLamports, floatLamports, secondsSinceLastTillCredit: since, holdUntilSeconds };
+  // F62: only the scheduler's reading checks payers (see `readTillHistory`).
+  const history = await readTillHistory(
+    conn,
+    p.till.publicKey,
+    nowSeconds,
+    scanLimit,
+    scanLimit === TILL_SCAN_LIMIT ? p.funder.publicKey : null,
+  );
+  const holdUntilSeconds = await readDeadline(kv, K.hold);
+  const forceAtSeconds = await readDeadline(kv, K.forceAt);
+  return {
+    tillLamports,
+    floatLamports,
+    secondsSinceLastTillCredit: history.secondsSinceLastPurchaseCredit,
+    purchaseCredits: history.purchaseCredits,
+    floatFundedCredits: history.floatFundedCredits,
+    holdUntilSeconds,
+    forceAtSeconds,
+  };
 }
 
 /**
@@ -473,7 +664,7 @@ export async function GET(req: NextRequest) {
 
   const nowSeconds = Math.floor(Date.now() / 1000);
   const cfg = settlementConfigFromEnv();
-  const obs = await observe(conn, p, nowSeconds, kv);
+  const obs = await observe(conn, p, nowSeconds, kv, authorised ? TILL_SCAN_LIMIT : TILL_SCAN_LIMIT_PUBLIC);
   let decision = decideSettlement({ ...obs, nowSeconds, config: cfg });
 
   if (!authorised) {
@@ -533,6 +724,28 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  /**
+   * The hard maximum deferral (audit v1 F38), drawn the first tick the batch
+   * floor is met, like the hold and for the same reason: drawn once, stored,
+   * and spread so the forced settlement is not "exactly three days after the
+   * floor", a constant an observer could subtract.
+   */
+  const batchMet =
+    decision.purchases >= cfg.minPurchases &&
+    (floorMet || decision.verdict === 'holding-off');
+  if (kv && batchMet && obs.forceAtSeconds === null) {
+    try {
+      const forceAt = drawHoldUntil(nowSeconds + maxDeferralSecondsFromEnv(), cfg);
+      await kv.set(K.forceAt, forceAt, {
+        ex: maxDeferralSecondsFromEnv() + cfg.holdSpreadSeconds + 7 * 86400,
+      });
+      obs.forceAtSeconds = forceAt;
+      decision = decideSettlement({ ...obs, nowSeconds, config: cfg });
+    } catch {
+      // No deadline this window: the quiet period still decides, as before.
+    }
+  }
+
   if (decision.verdict !== 'settle') {
     return NextResponse.json(
       statusBody(p, [], decision, {
@@ -542,6 +755,8 @@ export async function GET(req: NextRequest) {
         floatLamports: obs.floatLamports,
         lastCreditSecondsAgo: obs.secondsSinceLastTillCredit,
         holdUntilSeconds: obs.holdUntilSeconds,
+        // F62: credits set aside because their payer was funded by the float.
+        floatFundedCredits: obs.floatFundedCredits,
       }),
     );
   }
@@ -558,11 +773,35 @@ export async function GET(req: NextRequest) {
   let lock: number;
   try {
     lock = await kv.incr(K.lock);
-    if (lock === 1) await kv.expire(K.lock, LOCK_TTL_SECONDS);
   } catch (e) {
     return bad(503, `the settlement lock could not be taken: ${(e as Error).message}`);
   }
+  /**
+   * 🚨 THE TTL IS PART OF THE LOCK (audit v1 F39). `incr` and `expire` are two
+   * calls, and a lock whose `expire` failed had no TTL at all: every later tick
+   * read "a settlement is already in flight" for ever. So a lock this tick took
+   * but could not give a TTL is deleted and the tick stands down; and a tick
+   * that finds the lock held re-applies the TTL, so a key already wedged by an
+   * earlier failure expires at most one lock lifetime after the next tick.
+   */
+  if (lock === 1) {
+    try {
+      await kv.expire(K.lock, LOCK_TTL_SECONDS);
+    } catch {
+      try {
+        await kv.del(K.lock);
+      } catch {
+        /* the next tick re-applies the TTL below */
+      }
+      return bad(503, 'the settlement lock could not be given a TTL, so it was released; nothing was sent');
+    }
+  }
   if (lock !== 1) {
+    try {
+      await kv.expire(K.lock, LOCK_TTL_SECONDS);
+    } catch {
+      /* best effort: the next tick tries again */
+    }
     return NextResponse.json(
       statusBody(p, [], decision, { settled: false, alarm, note: 'a settlement is already in flight' }),
     );
@@ -653,8 +892,9 @@ export async function GET(req: NextRequest) {
     };
     try {
       await kv.set(K.last, record);
-      // The window is over; the next one draws a fresh hold.
+      // The window is over; the next one draws a fresh hold and deadline.
       await kv.del(K.hold);
+      await kv.del(K.forceAt);
     } catch {
       /* the settlement landed; bookkeeping is best effort */
     }

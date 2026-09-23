@@ -298,3 +298,36 @@ export function forgetRelayPayment(id: string | undefined): void {
     // entry; failing loudly here would turn a completed deposit into an error.
   }
 }
+
+/**
+ * [close-v1 F57] Drop every receipt, sealed or legacy, that names `signature`.
+ *
+ * Called once the payment has bought what it was for through ANOTHER route
+ * (the contribution's resume collected its note through confirm or
+ * `/api/claim-for-payment`). The receipt is keyed by the ephemeral of the leaf
+ * it was paid for; left behind, it names a payment already sold, and a future
+ * job on that key would present it to the relay again. Best effort, like
+ * `forgetRelayPayment`: a receipt that outlives its use costs a refused relay,
+ * never a second payment.
+ */
+export async function forgetRelayPaymentsFor(meta: string, signature: string): Promise<void> {
+  let records: RelayPaymentRecord[];
+  try {
+    records = await listRelayPayments(meta);
+  } catch {
+    return;
+  }
+  for (const r of records) {
+    if (r.signature === signature && !r.id.startsWith(LEGACY_PREFIX)) forgetRelayPayment(r.id);
+  }
+  try {
+    const legacy = readLegacy();
+    const kept = legacy.filter((r) => r.signature !== signature);
+    if (kept.length !== legacy.length) {
+      if (kept.length === 0) localStorage.removeItem(KEY_V1);
+      else localStorage.setItem(KEY_V1, JSON.stringify(kept));
+    }
+  } catch {
+    /* best effort on the way out */
+  }
+}

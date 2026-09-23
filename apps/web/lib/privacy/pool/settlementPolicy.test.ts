@@ -13,6 +13,7 @@ import {
   drawHoldUntil,
   envInt,
   floatRequiredForBatch,
+  maxDeferralSecondsFromEnv,
   purchasesCarried,
   purchasesHeld,
   sequentialDepositCapacity,
@@ -395,9 +396,9 @@ describe('configuration from the environment', () => {
   it('falls back on anything malformed rather than to zero', () => {
     // ⛔ 0 is the value that turns each of these rules off.
     for (const bad of ['', '0', '-1', 'abc', '2.5', undefined]) {
-      expect(envInt('X', 7, { X: bad } as unknown as NodeJS.ProcessEnv)).toBe(7);
+      expect(envInt('X', 7, { X: bad } as unknown as unknown as NodeJS.ProcessEnv)).toBe(7);
     }
-    expect(envInt('X', 7, { X: '12' } as unknown as NodeJS.ProcessEnv)).toBe(12);
+    expect(envInt('X', 7, { X: '12' } as unknown as unknown as NodeJS.ProcessEnv)).toBe(12);
   });
 
   it('reads every field, so no bound is silently unconfigurable', () => {
@@ -483,5 +484,77 @@ describe('the batch floor an environment variable cannot lower (SETTLE-1)', () =
     );
     expect(two.verdict).toBe('settle');
     expect(two.amountLamports).toBe(2 * ONE_PURCHASE_LAMPORTS);
+  });
+});
+
+// ── close-v1 lane L1: audit v1 F38, the two inputs the settler now reads ────
+
+describe('F38 · purchases counted per transaction, and a hard maximum deferral', () => {
+  it('a known count of purchase credits caps the balance reading', () => {
+    // One real purchase plus a credit of two notes' worth: three by balance,
+    // two payers on chain. Below a floor of three either way it is counted.
+    const d = decideSettlement(inputs({ tillLamports: 3 * ONE_PURCHASE_LAMPORTS, purchaseCredits: 2 }));
+    expect(d.purchases).toBe(2);
+    expect(d.verdict).toBe('below-batch-floor');
+  });
+
+  it('an unknown count (null or absent) leaves the balance reading as it was', () => {
+    expect(decideSettlement(inputs({ tillLamports: 3 * ONE_PURCHASE_LAMPORTS, purchaseCredits: null })).purchases).toBe(3);
+    expect(decideSettlement(inputs({ tillLamports: 3 * ONE_PURCHASE_LAMPORTS })).purchases).toBe(3);
+  });
+
+  it('more credits than the balance holds never raises the count above the balance', () => {
+    expect(decideSettlement(inputs({ tillLamports: 3 * ONE_PURCHASE_LAMPORTS, purchaseCredits: 9 })).purchases).toBe(3);
+  });
+
+  it('past the deadline, a met batch settles although a purchase is recent', () => {
+    const now = 1_800_000_000;
+    const d = decideSettlement(
+      inputs({
+        tillLamports: 4 * ONE_PURCHASE_LAMPORTS,
+        secondsSinceLastTillCredit: HOUR,
+        forceAtSeconds: now - 1,
+        nowSeconds: now,
+      }),
+    );
+    expect(d.verdict).toBe('settle');
+    expect(d.amountLamports).toBe(4 * ONE_PURCHASE_LAMPORTS);
+    expect(d.reason).toMatch(/maximum deferral/);
+  });
+
+  it('before the deadline the quiet period still decides', () => {
+    const now = 1_800_000_000;
+    const d = decideSettlement(
+      inputs({ tillLamports: 4 * ONE_PURCHASE_LAMPORTS, secondsSinceLastTillCredit: HOUR, forceAtSeconds: now + 1, nowSeconds: now }),
+    );
+    expect(d.verdict).toBe('too-soon-after-purchase');
+  });
+
+  it('the deadline never forces a batch under the floor, nor one whose clock is unknown', () => {
+    const now = 1_800_000_000;
+    expect(
+      decideSettlement(inputs({ tillLamports: 2 * ONE_PURCHASE_LAMPORTS, forceAtSeconds: 1, nowSeconds: now })).verdict,
+    ).toBe('below-batch-floor');
+    expect(
+      decideSettlement(
+        inputs({ tillLamports: 4 * ONE_PURCHASE_LAMPORTS, secondsSinceLastTillCredit: null, forceAtSeconds: 1, nowSeconds: now }),
+      ).verdict,
+    ).toBe('till-history-unknown');
+  });
+});
+
+describe('F38 · the deadline, pinned where the report claims it (close-v1 verify round 1)', () => {
+  it('the maximum deferral is never set under one hour', () => {
+    expect(maxDeferralSecondsFromEnv({ P01_SETTLE_MAX_DEFERRAL_SECONDS: '60' } as unknown as NodeJS.ProcessEnv)).toBe(HOUR);
+    expect(maxDeferralSecondsFromEnv({ P01_SETTLE_MAX_DEFERRAL_SECONDS: '7200' } as unknown as NodeJS.ProcessEnv)).toBe(2 * HOUR);
+  });
+
+  it('past the deadline, a batch the quiet period already allows settles as an ordinary one, not as forced', () => {
+    const now = 1_800_000_000;
+    const d = decideSettlement(
+      inputs({ tillLamports: 4 * ONE_PURCHASE_LAMPORTS, secondsSinceLastTillCredit: LONG_AGO, forceAtSeconds: now - 1, nowSeconds: now }),
+    );
+    expect(d.verdict).toBe('settle');
+    expect(d.reason).not.toMatch(/maximum deferral/);
   });
 });

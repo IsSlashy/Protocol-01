@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { Connection, PublicKey, type MessageCompiledInstruction } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey, type MessageCompiledInstruction } from '@solana/web3.js';
+import bs58 from 'bs58';
 import nacl from 'tweetnacl';
 
 import { getStore, rateLimitExceeded, type KvLike } from '@/lib/waitlist/store';
 import { clientIp } from '@/lib/net/clientIp';
-import { claimChallenge } from '@/lib/privacy/claimChallenge';
+import {
+  claimChallenge,
+  relayEphemeralChallenge,
+  relayEphemeralTag,
+  relayEphemeralTagKey,
+  relayReturnKey,
+  relayReturnOwner,
+} from '@/lib/privacy/claimChallenge';
 import { activeTreasurySeed } from '@/lib/privacy/treasurySeeds';
 import {
   UNSHIELD_FEE_BPS,
@@ -124,6 +132,45 @@ function tillAddress(): string | null {
   }
 }
 
+/**
+ * [close-v1 F70] Unix seconds before which a circuit-7 withdrawal to the till is
+ * still sold its note. `null` (unset or unparseable) sells none.
+ *
+ * WHY A CUTOFF AND NOT A FLAT REFUSAL. A buyer who exchanged before this rule
+ * shipped has already spent their note into the till; refusing their claim
+ * would keep the note and give nothing. A withdrawal that landed before the
+ * operator's cutoff was exposed to the copier exactly as before, so collecting
+ * it adds no risk; everything after it is either a stale client or a copier.
+ */
+function exchangeLegacyCutoff(): number | null {
+  const raw = Number(process.env.P01_EXCHANGE_LEGACY_CUTOFF ?? '');
+  return Number.isInteger(raw) && raw > 0 ? raw : null;
+}
+
+/** The float, whose secret keys the relay's ephemeral tag (`relayEphemeralTag`). */
+function funderKeypair(): Keypair | null {
+  const raw = process.env.P01_FUNDER_SECRET_KEY?.trim();
+  if (!raw) return null;
+  try {
+    return Keypair.fromSecretKey(
+      raw.startsWith('[') ? Uint8Array.from(JSON.parse(raw) as number[]) : bs58.decode(raw),
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * [close-v1 F11] How much of what the float sent a relayed ephemeral may be
+ * missing when it is read back: the fees of a failed attempt (the relay's own
+ * transfer fee, the ephemeral's signatures, buffers it closed again). 0.01 SOL,
+ * 1% of a 1 SOL note; anything short by more is money the caller kept, and
+ * Recover is what brings it home.
+ */
+const RELAYED_RETURN_TOLERANCE_LAMPORTS = 10_000_000;
+/** An honest deposit ephemeral signs a few dozen transactions; past this the history is not read. */
+const MAX_EPHEMERAL_HISTORY = 400;
+
 function bad(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ ok: false, error, ...extra }, { status });
 }
@@ -149,13 +196,51 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
  *   - a recipient that is not the till: a withdrawal to a third party inside a
  *     transaction that credited the till by some other route must not get the
  *     lowered floor.
+ *   - ⛔ [close-v1 F70, verifier round 1] ANY OTHER TRANSACTION THAT NAMES THE
+ *     POOL PROGRAM. A copier used to wrap the copied circuit-7 withdrawal in a
+ *     program of its own, add a 0.005 SOL top-up to the till, and be sold the
+ *     note as a plain `transfer`: the scan above reads top-level instructions
+ *     only, and the pool program checks no stack height. A program reached by
+ *     CPI must still be passed to the transaction as an account, so naming it
+ *     anywhere (static keys, loaded addresses, or an inner instruction) is
+ *     enough to refuse, whether or not the RPC returned `innerInstructions`.
+ *     A buyer's payment to the till is a plain transfer and never names it.
+ *     Refused whatever the operator cutoff says: no honest exchange was ever
+ *     wrapped. Pinned by `closeV1L2ClaimRoute.test.ts`, "F70 (round 2)".
  */
+type Refusal = { refuse: string; status?: number; code?: string };
+
+const NESTED_POOL_CALL: Refusal = {
+  refuse: 'the note-in exchange is disabled on this deployment',
+  status: 403,
+  code: 'EXCHANGE_DISABLED',
+};
+
 function classifyPayment(
   instructions: readonly MessageCompiledInstruction[] | undefined,
   keys: readonly string[],
   till: string,
-): { kind: PaymentKind } | { refuse: string } {
+  allKeys: readonly string[] = keys,
+  inner?: ReadonlyArray<{ instructions?: ReadonlyArray<{ programIdIndex: number }> }> | null,
+): { kind: PaymentKind } | Refusal {
   const program = ZK_SHIELDED_PROGRAM_ID.toBase58();
+  const direct = classifyTopLevel(instructions, keys, till, program);
+  if (!('kind' in direct) || direct.kind === 'pool-withdrawal') return direct;
+  for (const group of Array.isArray(inner) ? inner : []) {
+    for (const ix of Array.isArray(group?.instructions) ? group.instructions : []) {
+      if (allKeys[ix.programIdIndex] === program) return NESTED_POOL_CALL;
+    }
+  }
+  if (allKeys.includes(program)) return NESTED_POOL_CALL;
+  return direct;
+}
+
+function classifyTopLevel(
+  instructions: readonly MessageCompiledInstruction[] | undefined,
+  keys: readonly string[],
+  till: string,
+  program: string,
+): { kind: PaymentKind } | Refusal {
   for (const ix of Array.isArray(instructions) ? instructions : []) {
     if (keys[ix.programIdIndex] !== program) continue;
     const data = ix.data instanceof Uint8Array ? ix.data : new Uint8Array(ix.data ?? []);
@@ -192,6 +277,14 @@ export async function GET() {
     priceLamports: price,
     /** What a circuit-7 withdrawal to the till must land: the price minus the pool fee. */
     withdrawalFloorLamports: withdrawalFloorLamports(price),
+    /**
+     * [close-v1 F70] The note-in exchange is OFF: no new withdrawal to the till
+     * is sold a note, because the claim goes to the withdrawal's fee payer and
+     * a proof copier can be that fee payer. `exchangeLegacyCutoff` is the unix
+     * time before which a withdrawal that already landed is still collected.
+     */
+    exchange: false,
+    exchangeLegacyCutoff: exchangeLegacyCutoff(),
     reasons,
   });
 }
@@ -225,7 +318,13 @@ export async function POST(request: NextRequest) {
     return bad(503, 'the rate limiter could not be read');
   }
 
-  let body: { signature?: unknown; proof?: unknown; contribution?: unknown };
+  let body: {
+    signature?: unknown;
+    proof?: unknown;
+    contribution?: unknown;
+    ephemeral?: unknown;
+    ephemeralProof?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -257,13 +356,22 @@ export async function POST(request: NextRequest) {
   let payer: string;
   let received: number;
   let kind: PaymentKind;
+  let blockTime: number | null = null;
   try {
     const tx = await connection.getTransaction(signature, {
       maxSupportedTransactionVersion: 0,
       commitment: 'confirmed',
     });
     if (!tx?.meta) return bad(404, 'that payment is not on chain yet; confirm it and retry');
-    if (tx.meta.err) return bad(400, 'that transaction failed on chain, so it paid nothing');
+    // [close-v1 F57, verifier round 1] A stable code: the client's resume reads
+    // it as "this payment paid nothing", drops the record that named it, and
+    // stops refusing new contributions with PAYMENT_OUTSTANDING because of it.
+    if (tx.meta.err) {
+      return bad(400, 'that transaction failed on chain, so it paid nothing', {
+        code: 'PAYMENT_FAILED_ON_CHAIN',
+      });
+    }
+    blockTime = typeof tx.blockTime === 'number' ? tx.blockTime : null;
 
     const message = tx.transaction.message;
     const keys = message.getAccountKeys().staticAccountKeys.map((k) => k.toBase58());
@@ -281,11 +389,64 @@ export async function POST(request: NextRequest) {
     // it is the ephemeral, whose secret only the worker holds.
     payer = keys[0];
 
-    const classified = classifyPayment(message.compiledInstructions, keys, till);
-    if ('refuse' in classified) return bad(400, classified.refuse, { till });
+    // Every account the transaction loaded, in the order its balances are
+    // listed: a program reached by CPI may sit in a lookup table.
+    const allKeys = [
+      ...keys,
+      ...(tx.meta.loadedAddresses?.writable ?? []).map((k) => k.toBase58()),
+      ...(tx.meta.loadedAddresses?.readonly ?? []).map((k) => k.toBase58()),
+    ];
+    const classified = classifyPayment(
+      message.compiledInstructions,
+      keys,
+      till,
+      allKeys,
+      tx.meta.innerInstructions,
+    );
+    if ('refuse' in classified) {
+      return bad(classified.status ?? 400, classified.refuse, {
+        till,
+        ...(classified.code
+          ? {
+              code: classified.code,
+              hint:
+                'A withdrawal to the till names its submitter as fee payer, and anyone copying ' +
+                'its proof can be that submitter, so no note is sold against one, direct or ' +
+                'called from another program.',
+            }
+          : {}),
+      });
+    }
     kind = classified.kind;
   } catch (e) {
     return bad(502, `the payment could not be read: ${(e as Error).message}`);
+  }
+
+  /**
+   * ⛔ [close-v1 F70] THE NOTE-IN EXCHANGE SELLS NOTHING NEW.
+   *
+   * The claim goes to whoever can sign as the withdrawal's fee payer, and the
+   * fee payer of a circuit-7 withdrawal is whoever submits it. A stranger who
+   * copies the uploaded proof and lands the withdrawal first IS that fee payer,
+   * and used to be handed the note the buyer's spent note paid for (audit v1,
+   * `r4-client/p2-exchange-claim-copier.test.ts`). The real fix moves the
+   * credential off the fee payer; until it ships, no withdrawal is sold a note
+   * unless it landed before the operator's cutoff. Refused BEFORE the gate, so
+   * nothing is consumed. The client refuses before spending (`EXCHANGE_DISABLED`
+   * in `exchangeNoteForIssued`), so an honest buyer never reaches this.
+   * Pinned by `__tests__/api/closeV1L2ClaimRoute.test.ts`, F70.
+   */
+  if (kind === 'pool-withdrawal') {
+    const cutoff = exchangeLegacyCutoff();
+    if (cutoff === null || blockTime === null || blockTime >= cutoff) {
+      return bad(403, 'the note-in exchange is disabled on this deployment', {
+        code: 'EXCHANGE_DISABLED',
+        hint:
+          'A withdrawal to the till names its submitter as fee payer, and anyone copying its ' +
+          'proof can be that submitter, so no note is sold against one. A withdrawal that ' +
+          'landed before the exchange was switched off is settled through support.',
+      });
+    }
   }
 
   const price = priceLamports();
@@ -363,7 +524,7 @@ export async function POST(request: NextRequest) {
   // ⛔ Skipped once the payment has its code: every refusal in there is about
   // whether a claim may be MINTED, and this one is not minting.
   if (!earnedCode) {
-    const relayed = await relayedContribution(kv, connection, signature, body.contribution);
+    const relayed = await relayedContribution(kv, connection, signature, body);
     if (relayed instanceof NextResponse) return relayed;
   }
 
@@ -380,11 +541,40 @@ export async function POST(request: NextRequest) {
       const first = await kv.incr(paidKey);
       if (first === 1) {
         claimCode = randomBytes(32).toString('base64url');
-        await kv.set(notePaidCodeKey(signature), claimCode);
-        // The claim itself, in the shape /api/issue-note redeems. No expiry: see
-        // the founder ruling in mint-claim, a bearer asset somebody bought is not
-        // a liability to be timed out.
-        await kv.set(`p01:note:claim-minted:${claimCode}`, `payment:${signature}`);
+        /**
+         * ⛔ [close-v1 F63] THE GATE IS GIVEN BACK IF EITHER WRITE FAILS.
+         *
+         * The gate above is the only thing that says "this payment is sold".
+         * A transient store error on the next write used to leave it taken with
+         * no code anywhere, and every retry answered 409 "already redeemed"
+         * about a purchase that never got its code (audit v1,
+         * `r3-server/p4/probe-claim-store-blip.mts`). So: the redeemable row
+         * first (a random code nobody knows yet), the replay row second, and on
+         * any failure both are deleted and the gate released, so the retry
+         * mints exactly one code. Pinned by `closeV1L2ClaimRoute.test.ts`, F63.
+         */
+        const mintedKey = `p01:note:claim-minted:${claimCode}`;
+        try {
+          // The claim itself, in the shape /api/issue-note redeems. No expiry: see
+          // the founder ruling in mint-claim, a bearer asset somebody bought is not
+          // a liability to be timed out.
+          // Written as the literal key, not through `mintedKey`: the writer scan
+          // in `issue-note.node.test.ts` reads the shape off this very line.
+          await kv.set(`p01:note:claim-minted:${claimCode}`, `payment:${signature}`);
+          await kv.set(notePaidCodeKey(signature), claimCode);
+        } catch {
+          for (const k of [mintedKey, notePaidCodeKey(signature), paidKey]) {
+            try {
+              await kv.del(k);
+            } catch {
+              /* best effort: a store that cannot delete leaves the gate as before */
+            }
+          }
+          return bad(
+            503,
+            'the claim could not be recorded; nothing was sold, so ask again with the same payment',
+          );
+        }
         /**
          * 🚨 THE PAYMENT IS MARKED, NEVER THE LEAF. This branch runs only for a
          * deposit this route has just PROVEN is not on the tree, so the leaf
@@ -470,8 +660,9 @@ async function relayedContribution(
   kv: KvLike,
   connection: Connection,
   signature: string,
-  rawContribution: unknown,
+  body: { contribution?: unknown; ephemeral?: unknown; ephemeralProof?: unknown },
 ): Promise<{ poolKey: string; leafIndex: number } | null | NextResponse> {
+  const rawContribution = body.contribution;
   let relayClaim: unknown;
   try {
     relayClaim = await kv.get(relayPaymentClaimKey(signature));
@@ -532,5 +723,238 @@ async function relayedContribution(
       hint: 'POST /api/contribute-note { action: "confirm" }: that is what records the leaf as stock.',
     });
   }
+  const repaid = await relayedFloatRepaid(kv, connection, signature, body);
+  if (repaid instanceof NextResponse) return repaid;
   return bound;
+}
+
+/**
+ * ⛔ [close-v1 F11] A RELAYED PAYMENT IS SOLD HERE ONLY ONCE THE FLOAT HAS ITS LAMPORTS BACK.
+ *
+ * `/api/relay-to-buyer` forwards the payment, plus up to 0.65 SOL of rent it
+ * fronts, from the float to an ephemeral the CALLER names. This fallback used
+ * to mint a full note for that same payment as soon as the deposit was not on
+ * the tree, so a caller who relayed to a key of their own and never deposited
+ * kept the float's lamports AND collected a note: one payment paid out twice
+ * (audit v1, `r1-server/probes/relayDoubleDip.test.ts`).
+ *
+ * So the caller now names the ephemeral and signs `relayEphemeralChallenge`
+ * with it, and three facts must hold before anything is minted:
+ *
+ *   1. the relay tagged THAT ephemeral for THIS payment (`relayEphemeralTag`,
+ *      keyed by the float's secret). Without it any other float-funded key that
+ *      gave its lamports back (another relay, a fund-ephemeral grant) could
+ *      stand in for the one that kept them. A relay older than the tag left
+ *      none, and is refused: nothing then proves which key it funded.
+ *   2. the chain shows the float funding it, so "no history yet" is never read
+ *      as "nothing was sent".
+ *   3. the float is short by no more than `RELAYED_RETURN_TOLERANCE_LAMPORTS`:
+ *      every debit of the float in a transaction naming the ephemeral counts,
+ *      and a gain of the float counts only as a RETURN (below). A deposit that
+ *      landed elsewhere, a transfer away, or a key never swept all fail this;
+ *      Recover (which sweeps the ephemeral back to the float) is the way out,
+ *      and the payment stays unconsumed until then.
+ *
+ * ⛔ WHAT A RETURN IS [verifier round 1, `verify-r1/probe-double-count`]. The
+ * float's gain used to be summed over every transaction that merely NAMED the
+ * ephemeral, so one sweep could repay several payments: an ephemeral listed
+ * read-only in another key's sweep passed while it kept its own float, and so
+ * did one that paid a sink in the same transaction as another key paid the
+ * float. A return now counts only in a successful transaction in which the
+ * ephemeral LOST lamports and no account but the float GAINED any, so nothing
+ * the ephemeral gave up went anywhere else; and it credits at most the
+ * ephemeral's own loss plus what non-signer accounts gave up (the proof buffer
+ * the worker closes back through the ephemeral in its close-and-sweep,
+ * `stark.ts`), never another signer's money.
+ * And each return backs ONE payment, across all payments: it is recorded
+ * against the first payment it is credited to (`relayReturnKey`, keyed rows,
+ * first writer wins), and the same payment asking again keeps it.
+ *
+ * Every refusal is a 409 with a stable `code` and leaves the gate untouched.
+ */
+async function relayedFloatRepaid(
+  kv: KvLike,
+  connection: Connection,
+  signature: string,
+  body: { ephemeral?: unknown; ephemeralProof?: unknown },
+): Promise<true | NextResponse> {
+  const ephemeralRaw = typeof body.ephemeral === 'string' ? body.ephemeral.trim() : '';
+  const ephemeralProof = typeof body.ephemeralProof === 'string' ? body.ephemeralProof.trim() : '';
+  const recoverHint =
+    'Run Recover on this device (it sweeps the deposit key back to the float), then ask ' +
+    'again with the same payment. Nothing was sold and the payment is not consumed.';
+  if (!ephemeralRaw || !ephemeralProof) {
+    return bad(409, 'this payment funded a relayed deposit; name the deposit key it funded', {
+      code: 'RELAYED_EPHEMERAL_REQUIRED',
+      hint:
+        'ephemeral: the key the relay funded, and ephemeralProof: its signature over the ' +
+        'ephemeral challenge. ' + recoverHint,
+    });
+  }
+  let ephemeral: PublicKey;
+  try {
+    ephemeral = new PublicKey(ephemeralRaw);
+  } catch {
+    return bad(400, 'ephemeral must be a public key');
+  }
+  try {
+    const ok = nacl.sign.detached.verify(
+      new Uint8Array(Buffer.from(relayEphemeralChallenge(signature), 'utf8')),
+      new Uint8Array(Buffer.from(ephemeralProof, 'base64')),
+      ephemeral.toBytes(),
+    );
+    if (!ok) return bad(401, 'that ephemeral proof was not signed by the key it names');
+  } catch {
+    return bad(400, 'ephemeralProof must be base64 of a 64-byte ed25519 signature');
+  }
+
+  const funder = funderKeypair();
+  if (!funder) {
+    return bad(503, 'this deployment holds no float key, so a relayed payment cannot be checked');
+  }
+  let tag: unknown;
+  try {
+    tag = await kv.get(relayEphemeralTagKey(signature));
+  } catch {
+    return bad(503, 'the relay record could not be read');
+  }
+  if (
+    typeof tag !== 'string' ||
+    tag !== relayEphemeralTag(funder.secretKey, signature, ephemeral.toBase58())
+  ) {
+    return bad(409, 'that key is not the one the relay funded with this payment', {
+      code: 'RELAYED_EPHEMERAL_UNBOUND',
+      hint:
+        'The relay records which key it funded; this payment has no such record for the key ' +
+        'named. A payment relayed before that record existed is settled through support.',
+    });
+  }
+
+  const float = funder.publicKey.toBase58();
+  const eph = ephemeral.toBase58();
+  let net = 0;
+  let funded = false;
+  const returns: Array<{ signature: string; lamports: number }> = [];
+  try {
+    const history = await connection.getSignaturesForAddress(
+      ephemeral,
+      { limit: MAX_EPHEMERAL_HISTORY },
+      'confirmed',
+    );
+    if (history.length >= MAX_EPHEMERAL_HISTORY) {
+      return bad(409, 'that deposit key has too long a history to be checked here', {
+        code: 'RELAYED_FLOAT_NOT_RETURNED',
+        hint: 'Settled through support.',
+      });
+    }
+    for (const entry of history) {
+      const tx = await connection.getTransaction(entry.signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed',
+      });
+      if (!tx?.meta) {
+        return bad(502, "the deposit key's history could not be read in full; retry");
+      }
+      const keys = [
+        ...tx.transaction.message.getAccountKeys().staticAccountKeys.map((k) => k.toBase58()),
+        ...(tx.meta.loadedAddresses?.writable ?? []).map((k) => k.toBase58()),
+        ...(tx.meta.loadedAddresses?.readonly ?? []).map((k) => k.toBase58()),
+      ];
+      const fi = keys.indexOf(float);
+      const ei = keys.indexOf(eph);
+      if (fi < 0 || ei < 0) continue;
+      const pre = tx.meta.preBalances;
+      const post = tx.meta.postBalances;
+      // The signers are the first static keys. Unknown means every other
+      // account is treated as a signer: only the ephemeral's own loss counts.
+      const header = (tx.transaction.message as { header?: { numRequiredSignatures?: unknown } })
+        .header;
+      const signers =
+        typeof header?.numRequiredSignatures === 'number' ? header.numRequiredSignatures : null;
+      const delta = (i: number) => (post[i] ?? 0) - (pre[i] ?? 0);
+      const floatDelta = delta(fi);
+      const ephDelta = delta(ei);
+      if (floatDelta < 0) {
+        // Every debit of the float counts: over-counting what is owed can only
+        // refuse, never sell.
+        if (ephDelta > 0) funded = true;
+        net += floatDelta;
+        continue;
+      }
+      if (floatDelta === 0 || tx.meta.err || ephDelta >= 0) continue;
+      // A RETURN only if no account but the float gained: then whatever the
+      // ephemeral lost went to the float. It is credited with the ephemeral's
+      // own loss plus what NON-SIGNER accounts gave up (a proof buffer the
+      // ephemeral paid for, closed back through it by the worker's
+      // close-and-sweep), never with another signer's money.
+      let fromEphemeral = -ephDelta;
+      let foreignGain = false;
+      for (let i = 0; i < keys.length; i += 1) {
+        if (i === fi || i === ei) continue;
+        const d = delta(i);
+        if (d > 0) foreignGain = true;
+        else if (d < 0 && signers !== null && i >= signers) fromEphemeral -= d;
+      }
+      if (foreignGain) continue;
+      returns.push({ signature: entry.signature, lamports: Math.min(floatDelta, fromEphemeral) });
+    }
+  } catch {
+    return bad(502, "the deposit key's history could not be read; retry");
+  }
+  if (!funded) {
+    return bad(409, "the relay's transfer to that key is not visible on chain yet", {
+      code: 'RELAYED_FUNDING_UNSEEN',
+      hint: 'Retry in a minute. If the relay never sent it, the payment is settled through support.',
+    });
+  }
+  // Oldest first (the history is newest first), and only as many as the debt
+  // needs: a return this payment does not need is not recorded against it.
+  try {
+    for (const r of returns.reverse()) {
+      if (net >= -RELAYED_RETURN_TOLERANCE_LAMPORTS) break;
+      if (await returnBacksPayment(kv, funder.secretKey, r.signature, signature)) {
+        net += r.lamports;
+      }
+    }
+  } catch {
+    return bad(503, 'the relay record could not be written; nothing was sold, ask again');
+  }
+  if (net < -RELAYED_RETURN_TOLERANCE_LAMPORTS) {
+    return bad(409, 'the lamports the relay forwarded for this payment are not back at the float', {
+      code: 'RELAYED_FLOAT_NOT_RETURNED',
+      owedLamports: -net,
+      hint: recoverHint,
+    });
+  }
+  return true;
+}
+
+/**
+ * Record `returnSignature` as backing `paymentSignature`, or say whether it
+ * already does. First writer wins (`incr` on the keyed row); a payment asking
+ * again finds its own owner row and keeps the return. A failed owner write
+ * gives the row back, so a retry can take it. Throws on a store failure.
+ */
+async function returnBacksPayment(
+  kv: KvLike,
+  funderSecretKey: Uint8Array,
+  returnSignature: string,
+  paymentSignature: string,
+): Promise<boolean> {
+  const key = relayReturnKey(funderSecretKey, returnSignature);
+  const owner = relayReturnOwner(funderSecretKey, paymentSignature);
+  if ((await kv.incr(key)) === 1) {
+    try {
+      await kv.set(`${key}:owner`, owner);
+      return true;
+    } catch (e) {
+      try {
+        await kv.del(key);
+      } catch {
+        /* best effort: the row stays taken, and support settles it */
+      }
+      throw e;
+    }
+  }
+  return (await kv.get<string>(`${key}:owner`)) === owner;
 }

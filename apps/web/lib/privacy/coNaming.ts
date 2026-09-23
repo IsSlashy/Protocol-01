@@ -27,6 +27,7 @@ export async function namesBoth(
   a: string,
   b: string,
   limit = 1000,
+  options: NamesBothOptions = {},
 ): Promise<boolean | null> {
   try {
     const [left, right] = await Promise.all([
@@ -34,12 +35,88 @@ export async function namesBoth(
       connection.getSignaturesForAddress(new PublicKey(b), { limit }),
     ]);
     const seen = new Set(left.map((x) => x.signature));
-    for (const x of right) if (seen.has(x.signature)) return true;
+    const shared = right.filter((x) => seen.has(x.signature)).map((x) => x.signature);
+    if (!options.operatorEdgeOnly) {
+      if (shared.length > 0) return true;
+    } else {
+      const verdict = await operatorEdgeAmong(connection, a, b, shared);
+      if (verdict !== false) return verdict;
+    }
     if (left.length >= limit || right.length >= limit) return null;
     return false;
   } catch {
     return null;
   }
+}
+
+export interface NamesBothOptions {
+  /**
+   * Count a shared transaction only when it is an EDGE BETWEEN THE TWO: one of
+   * them signed it, or lamports left one of them for the other.
+   *
+   * 🚨 audit v1 F61. "Names both" is something any stranger can make true for
+   * one network fee: a transaction of their own with a 1-lamport transfer to
+   * each address, signed by nobody else. Where the question is "did one of
+   * these two FUND the other" (the fee sink and the float), such a transaction
+   * is not an answer, and treating it as one let a stranger switch off every
+   * relayed deposit. Lamports leave a system account only with its signature,
+   * so the signer test is the one that matters; the balance test is kept as a
+   * second, independent reading.
+   */
+  operatorEdgeOnly?: boolean;
+}
+
+/**
+ * How many shared transactions one answer reads, at most. Past this many
+ * without finding an edge, the answer is `null` (could not establish), never
+ * `false`: a flood of stranger transactions must not be able to bury a real
+ * edge under a clean verdict.
+ */
+const MAX_SHARED_INSPECTED = 25;
+
+/**
+ * `true` when one of `shared` is an edge between `a` and `b`; `false` when
+ * every one was read and none is; `null` when one could not be read or there
+ * were more than `MAX_SHARED_INSPECTED`.
+ */
+async function operatorEdgeAmong(
+  connection: Connection,
+  a: string,
+  b: string,
+  shared: string[],
+): Promise<boolean | null> {
+  let unknown = shared.length > MAX_SHARED_INSPECTED;
+  for (const signature of shared.slice(0, MAX_SHARED_INSPECTED)) {
+    let tx: Awaited<ReturnType<Connection['getTransaction']>>;
+    try {
+      tx = await connection.getTransaction(signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed',
+      });
+    } catch {
+      unknown = true;
+      continue;
+    }
+    if (!tx?.meta) {
+      unknown = true;
+      continue;
+    }
+    // A transaction that failed moved nothing but its fee, from its fee payer.
+    // It still counts when an operator key signed it: that key chose to be there.
+    const message = tx.transaction.message;
+    const keys = message.getAccountKeys().staticAccountKeys.map((k) => k.toBase58());
+    const signers = new Set(keys.slice(0, message.header?.numRequiredSignatures ?? 0));
+    if (signers.has(a) || signers.has(b)) return true;
+    if (tx.meta.err) continue;
+    const delta = (k: string) => {
+      const i = keys.indexOf(k);
+      return i < 0 ? 0 : (tx!.meta!.postBalances[i] ?? 0) - (tx!.meta!.preBalances[i] ?? 0);
+    };
+    const da = delta(a);
+    const db = delta(b);
+    if ((da < 0 && db > 0) || (db < 0 && da > 0)) return true;
+  }
+  return unknown ? null : false;
 }
 
 /**

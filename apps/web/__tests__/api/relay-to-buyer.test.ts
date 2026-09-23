@@ -183,6 +183,18 @@ vi.mock('@/lib/privacy/pool/denominatedPool', () => ({
           },
         ]
       : [],
+  // The pool history the route reads before it binds a leaf (audit v1 round 4:
+  // a leaf already on the tree binds nobody new). Leaves 0..5 are on the tree
+  // and leaf 6 has not landed: 6 is the tree's NEXT index, the only one reserve
+  // hands out and the only one the relay binds since audit v1 F72 (R2). It was
+  // an empty tree, which made leaf 6 six places past the edge.
+  fetchPoolCommitments: async () =>
+    new Map(
+      Array.from({ length: 6 }, (_, i) => [
+        String(1000 + i),
+        { commitment: BigInt(1000 + i), leafIndex: i, depositSlot: 1, depositPayer: null },
+      ]),
+    ),
 }));
 
 /**
@@ -772,7 +784,14 @@ describe('the payment is bound to the contribution it funded, only once the lamp
     const res = await route.POST(payment({ contribution: CONTRIBUTION }));
     expect(res.status).toBe(502);
     expect(mockKvSet).not.toHaveBeenCalled();
-    expect(mockDel).toHaveBeenCalledTimes(1);
+    // Exactly two deletions, named: the payment's one-shot claim, and the lock
+    // this request took on the leaf before the send (audit v1 round 4, one
+    // leaf one live payment). Nothing moved, so both are given back and the
+    // same payment can bind the same leaf on its retry.
+    expect(mockDel.mock.calls.map((c) => c[0])).toEqual([
+      'p01:relay:payment:PAYSIG',
+      `p01:relay:contribution-hold:${BINDING}:lock:open`,
+    ]);
   });
 
   it('writes nothing on a refusal that released the claim', async () => {
