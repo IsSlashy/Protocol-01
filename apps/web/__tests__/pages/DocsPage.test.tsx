@@ -98,7 +98,6 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     it('renders the SDK Layer as the published package names', () => {
       expect(screen.getByText('SDK Layer')).toBeInTheDocument();
       expect(screen.getByText('@protocol-01/specter-sdk')).toBeInTheDocument();
-      expect(screen.getByText('@protocol-01/zk-sdk')).toBeInTheDocument();
       expect(screen.getByText('@protocol-01/stark-prover')).toBeInTheDocument();
       // merchant-sdk is the package a merchant actually installs, and the
       // diagram omitted it entirely while labelling p01-js "Merchant SDK".
@@ -111,6 +110,14 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     it('does not show the retired Arcium SDK in the stack', () => {
       expect(screen.queryByText('@protocol-01/arcium-sdk')).toBeNull();
       expect(screen.queryByText('MPC Compute')).toBeNull();
+    });
+
+    // Same rule for zk-sdk, zkspl-sdk and privacy-toolkit: still on npm, but
+    // their source was deleted on 2026-09-23 and no Styx client imports them.
+    it('does not show the three deleted SDK packages in the stack', () => {
+      expect(screen.queryByText('@protocol-01/zk-sdk')).toBeNull();
+      expect(screen.queryByText('@protocol-01/zkspl-sdk')).toBeNull();
+      expect(screen.queryByText('@protocol-01/privacy-toolkit')).toBeNull();
     });
 
     it('renders the Protocol Layer with Stealth, Shielded and Payments', () => {
@@ -416,7 +423,7 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
-    it('lists specter-sdk in the feature list and P01Client/ShieldedClient in the code sample', () => {
+    it('lists specter-sdk in the feature list and P01Client, not a deleted package, in the code sample', () => {
       openTopic('Client SDK Architecture');
       expect(
         screen.getByText(
@@ -426,7 +433,11 @@ describe('DocsPage -- Privacy technologies documentation', () => {
 
       const code = document.querySelector('#client-sdk-code pre') as HTMLElement;
       expect(code).toHaveTextContent("const client = new P01Client({ cluster: 'devnet' });");
-      expect(code).toHaveTextContent('const zkClient = new ShieldedClient({ rpcUrl, programId });');
+      expect(code).not.toHaveTextContent('ShieldedClient');
+      expect(code).not.toHaveTextContent('ZkSplClient');
+      // The three deleted packages are named only in the comment that says
+      // why the sample does not import them.
+      expect(code.textContent ?? '').not.toMatch(/from '@protocol-01\/(zk-sdk|zkspl-sdk|privacy-toolkit)'/);
     });
   });
 
@@ -708,7 +719,11 @@ describe('DocsPage -- close-v1 (audit v1 residuals)', () => {
     expect(code).not.toMatch(/\b7 AIRs\b/);
     expect(code).toMatch(/\b8 AIRs\b/);
     expect(code).not.toMatch(/878,756/);
-    expect(code).toMatch(/889,691 CU/);
+    // 889,691 CU is phase 1 alone (getTransaction 5Kp9dMnU..., slot
+    // 501,407,541); the transaction, both phases, used 1,082,158 CU.
+    expect(code).toMatch(/1,082,158 CU/);
+    expect(code).toMatch(/phase 1 889,691 CU/);
+    expect(code).not.toMatch(/889,691 CU,? both phases/);
     // The "measured to be wrong" story is F21's false claim in comment form.
     expect(code).not.toMatch(/measured\s+(\/\/\s*)?to be wrong/);
     expect(code).toMatch(/docs\/SECURITY-LEVELS\.md/);
@@ -758,12 +773,15 @@ describe('DocsPage -- close-v1 (audit v1 residuals)', () => {
     expect(code).toMatch(/Poseidon/);
   });
 
-  it('F68: the client-SDK sample labels privacy-toolkit as BN254 Poseidon, not the pool hash, and imports what it exports', () => {
+  // privacy-toolkit's source was deleted on 2026-09-23, so the sample no
+  // longer imports it; the comment that replaces the import still says what
+  // it was (BN254 Poseidon, not the pool hash).
+  it('F68: the client-SDK sample no longer imports privacy-toolkit, and still says it is BN254, not the pool hash', () => {
     const code = codeOf('Client SDK Architecture', 'client-sdk');
     expect(code).not.toMatch(/IncrementalMerkleTree|poseidon2/);
-    const line = code.split('\n').find((l) => l.includes('=== @protocol-01/privacy-toolkit')) ?? '';
-    expect(line).toMatch(/BN254/);
-    expect(code).toMatch(/not the (Styx )?pool/i);
+    expect(code).not.toMatch(/from '@protocol-01\/privacy-toolkit'/);
+    expect(code).toMatch(/privacy-toolkit was BN254/);
+    expect(code).toMatch(/not the pool hash/i);
   });
 
   it('F21: detail10 gives the FRI configuration the verifier enforces', () => {

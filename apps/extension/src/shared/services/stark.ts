@@ -38,10 +38,10 @@ const STARK_VERIFIER_PROGRAM_ID = new PublicKey(
 
 const CIRCUIT_SUBSCRIBER_OWNERSHIP = 0;
 const CIRCUIT_POOL_COMMITMENT = 1;
-const CIRCUIT_BALANCE_PROOF = 2;
+// No constant for circuits 2, 4 and 5: the prover blob shipped on 2026-09-23
+// (241caaab) has no prover for them, so no client can build their proofs.
+// Same set as apps/mobile/services/stark and packages/stark-prover.
 const CIRCUIT_MERKLE_PATH = 3;
-const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
-const CIRCUIT_TRANSFER = 5;
 const CIRCUIT_MERKLE_UPDATE = 6;
 /**
  * [C7] The spend circuit: C1's pool commitment and C3's Merkle path proven in
@@ -402,12 +402,13 @@ async function allocateProofBufferLegacy(
 /**
  * Circuits whose phase 1 + phase 2 fit ONE transaction, with the measured sum
  * (litesvm, 2026-09-12, `docs/UNIFORM-MASKING-2026-09-11.md` §4a): C3 1,044,961,
- * C4 1,219,481, C6 1,075,102, C7 1,080,683 against the 1,400,000 cap. C2 (97%)
- * is not merged; C1 and C5 exceed it; C0 runs both phases in `verify_stark_proof`.
+ * C6 1,075,102, C7 1,080,683 against the 1,400,000 cap. C1 exceeds it; C0 runs
+ * both phases in `verify_stark_proof`. C2, C4 and C5 have no client prover, so
+ * they have no row (same table as packages/stark-prover/src/upload-protocol.ts
+ * and apps/mobile/services/stark).
  */
 export const SINGLE_TX_VERIFY_CU: Readonly<Partial<Record<number, number>>> = {
   [CIRCUIT_MERKLE_PATH]: 1_044_961,
-  [CIRCUIT_CONFIDENTIAL_BALANCE]: 1_219_481,
   [CIRCUIT_MERKLE_UPDATE]: 1_075_102,
   [CIRCUIT_SPEND]: 1_080_683,
 };
@@ -807,10 +808,7 @@ export {
   STARK_VERIFIER_PROGRAM_ID,
   CIRCUIT_SUBSCRIBER_OWNERSHIP,
   CIRCUIT_POOL_COMMITMENT,
-  CIRCUIT_BALANCE_PROOF,
   CIRCUIT_MERKLE_PATH,
-  CIRCUIT_CONFIDENTIAL_BALANCE,
-  CIRCUIT_TRANSFER,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_SPEND,
 };

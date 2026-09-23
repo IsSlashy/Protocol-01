@@ -38,10 +38,10 @@ const STARK_VERIFIER_PROGRAM_ID = new PublicKey(
 
 const CIRCUIT_SUBSCRIBER_OWNERSHIP = 0;
 const CIRCUIT_POOL_COMMITMENT = 1;
-const CIRCUIT_BALANCE_PROOF = 2;
+// No constant for circuits 2, 4 and 5: the prover blob shipped on 2026-09-23
+// (241caaab) has no prover for them, so no client can build their proofs.
+// Same set as apps/mobile/services/stark and packages/stark-prover.
 const CIRCUIT_MERKLE_PATH = 3;
-const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
-const CIRCUIT_TRANSFER = 5;
 const CIRCUIT_MERKLE_UPDATE = 6;
 /**
  * [C7] The spend circuit: C1's pool commitment and C3's Merkle path proven in
@@ -598,18 +598,19 @@ async function allocateProofBufferLegacy(
  * MEASURED 2026-09-12 in litesvm (`cu_budget_real_circuits`, cargo-build-sbf
  * 3.1.9, `.so` sha256 `ce2bba7e…`, `docs/UNIFORM-MASKING-2026-09-11.md` §4a):
  *
- *   C3  875,925 + 169,036 = 1,044,961     C4  853,785 + 365,696 = 1,219,481
+ *   C3  875,925 + 169,036 = 1,044,961
  *   C6  899,486 + 175,616 = 1,075,102     C7  887,641 + 193,042 = 1,080,683
  *
- * against the 1,400,000 CU a transaction may request. C2 (1,357,548) is 97% of
- * the cap and is NOT merged; C1 (1,429,650) and C5 (1,416,705) exceed it; C0
- * already runs both phases inside `verify_stark_proof`. A merged transaction
+ * against the 1,400,000 CU a transaction may request. C1 (1,429,650) exceeds
+ * it; C0 already runs both phases inside `verify_stark_proof`. C2, C4 and C5
+ * have no client prover since the 2026-09-23 reship, so they have no row
+ * (same table as packages/stark-prover/src/upload-protocol.ts and
+ * apps/mobile/services/stark). A merged transaction
  * is atomic: a miss costs one failed transaction and the two-transaction path
  * runs instead, nothing half-verified is left behind.
  */
 export const SINGLE_TX_VERIFY_CU: Readonly<Partial<Record<number, number>>> = {
   [CIRCUIT_MERKLE_PATH]: 1_044_961,
-  [CIRCUIT_CONFIDENTIAL_BALANCE]: 1_219_481,
   [CIRCUIT_MERKLE_UPDATE]: 1_075_102,
   [CIRCUIT_SPEND]: 1_080_683,
 };
@@ -1555,10 +1556,7 @@ export {
   MAX_CHUNK_SIZE,
   CIRCUIT_SUBSCRIBER_OWNERSHIP,
   CIRCUIT_POOL_COMMITMENT,
-  CIRCUIT_BALANCE_PROOF,
   CIRCUIT_MERKLE_PATH,
-  CIRCUIT_CONFIDENTIAL_BALANCE,
-  CIRCUIT_TRANSFER,
   CIRCUIT_MERKLE_UPDATE,
   CIRCUIT_SPEND,
 };

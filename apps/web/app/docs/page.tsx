@@ -67,8 +67,8 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
 const starkProof = await starkProver.generateProof(secret);
 
 // Upload proof buffer -> on-chain FRI verifier -> an accepted circuit-7
-// proof measured at 889,691 CU, both phases in one transaction, on devnet
-// 2026-09-20
+// proof, both phases in one transaction on devnet 2026-09-20: 1,082,158 CU
+// for the transaction (phase 1 889,691 CU, phase 2 192,317 CU)
 await submitStarkProof(program, proofBuffer, commitment, circuitId);
 // 8 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
 // point is implemented (programs/p01_stark_verifier/src/verify.rs:670-673).
@@ -163,8 +163,9 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     detailCount: 6,
     codeExample: `// v1.0.2: every spend verifies through the custom on-chain
 // FRI verifier (no Winterfell dep, Goldilocks field, SHA-256 Merkle
-// commitments; an accepted circuit-7 proof measured at 889,691 CU with
-// both phases in one transaction on devnet, 2026-09-20).
+// commitments; an accepted circuit-7 proof, both phases in one
+// transaction on devnet 2026-09-20: 1,082,158 CU for the transaction,
+// phase 1 889,691 CU, phase 2 192,317 CU).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
     verify_merkle_path(proof, pos, trace_root)?;
@@ -210,8 +211,9 @@ const starkProof = await starkProver.generateProof({
 // 2. Upload the proof to a buffer account (measured 2026-09-02: 79,405
 //    bytes on the wire for circuit 7, 94,897 for circuit 1) then call
 //    the on-chain FRI verifier (no Winterfell dep, custom Goldilocks
-//    field, SHA-256 Merkle commitments; an accepted circuit-7 proof
-//    measured at 889,691 CU, both phases in one transaction, 2026-09-20)
+//    field, SHA-256 Merkle commitments; an accepted circuit-7 proof,
+//    both phases in one transaction, 2026-09-20: 1,082,158 CU for the
+//    transaction, phase 1 889,691 CU, phase 2 192,317 CU)
 await submitStarkProof(program, proofBuffer, circuitId);
 
 // 3. Instruction reads the verified buffer and releases funds
@@ -359,24 +361,15 @@ import { P01Client, fetchAllServices } from '@protocol-01/specter-sdk';
 const client = new P01Client({ cluster: 'devnet' });
 const services = await fetchAllServices(connection);  // the merchants a vault can pay
 
-// === @protocol-01/zk-sdk: ZK Shielded Pool ===
-import { ShieldedClient } from '@protocol-01/zk-sdk';
-const zkClient = new ShieldedClient({ rpcUrl, programId });
-await zkClient.shield(1_000_000_000n, notes);
-
-// === @protocol-01/zkspl-sdk: Confidential Balances ===
-import { ZkSplClient } from '@protocol-01/zkspl-sdk';
-await zkspl.deposit(amount, proof);   // Public -> confidential
-await zkspl.send(amount, recipient);  // Confidential transfer
-
 // === @protocol-01/p01-js: Merchant Integration ===
 import { Protocol01 } from '@protocol-01/p01-js';
 await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 
-// === @protocol-01/privacy-toolkit: BN254 Poseidon, legacy Groth16 helpers ===
-// Not the pool hash: the Styx pool and its STARK proofs use Poseidon over
-// Goldilocks, and a commitment built here is not accepted there.
-import { createCommitment, getZeroHashes } from '@protocol-01/privacy-toolkit';
+// zk-sdk, zkspl-sdk and privacy-toolkit stay on npm as published, but their
+// source was deleted from this repository on 2026-09-23 and no Styx client
+// imports them, so this sample does not either. privacy-toolkit was BN254
+// Poseidon from the earlier Groth16 design, not the pool hash: the Styx pool
+// and its STARK proofs use Poseidon over Goldilocks.
 
 // === @protocol-01/auth-sdk: Auth Integration ===
 import { P01AuthClient } from '@protocol-01/auth-sdk';
@@ -547,19 +540,18 @@ const docsArchLayers = [
   },
   {
     nameKey: "docs.layerSdk",
-    // The ten packages published under @protocol-01 that are part of the current
-    // stack. @protocol-01/arcium-sdk is also on npm but is NOT here: Arcium was
-    // removed from the protocol on 2026-07-17, same reason the MPC node was
-    // dropped from the protocol layer below.
+    // The seven @protocol-01 packages whose source is in this repository and
+    // that are part of the current stack. Also on npm but NOT here:
+    // arcium-sdk (Arcium was removed from the protocol on 2026-07-17, same
+    // reason the MPC node was dropped from the protocol layer below), and
+    // zk-sdk, zkspl-sdk and privacy-toolkit (source deleted on 2026-09-23, no
+    // Styx client imports them). Their i18n keys stay for the clientSdk topic.
     nodes: [
       { labelKey: "docs.nodePrivacySdk", subKey: "docs.nodePrivacySdkSub" },
       { labelKey: "docs.nodeSpecterSdk", subKey: "docs.nodeSpecterSub" },
-      { labelKey: "docs.nodeZkSdk", subKey: "docs.nodeZkSub" },
       { labelKey: "docs.nodeStarkProver", subKey: "docs.nodeStarkProverSub" },
-      { labelKey: "docs.nodeZksplSdk", subKey: "docs.nodeZksplSub" },
       { labelKey: "docs.nodeMerchantSdk", subKey: "docs.nodeMerchantSdkSub" },
       { labelKey: "docs.nodeP01Js", subKey: "docs.nodeP01JsSub" },
-      { labelKey: "docs.nodePrivacyToolkit", subKey: "docs.nodePrivacyToolkitSub" },
       { labelKey: "docs.nodeAuthSdk", subKey: "docs.nodeAuthSub" },
       { labelKey: "docs.nodeRpcConfig", subKey: "docs.nodeRpcSub" },
     ],
@@ -810,7 +802,8 @@ function ArchitectureTopic({ t }: { t: (k: string) => string }) {
             8  = circuit ids the on-chain verifier accepts (0..7; 8+ returns
                  UnsupportedCircuit), one AIR module each in stark/src/air/.
                  Was "10 ZK Circuits", a mixed count of STARKs plus the three
-                 legacy Groth16 artifacts still sitting in the Android assets.
+                 legacy Groth16 artifacts then in the Android assets (removed
+                 on 2026-09-23).
             4  = programs live on devnet and on the product path (verifier,
                  shielded pool, registry, relayer), checked by getAccountInfo
                  on 2026-09-14. Was 14, the Cargo member count, which counted

@@ -59,7 +59,6 @@ const DEPENDENCIES = [
       { name: "@noble/hashes", license: "MIT", url: "https://github.com/paulmillr/noble-hashes" },
       { name: "@noble/post-quantum", license: "MIT", url: "https://github.com/paulmillr/noble-post-quantum" },
       { name: "tweetnacl", license: "Unlicense", url: "https://github.com/dchest/tweetnacl-js" },
-      { name: "circom / snarkjs", license: "GPL-3.0", url: "https://github.com/iden3/circom" },
     ],
   },
   {
@@ -266,8 +265,9 @@ export default function Licenses() {
               <p>
                 The proof stack is hash-based: winterfell, SHA-256 and
                 Poseidon, with no elliptic curve anywhere in the proof. The
-                circom / snarkjs row covers the older Groth16 tooling that the
-                repository&apos;s legacy root test scripts still install.
+                older Groth16 tooling (circom, snarkjs) is no longer a
+                dependency: the last root test scripts that installed it were
+                removed on 2026-09-23.
               </p>
             </div>
 

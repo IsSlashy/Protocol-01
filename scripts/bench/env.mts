@@ -14,15 +14,25 @@ function run(cmd: string, args: string[], cwd?: string): string {
   return r.status === 0 ? (r.stdout ?? '').trim() : '';
 }
 
+/**
+ * The OS architecture is NOT read from Win32_OperatingSystem.OSArchitecture:
+ * WMI localises that string ("64-bit", "64 bits" on a French Windows), and a
+ * manifest under docs/ that says "64 bits" is read by the security-levels
+ * prose gate as an unlisted security figure (tools/security-levels/src/prose.rs,
+ * `unread_files_with_figures`). `os_architecture` takes the .NET enum name
+ * instead ("X64", "Arm64"), which no locale changes; PROCESSOR_ARCHITECTURE
+ * ("AMD64") is the fallback where RuntimeInformation is missing.
+ */
 function windowsInventory(): Record<string, unknown> {
   const ps = [
     '[Console]::OutputEncoding = [Text.Encoding]::UTF8;',
     '$c = Get-CimInstance Win32_Processor | Select-Object -First 1 Name,NumberOfCores,NumberOfLogicalProcessors,MaxClockSpeed;',
     '$m = @(Get-CimInstance Win32_PhysicalMemory | Select-Object Capacity,Speed,ConfiguredClockSpeed,Manufacturer,PartNumber);',
-    '$o = Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber,OSArchitecture;',
+    '$o = Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber;',
+    '$a = try { [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() } catch { $env:PROCESSOR_ARCHITECTURE };',
     "$r = Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion';",
     '$p = (powercfg /getactivescheme) -join " ";',
-    '[pscustomobject]@{ cpu=$c; memory=$m; os=$o; ubr=$r.UBR; display_version=$r.DisplayVersion; power_scheme=$p } | ConvertTo-Json -Depth 4 -Compress',
+    '[pscustomobject]@{ cpu=$c; memory=$m; os=$o; os_architecture=$a; ubr=$r.UBR; display_version=$r.DisplayVersion; power_scheme=$p } | ConvertTo-Json -Depth 4 -Compress',
   ].join(' ');
   const out = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps]);
   try { return JSON.parse(out) as Record<string, unknown>; } catch { return { error: 'WMI query failed' }; }

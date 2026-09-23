@@ -227,7 +227,7 @@
       "circuit_7_is_live": "PROBE_ORDER in lib.rs carries [1, 6, 3, 5, 7] in this artifact, and the submission recorded below exercised verify phase 1 AND phase 2 for circuit 7 on this program.",
       "_why_b2_and_not_the_scan_s_b1_plus": "`--measure` prints `b1+` because that is the strongest thing a byte scan of msg! literals can say: B2 added no literal to the verifier, so the scan cannot separate b1 from b2. `b1+` means \"B1 or newer, cannot say which\" and the record is supposed to carry the PRECISE generation -- `generationsAreCompatible` exists exactly to reconcile the two, and accepts b1+ against a b2 claim. \u26a0\ufe0f Pasting --measure's block in verbatim therefore deadlocks the interlock at line 1655, which compares with `!==`. The claim here is b2 on DIRECT evidence, not on the scan: a b2-generation client's circuit-7 proof was accepted by this program in transaction 4yKg4gGm... All seven pre-C7 circuits in that client are byte-identical to the b2 column pinned in b1_deep_binding.rs and wireFormat.test.ts.",
       "_supersedes_2026_09_06": "The 2026-09-02 evidence below described slot 491973056 (elf 75fa927d..., 782,057 B). DGY37k3J... was redeployed on 2026-09-06 at slot 494130741 (elf 245176e8..., 798,881 B; built artifact 798,896 B sha256 cdd91f30..., the 15-byte difference is trailing zero padding) to add init_proof_buffer_v3 and reset_proof_buffer (error BufferTooSmall 6008 appended last). The proof format, every circuit and every pre-existing instruction are byte-for-byte unchanged in source, and the generation claim b2 stands on DIRECT evidence taken the same day against this slot: c7-live-proof.ts honest proof from the shipped blob 36c1fd4e accepted through both phases in 33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i (slot 494131451, phase 2 193,165 CU).",
-      "_supersedes_2026_09_12": "The 2026-09-06 evidence below described slot 494130741 (elf 245176e8..., 798,881 B). DGY37k3J... was redeployed on 2026-09-12 at slot 497235406 (elf 6cf414a6..., 801,457 B; built artifact 801,472 B sha256 e27317fa..., the 15-byte difference is trailing zero padding, as on 2026-09-06) for the UNIFORM MASKING of all eight circuits (three-part mask on C0/C2/C4/C5, the masked circuit 0 replacing the legacy 32-row shape, OOD point resampling on prover and verifier -- docs/UNIFORM-MASKING-2026-09-11.md). The wire of C0/C2/C4/C5 changed (74,365 / 95,777 / 75,085 / 91,261 B); C1/C3/C6/C7 keep their lengths but the OOD rule changed on all eight, so a proof from the previous blob 36c1fd4e is rejected by this deployment and must be. The generation claim b2 stands on DIRECT evidence taken the same day against this slot: c7-live-proof.ts honest proof from the reshipped blob 0ad6d7f1 accepted through both phases in 2H5p3dqE7XPbDDfT5n263bbMnWnRV9neqxLBnib6WEi2WywR7qtfLMkQNB9GvAYj5DZ9q125YYD3T88U5fopzx6C (slot 497236376, phase 1 + phase 2 in one transaction, 889,570 CU). Before the deploy, the staged .so ran the reshipped blob's proofs of all eight circuits on litesvm through the real instruction path, 8/8 (programs/p01_stark_verifier/tests/wasm_blob_parity.rs)."
+      "_supersedes_2026_09_12": "The 2026-09-06 evidence below described slot 494130741 (elf 245176e8..., 798,881 B). DGY37k3J... was redeployed on 2026-09-12 at slot 497235406 (elf 6cf414a6..., 801,457 B; built artifact 801,472 B sha256 e27317fa..., the 15-byte difference is trailing zero padding, as on 2026-09-06) for the UNIFORM MASKING of all eight circuits (three-part mask on C0/C2/C4/C5, the masked circuit 0 replacing the legacy 32-row shape, OOD point resampling on prover and verifier -- docs/UNIFORM-MASKING-2026-09-11.md). The wire of C0/C2/C4/C5 changed (74,365 / 95,777 / 75,085 / 91,261 B); C1/C3/C6/C7 keep their lengths but the OOD rule changed on all eight, so a proof from the previous blob 36c1fd4e is rejected by this deployment and must be. The generation claim b2 stands on DIRECT evidence taken the same day against this slot: c7-live-proof.ts honest proof from the reshipped blob 0ad6d7f1 accepted through both phases in 2H5p3dqE7XPbDDfT5n263bbMnWnRV9neqxLBnib6WEi2WywR7qtfLMkQNB9GvAYj5DZ9q125YYD3T88U5fopzx6C (slot 497236376, phase 1 + phase 2 in one transaction, 1,083,079 CU for the transaction: phase 1 889,570 CU, phase 2 193,359 CU, corrected 2026-09-23 from a read-only getTransaction; the record used to give 889,570 as both phases). Before the deploy, the staged .so ran the reshipped blob's proofs of all eight circuits on litesvm through the real instruction path, 8/8 (programs/p01_stark_verifier/tests/wasm_blob_parity.rs)."
     },
     "measured_at": {
       "date_utc": "2026-09-12",
@@ -278,7 +278,8 @@
       "circuit_id": 7,
       "proof_bytes": 79405,
       "phases_verified": "phase 1 (FRI/Merkle) and phase 2 (DEEP-ALI), merged in one transaction",
-      "phase2_compute_units": null,
+      "phase1_compute_units": 889570,
+      "phase2_compute_units": 193359,
       "cost_sol": 0.000146,
       "rent": "recovered -- the proof buffer is a PDA of (authority, circuit_id), so close_proof_buffer needs only the authority. NOT true of the 45 orphaned ProofBuffer accounts holding 20.50 SOL on devnet, which predate the PDA scheme and want an ephemeral key nobody kept.",
       "reproduce": "npx tsx packages/stark-prover/scripts/c7-live-proof.ts",
@@ -353,8 +354,13 @@
         "The previous entry was 33RgEF7C... at slot 494131451: the blob 36c1fd4e against the verifier deployed at slot 494130741.",
         "Both halves moved on 2026-09-12 [UNIFORM-MASK]: the verifier was redeployed at slot 497235406 and the blob",
         "reshipped to 0ad6d7f1 (265,324 B). This entry is the first acceptance of the new pair, taken by",
-        "c7-live-proof.ts the same day; phase 1 and phase 2 landed in ONE transaction of 889,570 CU (the script",
-        "merges them since [L2]), so phase2_compute_units alone is not observable here and is left null.",
+        "c7-live-proof.ts the same day; phase 1 and phase 2 landed in ONE transaction (the script merges",
+        "them since [L2]).",
+        "CORRECTED 2026-09-23 from a read-only getTransaction of 2H5p3dqE7XPbDDfT5n263bbMnWnRV9neqxLBnib6WEi2WywR7qtfLMkQNB9GvAYj5DZ9q125YYD3T88U5fopzx6C",
+        "(slot 497236376): this entry used to say the transaction was 889,570 CU and that phase 2 alone was not",
+        "observable. Both were wrong. The per-instruction log lines give each phase: VerifyStarkProofV2 (phase 1)",
+        "consumed 889,570 CU, VerifyDeepAliPhase2 (phase 2) consumed 193,359 CU, and meta.computeUnitsConsumed",
+        "for the whole transaction is 1,083,079 CU (the rest is the ComputeBudget instruction). 889,570 is phase 1 only.",
         "The 2026-09-06 entry is kept below for the record."
       ],
       "presized_buffer_evidence_2026_09_06": {
@@ -412,7 +418,7 @@
           "result": "REJECTED at step 3 (Merkle), InvalidProof 6003, after step2 ok"
         }
       },
-      "compute_units_both_phases": 889570,
+      "compute_units_both_phases": 1083079,
       "_superseded_2026_09_06_entry": {
         "transaction": "33RgEF7CagweAyMDnBWHUpmfzyG38o3QAruzYTiyuoL5ZnnL5hdT2JJ6ZxrX2b5Cd8SJN7E4VTKrJx7LMiqEUQ7i",
         "slot": 494131451,

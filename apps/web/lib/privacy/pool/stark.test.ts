@@ -852,10 +852,14 @@ describe('[L2-CLIENT 2026-09-12] pre-sized buffers, one transaction instead of n
     for (const [cid, cu] of Object.entries(SINGLE_TX_VERIFY_CU)) {
       expect(cu, `C${cid}`).toBeLessThan(1_400_000);
     }
-    // C2 is 97% of the cap and C1 / C5 exceed it: none of the three may be merged.
+    // C1 exceeds the cap, so it is never merged. C2, C4 and C5 have no client
+    // prover since the 2026-09-23 reship, so they have no row either (the
+    // same table as packages/stark-prover and apps/mobile).
     expect(SINGLE_TX_VERIFY_CU[1]).toBeUndefined();
     expect(SINGLE_TX_VERIFY_CU[2]).toBeUndefined();
+    expect(SINGLE_TX_VERIFY_CU[4]).toBeUndefined();
     expect(SINGLE_TX_VERIFY_CU[5]).toBeUndefined();
+    expect(Object.keys(SINGLE_TX_VERIFY_CU).map(Number).sort()).toEqual([3, 6, 7]);
   });
 });
 

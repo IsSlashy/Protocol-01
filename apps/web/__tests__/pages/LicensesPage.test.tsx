@@ -161,6 +161,8 @@ describe('/licenses: what the page says', () => {
   it('keeps the third-party table', () => {
     render(<LicensesPage />);
     expect(screen.getByText('winterfell')).toBeInTheDocument();
-    expect(screen.getByText('circom / snarkjs')).toBeInTheDocument();
+    // circom / snarkjs left the table on 2026-09-23 with the last root
+    // devDependencies and Groth16 test scripts that installed them.
+    expect(screen.queryByText('circom / snarkjs')).toBeNull();
   });
 });
