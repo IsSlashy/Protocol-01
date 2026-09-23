@@ -3,6 +3,7 @@ name = "p01-whitelist"
 version = "0.1.0"
 description = "Protocol 01 Developer Whitelist Program"
 edition = "2021"
+license-file.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]

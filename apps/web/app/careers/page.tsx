@@ -60,7 +60,8 @@ const OFFER_KEYS = ["o1", "o2", "o3", "o4"] as const;
  * a withdrawal republishes the deposit commitment, so pairing a deposit with its
  * withdrawal is trivial today and no client-side change closes it. Dropping the
  * paragraph was the wrong half of the fix though, because it also deleted the
- * true half (MIT open source) and left a section titled "The honest version"
+ * true half (the code is public: source-available under PolyForm Strict, and
+ * MIT for every commit before the relicense) and left a section titled "The honest version"
  * quietly missing the one limitation a BD candidate has to be able to say out
  * loud. The rewrite that states the limitation is filed as a dictionary edit
  * against `careers.context.p2` in both locales.

@@ -415,8 +415,11 @@ describe('AuthDemoPage: QR sign-in demo', () => {
 
     it('shows the client, its two calls and the licence, and nothing about npm', () => {
       // Exact, because the import line inside the sample names the package too.
-      const head = screen.getByText('@protocol-01/auth-sdk · MIT');
-      expect(head.textContent).toMatch(/MIT/);
+      // The licence named is the current one: new work is PolyForm Strict
+      // 1.0.0 since 2026-09-22 (the versions already on npm stay MIT).
+      const head = screen.getByText('@protocol-01/auth-sdk · PolyForm Strict 1.0.0');
+      expect(head.textContent).toMatch(/PolyForm Strict/);
+      expect(head.textContent).not.toMatch(/MIT/);
 
       const panel = head.closest('.styx-code-panel') as HTMLElement;
       expect(within(panel).getAllByText('P01AuthClient')).toHaveLength(2);

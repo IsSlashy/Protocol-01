@@ -522,7 +522,7 @@ export default {
     never: 'Jamais',
     privacyPolicy: 'Politique de confidentialit\u00e9',
     termsOfService: 'Conditions d\u2019utilisation',
-    openSource: 'Open Source',
+    openSource: 'Licences',
     madeBy: 'Cr\u00e9\u00e9 par Volta Team',
     aboutDescription: 'Protocol 01 est un portefeuille Solana ax\u00e9 sur la confidentialit\u00e9, utilisant des techniques cryptographiques avanc\u00e9es : ZK-SNARKs (Groth16), STARKs, adresses furtives (ECDH + ML-KEM) et soldes confidentiels (Poseidon) pour prot\u00e9ger votre vie priv\u00e9e financi\u00e8re.',
     checkForUpdates: 'V\u00e9rifier les mises \u00e0 jour',

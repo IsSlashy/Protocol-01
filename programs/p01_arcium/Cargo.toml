@@ -6,6 +6,7 @@ name = "p01-arcium"
 version = "0.1.0"
 description = "Protocol 01 × Arcium — Confidential computation bridge"
 edition = "2021"
+license-file = "../../LICENSE"
 
 [lib]
 crate-type = ["cdylib", "lib"]

@@ -121,9 +121,12 @@ export interface StarkProverConfig {
    */
   retainBuffer?: boolean;
   /**
-   * Optional commercial license JWT. When omitted, the SDK runs in non-
-   * production mode and emits a one-time console warning. Required for
-   * production deployments — see https://protocol01.com/license.
+   * Optional commercial license JWT. When omitted, the SDK runs unlicensed
+   * and emits a one-time console warning; proving is never blocked.
+   * Noncommercial use needs no key (PolyForm Strict 1.0.0). Commercial use
+   * (including production deployment by a business) needs a written license
+   * from Volta Team —
+   * see https://protocol-01.dev/licenses.
    *
    * Format: `<base64url-payload>.<base64url-signature>` signed with the
    * Protocol 01 license signing key. Verified locally against

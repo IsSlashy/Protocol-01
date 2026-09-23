@@ -293,8 +293,9 @@ export default function StyxTerminalNoir() {
             title="Merchant SDK"
             dek={
               <>
-                One MIT-licensed package for the merchant side: verify a
-                payment or a subscription server-side against your own RPC
+                One source-available package for the merchant side (PolyForm
+                Strict 1.0.0; commercial use needs a license from Volta Team):
+                verify a payment or a subscription server-side against your own RPC
                 connection. Framework-agnostic, no wallet adapter, no network
                 side effects at import.
               </>

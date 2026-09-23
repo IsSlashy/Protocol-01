@@ -1,4 +1,20 @@
-Required Notice: Copyright (c) 2025-2026 Volta Team (https://styx.cash)
+/* The licence texts printed on /licenses, byte for byte.
+ *
+ * PROJECT_LICENSE_TEXT is /LICENSE at the repository root: the upstream PolyForm
+ * Strict License 1.0.0 text, preceded only by its "Required Notice:" lines (the
+ * Volta Team copyright, and what stays MIT). MIT_LICENSE_TEXT_BEFORE_POLYFORM is
+ * the MIT text that /LICENSE held in every commit before the one that replaced
+ * it with PolyForm Strict; it still governs those commits and every npm version
+ * published before 2026-09-22 (LICENSE-MIT-BEFORE-POLYFORM).
+ *
+ * The page this replaced once printed a PARAPHRASE under the heading "MIT
+ * License". A paraphrase presented as a licence is a misrepresentation, so
+ * both constants are verbatim copies, and __tests__/pages/LicensesPage.test.tsx
+ * compares them with the files. If /LICENSE changes, change this with it.
+ *
+ * Kept out of page.tsx because a Next.js page module may only export what the
+ * framework expects. */
+export const PROJECT_LICENSE_TEXT = `Required Notice: Copyright (c) 2025-2026 Volta Team (https://styx.cash)
 Required Notice: Every commit of the Protocol 01 repository before the commit that replaced its MIT License with this license, and every @protocol-01 npm package version published before 2026-09-22, are available under the MIT License (LICENSE-MIT-BEFORE-POLYFORM in that repository); that grant is not withdrawn.
 
 # PolyForm Strict License 1.0.0
@@ -60,3 +76,28 @@ The **licensor** is the individual or entity offering these terms, and the **sof
 **Your licenses** are all the licenses granted to you for the software under these terms.
 
 **Use** means anything you do with the software requiring one of your licenses.
+`;
+
+export const MIT_LICENSE_TEXT_BEFORE_POLYFORM = `MIT License
+
+Copyright (c) 2025-2026 Volta Team
+Developed by Slashy Fx
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;

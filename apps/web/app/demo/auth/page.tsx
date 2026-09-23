@@ -650,7 +650,7 @@ export default function AuthDemoPage() {
 
             <Reveal className="styx-code-panel styx-reveal">
               <div className="styx-code-head">
-                <span>@protocol-01/auth-sdk &middot; MIT</span>
+                <span>@protocol-01/auth-sdk &middot; PolyForm Strict 1.0.0</span>
                 <span>devnet</span>
               </div>
               <pre className="styx-code">

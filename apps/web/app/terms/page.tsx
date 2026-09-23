@@ -71,7 +71,7 @@ export default function TermsOfService() {
             </strong>
           </p>
           <div className="styx-stack">
-            <p className="styx-mono">Last updated: August 11, 2026</p>
+            <p className="styx-mono">Last updated: September 22, 2026</p>
             <div className="styx-btn-row" style={{ alignItems: "center" }}>
               <span className="styx-chip">
                 <span className="styx-dot" aria-hidden="true" />
@@ -295,31 +295,42 @@ export default function TermsOfService() {
           </p>
 
           <h3 className="styx-h3" style={{ marginTop: "2.25rem" }}>
-            6.2 Current Open-Source License
+            6.2 Current License
           </h3>
           <p>
-            Styx Protocol is released under the <strong>MIT License</strong>.
-            You may use, copy, modify, merge, publish, distribute, sublicense,
-            and sell copies of the software, subject to the license&apos;s
-            copyright and permission notice.
-          </p>
-          <p>
-            The SDK packages are published to npm under the @protocol-01 scope,
-            and the MIT grant stated above is the grant that covers them. Where
-            a published package omits a license field in its metadata, that
-            omission is a packaging defect and not a license withheld: the MIT
-            terms stated in this clause govern that package too.
+            Styx Protocol is source-available under the{" "}
+            <strong>PolyForm Strict License 1.0.0</strong>, with Volta Team as
+            licensor. It covers the repository from the commit that replaced
+            the MIT License with it onward, and every @protocol-01 npm version
+            published from September 22, 2026 on. You may read, build, run and
+            verify the software for noncommercial purposes, such as research,
+            audit or replaying the benchmark, and for the other permitted
+            purposes the license defines. Commercial use (including production
+            deployment by a business), changes or new works based on the
+            software, and distribution need a separate written license from
+            Volta Team; see{" "}
+            <Link href="/licenses" className="styx-link">
+              https://styx.cash/licenses
+            </Link>
+            . PolyForm Strict 1.0.0 is not an open-source license.
           </p>
 
           <h3 className="styx-h3" style={{ marginTop: "2.25rem" }}>
             6.3 License Transition
           </h3>
           <p>
-            We reserve the right to change the licensing terms of future
-            releases. Code already released under the MIT License keeps the
-            rights that license grants (an MIT grant on distributed code is not
-            revocable), but no particular license is guaranteed for versions not
-            yet published.
+            Every commit of the Styx Protocol repository before the commit that
+            replaced the MIT License with PolyForm Strict 1.0.0, and every
+            @protocol-01 npm package version published before September 22,
+            2026, is available under the MIT License, with the rights that
+            license grants. That grant is not revocable and it is not
+            withdrawn. Where one of those published packages omits a license field
+            in its metadata, that omission is a packaging defect and not a
+            license withheld: the MIT terms govern that version too. Versions
+            published from September 22, 2026 on ship under PolyForm Strict
+            1.0.0. We reserve the right to change the licensing terms of future
+            releases; no particular license is guaranteed for versions not yet
+            published.
           </p>
 
           <h3 className="styx-h3" style={{ marginTop: "2.25rem" }}>
@@ -539,7 +550,7 @@ export default function TermsOfService() {
             Privacy Policy
           </Link>
           <Link href="/licenses" className="styx-btn-ghost">
-            Open Source Licenses
+            Licenses
           </Link>
           <Link href="/" className="styx-btn-ghost">
             Home

@@ -2,6 +2,7 @@
 name = "c7-phase2-probe"
 version = "0.1.0"
 edition = "2021"
+license-file = "../../../../LICENSE"
 publish = false
 description = "Throwaway SBF program that reproduces the ARITHMETIC SHAPE of the proposed C7 phase-2 DEEP-ALI check so its compute-unit cost can be measured before the AIR exists (C7_SPEND_CIRCUIT_PLAN.md Step 0)."
 

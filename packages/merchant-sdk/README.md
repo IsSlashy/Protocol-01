@@ -799,4 +799,15 @@ duplicated by hand.
 
 ## License
 
-MIT — see [LICENSE](../../LICENSE). (The published npm packages have declared MIT since 0.1.0.)
+PolyForm Strict License 1.0.0 — see [LICENSE](LICENSE). The package is
+source-available: anyone may read, build, run and verify it for noncommercial
+purposes. Commercial use (including production deployment by a business),
+changes or derivative works, and redistribution need a written license from
+Volta Team ([styx.cash/licenses](https://styx.cash/licenses)).
+PolyForm Strict is not an open-source license.
+
+The versions already published to npm (0.1.0 to 0.1.3) were released under the
+MIT License and remain MIT, as does every commit of this repository before the
+one that replaced the MIT License with PolyForm Strict
+([LICENSE-MIT-BEFORE-POLYFORM](../../LICENSE-MIT-BEFORE-POLYFORM)). Versions
+published from 2026-09-22 on ship under PolyForm Strict 1.0.0.

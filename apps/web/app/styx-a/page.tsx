@@ -401,7 +401,7 @@ export default function StyxVaultLanding() {
               </Reveal>
               <Reveal className={`${s.codePanel} ${s.reveal}`} delay={80}>
                 <div className={s.codeHead}>
-                  <span>@protocol-01/merchant-sdk &middot; MIT</span>
+                  <span>@protocol-01/merchant-sdk &middot; PolyForm Strict 1.0.0</span>
                   <span>devnet</span>
                 </div>
                 <pre className={s.code}>

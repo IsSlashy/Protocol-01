@@ -3,6 +3,7 @@ name = "p01-stream"
 version = "0.1.0"
 description = "Protocol 01 Stream Payments - Recurring subscription payments on Solana"
 edition = "2021"
+license-file.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]

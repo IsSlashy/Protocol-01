@@ -1,6 +1,7 @@
 {
   "name": "@protocol-01/whitelist-sdk",
   "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Protocol 01 Developer Whitelist SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

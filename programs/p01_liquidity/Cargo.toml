@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "P-01 Liquidity Pool — instant unshield via LP-backed prefunding (C2-on). EXPERIMENTAL, not deployed."
 keywords = ["protocol-01", "experimental", "not-deployed"]
 edition = "2021"
+license-file.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]

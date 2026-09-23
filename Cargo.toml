@@ -26,6 +26,8 @@ resolver = "2"
 
 [workspace.package]
 rust-version = "1.84"
+# PolyForm Strict 1.0.0 has no SPDX identifier, so crates point at the file.
+license-file = "LICENSE"
 
 [profile.release]
 overflow-checks = true

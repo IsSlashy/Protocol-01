@@ -16,6 +16,7 @@ import {
   formatMissingLicenseWarning,
   formatInvalidLicenseWarning,
   LICENSE_PUBLIC_KEY_B64,
+  COMMERCIAL_LICENSE_URL,
 } from './license';
 
 // ---------------------------------------------------------------------------
@@ -115,19 +116,39 @@ describe('license — verifyLicenseKey', () => {
 });
 
 describe('license — warning formatters', () => {
-  it('formatMissingLicenseWarning returns a non-empty string mentioning license + protocol01.com', () => {
+  it('COMMERCIAL_LICENSE_URL is the live licenses page', () => {
+    expect(COMMERCIAL_LICENSE_URL).toBe('https://styx.cash/licenses');
+  });
+
+  it('formatMissingLicenseWarning returns a non-empty string mentioning license + the licenses page', () => {
     const s = formatMissingLicenseWarning();
     expect(s.length).toBeGreaterThan(0);
     expect(s.toLowerCase()).toContain('license');
-    expect(s).toContain('protocol01.com');
+    expect(s).toContain('https://styx.cash/licenses');
+    // The key is optional for noncommercial use: the warning must say so, and
+    // must name who grants the commercial license.
+    expect(s).toContain('PolyForm Strict 1.0.0');
+    expect(s.toLowerCase()).toContain('noncommercial');
+    expect(s).toContain('Volta Team');
+    // protocol01.com does not answer (checked 2026-09-22): never point to it.
+    expect(s).not.toContain('protocol01.com');
+    // PolyForm Strict ties the need for a license to commercial purpose, not to
+    // "production": a noncommercial organisation may run it in production with
+    // no further license, so the warning must not claim otherwise.
+    expect(s).not.toMatch(/commercial or production use/i);
+    expect(s).toContain('Commercial use (including production deployment by a business)');
   });
 
-  it('formatInvalidLicenseWarning embeds the reason and mentions license + protocol01.com', () => {
+  it('formatInvalidLicenseWarning embeds the reason and mentions license + the licenses page', () => {
     const s = formatInvalidLicenseWarning('bad signature');
     expect(s.length).toBeGreaterThan(0);
     expect(s).toContain('bad signature');
     expect(s.toLowerCase()).toContain('license');
-    expect(s).toContain('protocol01.com');
+    expect(s).toContain('https://styx.cash/licenses');
+    expect(s).not.toContain('protocol01.com');
+    // "non-production mode" implied that production needs a key; it does not
+    // for a noncommercial purpose.
+    expect(s).not.toMatch(/non-production/i);
   });
 });
 

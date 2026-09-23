@@ -4,6 +4,14 @@
  * Verifies a compact, locally-signed JWT-ish token (Ed25519, no network call).
  * In v0.x this only emits a console warning when the key is missing or
  * invalid — proof generation is never blocked. A future v2.0 may harden this.
+ *
+ * The package is source-available under the PolyForm Strict License 1.0.0
+ * (see LICENSE): noncommercial use needs no key; commercial use (including
+ * production deployment by a business) needs a written license from Volta Team
+ * (COMMERCIAL_LICENSE_URL). Every
+ * version published to npm before 2026-09-22 (0.1.0 to 0.1.3) is available
+ * under MIT; 0.1.0 and 0.1.1 were released pointing at the then-proprietary
+ * root license and are covered by the same grant.
  */
 
 import * as nacl from 'tweetnacl';
@@ -105,10 +113,28 @@ export function verifyLicenseKey(licenseKey: string): LicenseVerification {
 // Warning formatters
 // ---------------------------------------------------------------------------
 
+/**
+ * Where commercial licenses are requested. The one place this URL lives:
+ * both warnings below are built from it. (A contact email will join it as a
+ * single constant once Volta Team confirms one; protocol01.com, used before,
+ * does not answer.)
+ */
+export const COMMERCIAL_LICENSE_URL = 'https://styx.cash/licenses';
+
 export function formatMissingLicenseWarning(): string {
-  return '[stark-prover] No license key provided. This is fine for development, evaluation, testing, and hackathon use. Production deployments require a commercial license — see https://protocol01.com/license or contact contact@protocol01.com';
+  return (
+    '[stark-prover] No license key provided. None is needed for noncommercial use ' +
+    '(research, audit, evaluation, testing), which the PolyForm Strict 1.0.0 license permits. ' +
+    'Commercial use (including production deployment by a business) needs a written ' +
+    'license from Volta Team — see ' +
+    COMMERCIAL_LICENSE_URL
+  );
 }
 
 export function formatInvalidLicenseWarning(reason: string): string {
-  return '[stark-prover] Invalid license key (' + reason + '). Falling back to non-production mode. Contact contact@protocol01.com to renew.';
+  return (
+    '[stark-prover] Invalid license key (' + reason + '). Continuing unlicensed ' +
+    '(proving still runs; noncommercial use needs no key). To obtain or renew a commercial license, see ' +
+    COMMERCIAL_LICENSE_URL
+  );
 }

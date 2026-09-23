@@ -84,7 +84,8 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
@@ -107,7 +108,7 @@
     "sdk"
   ],
   "author": "Protocol 01 Team",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/P-01SDK/privacy-sdk.git"

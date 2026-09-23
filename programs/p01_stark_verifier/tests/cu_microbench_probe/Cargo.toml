@@ -2,6 +2,7 @@
 name = "cu-microbench-probe"
 version = "0.1.0"
 edition = "2021"
+license-file = "../../../../LICENSE"
 publish = false
 description = "Throwaway SBF program that prices the primitives of the v2 compute-unit model (Goldilocks mul/add/inv, cubic-extension mul, the SHA-256 Merkle node and path walk) with the verifier's own source. Driven by tests/cu_microbench.rs. Never deployed."
 

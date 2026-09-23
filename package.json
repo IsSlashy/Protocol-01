@@ -2,6 +2,7 @@
   "name": "protocol-01",
   "version": "0.1.0",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Privacy super-app for Solana - One app. Total invisibility.",
   "scripts": {
     "dev": "turbo run dev",

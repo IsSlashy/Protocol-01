@@ -2,43 +2,19 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import StyxShell from "../_styx/StyxShell";
 import Reveal from "../_styx/Reveal";
+/* Both licence texts are verbatim copies of files in the repository, kept in
+ * ./licenseText.ts and compared with the files by
+ * __tests__/pages/LicensesPage.test.tsx. */
+import {
+  PROJECT_LICENSE_TEXT,
+  MIT_LICENSE_TEXT_BEFORE_POLYFORM,
+} from "./licenseText";
 
 export const metadata: Metadata = {
-  title: "Open source licenses | Styx Protocol",
+  title: "Licenses and attributions | Styx Protocol",
   description:
-    "Open source licenses and attributions for Styx Protocol, formerly Protocol 01, and its dependencies.",
+    "Styx Protocol, formerly Protocol 01, is source-available under the PolyForm Strict License 1.0.0. Every commit before the relicensing commit, and every npm version published before 2026-09-22, is available under the MIT License. Its dependencies keep their own licenses.",
 };
-
-/* Quoted verbatim from LICENSE at the repository root.
- *
- * The page this replaced printed a PARAPHRASE under the heading "MIT License":
- * it dropped "and to permit persons to whom the Software is furnished to do
- * so", rewrote the conditions clause, and abridged the warranty disclaimer.
- * A paraphrase presented as a licence is a misrepresentation, so this constant
- * is a byte-for-byte copy. If /LICENSE changes, change this with it. */
-const LICENSE_TEXT = `MIT License
-
-Copyright (c) 2025-2026 Volta Team
-Developed by Slashy Fx
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-`;
 
 /* Identifier frozen: it contains "P01_". Renaming strings of that shape is how
    this repository loses funds, so the rule is applied without exceptions, even
@@ -46,9 +22,9 @@ SOFTWARE.
 const P01_PACKAGES = [
   {
     name: "Styx Protocol: core protocol and applications",
-    license: "MIT",
+    license: "PolyForm Strict 1.0.0",
     description:
-      "The wallet application, browser extension, Solana programs, proof circuits and SDK sources in this repository are released under the MIT License. Use, copy, modify and redistribute freely. The full text lives in LICENSE at the repository root and is reproduced below, unedited.",
+      "The wallet application, browser extension, Solana programs, proof circuits and SDK sources in this repository are source-available under the PolyForm Strict License 1.0.0, with Volta Team as licensor. Anyone may read, build, run and verify them for noncommercial purposes: research, audit, replaying the benchmark. Commercial use (including production deployment by a business), changes or new works based on the code, and redistribution need a separate written license from Volta Team. Every commit before the one that replaced the MIT License with PolyForm Strict, and every npm version published before 2026-09-22, are available under the MIT License. The full texts live in LICENSE and LICENSE-MIT-BEFORE-POLYFORM at the repository root and are reproduced below, unedited.",
     url: "https://github.com/IsSlashy/Protocol-01-releases",
   },
 ];
@@ -140,13 +116,13 @@ const DEPENDENCY_COUNT = DEPENDENCIES.reduce(
   0,
 );
 
-export default function OpenSourceLicenses() {
+export default function Licenses() {
   return (
     <StyxShell>
       {/* ── Hero ───────────────────────────────────────────────────────── */}
       <section className="styx-container styx-hero">
         <p className="styx-overline">
-          Styx Protocol &middot; Legal &middot; Open source
+          Styx Protocol &middot; Legal &middot; Licenses
         </p>
         <h1 className="styx-h1">
           Licenses and <em className="styx-em">attributions</em>.
@@ -166,7 +142,7 @@ export default function OpenSourceLicenses() {
           <div className="styx-btn-row" style={{ alignItems: "center" }}>
             <span className="styx-chip">
               <span className="styx-dot" aria-hidden="true" />
-              This repository: MIT
+              This repository: PolyForm Strict 1.0.0
             </span>
             <span className="styx-chip">
               {DEPENDENCY_COUNT} packages listed
@@ -184,7 +160,8 @@ export default function OpenSourceLicenses() {
             </span>
             <p className="styx-index">Our license</p>
             <h2 className="styx-h2">
-              This repository is <span className="styx-gleam">MIT</span>.
+              This repository is{" "}
+              <span className="styx-gleam">source-available</span>.
             </h2>
           </div>
           <div className="styx-stack-lg">
@@ -218,13 +195,48 @@ export default function OpenSourceLicenses() {
               </Reveal>
             ))}
 
+            <div className="styx-admission">
+              <p className="styx-admission-title">Commercial licenses</p>
+              <p className="styx-admission-body">
+                Noncommercial use needs no permission beyond the license below:
+                read the code, build it, run it, verify a proof, replay the
+                benchmark. Commercial use (including production deployment by a
+                business), changes or new works based on the code, and
+                redistribution need a separate written license from Volta Team,
+                the licensor. This page is where
+                those requests start: write to the address in the notice below.
+              </p>
+            </div>
+
+            <div className="styx-prose">
+              <p>
+                What was already published stays published under MIT. Every
+                commit of this repository before the one that replaced the MIT
+                License with PolyForm Strict, and every @protocol-01 npm version
+                published before 2026-09-22, are available under the MIT
+                License: a license already granted is not withdrawn. The
+                relicensing commit and later ones, and npm versions published
+                from 2026-09-22 on, ship under PolyForm Strict 1.0.0.
+              </p>
+            </div>
+
             <Reveal className="styx-code-panel styx-reveal" delay={80}>
               <div className="styx-code-head">
-                <span>MIT License &middot; /LICENSE</span>
+                <span>PolyForm Strict License 1.0.0 &middot; /LICENSE</span>
                 <span>Verbatim</span>
               </div>
               <pre className="styx-code">
-                <code>{LICENSE_TEXT}</code>
+                <code>{PROJECT_LICENSE_TEXT}</code>
+              </pre>
+            </Reveal>
+
+            <Reveal className="styx-code-panel styx-reveal" delay={120}>
+              <div className="styx-code-head">
+                <span>MIT License &middot; every commit before the relicense</span>
+                <span>Verbatim</span>
+              </div>
+              <pre className="styx-code">
+                <code>{MIT_LICENSE_TEXT_BEFORE_POLYFORM}</code>
               </pre>
             </Reveal>
           </div>

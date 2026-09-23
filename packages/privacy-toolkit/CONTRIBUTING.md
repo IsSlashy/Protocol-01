@@ -11,6 +11,13 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 ## Pull Requests
 
+**License first.** This package is source-available under the PolyForm Strict
+License 1.0.0 (see [LICENSE](LICENSE)), which grants no right to make changes or to
+distribute them. Pull requests are accepted only from contributors who have a
+contributor agreement with Volta Team, the licensor: ask through
+https://styx.cash/licenses before you start. Bug reports and feature
+requests through issues need no agreement.
+
 1. Fork the repository and create a branch from `main`.
 2. Install dependencies: `npm install`
 3. Make your changes in the `src/` directory.

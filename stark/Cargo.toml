@@ -2,6 +2,7 @@
 name = "p01-stark"
 version = "0.1.0"
 edition = "2021"
+license-file.workspace = true
 description = "Protocol 01 - STARK proof system (quantum-resistant, no trusted setup)"
 
 [lib]

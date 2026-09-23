@@ -545,7 +545,7 @@ export default {
     never: 'Never',
     privacyPolicy: 'Privacy Policy',
     termsOfService: 'Terms of Service',
-    openSource: 'Open Source',
+    openSource: 'Licenses',
     madeBy: 'Made by Volta Team',
     aboutDescription: 'Protocol 01 is a privacy-focused Solana wallet that uses advanced cryptographic techniques including ZK-SNARKs (Groth16), STARKs, stealth addresses (ECDH + ML-KEM), and confidential balances (Poseidon) to protect your financial privacy.',
     checkForUpdates: 'Check for Updates',

@@ -46,7 +46,7 @@ const SOCIAL_LINKS: { icon: keyof typeof Ionicons.glyphMap; label: string; value
 const LEGAL_LINKS: { key: 'privacyPolicy' | 'termsOfService' | 'openSource'; url: string }[] = [
   { key: 'privacyPolicy', url: 'https://protocol-01.dev/privacy' },
   { key: 'termsOfService', url: 'https://protocol-01.dev/terms' },
-  { key: 'openSource', url: 'https://protocol-01.dev/licenses' },
+  { key: 'openSource', url: 'https://styx.cash/licenses' },
 ];
 
 const TECH = ['Solana', 'React Native', 'Expo', 'STARKs', 'Poseidon', 'ML-KEM'];

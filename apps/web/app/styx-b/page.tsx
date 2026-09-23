@@ -84,7 +84,7 @@ export default function StyxRiverPage() {
 
           <div className={styles.stateRow} aria-label="Current project status">
             <span className={styles.stateChip}>Live on devnet</span>
-            <span className={styles.stateChip}>Open source</span>
+            <span className={styles.stateChip}>Source available</span>
             <span className={styles.stateChip}>Not yet audited</span>
           </div>
 
@@ -448,7 +448,7 @@ export default function StyxRiverPage() {
                 GitHub
               </a>
             </div>
-            <p className={styles.ctaState}>Devnet · Open source · Not audited</p>
+            <p className={styles.ctaState}>Devnet · Source available · Not audited</p>
           </Reveal>
         </div>
       </section>

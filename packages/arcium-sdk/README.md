@@ -193,4 +193,18 @@ import { castVote } from '@protocol-01/arcium-sdk/governance';
 
 ## License
 
-MIT
+PolyForm Strict License 1.0.0 — see [LICENSE](LICENSE). The package is
+source-available: anyone may read, build, run and verify it for noncommercial
+purposes. Commercial use (including production deployment by a business),
+changes or derivative works, and redistribution need a written license from
+Volta Team ([styx.cash/licenses](https://styx.cash/licenses)).
+PolyForm Strict is not an open-source license.
+
+The versions already published to npm (0.1.0 to 0.1.2) are available under the
+MIT License, as is every commit of this repository before the one that
+replaced the MIT License with PolyForm Strict
+([LICENSE-MIT-BEFORE-POLYFORM](../../LICENSE-MIT-BEFORE-POLYFORM)). None of
+the three declares a license field in its manifest: 0.1.0 shipped a
+proprietary license file, 0.1.1 shipped none and 0.1.2 ships the MIT one. The
+same MIT grant covers all three. Versions published from 2026-09-22 on ship
+under PolyForm Strict 1.0.0.

@@ -57,6 +57,7 @@ import {
   formatMissingLicenseWarning,
   formatInvalidLicenseWarning,
   LICENSE_PUBLIC_KEY_B64,
+  COMMERCIAL_LICENSE_URL,
   type LicensePayload,
   type LicenseVerification,
 } from './license';
@@ -78,6 +79,7 @@ export {
   formatMissingLicenseWarning,
   formatInvalidLicenseWarning,
   LICENSE_PUBLIC_KEY_B64,
+  COMMERCIAL_LICENSE_URL,
   type LicensePayload,
   type LicenseVerification,
 } from './license';

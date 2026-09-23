@@ -30,6 +30,7 @@
 name = "p01-stark-test-support"
 version = "0.0.0"
 edition = "2021"
+license-file.workspace = true
 publish = false
 description = "Dev-only: turns on p01-stark's deterministic-mask-for-tests for its own integration tests"
 

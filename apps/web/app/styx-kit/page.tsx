@@ -398,7 +398,7 @@ export default function StyxKitPage() {
 
             <div className="styx-code-panel">
               <div className="styx-code-head">
-                <span>@protocol-01/merchant-sdk &middot; MIT</span>
+                <span>@protocol-01/merchant-sdk &middot; PolyForm Strict 1.0.0</span>
                 <span>devnet</span>
               </div>
               <pre className="styx-code">

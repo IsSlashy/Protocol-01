@@ -2,6 +2,7 @@
 name = "p01-security-levels"
 version = "0.1.0"
 edition = "2021"
+license-file = "../../LICENSE"
 rust-version = "1.84"
 publish = false
 description = "Protocol 01: the one source of STARK parameters and the soundness calculator that writes docs/SECURITY-LEVELS.md"

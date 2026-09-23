@@ -32,7 +32,8 @@
   "files": [
     "dist",
     "src",
-    "wasm"
+    "wasm",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
@@ -59,7 +60,7 @@
     "proof-system"
   ],
   "author": "Protocol 01 Team",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/IsSlashy/Protocol-01.git",

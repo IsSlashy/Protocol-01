@@ -3,6 +3,7 @@ name = "p01-subscription"
 version = "0.1.0"
 description = "P01 Subscription Program - Delegated recurring payments with on-chain validation"
 edition = "2021"
+license-file.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]

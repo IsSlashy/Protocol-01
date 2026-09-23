@@ -3,6 +3,7 @@ name = "p01_relayer"
 version = "0.1.0"
 description = "Protocol 01 - Decentralized Relayer Network"
 edition = "2021"
+license-file.workspace = true
 
 [lib]
 crate-type = ["cdylib", "lib"]
