@@ -1,742 +1,233 @@
 <p align="center">
-  <img src="docs/assets/banner.png" alt="Styx Protocol" width="100%" />
+  <img src="docs/assets/banner.png" alt="Styx" width="100%" />
 </p>
 
-<h1 align="center">Styx Protocol</h1>
+<h1 align="center">Styx</h1>
 
 <p align="center">
-  <strong>The privacy layer for Solana.</strong><br/>
-  Hash-based post-quantum STARKs &middot; Stealth addresses &middot; Shielded pools &middot; Subscription vaults &middot; On-chain service registry
-</p>
-
-<p align="center">
-  <a href="https://protocol-01.dev">Website</a> &middot;
-  <a href="https://protocol-01.dev/docs">Documentation</a> &middot;
-  <a href="https://x.com/Styx_PQ">Twitter/X</a> &middot;
+  <strong>Private payments on Solana, with hash-based STARK proofs.</strong><br/>
+  <a href="https://styx.cash">Website</a> &middot;
+  <a href="https://styx.cash/docs">Docs</a> &middot;
+  <a href="https://x.com/Styx_PQ">X @Styx_PQ</a> &middot;
   <a href="https://discord.gg/EfqnVmb2dV">Discord</a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/IsSlashy/Protocol-01/releases/latest"><img src="https://img.shields.io/github/v/release/IsSlashy/Protocol-01?color=39c5bb" alt="Latest release" /></a>
-  &middot;
-  <a href="https://github.com/IsSlashy/Protocol-01/releases/latest"><strong>Download Android APK (latest tag v1.0.3, 2026-06-16)</strong></a>
-</p>
+> **Status: devnet only. Not externally audited. v1 has known limits (below); v2 is being built.**
 
----
+## What Styx does
 
-> **SOURCE-AVAILABLE &mdash; POLYFORM STRICT 1.0.0**
->
-> &copy; 2025-2026 Volta Team | Developed by Slashy Fx
->
-> Since 2026-09-22, new work in this repository, and every new `@protocol-01`
-> npm version, is licensed under the [PolyForm Strict License 1.0.0](./LICENSE).
-> Anyone may read, build, run and audit the code, verify its proofs and replay
-> the benchmark, for noncommercial purposes. Commercial use, production
-> deployment, changes or derivative works, and redistribution need a written
-> license from Volta Team: [protocol-01.dev/licenses](https://protocol-01.dev/licenses).
-> PolyForm Strict is not an open-source license.
->
-> What was already published stays MIT: the repository up to and including
-> commit `beaa87ba`, and every npm version published before 2026-09-22, remain
-> available under the MIT License ([LICENSE-MIT-BEFORE-POLYFORM](./LICENSE-MIT-BEFORE-POLYFORM)).
-> A license already granted is not withdrawn.
->
-> For investment or partnership inquiries &mdash; [reach out](https://x.com/Styx_PQ).
-
----
-
-## 📱 Installation & Demo
-
-### Mobile App (Android)
-
-**Download the latest APK:** [GitHub Releases](https://github.com/IsSlashy/Protocol-01/releases/latest)
-
-#### Installation Steps:
-1. Download the APK on your Android device (Android 10 / API 29+)
-2. Open the file → Allow "Install from unknown sources" if prompted
-3. Tap "Install"
-4. Open **Protocol 01** — the shipped build predates the rename, so that is the
-   name the launcher shows, not Styx
-
-#### First Launch:
-1. Tap **"Create Wallet"** — a 12-word seed is generated locally (never leaves the device)
-2. **Save your seed phrase** — this is your only backup
-3. Set a PIN + optional biometric unlock
-4. A blocking *Recovering your notes* modal auto-scans the chain on first boot — leave it run (~15s)
-5. You're ready
-
-> **Note on signing keystores:** reinstalling across different keystores (`debug` ⇄ `release`) silently wipes AsyncStorage. `adb install -r` only preserves notes when signatures match — stick to the release APK.
-
----
-
-### Browser Extension (Chrome / Brave)
-
-Manual install (developer mode):
-
-1. Grab the latest extension ZIP from [Releases](https://github.com/IsSlashy/Protocol-01/releases/latest)
-2. Extract the archive
-3. Open Chrome → `chrome://extensions/`
-4. Enable **"Developer mode"** (top right toggle)
-5. Click **"Load unpacked"** → select the extracted `dist` folder
-6. The **Protocol 01** icon appears in the toolbar — the archive's manifest still
-   reads that name, so Chrome prints it rather than Styx
-
----
-
-### 🎮 Demo Path — key features in 5 minutes
-
-#### 1. Shield a note
-
-Privacy tab → **Shield** → choose a denomination (0.1 / 1 / 10 / 100 / 500 / 1000 SOL; only the first two have ever been used). A STARK shield proof is generated on-device (no on-device timing is published: the only on-device proving figure ever measured is circuit 3 at 1,482 ms on 2026-08-03, and the ">180 s" once quoted here was a client worker timeout rather than a proving time, see the mobile section below) and the deposit lands in the pool. Wait ~30 s for the deposit to confirm and for the wallet to re-scan. This is a confirmation wait, not a privacy delay: nothing on chain makes a note age before it can be spent. Every client pins `min_epoch = 0`, the unshield handler discards the field outright, and the subscribe gate compares against the absolute epoch counter, measured 2026-08-17, `1121 >= 2` is always true, so the gate never bites.
-
-#### 2. Subscribe to a live service
-
-Streams tab → pick one of the demo merchants (the catalogue lists privacy
-vendors — Mullvad, Proton VPN, IVPN, AdGuard, and others) → **Subscribe
-Private**.
-
-The demo services on devnet are seeded by us; no third-party merchant is
-registered yet. The vault pulls from your shielded note, and the retailer's
-claim is permissionless — anyone can trigger the payout, and it can only ever
-land on the retailer named when the vault was created. The program does not
-check that retailer, the rate or the interval against the service registry:
-the app takes them from the registry entry, client-side.
-
-#### 3. Pause and resume — there is no cancellation
-
-Privacy → **Subscription Vaults** → select a vault → **Pause** / **Resume**.
-
-A subscription is a one-way prepaid envelope. **Money that enters a vault can
-only ever leave it toward the retailer.** There is no cancel instruction, no
-refund and no path by which a lamport returns to the subscriber; the subscriber
-is told this on the paying screen, before the deposit.
-
-- **Pause** freezes the clock and cuts access. Prepaid periods are not lost —
-  `total_paused_slots` is credited on resume, so pause moves *when* the retailer
-  is paid, never *how much*.
-- **Resume** restarts accrual from where it stopped.
-- `claim_period` closes the vault once its funded periods are spent, paying the
-  sub-period remainder and the rent to the retailer. It is the only instruction
-  that can close a `SubscriptionVault`.
-
-#### 4. Seed-based recovery
-
-The app automatically runs `rescanPool` after a reinstall, wallet switch, or stale boot (>7 days). A blocking lazy-load modal shows per-pool progress, tallies the notes it pulled back, and can't be dismissed until the scan completes.
-
-No cloud, no backend. A rescan re-derives **your own deposits** from your seed, which is what restores them on a new device. It does not reach a note somebody **handed** you: those secrets came from the sender's seed, so no derivation finds them and the local store is their only witness. Back up the device store, not just the seed.
-
----
-
-### 🔧 For Developers — Test on Devnet
-
-```bash
-# Get devnet SOL
-solana airdrop 2 --url devnet
-```
-
-**Smart contracts — declared program IDs (devnet).** These are the
-`declare_id!` constants in `programs/`, checked against the devnet cluster on
-2026-09-14. The STARK verifier was redeployed on devnet 2026-09-12, slot
-497,235,406, and carries 801,457 bytes of program data; every verifier figure in
-this README is measured against that deployment on the real devnet cluster, and
-the raw numbers are in
-[`docs/BENCHMARK-2026-09-13.md`](docs/BENCHMARK-2026-09-13.md).
-
-Four programs carry the product path today:
-
-| Program | ID |
-|---|---|
-| STARK Verifier (8 circuits) | `DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs` |
-| ZK Shielded Pool (V4: shield, unshield, subscribe, pause, resume) | `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c` |
-| Registry (merchant services + stealth meta-addresses) | `QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB` |
-| Relayer (deployed, no node operating it since 2026-08-28) | `2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW` |
-
-These four are the only crates left in `programs/`. On 2026-09-23 six crates
-that no shipping flow called were deleted from the repo: `p01_arcium` (its
-program `FH1JiQRU…` was closed on devnet on 2026-09-22, slot 502,629,197), `p01_liquidity` (still
-deployed at `6PfFkvjX…`, deactivated, and called by nothing), and `p01_zkspl`,
-`stream`, `subscription` and `whitelist`, whose declared IDs were never
-deployed on devnet. Four programs were **closed on devnet on 2026-09-13** and
-their crates deleted from the repo: `specter`, `p01_quantum_vault`,
-`p01_quantum_wallet` and `p01_fee_splitter`
-([`docs/HANDOFF-2026-09-13.md`](docs/HANDOFF-2026-09-13.md) §11 and §12).
-Older deployments of some of these under superseded IDs still exist on devnet;
-no crate declares them and no product path calls them.
-
----
-
-## What is Styx Protocol?
-
-Styx Protocol is a **post-quantum-oriented privacy layer for Solana**, shipped as composable SDKs and a set of on-chain programs.
-
-The stack combines **STARKs** (hash-based, no trusted setup), **hybrid stealth addresses** (X25519 + ML-KEM-768, the NIST-standardized post-quantum KEM, whose keys are re-derived from the Ed25519 wallet key) and a **custom on-chain FRI verifier**. Winternitz one-time signatures (WOTS+) are no longer part of it: the vault that verified them was closed on devnet on 2026-09-13, and no program in this repository verifies WOTS+. The *proof* system is chosen so that no proof falls to Shor: no pairing-based proofs, no trusted setup, hash commitments throughout. The *stack* is not in that position, and saying otherwise here was wrong until 2026-08-17. Solana verifies **Ed25519** and nothing else, so spend authority falls to Shor whatever this layer does. Worse for the pool specifically: the web pool seed is `HKDF(one Ed25519 signature over a fixed message)`, so an adversary who recovers the wallet key re-signs that message, reproduces the seed, and re-derives every note it ever held — retroactively. The web client carries a passphrase-salted derivation (v2) that would close that for pool notes created after a passphrase is set, but no screen of the web app sets one today, so every web pool seed is the signature-only one; it would reach neither the stealth identity nor the extension nor mobile either. On what the proof bytes reveal: until 2026-08-31 a private witness could be recovered from published proof bytes by interpolation against the AIR (four C1 witnesses in 5 ms, probe `P3b` of `verify/p01-verify.mjs`, kept as the positive control). Every one of the eight circuits now carries a blinding mask, and what is claimed for it is narrower than this README said until 2026-09-23: each committed value of a proof is measured uniform in the mask (the X5 uniformity test, all eight circuits, 2026-09-11), and no witness has been recovered from a masked proof. The simulation argument in [`docs/zk-simulation-argument.md`](docs/zk-simulation-argument.md) does not hold as written (audit v1, finding F69): it treats the next-row trace openings as values nobody sees, while every proof publishes them and the verifier Merkle-checks them, so its simulator is told apart from an honest proof with public data (`stark/tests/next_row_openings_are_published.rs`). No witness leak follows from that and none is shown; statistical hiding is not claimed until a corrected simulator is executed. The words "zero-knowledge" are not used as a property of this protocol. On the mask itself one item stays open: the prover functions take it from the caller and check only its length; the shipped wasm draws it from the OS CSPRNG (`docs/LEAK-LEDGER.md`, A8). The ledger's other families (A7, A9 to A11, B to G) list what the proof bytes, the chain, the verifier and the clients still reveal.
-
-### What is hidden, and what is not
-
-A privacy protocol owes its users a precise answer here, so this section states
-what the code does rather than what a mixer brochure would say:
-
-**Hidden:**
-- **The pool transaction is signed by a one-time key rather than by your wallet
-  — always on the withdrawal, but only on SOL for the deposit.** A **USDC**
-  deposit has no ephemeral path: `useEphemeralDepositor = pool.token === 'SOL'`
-  (`apps/mobile/stores/denominatedPoolStore.ts:1176`), so your wallet signs the
-  shield instruction itself and appears on chain as the depositor. The code logs
-  exactly that, and the mobile app tells the depositor so on the shield screen —
-  this README claimed the opposite until 2026-08-17. On the web client USDC is
-  refused outright rather than half-wired. Wherever a one-time key *is* used,
-  your wallet funds it in the clear one hop earlier and the residue is swept
-  back, so the wallet stays reachable from either leg in three RPC calls.
-  Dropping the wallet as the signer is real and worth saying. It is not absence.
-- **Stealth payments create a unique one-time address per payment** — an
-  observer cannot connect two payments to the same recipient from the addresses
-  alone.
-- **Note contents** (owner, blinding) are never posted in clear on-chain, and
-  since the 2026-08-31 masks the proof bytes no longer allow trace recovery by
-  interpolation on any of the eight circuits (see the hiding paragraph above
-  and `docs/LEAK-LEDGER.md` A1, A2, A5).
-
-**NOT hidden — read this before relying on the pool:**
-- **A withdrawal is linkable to its deposit.** The withdrawal proof publishes
-  the note's commitment, which the deposit already published: matching the two
-  is trivial for any observer, and this is a property of the circuit's public
-  inputs — no client-side change can remove it.
-- **Your wallet is reachable from any spend in three RPC calls, and it is the
-  cheapest attack here.** Nothing cryptographic is involved: the ephemeral key
-  cannot pay a fee from nothing, so an ordinary `SystemProgram::transfer` funds
-  it and another sweeps the residue back, and both name the wallet. Measured on
-  a real devnet subscription — `verify/p01-verify.mjs` probe P6 does exactly
-  this walk and prints its own call count.
-- **The anonymity set is small, and here are the numbers.** Measured
-  2026-08-17: seven unspent notes in the 1 SOL pool out of twenty-six ever
-  deposited, eight in the 0.1 SOL pool, and zero in every other denomination.
-  Because each note is individually linkable by the point above, the effective
-  set is one.
-- **Amounts in the denominated pool are public by denomination** (0.1 / 1 / 10
-  / 100 / 500 / 1000 SOL, of which only the first two have ever been used).
-- **A merchant's retailer address and subscription vault fields are public** —
-  anyone can enumerate a merchant's subscriber vaults.
-
-So the honest claim is narrower than it used to read here. This paragraph said
-"the pool hides *who you are* (your wallet), not *which deposit you are*" until
-2026-08-17, and that sentence contradicted the caveat three bullets above it: the
-wallet funds the ephemeral in the clear, one hop earlier, and three RPC calls
-close that hop. **The pool hides neither today.** What it does hide is the
-amount's distinctiveness, by denomination.
-
-Handing the note to someone else does not fix this, and both forms were measured
-rather than assumed: an off-chain hand-off emits no transaction at all, so the
-chain is unchanged and the spend still republishes the deposit's commitment; an
-on-chain `transfer_denominated_stark_v3` publishes the OLD commitment in the
-clear at byte 80 of its own instruction, so it adds a public hop instead of
-breaking the chain — verified against both real transfers on devnet, two for
-two. Anything stronger will be claimed here when it ships, not before.
+Styx is a shielded pool for SOL on Solana. You deposit a fixed amount (1 SOL) and get back a
+*note*: a secret only your wallet can open, which says "one unit of this pool is yours".
+Every deposit or spend comes with a STARK proof that your browser computes locally. The proof
+is built from hashes only (no elliptic curves, no trusted setup), and a verifier program on
+Solana checks it before the pool moves any money. When you deposit through the web app, your
+money funds a note the deployment (the operator running styx.cash, with its till and its stock of notes) keeps, and you are handed a different, *older* note: you
+contribute one and collect an older one, so the note you later spend is not the one your
+deposit made. The aim is to hide which deposit a withdrawal or a subscription spends, and so
+who paid, from anyone reading the chain. It does not hide that you used Styx, how much (every
+note is 1 SOL), or when, and it does not hide your note from the deployment that issued it.
 
 ```
-User generates a STARK proof (Rust prover compiled to WASM, Goldilocks/Poseidon)
-    -> Proof submitted to the on-chain FRI verifier
-        -> Shielded program applies the state transition
-            -> Funds land at a fresh payout address, one per note; the web app
-               derives it by HKDF from one Ed25519 wallet signature (no KEM, so
-               an adversary who recovers the wallet key re-derives it)
-                -> Neither transaction is SIGNED by the user's wallet
-                   — except a USDC deposit, which the wallet signs itself.
-                   Elsewhere the wallet funded the ephemeral one hop
-                   earlier, in the clear, and is swept back to afterwards.
+User generates a STARK proof (Rust prover compiled to WASM, Goldilocks field, Poseidon hash)
+    -> the proof is uploaded in chunks and checked by the on-chain FRI verifier
+        -> the pool program applies the deposit, withdrawal or subscription
+            -> a withdrawal pays a fresh address, one per note, which the web app
+               derives by HKDF from one Ed25519 wallet signature (no KEM involved)
 ```
 
-> **Groth16 was fully retired in the March 2026 migration.** The Circom
-> circuits have since been deleted, and on 2026-09-23 so were the last Groth16
-> artefacts the apps still bundled (proving keys and circuit files no code
-> loaded). All runtime proofs are STARK.
+## Try it (devnet)
 
----
+The web app at **[styx.cash/app](https://styx.cash/app)** is the only client whose proofs the
+deployed verifier accepts today.
+
+1. Set your wallet (Phantom, Solflare, Coinbase Wallet, Ledger or Torus) to **devnet**.
+2. Get free devnet SOL: `solana airdrop 2 <your address> --url devnet`, or
+   [faucet.solana.com](https://faucet.solana.com). A deposit needs a little over 1 SOL.
+3. Open [styx.cash/app](https://styx.cash/app), connect, and **shield** 1 SOL. You sign one
+   public transaction to the deployment (1 SOL, a 0.3% protocol fee and a 1% operator fee);
+   the deployment funds a one-time key that makes the pool deposit, and hands you an older
+   note when it has one in stock. When it has none, the app says so and offers a plain
+   deposit, labelled as linked to your wallet. The older note you receive was derived from the
+   operator's seed, not yours: your wallet cannot rebuild it, and it lives only in this
+   browser's storage. Clearing that storage loses it (the app warns about this).
+4. **Withdraw** it to a payout address derived for that note alone, or **subscribe** to a demo
+   service with it. A withdrawal pays 0.995 SOL (a 0.5% fee). Your wallet is on neither
+   transaction when the deployment covers the fees. The payout address is public, so do not
+   sweep it back to the wallet that deposited: that joins the two halves again (see the limits
+   below).
+
+How long it takes, measured on devnet on 2026-09-23 (one or two runs each, so not a benchmark):
+a shield took about **37 s** end to end, of which about 13.5 s is Styx's own work and the rest
+is waiting on the rate limit of the Helius Free-plan RPC; a withdrawal took about **32 s**, a
+subscription about **37.5 s**. A benchmark with at least 30 runs per flow is coming; its
+method is in [`docs/BENCHMARK-METHOD.md`](docs/BENCHMARK-METHOD.md).
+
+**Mobile app and browser extension: paused.** Their released builds (the Android APK tagged
+v1.0.3 and the extension ZIP) produce proofs the current verifier rejects.
+
+## What it protects, and what it does not
+
+**What v1 does protect**
+
+- **The pool deposit is not signed by your wallet.** A one-time key signs it, funded by the
+  deployment (except the plain deposit offered when no older note is in stock, labelled as such). A web withdrawal pays a per-note address, never your connected wallet.
+- **A web withdrawal does not republish the deposit's fingerprint.** It runs on circuit 7,
+  which publishes a nullifier and no note commitment, so the commitment cannot be matched to
+  its deposit, assuming the proof bytes reveal nothing about the note, which is not yet established (F69, next bullet); that match is as hard as searching the note's blinding, a cost stated in
+  [`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md) ("The note blinding"). The withdrawal
+  still publishes other things that narrow it down (the "What a spend still shows" row below).
+- **The proof bytes are masked.** Every circuit carries a blinding mask, each committed value
+  of a proof is measured uniform in it, and no private input has been recovered from a masked
+  proof. That is all that is claimed: the simulation argument in
+  [`docs/zk-simulation-argument.md`](docs/zk-simulation-argument.md) does not hold as written,
+  because every proof publishes the next-row openings it treats as hidden (audit finding F69).
+
+**What v1 does NOT protect** (the full list, about 110 channels, is
+[`docs/LEAK-LEDGER.md`](docs/LEAK-LEDGER.md), in French)
+
+| Limit | In plain words | Details |
+|---|---|---|
+| Double-spend | **One deposit can be withdrawn twice.** Protection against it is not guaranteed in v1: an audit agent found such a pair in under half an hour on one desktop. A note's fingerprint (its commitment) is one field element, so a birthday search of about 2^32 Poseidon evaluations (generic collision bound, classical) finds two notes with the same fingerprint, and one deposit can then be withdrawn twice. Nullifier records stop one nullifier from being spent twice, not this. Fixed by design in v2. | ledger F2, audit F03 (critical); [`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md), "Hash-collision lines" |
+| Forgery floor | v1 draws the verifier's random challenges from the base field (about 2^64 values), so a forger can re-roll them until one lands where it wants and have a false statement accepted. The search splits across machines, so it is within reach of an attacker who can rent enough of them. v2 is designed to draw them from a cubic extension field (nearly 2^192 values). | audit F52 (high); [`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md), per circuit and per regime |
+| Proof not bound to its sender | On some paths a copied proof can be submitted by someone else: in the note-in exchange, whoever pays the fee of the withdrawal to the till gets the claim code, and the older C1 + C3 withdrawal pair binds no payee (the web app refuses that pair). | audit F70, F05 |
+| The issuer | The deployment derives every note it hands out from its own seed, so it can tell which note is yours and could spend it. Against the issuer, your crowd is one. | [`docs/LEAK-LEDGER.md`](docs/LEAK-LEDGER.md), D5 |
+| Your wallet, one hop away | You pay the deployment in public, and it funds the one-time key. The amount and the minutes between the two transfers link them. | [`docs/LEAK-LEDGER.md`](docs/LEAK-LEDGER.md), families B and D |
+| What a spend still shows | The payout address is written into the withdrawal in the clear: whoever reads it reaches wherever you sweep the money, and sweeping it back to the wallet that deposited joins the two halves by hand. A spend also publishes its Merkle directions and siblings (which of 8 positions the note sits in) and the pool root it names, which bounds how old the note is. | [`docs/LEAK-LEDGER.md`](docs/LEAK-LEDGER.md), B2 (payout in the clear), B4 (open), B11 (web residual) |
+| Small crowd | Devnet traffic is light, so the time between a deposit and a spend can narrow down which note is yours. | [`docs/LEAK-LEDGER.md`](docs/LEAK-LEDGER.md) |
+| Phone withdrawals | A withdrawal from the paused mobile app, or of a note deposited before the blinding was randomised, republishes the commitment, so anyone can match it to its deposit. | [`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md), "The note blinding" |
+| Accepted by design | The RPC provider (Helius for now) sees your IP and both halves of a flow. The 1 SOL denomination is public. Deposits are public. A deposit and a spend close together in time can be paired. | [`docs/LEAK-LEDGER.md`](docs/LEAK-LEDGER.md), family D |
+| Quantum | The proofs are hash-based, but Solana signs with Ed25519 only, and the web app's note keys and payout addresses are derived from one Ed25519 wallet signature, so they are only as safe as that wallet secret. A quantum computer that breaks Ed25519 takes the wallet. | [`docs/HACKATHON.md`](docs/HACKATHON.md), TL;DR |
+
+Every soundness figure, with its regime and assumptions, is generated in
+[`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md). The only one this README quotes is the
+v1 collision line in the Double-spend row.
+
+## Security status
+
+v1 has had an **internal, AI-assisted audit** run with Claude Opus 5.5: 79 confirmed findings,
+1 of them critical (the double-spend above). It is **not an external human audit**; an external
+review is the next step. The white paper that reports the audit, `docs/WHITEPAPER.md`, is being
+finalised and will be linked here once it is committed. v1 will not go to mainnet.
+
+**v2** is designed to fix the root cause of the two worst findings, fingerprints and
+challenges packed into one small field element; it is decided and not built. Its design uses
+security profile R: the Poseidon2 hash (width 12), a fingerprint of four field elements, every challenge drawn from a cubic extension field (rate
+1/32, 36 queries, 16 grinding zeros), a statement bound to the key that submits it, and a new
+verifier program. The Poseidon2 hash (WP2) and the extension-field transcript (WP3) are implemented and tested in a v2 workspace that is not yet published in this repository;
+the v2 circuits, prover, verifier and clients come next. The design figures of profile R are in
+[`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md) ("v2 candidates").
 
 ## Architecture
 
-```
-protocol-01/
-├── apps/
-│   ├── extension/          # Chrome MV3 wallet + privacy UI
-│   ├── mobile/             # React Native (Expo) wallet + full STARK prover (WebView WASM)
-│   └── web/                # Next.js 16 marketing site + docs
-├── packages/                   # 8 packages, 7 published to npm under @protocol-01
-│   ├── specter-sdk/        # npm 0.4.3 (0.5.0 in repo, publish pending) — service registry, stealth meta-addresses
-│   ├── merchant-sdk/       # npm 0.1.3 — server-side: register, payment polling, vaults, permissionless claims, access tokens
-│   ├── privacy-sdk/        # npm 1.0.5 (2.0.0 in repo, publish pending) — identity, denominations, registry and relay helpers; builds no pool instruction (see SDK below)
-│   ├── auth-sdk/           # npm 0.1.1 — "Login with P-01"
-│   ├── p01-js/             # npm 0.3.2 — merchant pay button & browser SDK
-│   ├── rpc-config/         # npm 0.1.2 — shared RPC connection manager
-│   ├── stark-prover/       # npm 0.1.3 (0.2.0 in repo, publish pending) — WASM STARK prover bindings, 240,172-byte blob
-│   └── pay-core/           # unpublished — /pay page core
-│   # arcium-sdk, zkspl-sdk, zk-sdk, privacy-toolkit, whitelist-sdk, react-native-zk, specter-js, ui: deleted 2026-09-23
-├── programs/                   # 4 Anchor crates, all deployed on devnet (table above)
-│   ├── zk_shielded/            # Shielded pool V4 — shield/unshield/subscribe/pause/resume/claim (STARK)
-│   ├── p01_stark_verifier/     # On-chain FRI verifier (8 circuit AIRs, Goldilocks)
-│   ├── p01_registry/           # Stealth meta-address directory + Service Registry (retailers)
-│   └── p01_relayer/            # On-chain relay + chunked submit + reputation decay
-│   # specter, p01_quantum_vault, p01_quantum_wallet, p01_fee_splitter: closed on devnet and deleted 2026-09-13
-│   # p01_arcium, p01_liquidity, p01_zkspl, stream, subscription, whitelist: deleted 2026-09-23
-└── stark/                      # STARK prover and its 8 AIRs (Goldilocks field, Poseidon, WASM build)
-```
+**Programs on devnet** (the `declare_id!` of each crate, the same in `Anchor.toml`):
 
----
+| Program | Devnet id | Role |
+|---|---|---|
+| `p01_stark_verifier` | `DGY37k3Jt7cbrfNa9rxyLZVcFB7S7A2NqtVpkh9fWQvs` | FRI verifier written for Solana; accepts the eight v1 circuits |
+| `zk_shielded` | `GbVM5yvetrSD194Hnn1BXnR56F8ZWNKnij7DoVP9j27c` | the pool: shield, withdraw, subscribe, pause, resume, claim |
+| `p01_registry` | `QaQwpvBi1EQpevNE21D2oNBHFsLtoLwa7aXH26zRhQB` | merchant services and stealth meta-addresses |
+| `p01_relayer` | `2okhzLVr6FEq5jP19KT6VurcSutx2zE4RhkRamrk5WpW` | relay jobs; deployed, but no node operates it |
 
-## Privacy Stack
+A subscription pays the retailer named when the vault was created.
+No instruction reads the registry, so a merchant must check a vault against its registry entry
+off chain (the merchant SDK does). There is no cancel and no refund: a vault's money can only
+go to that retailer.
 
-### Hash-based STARKs
+**Circuits the product uses** (the shipped prover exports exactly these five):
 
-Hash-based, transparent, and post-quantum. No trusted setup, no `.ptau` ceremony, no `.zkey` artifacts. The hiding claim is the narrow one stated above (committed values measured uniform in the mask on all eight circuits; the simulation argument under revision since the next-row finding F69), which is why this heading does not say "ZK".
+- **C0** subscriber ownership: proves you own a subscription vault without naming a wallet
+  (pause, resume).
+- **C1** pool commitment and **C3** Merkle path: the older withdrawal pair of the paused mobile
+  app and extension; the web app refuses it.
+- **C6** Merkle update: the deposit (shield).
+- **C7** spend: the web withdrawal and subscription, with no commitment published.
+
+C2, C4 and C5 have no caller since 2026-09-23 and stay in the verifier until the v2 redeploy.
+
+**The shipped prover blob** is `packages/stark-prover/wasm/p01_stark_bg.wasm`, 240,172 bytes,
+SHA-256 `241caaab…`. A circuit-7 proof from it was accepted on devnet (slot 502,692,190).
 
 | Parameter | Value |
-|-----------|-------|
-| Proving system | STARK (FRI-based) |
-| Field | Goldilocks (`p = 2^64 − 2^32 + 1`) |
-| Hash function | Poseidon (full S-box `x^7`, 30 rounds) |
-| Configured FRI parameters | 22 queries on C0 `subscriber_ownership`, C3 `merkle_path`, C4 `confidential_balance`, C5 `transfer`, C6 `merkle_update` and C7 `spend`; 27 on C1 `pool_commitment` and C2 `balance_proof`; blowup 16; FRI rate 1/16 enforced by the verifier on every circuit (final-polynomial degree bound over its size); grinding `GRINDING_BITS = 22`. Read from `programs/p01_stark_verifier/src/compact_proof.rs`. The soundness figures derived from them, each beside its regime and assumptions, are generated in [`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md); this README copies none of them |
-| On-chain verification cost | Two instructions. The per-phase figures were measured on devnet 2026-09-02/03 against the verifier deployed in slot 491,973,056, which has since been replaced twice (2026-09-06, then 2026-09-12 in slot 497,235,406): **phase 1 878,756 CU**, **phase 2 193,200 CU** (193,026 on the black-box honest run), against the 1,400,000 transaction budget. On the current deployment `packages/stark-prover/deployed-verifier.json` records the per-phase split of two circuit-7 acceptances: blob `d5583d41` (slot 501,407,541) phase 1 889,691 CU + phase 2 192,317 CU = 1,082,158 CU for the transaction, and blob `241caaab` (slot 502,692,190) phase 1 889,882 CU + phase 2 193,269 CU = 1,083,301 CU. The earlier acceptance of blob `0ad6d7f1` (slot 497,236,376) is recorded at 889,570 CU |
-| Circuits | 8 AIRs — C0 subscriber ownership, C1 denominated pool (pool commitment), C2 balance proof, C3 Merkle path, C4 confidential balance, C5 transfer, C6 Merkle update (shield), C7 spend (unshield v4, subscription v4). All eight were proved by the 2026-09-12 blob (`0ad6d7f1`, 265,324 B) and verified on devnet 2026-09-12 (`docs/BENCHMARK-2026-09-13.md` §6, §6b). The product uses five of the eight: C0 (subscriber ownership), C1, C3, C6 and C7. The blob shipped since 2026-09-23 (`241caaab`, 240,172 B) exports only those five, and matches the Rust prover's wire format on each (`packages/stark-prover/src/wireFormat.test.ts`); on devnet one circuit-7 proof from it has been verified (slot 502,692,190), and no proving time has been measured on it or on its predecessor `d5583d41` (262,363 B, NTT prover, 2026-09-20). No client proves C2, C4 or C5 since then; their AIRs stay in `stark/`, and the deployed verifier accepts them, until the v2 redeploy |
-
-**On soundness, plainly:** an earlier revision of this README advertised
-"124-bit" security. That figure was wrong — it was never implemented, and the
-naive formula it came from (`queries × log2(blowup)`) did not match the
-verifier of the time: its effective FRI rate was measured at 1/2, not the
-nominal 1/16, which collapses that arithmetic. Since B2 (landed 2026-08-24) the
-verifier enforces rate 1/16 on all eight circuits, and
-[`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md) derives each circuit's
-figures from the deployed parameters, per regime; none of them is 124, and
-none is an audited figure. The soundness of the current construction is
-under active hardening (DEEP binding of the out-of-domain sample landed
-2026-07-30; the coset low-degree extension deployed 2026-08-04), **no audited
-soundness figure is claimed**, and the protocol is not audited. Treat devnet as
-devnet.
-
-Since the 2026-08-04 coset-LDE deployment, **no raw trace cells are
-transmitted** in the proofs the devnet verifier accepts. Said precisely,
-because the imprecise version would oversell it: the coset removes the
-verbatim-cell line, and until 2026-08-31 trace values could still be recovered
-by Lagrange interpolation (`stark/tests/air_aware_recovery_c1.rs` recovered all
-four C1 private inputs). A blinding region and a lift column shipped on the
-production circuits C1, C3, C6 and C7 that day, and on all eight circuits by
-2026-09-11 (`docs/LEAK-LEDGER.md` A1, A2, A5, ?2 closed); the same solver now
-reads under-determined, with the pre-mask model kept beside it as the positive
-control. The committed channels of the proof are measured uniform in the mask
-(`stark/src/compact/zk_hiding.rs`, the X5 uniformity test, on all eight
-circuits), and a simulator built from the verifier's own equations and no
-witness passes every one of them at the algebraic layer (2026-09-02). **That
-simulator is not enough, and the argument built on it does not hold as
-written** (audit v1, finding F69): it leaves the per-row quotient identity
-unsatisfied on the grounds that the next-row trace values are unpublished, and
-every proof publishes those next-row openings, Merkle-checked by the verifier.
-With them anyone evaluates the identity from public data: it holds on every
-opened row of an honest proof and fails on a transcript that ignores it
-(`stark/tests/next_row_openings_are_published.rs`). No witness leak follows,
-and none is shown; a simulator that also satisfies the identity has not been
-executed, so no statistical-hiding claim is made until it is. The word
-*zero-knowledge* is still not used here. On the mask itself one item is open,
-A8: the prover functions take the mask from the caller and check only its length
-(the shipped wasm draws it from the OS CSPRNG, other callers are trusted).
-A7 and A9 to A11 stay open on the proof bytes, and the B to G families of
-`docs/LEAK-LEDGER.md` cover what the chain, the verifier and the clients reveal.
-`docs/zk-simulation-argument.md` says exactly what is and is not claimed.
-
-The on-chain verifier is written from scratch (no Winterfell dependency at
-runtime) and carries **801,457 bytes** of program data, upgraded in place on
-devnet 2026-09-12, slot 497,235,406, with the uniform masks. Measured on that
-deployment on 2026-09-12 (`docs/BENCHMARK-2026-09-13.md` §6, §6b, one
-transaction signature per row): an honest C7 spend proof verifies at
-**890,643 CU** with both phases merged in one transaction, C6 shield at
-901,023 CU, C3 Merkle path at 878,411 CU; the two-transaction circuits pay
-312,010 (C2), 391,977 (C1) and 438,682 (C5) CU in phase 2. Rejection is
-attributed, not assumed: on the previous deployment (2026-09-02/03,
-`docs/BENCHMARK-2026-09-02.md`) a forged FRI byte rejected `InvalidProof`
-(6003) at 277,171 CU, a forged Merkle byte at 26,423 CU, and a tampered public
-input at 18,110 CU. The interesting part is that a forged FRI byte costs the
-verifier more than the cheap rejections: the forgery is caught at step 3.5,
-after the work, and only the two cheap rejections short-circuit.
-
-### Stealth Addresses (Hybrid Post-Quantum)
-
-Adapted from Ethereum's EIP-5564 for Solana. Each payment creates a **unique one-time address** using a hybrid of X25519 ECDH + **ML-KEM-768** (the NIST-standardized post-quantum KEM).
+|---|---|
+| Field and hash | Goldilocks (`p = 2^64 − 2^32 + 1`), Poseidon |
+| Configured FRI parameters | 22 queries on C0 `subscriber_ownership`, C3 `merkle_path`, C4 `confidential_balance`, C5 `transfer`, C6 `merkle_update` and C7 `spend`; 27 on C1 `pool_commitment` and C2 `balance_proof`; blowup 16; FRI rate 1/16 enforced by the verifier on every circuit (final-polynomial degree bound over its size); grinding `GRINDING_BITS = 22`. Read from `programs/p01_stark_verifier/src/compact_proof.rs` |
 
 ```
-Sender: ephemeralKey = random()
-Shared secret = ECDH(ephemeralKey, recipientViewingKey) ⊕ KEM(recipientKemKey)
-Stealth address = recipientSpendingKey + H(sharedSecret) · G
+Protocol-01/
+├── apps/
+│   ├── web/                Next.js app at styx.cash (the live client)
+│   ├── mobile/             Expo wallet (paused)
+│   └── extension/          Chrome MV3 wallet (paused)
+├── packages/               TypeScript packages, published under @protocol-01
+│   ├── stark-prover/       WASM prover and on-chain submitter (repo 0.2.0, npm 0.1.3)
+│   ├── privacy-sdk/        identity, denominations, registry and relay helpers; no pool instruction (repo 2.0.0, npm 1.0.5)
+│   ├── specter-sdk/        stealth addresses and service registry (repo 0.5.0, npm 0.4.3)
+│   ├── merchant-sdk/       server side for merchants: register, payments, vaults (0.1.3)
+│   ├── auth-sdk/           "Login with P-01" (0.1.1)
+│   ├── p01-js/             merchant pay button and browser SDK (repo 0.4.0, npm 0.3.2)
+│   ├── rpc-config/         shared RPC connection manager (0.1.2)
+│   └── pay-core/           core of the /pay page (not published)
+├── programs/               the four Anchor programs above
+├── stark/                  Rust prover and the eight v1 AIRs, compiled to WASM
+├── tools/security-levels/  generates docs/SECURITY-LEVELS.md
+└── verify/                 p01-verify.mjs: chain probes and frozen replay fixtures
 ```
 
-The recipient scans incoming payments using a **viewTag** (2-byte fast filter) then derives the spending key. v1 addresses (X25519-only) remain supported for backward compatibility.
+The pool instructions the web app sends are built in `apps/web/lib/privacy/pool`, not by
+`privacy-sdk`. `@protocol-01/stark-prover` 0.1.3 on npm predates the current verifier, which
+rejects its proofs; 0.2.0 is not published yet.
 
-### Shielded Pool
+### zkSPL: removed
 
-On-chain Anchor program (`zk_shielded`). Stores encrypted notes in a sparse Merkle tree.
+The confidential-SPL program `p01_zkspl` was not deployed on devnet, and it was deleted from the
+repo on 2026-09-23. `@protocol-01/zkspl-sdk` 0.1.3 stays on npm and describes a design the
+program never enforced: the `prove_balance` threshold was not enforced, and neither was
+conservation on `withdraw`, so a holder could have withdrawn any amount the vault held (audit
+F46). Do not use it.
 
-| Instruction | Description |
-|-------------|-------------|
-| `shield` | Deposit SOL/SPL into a denominated pool (0.1 / 1 / 5 / 10 SOL) |
-| `unshield_denominated_stark` | Withdraw with STARK proof |
-| `subscribe_private_stark` | Lock a note into a subscription vault |
-| `pause_private_stark` / `resume_private_stark` | Control a vault's billing clock |
-| `claim_period` | Retailer claims accrued periods; closes the vault and sweeps the sub-period remainder + rent to the retailer once its funding is spent |
+## Developers
 
-### zkSPL — removed on 2026-09-23
-
-The confidential-SPL layer is gone from the repo: the `p01_zkspl` program, which
-was not deployed on devnet, `@protocol-01/zkspl-sdk` and the confidential-balance
-screens of the extension and the mobile app were deleted on 2026-09-23. Its
-source did not do what it described (audit v1, finding F46): the threshold of
-`prove_balance` was not enforced (the handler recorded `verified: true` while
-the `balance_proof` AIR bound only the commitment, not `balance >= threshold`),
-and conservation was not enforced on `withdraw` (the public `amount` was never
-tied to the old or new commitment, so a holder could withdraw any amount the
-vault held). No funds were ever exposed, since the program never ran on devnet.
-`zkspl-sdk` 0.1.3 stays on npm as published and describes that intended design,
-not an enforced one. The `balance_proof` (C2) and `confidential_balance` (C4)
-AIRs stay in `stark/` and in the deployed verifier until the v2 redeploy; no
-client proves them.
-
-### Service Registry + Private Subscriptions
-
-**Any wallet can register as a merchant** via the `p01_registry` program — the entry is a PDA keyed by `["service", owner, slug]` that holds the retailer pubkey, token mint, price per period, interval (slots), and a `verified` flag flipped by the protocol authority.
-
-Clients read the registry through `fetchAllServices()` (SWR-cached, ~10 min TTL) and render a live merchant list. Users subscribe with a shielded note; the on-chain subscription vault lets the retailer pull the rate per period — and since 2026-08-04 the claim is **permissionless**: anyone can trigger it, the program pins the payout to the retailer recorded in the vault when it was created, so a merchant who loses their key keeps getting paid. That retailer, the rate and the interval are whatever the subscribe transaction named (`subscribe_private_stark_v4.rs`: "Any pubkey can be a retailer"; rate and interval are only required to be above zero), and no instruction reads the registry. The registry binding is checked by the client (the merchant SDK's `service` scope), not by the program, so a merchant should not treat a vault that names them as a registered subscription at the registered price without that check.
-
-Full disclosure on the current registry state: every entry live on devnet today
-is a demo service seeded and attested by us. No third-party merchant has
-registered yet — if you integrate, you are early, and the
-[merchant-sdk README](./packages/merchant-sdk/README.md) is written for you.
-
-**Exit flow:** there is none for the subscriber. A subscription is a one-way prepaid envelope — `cancel_normal` and `cancel_private_stark` were removed from the program, and no instruction can move a lamport from a `SubscriptionVault` to anyone but the retailer. The vault ends when `claim_period` finds its funded periods spent: that call pays the last periods, sweeps the sub-period remainder `total_deposited % rate` (which never bought a period and used to be quoted as the "refund"), closes the account and sends its rent to the retailer. The subscriber's controls are pause and resume, and the rule is stated on the paying screen before the deposit.
-
-### Quantum-Safe Vault (closed 2026-09-13)
-
-The `p01_quantum_vault` program (WOTS+ 67-chain, SHA-256 hash-timelock,
-commit-then-reveal) and the `p01_quantum_wallet` design were closed on devnet
-and removed from the repo on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
-The design notes stay under `docs/` for the record; no shipping client offers
-the vault. Ed25519 remains the signing boundary for every Solana transaction.
-
-### On-Chain Relay Program (deployed, not operated)
-
-The `p01_relayer` program is deployed on devnet and accepts encrypted relay
-jobs, but **no node operates it**. Both hosted relayer nodes were retired on
-2026-08-28 (`services/relayer/README.md`): between them they picked up 10 relay
-jobs in 45 days and reported `lastPollCount: 0` throughout. The funding shape
-was wrong as well, because the user's own wallet pre-funded the relay-job
-ephemeral, so the fee payer moved one hop instead of disappearing. Nothing in
-this README depends on a relayer being up.
-
-Two paths ship in its place, and both are submitted by the spender:
-
-- the **direct circuit-7 spend** (`unshield_denominated_stark_v4`), which binds
-  the recipient in the proof;
-- the **note-in exchange**, where a buyer withdraws their own note to the till
-  and collects an older issued note in return
-  ([`docs/NOTE-IN-EXCHANGE-2026-09-02.md`](docs/NOTE-IN-EXCHANGE-2026-09-02.md)).
-
----
-
-## Products
-
-### Mobile App (primary client)
-
-- STARK prover runs on-device inside a hidden WebView (WASM). No on-device
-  timing is advertised here. The ">180 s" this list used to quote was never a
-  proving time: it is the client worker timeout in the mobile prover provider,
-  raised from 60 s after two circuits timed out on a test handset, so it bounds
-  the whole flow and not the prover. The only on-device proving figure ever
-  measured is circuit 3 at 1,482 ms (2026-08-03), and nothing newer exists. A
-  full unshield still does not complete on the installed build, whose prover
-  blob predates the deployed verifier
-- Tabs: Wallet, Privacy, Streams (the Agent tab and its on-device model were removed on 2026-09-13)
-- Hybrid stealth addresses + ML-KEM-768
-- Auto-recovery on boot (blocking lazy-load modal)
-- Subscription vaults: pause / resume, with the one-way no-refund rule stated before payment
-- Biometric unlock + PIN with progressive lockout + SHA-256 hashing
-- Clipboard auto-clear on sensitive copies
-
-**Stack:** React Native 0.81, Expo 54, Expo Router, Reanimated, Hermes.
-
-### Browser Extension
-
-- Full Solana wallet (Manifest V3)
-- STARK prover bundled (the WASM blob; the Groth16 circuit files it used to
-  carry were deleted on 2026-09-23)
-- Denominated pool (shield, withdraw, send and import a note) + subscriptions +
-  dApp connection
-
-**Stack:** React 19, TypeScript, Zustand, Vite, TailwindCSS v4.
-
-### Web App
-
-Marketing site, SDK docs, weekly update videos (Remotion).
-
-**Stack:** Next.js 16, TypeScript, TailwindCSS v4, Framer Motion.
-
-## SDK
-
-The repo holds 8 packages; 7 of them are published to npm under the
-`@protocol-01` scope (versions read from the registry on 2026-09-14): auth-sdk
-0.1.1, merchant-sdk 0.1.3, p01-js 0.3.2, privacy-sdk 1.0.5, rpc-config 0.1.2,
-specter-sdk 0.4.3 and stark-prover 0.1.3; pay-core is unpublished. Four more
-published packages lost their source on 2026-09-23, when nothing in the product
-used them any more, and stay on npm as published: arcium-sdk 0.1.2,
-privacy-toolkit 1.0.4, zk-sdk 1.0.2 and zkspl-sdk 0.1.3. Every version already
-published is available under MIT; all but arcium-sdk 0.1.0-0.1.2 and
-stark-prover 0.1.0-0.1.1 declare MIT in their manifest, and the same grant
-covers those five. The repo carries newer builds not yet published:
-privacy-sdk 2.0.0 and specter-sdk 0.5.0 (the modules that spoke to the programs
-closed on 2026-09-13 and to the crates deleted on 2026-09-23 are gone) and
-stark-prover 0.2.0 (paired with the 2026-09-12 verifier; its blob is `241caaab`
-since the 2026-09-23 reship, which dropped C2, C4 and C5; `d5583d41` from
-2026-09-20, `0ad6d7f1` before). The packed tarballs also
-install and typecheck standalone, outside any workspace (verified 2026-08-04).
-New npm versions, those unpublished builds included, will ship under PolyForm
-Strict 1.0.0.
-
-```typescript
-// @protocol-01/specter-sdk — stealth wallets + service registry
-import { P01Client, fetchAllServices } from '@protocol-01/specter-sdk';
-
-const client = new P01Client({ cluster: 'devnet' });
-
-// List every on-chain merchant
-const services = await fetchAllServices(connection, { verifiedOnly: true });
-
-// Send to a stealth meta-address
-await client.sendPrivate({ amount: 1.5, recipient: stealthMetaAddress });
-```
-
-```typescript
-// @protocol-01/merchant-sdk — server-side for retailers
-import {
-  registerServiceOnChain, fetchService, pollPaymentsForRetailer,
-  hasActiveVaultAccessForVault, issueAccessToken, NATIVE_SOL_MINT,
-} from '@protocol-01/merchant-sdk';
-
-// Register the service (idempotent — boot-time)
-await registerServiceOnChain(connection, merchantKp, {
-  slug: 'my-saas-pro',
-  name: 'My SaaS — Pro tier',
-  iconKey: 'chatgpt',
-  category: 'saas',
-  metadataUri: '',
-  retailer: merchantKp.publicKey,
-  tokenMint: NATIVE_SOL_MINT,    // or USDC SPL mint
-  priceAtomic: 50_000_000n,      // 0.05 SOL in lamports
-  intervalSlots: 6_480_000n,     // ~30 days
-  supportsOneshot: true,
-  supportsVault: true,
-  skipIfExists: true,
-});
-
-// Poll for incoming payments
-const receipts = await pollPaymentsForRetailer(connection, retailerPubkey, {
-  slugFilter: 'my-saas-pro',
-});
-
-// Issue a signed access token the client stores for session auth
-const token = issueAccessToken({
-  merchantKeypair: merchantKp,
-  subscriberId: 'user-42',
-  serviceSlug: 'my-saas-pro',
-  ttlSeconds: 3600,
-});
-```
-
-**`@protocol-01/privacy-sdk` builds no pool instruction.** Its 1.0.5 release
-on npm carries a shield module whose `shield_stark`, `transfer_stark`,
-`unshield_stark`, `shield_denominated` and `unshield_denominated_stark` calls
-target instructions the deployed `zk_shielded` program has not registered
-(`programs/zk_shielded/src/lib.rs`: the base-pool and v2 instructions are
-commented out, the `_stark` names never existed), and a subscriptions module
-for the `subscription` program, which was never deployed on devnet. Version
-2.0.0 in the repo drops both modules, with the other ones that targeted
-programs no longer in the repo, and keeps the identity, denomination, registry
-and relay helpers. The live pool instructions (`shield_denominated_v3`,
-`unshield_denominated_stark_v3` / `_v4`) are built by the web app
-(`apps/web/lib/privacy/pool`), not by this SDK.
-
----
-
-## Security Model
-
-| Layer | Mechanism |
-|-------|-----------|
-| Seed / vault encryption | AES-256-GCM with PBKDF2-derived keys, 100,000 iterations (extension); authenticated encryption with HMAC on the mobile note vault |
-| Session keys | Stored in SecureStore (Keychain/Keystore), never AsyncStorage |
-| Key management | Spending key never leaves the device — backend prover fallback removed |
-| STARK soundness | Under active hardening; **no audited figure is claimed** — see the plain-language note in the STARK section above |
-| Double-spend | Nullifiers as on-chain PDAs inside `zk_shielded` stop one nullifier from being spent twice. **One deposit spent twice is not guaranteed against in v1:** a v1 leaf commitment is a single Goldilocks element, so a depositor who finds two openings of one commitment (a collision search of about 2^32 Poseidon evaluations) holds two different nullifiers for one deposit (finding F2, [`docs/SECURITY-LEVELS.md`](docs/SECURITY-LEVELS.md); open in `docs/LEAK-LEDGER.md`). The v2 design widens the commitment to four elements |
-| Quantum resistance | STARK (hash-based) + ML-KEM-768 for stealth, its keys re-derived from the Ed25519 wallet key; no program verifies WOTS+ since the quantum vault was closed on 2026-09-13 — a design choice, not an "immunity" claim |
-| PIN | SHA-256(`p01_pin_v1:` + pin) via expo-crypto, progressive lockout (5→30 s, 8→60 s, 10→300 s) |
-| Clipboard | Auto-clear on sensitive copies |
-| Screenshot | `ScreenCapture.preventScreenCaptureAsync()` on seed/viewing-key/private-note screens |
-| Backup surface | `android:allowBackup="false"` to defeat `adb backup` |
-
-**Not audited.** No external security audit has been performed yet; it is on
-the roadmap, and until it happens the protocol should be treated as
-experimental software on devnet.
-
----
-
-## Development
-
-### Prerequisites
-
-- Node.js 22+
-- pnpm 8+
-- Rust 1.94 + Anchor CLI 0.32.1 (for programs)
-- Solana CLI 2.2.14 (Agave)
-- JDK 17 (**not** Temurin 21.0.6 on Windows — JIT crashes)
-
-### Quick Start
+**Prerequisites:** Node.js 24 (`.node-version`), pnpm 9.15.9 (`packageManager`), Rust stable,
+Anchor 0.32.1 and Solana CLI 3.1.9 for the programs (`Anchor.toml`). Rebuilding the prover blob
+byte for byte needs the pinned toolchain in the header of `scripts/ci/wasm-repro.mjs` (rustc
+1.98.1, wasm-pack 0.14.0, wasm-bindgen 0.2.114, binaryen version_117) on Windows x64.
 
 ```bash
-git clone https://github.com/IsSlashy/Protocol-01.git
-cd Protocol-01
+git clone https://github.com/IsSlashy/Protocol-01.git && cd Protocol-01
 pnpm install
 
-pnpm dev:mobile     # Expo dev client
-pnpm --filter @protocol-01/extension dev  # Extension dev server
-pnpm dev:web        # Next.js dev server
+pnpm --filter @protocol-01/web dev          # the web app on localhost
+pnpm --filter @protocol-01/web test         # web unit tests (vitest)
+pnpm --filter @protocol-01/web test:pool    # pool client tests
+pnpm --filter @protocol-01/web build        # production build
+pnpm --filter @protocol-01/stark-prover test
+
+cargo test -p p01-stark --release                                     # prover and AIRs
+cargo test --locked --manifest-path tools/security-levels/Cargo.toml  # soundness figures and prose checks
+bash scripts/ci/sbf-litesvm.sh                                        # build the programs, run litesvm suites
 ```
 
-### Build
+**Check the prover blob and the deployed verifier yourself:**
 
 ```bash
-# Release APK
-cd apps/mobile/android
-./gradlew assembleRelease
-# output: apps/mobile/android/app/build2/outputs/apk/release/app-release.apk
-
-# Extension + web
-pnpm --filter @protocol-01/extension build
-pnpm --filter @protocol-01/web build
+node scripts/ci/wasm-repro.mjs                                             # rebuild the blob, compare byte for byte
+node packages/stark-prover/scripts/deployed-verifier-check.mjs             # blob matches the record of the deployment
+node packages/stark-prover/scripts/deployed-verifier-check.mjs --verify-onchain  # re-read the verifier from devnet
 ```
 
-### On-chain programs
+`verify/p01-verify.mjs` walks real devnet transactions and prints what an observer can link.
+Security reports: [`SECURITY.md`](SECURITY.md). Past corrections and events:
+[`docs/HISTORY.md`](docs/HISTORY.md); the old roadmap: [`docs/ROADMAP-ARCHIVE.md`](docs/ROADMAP-ARCHIVE.md).
 
-```bash
-# SBF build (Windows-safe, bypasses cargo-build-sbf)
-rustup run solana cargo build --release --target sbf-solana-solana -p <program_name>
-solana program deploy target/sbf-solana-solana/release/<program_name>.so \
-  --program-id <declared_pubkey> --url devnet
-```
+## License
 
----
+Copyright &copy; 2025-2026 Volta Team. Source-available under the
+[PolyForm Strict License 1.0.0](./LICENSE). You may read, build, run and audit the code, verify
+its proofs and replay the benchmark, for noncommercial purposes. Commercial use, production
+deployment, changes, derivative works and redistribution need a written license from Volta
+Team: [styx.cash/licenses](https://styx.cash/licenses), legal@protocol-01.com.
 
-## Testing
-
-Every number below was **measured on 2026-08-04** by running the suite, not
-carried forward. Suites not re-run that day say so instead of quoting a stale
-figure. For the state of the Rust verifier suites, the stark-prover package and
-the web pool suite as of 2026-09-13, see
-[`docs/HANDOFF-2026-09-13.md`](docs/HANDOFF-2026-09-13.md) §4c.
-
-| Layer | Suite | Tests | Status |
-|---|---|---|---|
-| specter-sdk | Stealth, wallet, transfers, registry | 240 | Passing |
-| merchant-sdk | Registry, vaults, entitlement, permissionless claims, licenses | 273 | Passing |
-| privacy-sdk | SDK wiring, constants, denominations, identity. The 124 counted on 2026-09-22 also covered liquidity and instant-unshield encoding and the refusal of every pool call whose instruction is not registered (those tests never reached the program); the modules and their tests were removed on 2026-09-23 | 124 | Passing — measured 2026-09-22; not re-counted since the removal |
-| auth-sdk | Login with P-01 | 123 | Passing |
-| p01-js | Merchant pay button + browser SDK | 393 | Passing |
-| stark-prover | WASM packaging + license keys | 23 | Passing |
-| pay-core | /pay page core | 3 (+4 skipped) | Passing |
-| Web app | API + lib utils | 399 (+29 skipped) | Passing |
-| rpc-config | — | 0 | **No test suite** — an earlier revision claimed 361 for rpc-config; that suite does not exist |
-| Mobile app / Extension | Jest / vitest CI suites | not re-measured 2026-08-04 | — |
-| STARK prover/verifier (Rust) | verifier lib 81, CU-pin suite 21, DEEP-binding 26 | 128 | Passing — measured 2026-08-04 on the coset branch (`b7-drop-aligned-checks`, unmerged) |
-| E2E devnet | Shield → subscribe → recover | — | **Stale — its `cancel` step no longer exists in the program** |
-
-```bash
-pnpm test                             # all unit tests
-pnpm --filter specter-sdk test        # individual package
-anchor test                           # on-chain programs (localnet)
-```
-
----
-
-## Roadmap
-
-### Latest tag — v1.0.3 (2026-06-16); notes below are from v1.0.1 (hotfix · 2026-05-29)
-
-- Privy embedded-wallet recovery & signing fixed (`PrivyElements` mounted, deterministic note-seed persisted in SecureStore for offline recovery)
-- `Transaction.serialize()` restored after the `@noble/curves` v2 migration (every on-chain op had been throwing)
-- C3 `merkle_path` STARK verifier fixed — padding rows (480–511) were counted as active Poseidon rounds, rejecting valid V3 unshield proofs; verifier rebuilt + redeployed on devnet
-- Transient RPC retry + ephemeral crash-sweep; pnpm 10 monorepo Android autolinking
-- Verified end-to-end on device (devnet): shield, emergency unshield + sweep, private merchant subscribe, classic local-keypair flow
-
-### Shipped
-
-- [x] Chrome extension + Android mobile wallet
-- [x] ZK shielded pool (STARK, migrated from Groth16 March 2026)
-- [x] Hybrid stealth addresses (X25519 + ML-KEM-768)
-- [x] Denominated privacy pools (fixed-amount Tornado model)
-- [x] Subscription vaults with STARK subscribe proofs (the vault is keyed by a note commitment, not the subscriber wallet; a merchant's vaults are enumerable)
-- [x] STARK verifier on-chain (custom FRI, 8 circuits, Goldilocks; uniform masks on all eight since the 2026-09-12 redeploy)
-- [x] ~~Quantum vault (WOTS+ 67-chain, hash-timelock, commit-reveal)~~ closed on devnet and removed 2026-09-13
-- [x] On-chain stealth meta-address registry
-- [x] **On-chain Service Registry** (retailers register as first-class merchants)
-- [x] **Subscription vaults are one-way** — cancellation and refunds removed from the program; `claim_period` closes an exhausted vault and pays the remainder + rent to the retailer
-- [x] **Boot-time auto-recovery** (blocking lazy-load rescan from seed)
-- [x] ~~Instant unshield via `p01_liquidity` prefund pool~~ deactivated; crate deleted 2026-09-23
-- [x] ~~Arcium MPC bridge program + SDK (9 circuits)~~ client integration removed 2026-07; program closed on devnet and crate and SDK deleted 2026-09-23
-- [x] On-chain relayer program + Tor-routed RPC middleware (both hosted nodes retired 2026-08-28; the program is deployed, nobody operates it)
-- [x] **Permissionless `claim_period` + close-on-exhaustion** (2026-08-04, proven on devnet by a third-party signer: the program pins where the money goes, not who sends the claim)
-- [x] **MIT license everywhere** (2026-08-04 — root LICENSE, site, and docs now agree with what npm shipped)
-- [x] **Relicensed new work to PolyForm Strict 1.0.0** (2026-09-22 — source-available, noncommercial; the repository up to `beaa87ba` and the npm versions already published stay MIT)
-- [x] **Coset-LDE STARK verifier redeployed on devnet** (2026-08-04 — honest proof accepted at 809,812 CU, deployed-verifier gate exit 0, rejection attributed per cause)
-- [x] **V3 STARK migration end-to-end** (Goldilocks parity-locked). The pool runs on the denominated v3/v4 instructions. The base-pool `shield`, `transfer` and `unshield` are unregistered (circuit 5 proves no membership of the notes it spends), and `programs/zk_shielded/src/lib.rs` records that no client could reach them anyway: every client built `_stark` names the program never had
-- [x] **Tx-Opacity Phase A** — `p01_relayer` wired V3. This does **not** close RPC IP leak L19 today: no node operates the relayer (see *On-Chain Relay Program* above), so every spend is submitted by the spender
-- [x] **Tx-Opacity Phase B** — on-chain event scrub (closes L5-L10)
-- [x] **Tx-Opacity Phase C v1** — uniform 145 KB STARK proof padding exists in the verifier (`init_proof_buffer_v2` + `verify_uniform`) and in the paused mobile client only. The web client, the only one whose proofs the chain accepts today, does **not** pad: it sizes each proof buffer at the proof's own length and writes `proofSize` and `circuitId` in clear into `init_proof_buffer_v3` (`apps/web/lib/privacy/pool/stark.ts`), so proof length and circuit stay visible on chain (`docs/LEAK-LEDGER.md`, C1–C6)
-- [x] **Tx-Opacity Phase E v1** — `fee_escrow` PDAs. They do **not** hide the denomination: `unshield_denominated_stark_v4` pays the recipient the denomination minus the 0.5% fee directly, so the payee's lamport delta shows it (a 1 SOL note paid 0.995 SOL, `docs/BENCHMARK-2026-09-13.md` §6c). The denomination is public by design
-- [x] **Sprint 3 multi-relayer** — auto-rotation + liveness filter + chunked submit_job + lazy reputation decay
-- [x] **V4 pool migration** — seed `denominated_pool_v4`, 13 fresh pools, escapes legacy un-decodable events
-- [x] **Subscribe_private V3** — V2→V3 structs, ix builder placeholders, vault PDA création validated live
-
-### In Progress
-
-- [ ] **Ship the masked prover blob to every client.** The chain runs the
-  uniform-mask verifier since 2026-09-12 and the web app on `master` carries
-  a blob it accepts: `0ad6d7f1` from 2026-09-12 (`docs/HANDOFF-2026-09-13.md`
-  §7), `d5583d41` from 2026-09-20, `241caaab` since 2026-09-23 (`apps/web/lib/privacy/pool/starkWasmData.ts`). The APK tagged
-  v1.0.3 (2026-06-16) and `@protocol-01/stark-prover@0.1.3` on npm predate it
-  and their proofs are **rejected by the chain** until a new APK is released and
-  stark-prover 0.2.0 is published. This line exists so nobody reads the redeploy
-  as "done" for mobile
-- [ ] **Soundness hardening** of the FRI/DEEP construction (see the plain-language note in the STARK section)
-- [ ] **Subscribe_private renewal** live validation (Pay Now flow under logcat)
-- [ ] Universal `LeafInserted` canonical event
-
-### Future
-
-- ~~**Quantum Wallet** (`p01_quantum_wallet`)~~ — retired 2026-09-13: the program was closed on devnet and its crate removed. The 2026-05-09 design note stays in `docs/quantum-wallet-ux-design.md` for the record
-- [ ] **Cover traffic self-loop** — user-side dummy round-trips for indistinguishability
-- [ ] **Phase A.5 feeder pool** — close shield depositor leak (gated on TEE attestation OR N-relayer registry)
-- [ ] External security audit (OtterSec / Neodyme / Trail of Bits)
-- [ ] Mainnet deployment
-- [ ] iOS build
-- [ ] Hardware wallet support
-- [ ] Cross-chain bridges
-
----
-
-## Links
-
-| | |
-|---|---|
-| Website | [protocol-01.dev](https://protocol-01.dev) |
-| Docs | [protocol-01.dev/docs](https://protocol-01.dev/docs) |
-| Weekly updates | [protocol-01.dev/updates](https://protocol-01.dev/updates) |
-| Twitter/X | [@Styx_PQ](https://x.com/Styx_PQ) |
-| Discord | [discord.gg/EfqnVmb2dV](https://discord.gg/EfqnVmb2dV) |
-| GitHub | [IsSlashy/Protocol-01](https://github.com/IsSlashy/Protocol-01) |
-
----
-
-<p align="center">
-  <strong>Built on Solana</strong><br/>
-  <sub>&copy; 2025-2026 Volta Team &mdash; Source-available under the <a href="./LICENSE">PolyForm Strict License 1.0.0</a>; versions up to <code>beaa87ba</code> remain <a href="./LICENSE-MIT-BEFORE-POLYFORM">MIT</a></sub>
-</p>
+What was published under MIT stays MIT: every commit of this repository before the relicensing
+commit, and every `@protocol-01` npm version published before 2026-09-22, are available under
+the MIT License ([`LICENSE-MIT-BEFORE-POLYFORM`](./LICENSE-MIT-BEFORE-POLYFORM)). That grant is
+not withdrawn.

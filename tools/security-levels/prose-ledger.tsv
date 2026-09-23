@@ -23,7 +23,6 @@
 #                the set of stale rows, are pinned exactly in tests/prose.rs.
 #
 # A row that covers nothing any more fails the test: delete it when its line is fixed.
-historical	README.md	"124-bit" security. That figure was wrong		the withdrawn figure, said so
 historical	docs/AUDIT-2026-09-03.md	matching Miden/Plonky2, at 128 bits. None of that reproduces		describes the claimed 128-bit Poseidon constants as not reproducing (finding F1)
 not-a-level	docs/AUDIT-2026-09-03.md	**The 64-bit Merkle node.**		the width of a v1 Merkle node (finding F2)
 historical	docs/AUDIT-2026-09-03.md	quotes ~85-bit collision resistance from the retired BN254 tree		describes the BN254 figure as retired
@@ -37,6 +36,7 @@ not-a-level	docs/FREEZE-until-2026-09-04.md	pool-v3-64bit-leaf-collision		an art
 historical	docs/HANDOFF-2026-09-02.md	still quotes ~85-bit collision resistance from the retired BN254 tree		describes the BN254 figure as retired
 not-a-level	docs/HANDOFF-2026-09-02.md	first, or 128 bits about		quotes the forbidden phrase of the standing rules, not a level
 not-a-level	docs/HANDOFF-2026-09-11.md	« 128 bits »		quotes the forbidden phrase of the standing rules, not a level
+historical	docs/HISTORY.md	the README advertised "124-bit" security. The figure was never implemented		the withdrawn figure, said so (moved with the note from README.md on 2026-09-23)
 not-a-level	docs/LEAK-LEDGER.md	min-entropie ≥ 2·largeur·63 bits		the min-entropy of the masks, a privacy figure
 not-a-level	docs/LEAK-LEDGER.md	Capacité d'éponge 64 bits		the v1 sponge capacity; its collision cost 2^32 is the v1-digest hash line
 not-a-level	docs/LEAK-LEDGER.md	3 bits de bucket		a bucket-index width (a privacy leak size)
