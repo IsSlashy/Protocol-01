@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Styx prover bench</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>Styx in-browser prover bench</h1>
+<p>Proves with the shipped wasm blob inside a module Web Worker, like the app. Results are sent to the local bench server that served this page; nothing leaves this machine.</p>
+<pre id="log"></pre>
+<script type="module">
+  const q = new URLSearchParams(location.search);
+  const token = q.get('token');
+  const n = Number(q.get('n') || '1');
+  const coldN = Number(q.get('cold') || String(n));
+  const want = (q.get('circuits') || '0,1,2,3,4,5,6,7').split(',').map(Number);
+  const logEl = document.getElementById('log');
+  const log = (s) => {
+    logEl.textContent += s + '\n';
+    fetch(`/progress?token=${token}`, { method: 'POST', body: s }).catch(() => {});
+  };
+
+  function spawn() {
+    const w = new Worker('/worker.mjs', { type: 'module' });
+    let seq = 0;
+    const pending = new Map();
+    w.onmessage = (e) => {
+      const p = pending.get(e.data.id);
+      if (!p) return;
+      pending.delete(e.data.id);
+      e.data.ok ? p.resolve(e.data.value) : p.reject(new Error(e.data.error));
+    };
+    w.onerror = (e) => { for (const p of pending.values()) p.reject(new Error(e.message || 'worker error')); pending.clear(); };
+    const call = (cmd, witness) => new Promise((resolve, reject) => {
+      const id = ++seq;
+      pending.set(id, { resolve, reject });
+      w.postMessage({ id, cmd, witness });
+    });
+    return { call, terminate: () => w.terminate() };
+  }
+
+  async function main() {
+    const witnesses = (await (await fetch('/witnesses.json', { cache: 'no-store' })).json())
+      .filter((w) => want.includes(w.circuit));
+    const result = {
+      user_agent: navigator.userAgent,
+      hardware_concurrency: navigator.hardwareConcurrency,
+      cross_origin_isolated: self.crossOriginIsolated,
+      circuits: {},
+    };
+    for (const w of witnesses) {
+      const key = `C${w.circuit}`;
+      const r = { cold: [], warm: [], warmup_ms: null, bytes: 0, digests: [] };
+      // COLD: a brand-new worker per sample: fetch, compile, instantiate, first proof.
+      for (let i = 0; i < coldN; i++) {
+        const wk = spawn();
+        const init = await wk.call('init');
+        const p = await wk.call('prove', w);
+        wk.terminate();
+        r.cold.push({ ...init, prove_ms: p.ms, init_plus_prove_ms: init.init_ms + p.ms });
+        r.digests.push(p.digest);
+        r.bytes = p.bytes;
+        log(`${key} cold ${i + 1}/${coldN}: init ${init.init_ms.toFixed(1)} ms + prove ${p.ms.toFixed(0)} ms`);
+      }
+      // WARM: one worker, one discarded warm-up proof, then n timed proofs.
+      const wk = spawn();
+      r.warm_init = await wk.call('init');
+      r.warmup_ms = (await wk.call('prove', w)).ms;
+      for (let i = 0; i < n; i++) {
+        const p = await wk.call('prove', w);
+        r.warm.push(p.ms);
+        r.digests.push(p.digest);
+        log(`${key} warm ${i + 1}/${n}: ${p.ms.toFixed(0)} ms`);
+      }
+      wk.terminate();
+      result.circuits[key] = r;
+    }
+    await fetch(`/result?token=${token}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(result) });
+    log('DONE');
+  }
+  main().catch(async (e) => {
+    log('FAIL ' + (e && e.message ? e.message : String(e)));
+    await fetch(`/result?token=${token}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ error: String(e && e.message || e) }) });
+  });
+</script>
+</body>
+</html>

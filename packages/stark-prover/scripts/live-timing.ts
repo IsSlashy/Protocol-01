@@ -8,6 +8,20 @@
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --legacy            # the pre-L2 path, for A/B
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --pacing fast       # waves 8 / 150 ms / one batch
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --keypair path.json --rpc https://...
+ *   npx tsx packages/stark-prover/scripts/live-timing.ts --rpc-env P01_BENCH_RPC --json out.json   # URL from env, samples as JSON
+ *
+ * [BENCH 2026-09-22] Plan phase 6 fixes: every run proves a FRESH proof (it used
+ * to prove once and upload the same bytes on every run, so `--runs 5` timed one
+ * proof five times), `--json <path>` writes every sample with its signatures,
+ * and the summary median is the mean of the two middle values for an even run
+ * count (it printed the upper one). Driven by scripts/bench/run.mts.
+ *
+ * `--warmup-proofs K` (run.mts passes 1) proves K DISCARDED proofs per circuit
+ * before anything is timed. Without it, the first timed proof of the first
+ * circuit is the first wasm call of the process, and V8 compiles wasm
+ * functions lazily, on first call: that sample carries compile time the others
+ * do not. The warm-up times are written apart (`warmup` in the JSON), never
+ * mixed into the samples.
  *
  * # What it measures
  *
@@ -36,7 +50,7 @@
  * of the run; it is recovered when the buffer is closed. If the faucet refuses,
  * the address is printed so it can be funded by hand, and the script waits.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import {
   Connection,
   Keypair,
@@ -66,8 +80,21 @@ const V1 = args.includes('--v1');
 const V1_CHUNK = Number(flag('v1-chunk') ?? V1_CHUNK_SIZE);
 const V1_WAVE = Number(flag('v1-wave') ?? 8);
 const V1_WAVE_DELAY = Number(flag('v1-wave-delay') ?? 100);
-const RPC = flag('rpc') ?? 'https://api.devnet.solana.com';
+// `--rpc-env NAME` reads the URL from the environment, so an RPC URL carrying an
+// API key never appears on a logged command line.
+const RPC_ENV = flag('rpc-env');
+if (RPC_ENV && !process.env[RPC_ENV]) {
+  console.error(`FAIL — --rpc-env ${RPC_ENV}: that environment variable is empty`);
+  process.exit(1);
+}
+const RPC = (RPC_ENV ? process.env[RPC_ENV] : undefined) ?? flag('rpc') ?? 'https://api.devnet.solana.com';
+const JSON_OUT = flag('json');
 const RUNS = Number(flag('runs') ?? 1);
+const WARMUP_PROOFS = Number(flag('warmup-proofs') ?? 0);
+if (!Number.isInteger(WARMUP_PROOFS) || WARMUP_PROOFS < 0) {
+  console.error('FAIL — --warmup-proofs takes a whole number of 0 or more');
+  process.exit(1);
+}
 const CIRCUITS = (flag('circuit') ?? '7,6').split(',').map((c) => Number(c.trim()));
 const PACING_NAME = flag('pacing') ?? 'default';
 const PACINGS: Record<string, ChunkPacing> = {
@@ -131,21 +158,31 @@ const DRIVES: Record<number, Drive> = {
   7: { label: 'C7 spend (unshield v4, subscription)', entry: 'generate_spend_stark_proof', args: () => [11n, 22n, 33n, 44n, csvOf(CANONICAL_DEPTH, (i) => 1000 + i * 7), csvOf(CANONICAL_DEPTH, (i) => i % 2), '111111111,222222222,333333333,444444444'], pubs: (j) => [big(j.nullifier), big(j.root), ...(j.recipient_hash as string[]).map(big)] },
 };
 
-async function proveAll(): Promise<Proof[]> {
+/** One FRESH proof: the wasm draws a new blinding mask from the CSPRNG on every call. */
+async function proveOne(cid: number): Promise<Proof> {
   const exports = await initStarkWasm() as unknown as Record<string, (...a: Array<bigint | string>) => string>;
+  const d = DRIVES[cid];
+  if (!d) throw new Error(`--circuit ${cid}: unknown circuit (0..7)`);
+  const entry = exports[d.entry];
+  if (typeof entry !== 'function') throw new Error(`the shipped blob does not export ${d.entry}`);
+  const t0 = performance.now();
+  const json = JSON.parse(entry(...d.args())) as Record<string, unknown> & { error?: string; proof_hex: string };
+  const provingMs = Math.round(performance.now() - t0);
+  if (json.error) throw new Error(`C${cid} prover refused: ${json.error}`);
+  return { circuitId: cid, label: d.label, proofBytes: hexToBytes(json.proof_hex), publicInputs: d.pubs(json), provingMs };
+}
+
+async function proveAll(): Promise<Proof[]> {
   const proofs: Proof[] = [];
-  for (const cid of CIRCUITS) {
-    const d = DRIVES[cid];
-    if (!d) throw new Error(`--circuit ${cid}: unknown circuit (0..7)`);
-    const entry = exports[d.entry];
-    if (typeof entry !== 'function') throw new Error(`the shipped blob does not export ${d.entry}`);
-    const t0 = performance.now();
-    const json = JSON.parse(entry(...d.args())) as Record<string, unknown> & { error?: string; proof_hex: string };
-    const provingMs = Math.round(performance.now() - t0);
-    if (json.error) throw new Error(`C${cid} prover refused: ${json.error}`);
-    proofs.push({ circuitId: cid, label: d.label, proofBytes: hexToBytes(json.proof_hex), publicInputs: d.pubs(json), provingMs });
-  }
+  for (const cid of CIRCUITS) proofs.push(await proveOne(cid));
   return proofs;
+}
+
+/** Median of an even count is the mean of the two middle values. */
+function medianOf(sorted: number[]): number {
+  const n = sorted.length;
+  const m = Math.floor(n / 2);
+  return n % 2 === 1 ? sorted[m]! : (sorted[m - 1]! + sorted[m]!) / 2;
 }
 
 async function fundThrowaway(connection: Connection): Promise<Keypair> {
@@ -231,13 +268,26 @@ async function timeOne(connection: Connection, payer: Keypair, programId: Public
   console.log(`    prove ${proof.provingMs} ms | ${stages.map((s) => `${s.name} ${s.ms} ms`).join(' | ')} | STARK pipeline ${totalMs} ms | prove + pipeline ${proof.provingMs + totalMs} ms`);
   console.log(`    verify tx ${result.verifySignatures.join(', ')}`);
   console.log(`    slot ${tx?.slot ?? '?'}  verifier ${success ? 'success' : 'NO SUCCESS LINE'}  ${cu}`);
-  return { totalMs, stages, success, sig: result.signature, slot: tx?.slot };
+  return {
+    totalMs, stages, success, sig: result.signature, slot: tx?.slot,
+    verifySignatures: result.verifySignatures, cu, chunks,
+    v1: v1 ? { chunkSize: v1.chunkSize, ...v1.stats } : null,
+  };
 }
 
 async function main(): Promise<void> {
   console.log('=== STARK pipeline live timing =========================================');
   console.log(`  rpc              ${RPC.replace(/api-key=[^&]+/, 'api-key=<redacted>')}`);
   console.log(`  circuits         ${CIRCUITS.join(', ')}   runs ${RUNS}   path ${LEGACY ? 'legacy' : 'L2'}   pacing ${PACING_NAME}`);
+  // [BENCH] Discarded warm-up proofs, timed apart: the prover is warm before the first timed sample.
+  const warmup: Array<{ circuit: number; prove_ms: number }> = [];
+  for (const cid of CIRCUITS) {
+    for (let i = 0; i < WARMUP_PROOFS; i++) {
+      const w = await proveOne(cid);
+      warmup.push({ circuit: cid, prove_ms: w.provingMs });
+      console.log(`  warm-up          C${cid}: ${w.provingMs} ms (discarded, not uploaded)`);
+    }
+  }
   const proofs = await proveAll();
   for (const p of proofs) console.log(`  proved           ${p.label}: ${p.proofBytes.length.toLocaleString()} B in ${p.provingMs} ms (Node, shipped blob)`);
   if (DRY) {
@@ -258,11 +308,22 @@ async function main(): Promise<void> {
   }
 
   const totals: Record<string, number[]> = {};
+  const samples: Array<Record<string, unknown>> = [];
+  const startedAt = new Date().toISOString();
   for (let run = 1; run <= RUNS; run++) {
-    for (const p of proofs) {
+    for (const cid of CIRCUITS) {
+      // [BENCH] Run 1 reuses the proof printed above; every later run proves anew,
+      // so no two runs upload the same bytes.
+      const p = run === 1 ? proofs.find((x) => x.circuitId === cid)! : await proveOne(cid);
       const r = await timeOne(connection, payer, programId, p, run);
       (totals[p.label] ??= []).push(p.provingMs + r.totalMs);
       if (!r.success) console.error(`    FAIL — the verifier never logged success for ${p.label}`);
+      samples.push({
+        circuit: cid, label: p.label, run, bytes: p.proofBytes.length, chunks: r.chunks,
+        prove_ms: p.provingMs, pipeline_ms: r.totalMs, total_ms: p.provingMs + r.totalMs,
+        stages: Object.fromEntries(r.stages.map((s) => [s.name, s.ms])),
+        verify_signatures: r.verifySignatures, slot: r.slot ?? null, success: r.success, cu: r.cu, v1: r.v1,
+      });
     }
   }
   const after = await connection.getBalance(payer.publicKey);
@@ -270,7 +331,27 @@ async function main(): Promise<void> {
   console.log('\n  SUMMARY (prove + STARK pipeline, ms)');
   for (const [label, arr] of Object.entries(totals)) {
     const sorted = [...arr].sort((a, b) => a - b);
-    console.log(`    ${label.padEnd(40)} min ${sorted[0]}  median ${sorted[Math.floor(sorted.length / 2)]}  max ${sorted[sorted.length - 1]}`);
+    console.log(`    ${label.padEnd(40)} min ${sorted[0]}  median ${medianOf(sorted)}  max ${sorted[sorted.length - 1]}`);
+  }
+  if (JSON_OUT) {
+    writeFileSync(JSON_OUT, JSON.stringify({
+      tool: 'packages/stark-prover/scripts/live-timing.ts',
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+      rpc_host: (() => { try { return new URL(RPC).host; } catch { return '?'; } })(),
+      verifier: programId.toBase58(),
+      path: LEGACY ? 'legacy PDA' : 'L2 keypair',
+      phases: NO_MERGE ? 'split' : 'merged where allowed',
+      chunks: V1 ? { kind: 'tx v1', chunk: V1_CHUNK, wave: V1_WAVE, wave_delay_ms: V1_WAVE_DELAY } : { kind: 'legacy', pacing: PACING_NAME },
+      runs: RUNS,
+      prover_state: WARMUP_PROOFS > 0
+        ? `warm: ${WARMUP_PROOFS} discarded proof(s) per circuit before the first timed proof`
+        : 'cold start included: the first timed proof of the first circuit is the first wasm call of the process',
+      warmup,
+      cost_lamports: before - after,
+      samples,
+    }, null, 2));
+    console.log(`  samples written  ${JSON_OUT}`);
   }
   console.log('\n  The pool instruction that consumes the buffer is one more transaction, not timed here.');
 }
