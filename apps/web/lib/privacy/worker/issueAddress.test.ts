@@ -38,6 +38,27 @@ import {
 } from '../pool/denominatedPool';
 import { encryptNote, parseNoteEncryptionAddress } from '../pool/noteCrypto';
 
+// [close-v1 F35] The import now files a note only when the pool's tree holds
+// its commitment at its leaf: the chain reads are pool-wide and stubbed here
+// with the notes this issuer sells, at the leaves they name.
+vi.mock('../pool/denominatedPool', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../pool/denominatedPool')>();
+  return {
+    ...actual,
+    fetchSpentNullifierSet: async () => new Set<string>(),
+    fetchPoolCommitments: async () =>
+      new Map(
+        Array.from({ length: 16 }, (_, i) => {
+          const n = issuedNote(i);
+          return [
+            n.commitment,
+            { leafIndex: n.leafIndex, commitment: BigInt(n.commitment), depositSlot: 1 },
+          ] as const;
+        }),
+      ),
+  };
+});
+
 vi.mock('../workerClient', async () => {
   const { handlePoolRequest } = await import('./poolHandlers');
   return {
@@ -47,7 +68,9 @@ vi.mock('../workerClient', async () => {
 });
 
 const shieldClient = await import('../shieldClient');
-const { clearPoolState, handlePoolRequest, setPoolSeed } = await import('./poolHandlers');
+const { clearPoolState, configurePoolHandlers, handlePoolRequest, setPoolSeed } = await import(
+  './poolHandlers'
+);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -171,6 +194,8 @@ beforeEach(() => {
   installLocalStorage();
   installIssuer();
   clearPoolState();
+  // [close-v1 F35] The tree read needs a connection; the reads themselves are stubbed above.
+  configurePoolHandlers('http://localhost:8899');
   setPoolSeed(META, SIGNATURE);
   issuer.asked = [];
   issuer.sealed = [];

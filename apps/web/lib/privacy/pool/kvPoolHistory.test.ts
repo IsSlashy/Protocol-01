@@ -624,7 +624,9 @@ describe('[CACHE-1] the server pool history is shared through KV, keyed by pool,
     const oldestFirst = [...chain.txs].reverse();
     const good = {
       format: 1,
-      version: 2,
+      // close-v1: version 3 is what this code writes; a version-2 row is a
+      // pre-fix leaf map and is ignored (`POOL_HISTORY_VERSION`).
+      version: 3,
       newestSignature: chain.txs[0]!.signature,
       oldestSignature: oldestFirst[0]!.signature,
       reachedOldest: true,

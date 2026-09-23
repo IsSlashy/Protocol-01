@@ -223,10 +223,38 @@ function buildResizeProofBufferIx(
 // the "secret" is public. What it authorises is exactly one thing, signing
 // `createAccount` for that address; once the account exists it is owned by the
 // verifier program and the system program lets nobody else touch it. Someone
-// who computes the key can only OCCUPY the address ahead of us, paying its
-// rent, and the `attempt` byte steps past that.
+// who computes the key can OCCUPY the address ahead of us, paying its rent.
+//
+// [AUDIT-V1 R1 2026-09-22] Occupying it is cheap and, before this fix, it was
+// fatal. MEASURED (litesvm + the web client, audit round 1): a 0-byte account at
+// the address — a plain transfer of 890,880 lamports needs no key at all, a
+// createAccount signed with the public key makes one the verifier owns and that
+// `close_proof_buffer` / `reset_proof_buffer` refuse (3001) forever — parsed as
+// "absent" (< 83 bytes), so the client sent createAccount there, got "already in
+// use" and rethrew: the shield / withdrawal / subscribe aborted and attempt 1
+// was never read. And filling the four public attempts blocked even the step
+// that did exist. The withdrawal key E is fixed per note, so that note could
+// never be spent through this client again.
+//
+// So now:
+//   1. ANY account at an address that is not a parsed buffer of ours — any
+//      owner, any size — is stepped past, and a createAccount that loses the
+//      race ("already in use") steps too instead of aborting;
+//   2. after the public attempts come PRIVATE ones, derived from the signer's
+//      own ed25519 signature over a domain-tagged message
+//      (`deriveSecretProofBufferKeypair`). Ed25519 is deterministic, so the
+//      address is as stable for the key holder as the public one (a rerun still
+//      rearms its buffer), and nobody without the key can compute it before the
+//      createAccount is sent. A signer that cannot sign raw bytes (a browser
+//      wallet) gets fresh random keys there instead: unpredictable too, at the
+//      cost of a rerun not finding that buffer to rearm.
+// The public attempts stay FIRST and unchanged; the private ones are only
+// reached when a stranger already sits on the public ones. `recoverFloat`
+// probes every one of them (`proofBufferAddresses`, close-v1 F04 follow-up).
 const PROOF_BUFFER_KEY_DOMAIN = 'p01/stark-proof-buffer/v3';
 const PROOF_BUFFER_KEY_ATTEMPTS = 4;
+const PROOF_BUFFER_SECRET_DOMAIN = 'p01/stark-proof-buffer/v3-private';
+const PROOF_BUFFER_SECRET_ATTEMPTS = 4;
 
 export function deriveProofBufferKeypair(
   authority: PublicKey,
@@ -241,6 +269,76 @@ export function deriveProofBufferKeypair(
     ),
   );
   return Keypair.fromSeed(seed);
+}
+
+/**
+ * A proof-buffer keypair only the signer can compute: the seed is
+ * sha256(domain ‖ signBytes(domain ‖ circuit_id ‖ attempt)). The signature never
+ * leaves this function. Returns null for a signer without `signBytes`.
+ */
+export async function deriveSecretProofBufferKeypair(
+  signer: WalletSigner,
+  circuitId: number,
+  attempt = 0,
+): Promise<Keypair | null> {
+  if (!signer.signBytes) return null;
+  const domain = utf8ToBytes(PROOF_BUFFER_SECRET_DOMAIN);
+  const signature = await signer.signBytes(
+    concatBytes(domain, Uint8Array.of(circuitId & 0xff, attempt & 0xff)),
+  );
+  return Keypair.fromSeed(sha256(concatBytes(domain, signature)));
+}
+
+/**
+ * Every address `allocateProofBuffer` may use for (signer, circuit), in the
+ * order it tries them: the public attempts, then the private ones.
+ */
+async function* proofBufferCandidates(
+  signer: WalletSigner,
+  circuitId: number,
+): AsyncGenerator<Keypair> {
+  for (let attempt = 0; attempt < PROOF_BUFFER_KEY_ATTEMPTS; attempt++) {
+    yield deriveProofBufferKeypair(signer.publicKey, circuitId, attempt);
+  }
+  for (let attempt = 0; attempt < PROOF_BUFFER_SECRET_ATTEMPTS; attempt++) {
+    yield (await deriveSecretProofBufferKeypair(signer, circuitId, attempt)) ?? Keypair.generate();
+  }
+}
+
+/**
+ * [close-v1, audit v1 F04 follow-up] Every DETERMINISTIC address
+ * `allocateProofBuffer` may have used for (signer, circuit), in its order: the
+ * public attempts, then the private ones when the signer can sign raw bytes.
+ *
+ * `recoverFloat` probes these for an ephemeral's stranded buffers. It used to
+ * probe public attempt 0 only, so a buffer allocated after a stranger squatted
+ * attempt 0 (the F04 fix's whole point) was never found again
+ * (`closeV1L3RecoverFloat.test.ts`). A signer without `signBytes` got random
+ * keys at the private attempts, which nobody can re-derive: those are not
+ * listed, and such a signer is never an ephemeral (every ephemeral signs bytes).
+ */
+export async function proofBufferAddresses(
+  signer: WalletSigner,
+  circuitId: number,
+): Promise<PublicKey[]> {
+  const out: PublicKey[] = [];
+  for (let attempt = 0; attempt < PROOF_BUFFER_KEY_ATTEMPTS; attempt++) {
+    out.push(deriveProofBufferKeypair(signer.publicKey, circuitId, attempt).publicKey);
+  }
+  for (let attempt = 0; attempt < PROOF_BUFFER_SECRET_ATTEMPTS; attempt++) {
+    const kp = await deriveSecretProofBufferKeypair(signer, circuitId, attempt);
+    if (kp) out.push(kp.publicKey);
+  }
+  return out;
+}
+
+/**
+ * The system program's AccountAlreadyInUse (custom error 0 on the createAccount,
+ * instruction 0 of the allocation transaction), at preflight or after landing.
+ */
+function isAccountAlreadyInUse(e: unknown): boolean {
+  const msg = (e as Error)?.message ?? String(e);
+  return /already in use/i.test(msg) || /"InstructionError":\[0,\{"Custom":0\}\]/.test(msg);
 }
 
 function buildInitProofBufferV3Ix(
@@ -344,14 +442,18 @@ async function allocateProofBuffer(
 ): Promise<PublicKey> {
   const authority = signer.publicKey;
   const space = PROOF_DATA_OFFSET + proofSize;
-  for (let attempt = 0; attempt < PROOF_BUFFER_KEY_ATTEMPTS; attempt++) {
-    const kp = deriveProofBufferKeypair(authority, circuitId, attempt);
-    const existing = await readProofBufferState(connection, kp.publicKey);
-    if (existing) {
+  for await (const kp of proofBufferCandidates(signer, circuitId)) {
+    const info = await connection.getAccountInfo(kp.publicKey);
+    if (info) {
+      const existing = parseProofBufferState(info.owner ?? PublicKey.default, info.data);
       const ours =
-        existing.owner.equals(STARK_VERIFIER_PROGRAM_ID) && existing.authority.equals(authority);
-      // Somebody else's account sits at this address (the derivation is
-      // public, see above): step to the next one.
+        !!existing &&
+        existing.owner.equals(STARK_VERIFIER_PROGRAM_ID) &&
+        existing.authority.equals(authority);
+      // Anything else at this address — somebody else's buffer, a 0-byte
+      // account the verifier owns, a plain transfer's system account, any size
+      // (see above): createAccount would fail "already in use", so step to the
+      // next one.
       if (!ours) continue;
       if (existing.space >= space) {
         onProgress?.('Rearming an existing proof buffer...');
@@ -385,6 +487,9 @@ async function allocateProofBuffer(
         signSendConfirm(connection, createTx, signer, { extraSigners: [kp] }),
       );
     } catch (e) {
+      // Taken between our read and our createAccount (a race lost to someone
+      // watching the address): the next candidate, not an abort.
+      if (isAccountAlreadyInUse(e)) continue;
       if (!isUnknownInstruction(e)) throw e;
       console.warn('[STARK] init_proof_buffer_v3 is not deployed here, using the PDA path');
       return allocateProofBufferLegacy(connection, signer, proofSize, circuitId, onProgress);
@@ -392,8 +497,8 @@ async function allocateProofBuffer(
     return kp.publicKey;
   }
   throw new Error(
-    `Could not allocate a proof buffer: ${PROOF_BUFFER_KEY_ATTEMPTS} derived addresses are ` +
-      'occupied by accounts that are not ours.',
+    `Could not allocate a proof buffer: ${PROOF_BUFFER_KEY_ATTEMPTS + PROOF_BUFFER_SECRET_ATTEMPTS} ` +
+      'candidate addresses are occupied by accounts that are not ours.',
   );
 }
 

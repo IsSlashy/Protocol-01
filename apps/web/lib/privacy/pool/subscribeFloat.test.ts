@@ -33,7 +33,7 @@
  *                 really does reproduce `getMinimumBalanceForRentExemption`.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Keypair, PublicKey, SystemProgram, type Connection } from '@solana/web3.js';
@@ -326,7 +326,15 @@ describe('prepareSubscribeJobV4 prices exactly what the disclosure quotes', () =
 });
 
 describe('the fallback route is priced by the same terms', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it('the v3 job is the withdrawal floor plus the vault rent, which is the pair figure', async () => {
+    // close-v1 (audit v1 F05): the C1 + C3 route is built only on an explicit
+    // opt-in now (default off, `closeV1L3C1C3SpendDisabled.test.ts`); this case
+    // prices that route, so it opts in.
+    vi.stubEnv('NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND', '1');
     // The withdrawal preparer is the expensive half and is pinned in its own
     // file; what is asserted here is the COMPOSITION — that a subscribe adds the
     // vault's rent on top and nothing else — and that the sum is the number the

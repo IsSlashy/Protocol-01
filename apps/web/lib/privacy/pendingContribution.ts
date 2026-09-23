@@ -91,6 +91,14 @@ export interface PendingContribution {
    */
   paymentSignature?: string;
   /**
+   * [close-v1 F57, verifier round 1] The `lastValidBlockHeight` the payment
+   * was signed under, when this device sent it. Past that height a payment the
+   * chain does not know can never land, so `contributeToPool` may drop a record
+   * naming one instead of refusing every later contribution for it
+   * (`pool/ephemeralFunder.ts`, `paymentOutcome`).
+   */
+  paymentValidUntil?: number;
+  /**
    * Exchange only: the ephemeral's signature over `claimChallenge(txSig)`,
    * base64, made by the worker before it dropped the job. Worth exactly one
    * claim on exactly that payment, and irreplaceable: the key that made it
@@ -264,9 +272,14 @@ function baseBody(id: string, entry: PendingContribution): Record<string, unknow
     pendingKind: entry.kind ?? 'contribution',
     ...(entry.txSig ? { txSig: entry.txSig } : {}),
     ...(entry.paymentSignature ? { paymentSignature: entry.paymentSignature } : {}),
+    ...(validHeight(entry.paymentValidUntil) ? { paymentValidUntil: entry.paymentValidUntil } : {}),
     ...(entry.claimProof ? { claimProof: entry.claimProof } : {}),
     ...(entry.claimCode ? { claimCode: entry.claimCode } : {}),
   };
+}
+
+function validHeight(h: unknown): h is number {
+  return typeof h === 'number' && Number.isSafeInteger(h) && h >= 0;
 }
 
 function indexEntry(
@@ -317,7 +330,7 @@ export function rememberContribution(session: PendingSession, entry: PendingCont
 function appendDelta(
   session: PendingSession,
   id: string,
-  delta: { paymentSignature: string } | { claimCode: string },
+  delta: { paymentSignature: string; paymentValidUntil?: number } | { claimCode: string },
 ): void {
   const list = readIndex();
   const entry = list.find((e) => e.id === id);
@@ -364,8 +377,17 @@ export function attachClaim(session: PendingSession, id: string, claimCode: stri
  * attempted. A record with a payment and no claim is exactly what the
  * fallback needs: the money moved, and this is the receipt for it.
  */
-export function attachPayment(session: PendingSession, id: string, paymentSignature: string): void {
-  appendDelta(session, id, { paymentSignature });
+export function attachPayment(
+  session: PendingSession,
+  id: string,
+  paymentSignature: string,
+  paymentValidUntil?: number,
+): void {
+  appendDelta(
+    session,
+    id,
+    validHeight(paymentValidUntil) ? { paymentSignature, paymentValidUntil } : { paymentSignature },
+  );
 }
 
 /**
@@ -538,6 +560,7 @@ async function load(meta: string, owner: string, prune: boolean): Promise<Pendin
       at: body.at ?? exactAt.get(e.id) ?? e.at,
       ...(body.txSig ? { txSig: body.txSig } : {}),
       ...(body.paymentSignature ? { paymentSignature: body.paymentSignature } : {}),
+      ...(validHeight(body.paymentValidUntil) ? { paymentValidUntil: body.paymentValidUntil } : {}),
       ...(body.claimProof ? { claimProof: body.claimProof } : {}),
       ...(body.claimCode ? { claimCode: body.claimCode } : {}),
     });
@@ -571,7 +594,31 @@ export function pendingRecords(meta: string, owner: string): Promise<PendingReco
  * other identities are never touched: this store is scoped per identity.
  */
 export async function pendingFor(meta: string, owner: string): Promise<PendingRecord | null> {
-  return (await load(meta, owner, true))[0] ?? null;
+  const records = await load(meta, owner, true);
+  // [close-v1 F58] MONEY THAT MOVED IS SERVED FIRST. A paymentless reservation
+  // younger than the reclaim window is still "collectable", and as the oldest
+  // record it used to be the one returned: the resume threw on its missing
+  // payment, the panel swallowed the throw, and the paid record behind it was
+  // never presented, so the next click paid again (audit v1,
+  // `r3-client/probes/resumeShadow.probe.test.ts`). The oldest record that
+  // names a payment or holds a claim wins; a bare reservation is returned only
+  // when nothing paid is outstanding.
+  return (
+    records.find((r) => !!r.paymentSignature || !!r.claimCode) ?? records[0] ?? null
+  );
+}
+
+/**
+ * [close-v1 F57] A record whose money moved and whose note is not in hand yet.
+ * `contributeToPool` refuses a new payment while one exists: whatever stopped
+ * the resume from collecting it (the deployment busy, Recover not run yet),
+ * paying again cannot be the answer.
+ */
+export async function outstandingPayment(
+  meta: string,
+  owner: string,
+): Promise<PendingRecord | null> {
+  return (await load(meta, owner, false)).find((r) => !!r.paymentSignature) ?? null;
 }
 
 /**

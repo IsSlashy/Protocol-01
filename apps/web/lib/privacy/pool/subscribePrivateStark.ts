@@ -257,6 +257,10 @@ export async function subscribePrivateStark(
   connection: Connection,
   onProgress?: (step: string) => void,
 ): Promise<{ txSig: string; vaultPDA: PublicKey }> {
+  // [close-v1, audit v1 F05] Before any upload: the C1 + C3 pair is copyable on
+  // the deployed program (`assertC1C3SpendAllowed`, denominatedPool.ts).
+  const { assertC1C3SpendAllowed } = await import('./denominatedPool');
+  assertC1C3SpendAllowed('subscription');
   const { submitAndVerifyStarkProof, closeStarkProofBuffer } = await import('./stark');
   const { CIRCUIT_POOL_COMMITMENT, CIRCUIT_MERKLE_PATH } = await import('./denominatedPool');
 

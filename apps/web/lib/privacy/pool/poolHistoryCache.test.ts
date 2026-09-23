@@ -257,10 +257,12 @@ describe('[HIST-1] the snapshot key is a function of host and pool only', () => 
     expect(rows.has(legacyKey)).toBe(false);
     expect(rows.has(poolHistoryKey(ENDPOINT, POOL.toBase58()))).toBe(true);
     expect(JSON.stringify([...rows.entries()])).not.toContain(SECRET);
-    // Migrated, not thrown away: the four decoded leaves are still there and
-    // none of them was fetched again.
+    // [close-v1, audit v1 F33/F34] Deleted AND not trusted: a version-1 row is
+    // a pre-fix walk's leaf map (filed by commitment, any program's events), so
+    // its four leaves are read again from the chain (`POOL_HISTORY_VERSION`).
+    // This case used to pin "migrated, not thrown away: 0 transactions".
     expect(map.size).toBe(4);
-    expect(h.getTransactionCalls).toBe(0);
+    expect(h.getTransactionCalls).toBe(4);
   });
 
   it('two endpoints that differ only by their credential share one snapshot, two hosts do not', async () => {
@@ -592,10 +594,11 @@ describe('[SWEEP-R1-STORAGE] a row left under a key that spells an endpoint does
     expect(dump, 'a key still spells the old endpoint').not.toContain('OLD-CREDENTIAL-PLACEHOLDER');
     expect(dump).not.toContain('api-key');
     expect([...rows.keys()]).toEqual([poolHistoryKey(NEW_ENDPOINT, POOL.toBase58())]);
-    // Healed, not thrown away: the four decoded leaves are served from the old
-    // row, and the only read is the one transaction the row never decoded.
+    // [close-v1, audit v1 F33/F34] Deleted, not healed: the old build's row is
+    // a pre-fix leaf map, so the walk is cold and reads the four leaves and the
+    // leafless withdrawal (5). This case used to pin "healed, 1 transaction".
     expect(map.size).toBe(4);
-    expect(h.getTransactionCalls).toBe(1);
+    expect(h.getTransactionCalls).toBe(5);
   });
 
   it('nothing new on chain since the old build’s last walk: the migrated row still does not name the withdrawal', async () => {
@@ -730,11 +733,11 @@ describe('[SWEEP-R1-STORAGE] the IndexedDB store lists its keys, so the pass rea
     expect(dump).not.toContain('1789000123456');
     expect(dump).not.toContain('OLD-CREDENTIAL-PLACEHOLDER');
     expect(map.size).toBe(4);
-    // Not 0, and on purpose: this store is a DEVICE's row (`perDevice`), so the
-    // walk resumes at the public anchor (leaf 0 in a four-leaf pool) and reads
-    // the three leaves above it again, whatever the row already held
-    // (`poolWalkPublicAnchor.test.ts`). The healed row is what served the map.
-    expect(h.getTransactionCalls).toBe(3);
-    expect(h.signatureCalls[0]?.until).toBe(h.txs[3]!.signature);
+    // [close-v1, audit v1 F33/F34] The old build's row is a pre-fix leaf map:
+    // it is deleted, never healed into a served row, so the walk is cold and
+    // reads all four leaves (it used to heal the row and read 3, resuming at
+    // the public anchor). A cold walk lists with no `until`.
+    expect(h.getTransactionCalls).toBe(4);
+    expect(h.signatureCalls[0]?.until).toBeUndefined();
   });
 });

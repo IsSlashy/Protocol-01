@@ -35,15 +35,19 @@ import {
   rememberContribution,
   attachClaim,
   attachPayment,
+  outstandingPayment,
   pendingFor,
+  pendingRecords,
   clearContribution,
   type PendingContribution,
 } from './pendingContribution';
+import { forgetRelayPaymentsFor } from './pool/relayPaymentReceipts';
 import { claimChallenge } from './claimChallenge';
 import {
   fetchFunderLookup,
   funderTicket,
   fundEphemeralForJob,
+  paymentOutcome,
 } from './pool/ephemeralFunder';
 import { loadSubscriptions } from '../pay/subscriptions';
 import {
@@ -96,6 +100,15 @@ export interface ShieldParams {
    * from an operator screen that already warns it reveals a spend key.
    */
   depositPublicly?: boolean;
+  /**
+   * [close-v1 F56] Signs `claimChallenge(paymentSignature)` as the wallet that
+   * paid the till. REQUIRED on the relayed path (every deposit that is not
+   * `depositPublicly`): `/api/relay-to-buyer` will not move the float without
+   * it. It used to be dropped here, so "deposit my own note" paid the till and
+   * was then refused, every click; `fundEphemeralForJob` now refuses before
+   * paying when it is absent.
+   */
+  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
 }
 
 export interface ShieldOutcome {
@@ -210,6 +223,9 @@ export async function shieldToPool(params: ShieldParams): Promise<ShieldOutcome>
     // `depositPublicly`: the treasury's deposit is public BY DESIGN, and
     // refusing it is what left the inventory with nothing to hand out.
     relayThroughDeployment: !params.depositPublicly,
+    // [close-v1 F56] The relay's proof of payer. Absent, the relayed branch
+    // refuses before the wallet is asked to pay.
+    signMessage: params.signMessage,
     // The 1% is a percentage of the pool's own ATOMIC denomination, taken from
     // the pool table rather than from the human `denomination` above. The
     // version that multiplied the human number by a hard-coded 1e9 was right for
@@ -501,6 +517,13 @@ export async function claimForPayment(params: {
   signature: string;
   proof: string;
   contribution?: { token: PoolToken; leafIndex: number };
+  /**
+   * [close-v1 F11] The deposit key a relayed contribution's payment funded,
+   * and its signature over `relayEphemeralChallenge`. The route mints for a
+   * relayed payment only once that key has given the float back what it was
+   * sent; it ignores both for a plain sale.
+   */
+  ephemeral?: { ephemeral: string; proof: string };
   onProgress?: (step: string) => void;
   /** Retry budget for the 404 case. Defaults match the live test. */
   attempts?: number;
@@ -516,6 +539,9 @@ export async function claimForPayment(params: {
         signature: params.signature,
         proof: params.proof,
         ...(params.contribution ? { contribution: params.contribution } : {}),
+        ...(params.ephemeral
+          ? { ephemeral: params.ephemeral.ephemeral, ephemeralProof: params.ephemeral.proof }
+          : {}),
       }),
     });
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -525,10 +551,14 @@ export async function claimForPayment(params: {
       continue;
     }
     if (!res.ok || body.ok !== true || typeof body.claimCode !== 'string' || !body.claimCode) {
+      // A refusal that carries a stable `code` leads with it (contract C2), so
+      // the panels can say it in the reader's language; the English follows.
+      const code = typeof body.code === 'string' && /^[A-Z0-9_]+$/.test(body.code) ? `${body.code}: ` : '';
+      const hint = code && typeof body.hint === 'string' ? `. ${body.hint}` : '';
       throw new Error(
         typeof body.error === 'string'
-          ? `The deployment refused the claim: ${body.error}`
-          : `/api/claim-for-payment answered ${res.status}`,
+          ? `${code}The deployment refused the claim: ${body.error}${hint}`
+          : `${code}/api/claim-for-payment answered ${res.status}`,
       );
     }
     return {
@@ -590,7 +620,7 @@ export async function resumeContribution(params: {
    */
   signMessage?: SignMessage;
   onProgress?: (step: string) => void;
-}): Promise<IssuedNoteOutcome | null> {
+}): Promise<ResumedNoteOutcome | null> {
   const { meta, owner, signMessage, onProgress } = params;
   // Opened in the worker: the record is sealed on disk (DEV-1). A worker that
   // cannot read it throws `StaleWorkerError`, never "nothing outstanding"
@@ -606,12 +636,37 @@ export async function resumeContribution(params: {
   );
   let claimCode = pending.claimCode ?? '';
   if (!claimCode) {
-    claimCode =
-      pending.kind === 'exchange'
-        ? await collectExchangeClaim(pending, onProgress)
-        : await collectContributionClaim(pending, signMessage, onProgress);
+    try {
+      claimCode =
+        pending.kind === 'exchange'
+          ? await collectExchangeClaim(pending, onProgress)
+          : await collectContributionClaim(meta, pending, signMessage, onProgress);
+    } catch (e) {
+      /**
+       * ⛔ [close-v1 F57, verifier round 1] A PAYMENT THAT FAILED ON CHAIN IS
+       * OWED NOTHING. The deployment read it and says so with a stable code:
+       * the record names a payment that paid nothing (a tab closed between the
+       * send and the confirmation), and kept, it would refuse every later
+       * contribution with PAYMENT_OUTSTANDING for good
+       * (`verify-r1/probe-failed-payment.test.ts`). It is dropped, with any
+       * relay receipt naming it, and the next record is looked at.
+       */
+      if (
+        pending.kind !== 'exchange' &&
+        pending.paymentSignature &&
+        leadingCode(e) === 'PAYMENT_FAILED_ON_CHAIN: '
+      ) {
+        await dropVoidPayment(meta, pending.id, pending.paymentSignature);
+        return resumeContribution(params);
+      }
+      throw e;
+    }
     attachClaim(await storeSession(meta), pending.id, claimCode);
   }
+  // [close-v1 F57] The payment has bought its code through this record, so a
+  // relay receipt still naming it (a relay that failed after the payment) is
+  // spent: left behind, a later job on that key would present it again.
+  if (pending.paymentSignature) await forgetRelayPaymentsFor(meta, pending.paymentSignature);
 
   const issued = await requestIssuedNote({
     meta,
@@ -624,8 +679,25 @@ export async function resumeContribution(params: {
   // ⛔ Cleared only once the note is in hand. Clearing on the claim alone
   // would lose the one record proving this buyer is owed something.
   clearContribution(pending.id);
-  return issued;
+  // [close-v1 F07, contract C1] The code goes back with the note: clearing the
+  // record deleted this device's only copy, and the note it bought is not
+  // derivable from the buyer's seed, so the card must be able to hand it over.
+  return { ...issued, claimCode };
 }
+
+/**
+ * [close-v1 F57, verifier round 1] Forget a record whose payment paid nothing,
+ * and any relay receipt still naming that payment. Only ever called on a
+ * verdict that nothing moved: the chain's (`paymentOutcome`) or the
+ * deployment's (`PAYMENT_FAILED_ON_CHAIN`).
+ */
+async function dropVoidPayment(meta: string, id: string, paymentSignature: string): Promise<void> {
+  clearContribution(id);
+  await forgetRelayPaymentsFor(meta, paymentSignature).catch(() => undefined);
+}
+
+/** What a resume hands back: the issued note, and the claim code it was bought with (C1). */
+export type ResumedNoteOutcome = IssuedNoteOutcome & { claimCode?: string };
 
 /**
  * ⛔ A CONTRIBUTION'S DEPOSIT IS ALWAYS RELAYED, and unlike the shield there is
@@ -650,6 +722,45 @@ export async function resumeContribution(params: {
  * says which of the two paths this is and why, instead of evading the scan.
  */
 const CONTRIBUTION_IS_ALWAYS_RELAYED = true;
+
+/**
+ * The stable code a refusal led with (`CODE: ...`, contract C2), carried to
+ * the front of a sentence that wraps it, so the panels still find it there.
+ * Empty when the refusal had none.
+ */
+function leadingCode(e: unknown): string {
+  const m = /^([A-Z][A-Z0-9_]+): /.exec(e instanceof Error ? e.message : String(e));
+  return m ? `${m[1]}: ` : '';
+}
+
+/**
+ * [close-v1 F11] The deposit key a relayed contribution's payment funded, and
+ * its proof for `/api/claim-for-payment`. Signed in the worker, which re-derives
+ * the key from the seed and the leaf. `undefined` when the worker cannot make
+ * it (an older worker): the route then refuses a relayed payment with
+ * `RELAYED_EPHEMERAL_REQUIRED` and a plain sale does not need it.
+ */
+async function relayEphemeralProof(
+  meta: string,
+  token: PoolToken,
+  denomination: number,
+  leafIndex: number,
+  paymentSignature: string,
+): Promise<{ ephemeral: string; proof: string } | undefined> {
+  try {
+    const res = await poolRequest({
+      kind: 'poolRelayEphemeralProof',
+      meta,
+      token,
+      denomination,
+      leafIndex,
+      paymentSignature,
+    });
+    return { ephemeral: res.ephemeral, proof: res.proof };
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The claim an exchange is owed, from the receipt the worker signed.
@@ -692,7 +803,8 @@ async function collectExchangeClaim(
  * same `p01:note:paid:<sig>` gate, so whichever ran first answers the other.
  */
 async function collectContributionClaim(
-  pending: Pick<PendingContribution, 'token' | 'leafIndex' | 'paymentSignature'>,
+  meta: string,
+  pending: Pick<PendingContribution, 'token' | 'denomination' | 'leafIndex' | 'paymentSignature'>,
   signMessage: SignMessage | undefined,
   onProgress?: (step: string) => void,
 ): Promise<string> {
@@ -736,12 +848,14 @@ async function collectContributionClaim(
       signature: paymentSignature,
       proof,
       contribution: { token, leafIndex },
+      ephemeral: await relayEphemeralProof(meta, pending.token, pending.denomination, leafIndex, paymentSignature),
       onProgress,
     });
     return claimed.claimCode;
   } catch (e) {
     throw new Error(
-      `A deposit you paid for (payment ${paymentSignature}) could not be ` +
+      leadingCode(e) +
+        `A deposit you paid for (payment ${paymentSignature}) could not be ` +
         `collected yet. Confirm said: ${confirmFailure} The fallback said: ` +
         `${(e as Error).message || String(e)} Do NOT shield again, that would pay a second ` +
         'time. Retry in a minute; the payment is recorded on this device and one note is ' +
@@ -750,9 +864,89 @@ async function collectContributionClaim(
   }
 }
 
+/**
+ * ⛔ STORAGE IS CHECKED BEFORE MONEY MOVES, AND READ BACK, NOT ASSUMED.
+ *
+ * The rule of `pendingContribution.ts` is that what a buyer is owed survives
+ * a reload once money cannot be un-spent. A browser that refuses writes (a
+ * full origin quota, or Firefox with `dom.storage` disabled, where
+ * `localStorage` is `null` and every access throws) used to break it in
+ * silence: `rememberContribution` returned an id for a record it never
+ * wrote, and the flow paid anyway (audit v1 round 1, client axis,
+ * `pool/storageRefusal.test.ts`).
+ *
+ * The probe is record-sized on purpose. The funder's own probe
+ * (`relayPaymentReceipts.storageAvailable`) writes one byte, which a nearly
+ * full quota still takes while refusing the kilobyte-sized sealed record.
+ */
+const STORAGE_PROBE_KEY = 'p01:storage-probe';
+const STORAGE_PROBE_BYTES = 8 * 1024;
+
+function storageRefusesRecords(): boolean {
+  try {
+    const ls = (globalThis as { localStorage?: Storage | null }).localStorage;
+    if (!ls) return true;
+    ls.setItem(STORAGE_PROBE_KEY, 'x'.repeat(STORAGE_PROBE_BYTES));
+    ls.removeItem(STORAGE_PROBE_KEY);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+const STORAGE_REFUSED =
+  'This browser refused to save data for this site (storage full, or site data blocked), ' +
+  'so the record of what you would be owed could not be kept across a reload.';
+
+/** Did the record `rememberContribution` named actually reach the disk, and does it open? */
+async function recordKept(meta: string, owner: string, id: string): Promise<boolean> {
+  try {
+    return (await pendingRecords(meta, owner)).some((r) => r.id === id);
+  } catch {
+    return false;
+  }
+}
+
 export async function contributeToPool(params: ContributeParams): Promise<ContributeOutcome> {
   const { meta, token, denomination, owner, connection, signOne, signMessage, onProgress } =
     params;
+
+  /**
+   * ⛔ [close-v1 F57] NO SECOND PAYMENT WHILE ONE IS STILL OWED A NOTE.
+   *
+   * The panel resumes before it contributes, and a resume that fails is
+   * swallowed there on purpose (a stale record must not block a shield). But a
+   * PAID record the resume could not finish (the deployment busy, a relayed
+   * float not yet swept back) is money already spent: taking another payment
+   * is the double charge this store exists to stop (audit v1,
+   * `r3-client/probes/resumeShadow` and `relayReceiptOrphan`). Refused before
+   * the reservation, so nothing is reserved or paid.
+   */
+  //
+  // [verifier round 1] ...but only while the payment may have MOVED money. A
+  // record naming a payment the chain says failed, or one it does not know
+  // past the height it was signed to be valid until, bought nothing: it is
+  // dropped here and the next one is looked at. A chain that cannot be read
+  // keeps the refusal (`paymentOutcome` 'unknown').
+  let owed = await outstandingPayment(meta, owner.toBase58());
+  for (let checked = 0; owed && checked < 8; checked += 1) {
+    const sig = owed.paymentSignature;
+    if (!sig || owed.claimCode || owed.kind === 'exchange') break;
+    const outcome = await paymentOutcome(connection, sig, owed.paymentValidUntil).catch(
+      () => 'unknown' as const,
+    );
+    if (outcome !== 'void') break;
+    await dropVoidPayment(meta, owed.id, sig);
+    owed = await outstandingPayment(meta, owner.toBase58());
+  }
+  if (owed) {
+    throw new Error(
+      'PAYMENT_OUTSTANDING: A payment you already made is still owed a note, and it could ' +
+        'not be collected just now. Nothing was paid this time. Try again in a minute; if a ' +
+        'deposit of yours was interrupted, run Recover first. The payment in your wallet ' +
+        'history identifies it for support.',
+    );
+  }
 
   onProgress?.('Reserving a leaf from the treasury...');
   // The store session (this identity's label and V1 address) is fetched
@@ -770,6 +964,9 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
   if (!Number.isInteger(leafIndex) || leafIndex < 0 || !commitment) {
     throw new Error('The treasury reserved no usable leaf, so nothing was funded.');
   }
+  if (storageRefusesRecords()) {
+    throw new Error(`${STORAGE_REFUSED} Nothing was paid. Free some space or allow site data, then retry.`);
+  }
 
   /**
    * ⛔ RECORDED BEFORE ANY MONEY MOVES, and that ordering is the point.
@@ -785,6 +982,11 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     denomination,
     at: Date.now(),
   });
+  // Read back before the wallet is asked for anything: `rememberContribution`
+  // returns an id even when storage refused the write.
+  if (!(await recordKept(meta, owner.toBase58(), pendingId))) {
+    throw new Error(`${STORAGE_REFUSED} Nothing was paid. Free some space or allow site data, then retry.`);
+  }
 
   const prep = await poolRequest(
     { kind: 'poolContributePrepare', meta, token, denomination, commitment, leafIndex },
@@ -796,6 +998,8 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
   // both. A contribution that funded the ephemeral from the wallet would put
   // the buyer one hop from a leaf SOMEBODY ELSE will later be handed.
   const feePool = findPoolV3(token, denomination);
+  /** Set once the payment is on the record, so it is attached exactly once. */
+  let paymentAttached = false;
   const funding = await fundEphemeralForJob({
     ephemeralPubkey: prep.ephemeralPubkey,
     // The identity the relayed payment receipt is sealed to (SWEEP4 item 5).
@@ -807,6 +1011,24 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
     signOne,
     signMessage,
     onProgress,
+    // [close-v1 F57] THE PAYMENT GOES ON THE RECORD THE MOMENT IT EXISTS, not
+    // after the relay answers. A relay that failed after the till was paid
+    // used to leave this record paymentless: the next click reserved another
+    // leaf and paid again, and 20 minutes later this record was pruned.
+    onPaid: (sig, validUntil) => {
+      if (paymentAttached) return;
+      attachPayment(session, pendingId, sig, validUntil);
+      paymentAttached = true;
+    },
+    // [close-v1 F57, verifier round 1] The payment landed and failed, or
+    // expired unlanded: nothing moved, so the record goes. Kept, it named a
+    // payment that bought nothing and refused every later contribution with
+    // PAYMENT_OUTSTANDING (`verify-r1/probe-failed-payment.test.ts`). The
+    // reservation it held is reclaimed by the deployment on its own clock.
+    onPaymentVoid: () => {
+      clearContribution(pendingId);
+      paymentAttached = false;
+    },
     relayThroughDeployment: CONTRIBUTION_IS_ALWAYS_RELAYED,
     feeBasis: feePool && {
       token: feePool.token,
@@ -822,8 +1044,9 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
   // THE SECOND WRITE, the moment the money has moved. The first one (above,
   // before anything was paid) says "this buyer may have paid"; this one says
   // which transaction did, which is what every route from here on needs.
-  if (funding.paymentSignature) {
+  if (funding.paymentSignature && !paymentAttached) {
     attachPayment(session, pendingId, funding.paymentSignature);
+    paymentAttached = true;
   }
 
   let done: { txSig: string; leafIndex: number; commitment: string } | null = null;
@@ -878,12 +1101,16 @@ export async function contributeToPool(params: ContributeParams): Promise<Contri
         signature: funding.paymentSignature,
         proof: await walletClaimProof(signMessage, funding.paymentSignature),
         contribution: { token, leafIndex },
+        // [close-v1 F11] The route sells a relayed payment only once the key
+        // the relay funded has given the float back.
+        ephemeral: await relayEphemeralProof(meta, token, denomination, leafIndex, funding.paymentSignature),
         onProgress,
       });
       claimCode = claimed.claimCode;
     } catch (fallbackErr) {
       throw new Error(
-        `${reason} The payment (${funding.paymentSignature}) is recorded on this device and ` +
+        leadingCode(fallbackErr) +
+          `${reason} The payment (${funding.paymentSignature}) is recorded on this device and ` +
           'the next Shield click resumes collecting the note; do NOT contribute again. The ' +
           `fallback claim was refused: ${(fallbackErr as Error).message || String(fallbackErr)}`,
       );
@@ -1118,6 +1345,8 @@ async function fetchExchangeTerms(): Promise<{
   till: string | null;
   priceLamports: number;
   reasons: string[];
+  /** `false` when the deployment says it sells nothing against a withdrawal (close-v1 F70). */
+  exchange: boolean | null;
 }> {
   const res = await fetch('/api/claim-for-payment', { method: 'GET' });
   const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -1129,8 +1358,25 @@ async function fetchExchangeTerms(): Promise<{
     till: typeof body.till === 'string' ? body.till : null,
     priceLamports: Number(body.priceLamports ?? 0),
     reasons: Array.isArray(body.reasons) ? body.reasons.map(String) : [],
+    exchange: typeof body.exchange === 'boolean' ? body.exchange : null,
   };
 }
+
+/**
+ * [close-v1 F70] The note-in exchange stays OFF in this build unless
+ * `NEXT_PUBLIC_P01_ALLOW_NOTE_EXCHANGE` is '1'. The claim for an exchange goes
+ * to the withdrawal's fee payer, which anyone copying the proof can become, so
+ * `/api/claim-for-payment` sells nothing against a withdrawal; spending a note
+ * into the till would buy nothing. Do not set the flag until the claim
+ * credential moves off the fee payer and the route says `exchange: true`.
+ */
+function noteExchangeAllowed(): boolean {
+  return process.env.NEXT_PUBLIC_P01_ALLOW_NOTE_EXCHANGE === '1';
+}
+
+const EXCHANGE_DISABLED =
+  'EXCHANGE_DISABLED: Exchanging a note for an older one is switched off: the claim it buys ' +
+  'could be taken by anyone copying the withdrawal. Nothing was spent.';
 
 /**
  * Give up one note and receive an OLDER one the treasury deposited.
@@ -1177,8 +1423,14 @@ async function fetchExchangeTerms(): Promise<{
 export async function exchangeNoteForIssued(params: ExchangeParams): Promise<ExchangeOutcome> {
   const { meta, token, denomination, leafIndex, owner, connection, signOne, onProgress } = params;
 
+  // ⛔ [close-v1 F70, F59] BEFORE ANYTHING: the note is never spent into the
+  // till while the claim it buys can be copied. This also retires the lost-
+  // answer case (F59): no withdrawal is sent, so none can land untracked.
+  if (!noteExchangeAllowed()) throw new Error(EXCHANGE_DISABLED);
+
   onProgress?.('Asking the deployment where an exchange pays...');
   const terms = await fetchExchangeTerms();
+  if (terms.exchange === false) throw new Error(EXCHANGE_DISABLED);
   if (!terms.configured || !terms.till) {
     throw new Error(
       'This deployment cannot take a note in exchange: ' +
@@ -1215,6 +1467,13 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
   // (`pool/exchangeNote.test.ts`, "refuses before the spend when the receipt
   // could not be sealed").
   const session = await storeSession(meta);
+
+  // BEFORE the spend: a browser that cannot keep the receipt would leave the
+  // note spent with nothing on this device saying a note is owed for it
+  // (`pool/storageRefusal.test.ts`).
+  if (storageRefusesRecords()) {
+    throw new Error(`${STORAGE_REFUSED} Nothing was spent. Free some space or allow site data, then retry.`);
+  }
 
   const spent = await unshieldFromPool({
     meta,
@@ -1260,6 +1519,15 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
     claimProof: spent.claimProof,
     at: Date.now(),
   });
+  // The spend cannot be undone, so a receipt that did not land only changes
+  // what the errors below may promise: none of them may say it was kept.
+  const receiptKept = await recordKept(meta, ownerKey, pendingId);
+  const keptOrNot = (kept: string) =>
+    receiptKept
+      ? kept
+      : ' The withdrawal paid the till, but this browser refused to save its receipt, so ' +
+        'nothing on this device resumes it: keep the withdrawal signature (Show the on-chain ' +
+        'links) for support; one note is owed for it.';
 
   let claimCode: string;
   try {
@@ -1278,8 +1546,11 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
     // and the proof when the claim is refused" and "names no withdrawal when
     // the claim retries run out"). The receipt on this device is what resumes it.
     throw new ExchangeAfterSpendError(
-      `${(e as Error).message || String(e)} The withdrawal paid the till and ` +
-        'its receipt is kept on this device; the next Shield click resumes collecting the note.',
+      `${(e as Error).message || String(e)}` +
+        keptOrNot(
+          ' The withdrawal paid the till and its receipt is kept on this device; the next ' +
+            'Shield click resumes collecting the note.',
+        ),
       spent.txSig,
     );
   }
@@ -1297,8 +1568,10 @@ export async function exchangeNoteForIssued(params: ExchangeParams): Promise<Exc
     });
   } catch (e) {
     throw new ExchangeAfterSpendError(
-      `${(e as Error).message || String(e)} Your claim is kept on this device and does not ` +
-        'expire; the next Shield click redeems it.',
+      `${(e as Error).message || String(e)}` +
+        keptOrNot(
+          ' Your claim is kept on this device and does not expire; the next Shield click redeems it.',
+        ),
       spent.txSig,
     );
   }
@@ -2056,7 +2329,9 @@ export async function importReceivedNote(params: {
   );
   // The blob IS the note's existence on this device; store it before reporting
   // success so a render error can never lose what was just received.
-  await storeEncryptedNote(params.meta, params.walletPubkey, res.encryptedNote);
+  await storeEncryptedNote(params.meta, params.walletPubkey, res.encryptedNote, {
+    onlyRecord: true,
+  });
   return { note: res.note, merklePath: res.merklePath };
 }
 
@@ -2563,8 +2838,16 @@ export async function storeEncryptedNote(
   meta: string,
   walletPubkey: string,
   blob: string,
+  /**
+   * Set when the blob is the note's ONLY record (a received or issued note):
+   * a write that both stores refuse then throws, instead of letting the caller
+   * report a note collected that a reload loses (`pool/storageRefusal.test.ts`).
+   * Left unset for a shielded note, which a rescan re-derives.
+   */
+  opts: { onlyRecord?: boolean } = {},
 ): Promise<void> {
   if (typeof localStorage === 'undefined') return;
+  let landed = true;
   try {
     const { label } = await storeSession(meta);
     migrateNoteStore(walletPubkey, label);
@@ -2587,13 +2870,23 @@ export async function storeEncryptedNote(
       all[bucket] = list;
       writeMap(NOTE_STORE_KEY_V1, all);
     } catch {
-      // Quota failure on both: recovery-by-scan still covers a shielded note.
+      // Refused by both. Recovery-by-scan covers a SHIELDED note; a received
+      // or issued note has no other record, so that caller is told below.
+      landed = false;
     }
   }
   // After both attempts, like `recordHandoff`: listeners re-read through
   // `loadEncryptedNotes`, which unions the v2 and v1 stores, so the event is
   // right whichever write landed — and harmless if neither did.
   announceNotesChanged();
+  if (!landed && opts.onlyRecord) {
+    throw new Error(
+      'The note could not be saved: this browser refused to store it (storage full, or site ' +
+        'data blocked), and this device holds no other copy of it. Free some space or allow ' +
+        'site data, then retry; what the note was delivered with (the claim or the sealed ' +
+        'note) still opens it.',
+    );
+  }
 }
 
 export async function loadEncryptedNotes(meta: string, walletPubkey: string): Promise<string[]> {

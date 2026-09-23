@@ -291,10 +291,16 @@ describe('[HIST-1] the pool-history walk is completed, not frozen', () => {
     expect(snapshotOf(h)?.retry).toEqual([]);
   });
 
-  it('the upgrade path: a snapshot saved by the old walk is completed, then goes quiet', async () => {
+  it('the upgrade path: a snapshot saved by the old walk is discarded, the history rebuilt, then quiet', async () => {
     // What a client upgrading to this code actually holds: a snapshot the old
     // walk wrote, with no oldest signature and no completeness, stopped at its
-    // 1,000-signature cap. The cost of finishing it is paid once.
+    // 1,000-signature cap.
+    //
+    // [close-v1, audit v1 F33/F34] That walk filed leaves by commitment and
+    // accepted any program's events, so its row is NOT completed any more: it is
+    // discarded (`POOL_HISTORY_VERSION` 3), the first call is a cold walk capped
+    // at its budget, the next one finishes the history, and then it goes quiet.
+    // This case used to pin "completed on the upgrade call: 1,500 leaves".
     const h = new FakeChain();
     for (let i = 0; i < 1500; i++) h.push(i, 50_000n + BigInt(i));
     const walked = h.txs.slice(0, 1000);
@@ -313,8 +319,12 @@ describe('[HIST-1] the pool-history walk is completed, not frozen', () => {
     });
 
     const upgraded = await fetchPoolCommitments(h.asConnection(), POOL, { maxSignatures: 1000 });
-    expect(upgraded.size).toBe(1500);
-    expect(upgraded.get('50000')?.leafIndex).toBe(0);
+    // Cold: the newest 1,000, none of them taken from the old row.
+    expect(upgraded.size).toBe(1000);
+    expect(upgraded.get('50000')).toBeUndefined();
+    const finished = await fetchPoolCommitments(h.asConnection(), POOL, { maxSignatures: 1000 });
+    expect(finished.size).toBe(1500);
+    expect(finished.get('50000')?.leafIndex).toBe(0);
 
     // Then it stops costing anything: no transaction re-read, and exactly one
     // signature page (the delta) — no backfill page once the history is whole.
@@ -446,7 +456,10 @@ describe('[HIST-1] the pool-history walk is completed, not frozen', () => {
     expect(m.size).toBe(4);
   });
 
-  it('a contiguous legacy row costs one signature page and no transaction on the upgrade call', async () => {
+  it('a contiguous legacy row is deleted and its leaves read again once (pre-fix rows are not trusted)', async () => {
+    // [close-v1, audit v1 F33/F34] This case used to pin "one signature page and
+    // no transaction on the upgrade call": the version-1 row was trusted. It is a
+    // pre-fix walk's leaf map, so the upgrade call is a cold walk now.
     const h = new FakeChain();
     for (let i = 0; i < 50; i++) h.push(i, 100_000n + BigInt(i));
     const legacyKey = `${h.rpcEndpoint}|${POOL.toBase58()}`;
@@ -465,8 +478,7 @@ describe('[HIST-1] the pool-history walk is completed, not frozen', () => {
     });
     const [upgrade] = await walk(h, 1);
     expect(upgrade!.size).toBe(50);
-    expect(upgrade!.txs).toBe(0);
-    expect(upgrade!.pages).toBe(1);
+    expect(upgrade!.txs).toBe(50);
     expect(snapshotOf(h)?.complete).toBe(true);
     expect(rows.has(legacyKey)).toBe(false);
   });
@@ -478,7 +490,9 @@ describe('[HIST-1] the pool-history walk is completed, not frozen', () => {
     for (let i = 0; i < 200; i++) h.push(i, 110_000n + BigInt(i));
     const key = poolHistoryKey(h.rpcEndpoint, POOL.toBase58());
     rows.set(key, {
-      version: 2,
+      // The current row shape (close-v1: version 3; a version-2 row is a
+      // pre-fix leaf map and is discarded, see `POOL_HISTORY_VERSION`).
+      version: 3,
       key,
       newestSignature: h.txs[0]!.signature,
       oldestSignature: h.txs[h.txs.length - 1]!.signature,

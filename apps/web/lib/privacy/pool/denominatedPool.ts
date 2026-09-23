@@ -193,6 +193,106 @@ export function buildComputeBudgetIxs(
 }
 
 /**
+ * ⛔ [close-v1, audit v1 F05, web mitigation of a founder item] NO C1 + C3
+ * SPEND IS BUILT UNLESS THE DEPLOYMENT OPTS IN.
+ *
+ * The deployed v3 withdrawal and v3 subscription verify C1 and C3, which bind
+ * neither the payee, nor the new note, nor the merchant, and a proof does not
+ * depend on who uploads it: anyone who copies the public proof bytes out of the
+ * buffers can land the spend first, to themselves (audit v1 F05, measured in
+ * litesvm: 995,000,000 lamports taken). Only a program change closes that
+ * (founder). Until then the web client refuses to build one, before any
+ * request, proof, payment or upload, unless
+ * `NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND === '1'` (default off). Circuit 7 (the v4
+ * withdrawal and subscription) is not affected and not gated.
+ *
+ * The message starts with the stable code `C1C3_SPEND_DISABLED:` (close-v1
+ * contract C2): the worker passes it through, the panels map the code to their
+ * own words. It names no note value. Pinned by
+ * `closeV1L3C1C3SpendDisabled.test.ts`.
+ */
+export const C1C3_SPEND_DISABLED = 'C1C3_SPEND_DISABLED';
+
+export function c1c3SpendAllowed(): boolean {
+  // Literal property access, so Next inlines the build-time value in the worker bundle.
+  return process.env.NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND === '1';
+}
+
+export function assertC1C3SpendAllowed(spend: 'withdrawal' | 'subscription'): void {
+  if (c1c3SpendAllowed()) return;
+  throw new Error(
+    `${C1C3_SPEND_DISABLED}: this ${spend} would use the older C1 + C3 proof pair, which this ` +
+      'site no longer builds: on the deployed program anyone who copies those public proofs ' +
+      'can land the spend to themselves first. Nothing was proved, funded or sent, and the ' +
+      'note stays in the pool.',
+  );
+}
+
+/**
+ * [close-v1, audit v1 F01/F06] Stable code of a pool tree the event history
+ * provably cannot rebuild (contract C2). See `prepareShieldInsert`.
+ */
+export const POOL_TREE_DIVERGED = 'POOL_TREE_DIVERGED';
+
+/** The spend-side refusal (see `poolTreeDiverged`). Names no root, leaf or count. */
+export function poolTreeDivergedError(spend: 'withdrawal' | 'subscription'): Error {
+  return new Error(
+    `${POOL_TREE_DIVERGED}: this ${spend} was stopped before any proof: the pool's complete leaf ` +
+      'history does not rebuild the on-chain Merkle root, so a leaf on chain is not where its ' +
+      'event says, and no path this client builds would be accepted. Nothing was proved, funded ' +
+      'or sent, and the note is untouched. Retrying will not help until the pool is repaired.',
+  );
+}
+
+/**
+ * ⛔ [close-v1, audit v1 F28, web mitigation of a founder item] A POOL WHOSE
+ * TREE HOLDS A NON-CANONICAL VALUE TAKES NO DEPOSIT FROM THIS CLIENT.
+ *
+ * The deployed program reads EVERY `filled_subtrees` entry, and the root,
+ * through `felt_from_bytes` (shield_denominated_v3.rs:47-58, 435-437, 453): the
+ * upper 24 bytes must be zero and the low limb below the Goldilocks modulus,
+ * or the insert fails InvalidMerkleRoot. Nothing stops a depositor from
+ * storing such a value (a raw commitment, or a hint), and from then on every
+ * deposit and v3 transfer into the pool is refused, for ever (audit v1 F28,
+ * litesvm; v4 withdrawals still land). The web root fold reads only the levels
+ * the next insertion turns right at, so a bad value at an unread level passed
+ * the pre-flight: the proof was generated, the float paid, and the insert
+ * refused on chain. This check mirrors the program's, over the raw bytes, and
+ * throws `POOL_DEPOSITS_BRICKED:` before any proof, payment or upload. It names
+ * no value and no level. Pinned by `closeV1L3PoolPreflight.test.ts`.
+ */
+export const POOL_DEPOSITS_BRICKED = 'POOL_DEPOSITS_BRICKED';
+
+function isCanonicalFelt32(bytes: Uint8Array): boolean {
+  for (let i = 8; i < 32; i++) if (bytes[i] !== 0) return false;
+  let v = 0n;
+  for (let b = 7; b >= 0; b--) v = (v << 8n) | BigInt(bytes[b]!);
+  return v < GOLDILOCKS_MODULUS;
+}
+
+/** MerkleTreeStateV3: disc(8) | pool(32) | root@40 | leaf_count@72 | depth@80 | vec len@81 | entries@85. */
+export function treeHoldsNonCanonicalValue(treeData: Uint8Array): boolean {
+  if (treeData.length < 85) return false;
+  if (!isCanonicalFelt32(treeData.subarray(40, 72))) return true;
+  const count = new DataView(treeData.buffer, treeData.byteOffset, treeData.byteLength).getUint32(81, true);
+  for (let i = 0; i < count; i++) {
+    const at = 85 + i * 32;
+    if (at + 32 > treeData.length) break;
+    if (!isCanonicalFelt32(treeData.subarray(at, at + 32))) return true;
+  }
+  return false;
+}
+
+function assertTreeValuesCanonical(treeData: Uint8Array): void {
+  if (!treeHoldsNonCanonicalValue(treeData)) return;
+  throw new Error(
+    `${POOL_DEPOSITS_BRICKED}: this pool's tree holds a value the program refuses to read, so ` +
+      'the program rejects every deposit into it until the pool is repaired. Nothing was proved, ' +
+      'funded or sent. Withdrawals are not affected.',
+  );
+}
+
+/**
  * Convert slot to epoch. Mirrors mobile slotToEpoch lines 721-723.
  */
 export function slotToEpoch(slot: number): bigint {
@@ -1599,6 +1699,9 @@ export async function prepareShieldInsert(
   const treeInfo = await connection.getAccountInfo(poolConfig.treePDA);
   if (!treeInfo) throw new Error(`Tree account not found: ${poolConfig.treePDA.toBase58()}`);
   const treeBuf = Buffer.from(treeInfo.data);
+  // [close-v1, audit v1 F28] Before anything else: a pool the program can no
+  // longer insert into is refused here, not after the proof and the payment.
+  assertTreeValuesCanonical(treeBuf);
   const { leafCount, subtrees } = parseFilledSubtrees(treeBuf);
 
   // On-chain current root (low 8 bytes LE of MerkleTreeStateV3.root @ offset 8+32).
@@ -1655,12 +1758,53 @@ export async function prepareShieldInsert(
   const oldRootDirect = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees).newRoot;
   const oldRootSliced = computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, subtrees.slice(1)).newRoot;
 
-  let chosen: typeof direct;
+  let chosen: typeof direct | null = null;
   if (oldRootDirect === onChainRoot) {
     chosen = direct;
   } else if (oldRootSliced === onChainRoot) {
     chosen = sliced;
   } else {
+    // [AUDIT v1 r2, fix lane 1, F1] NEITHER LAYOUT MATCHING IS NOT A DIVERGED
+    // TREE: IT IS WHAT ANY DEPOSITOR CAN LEAVE BEHIND.
+    //
+    // `filled_subtrees[1..10]` are the previous depositor's `new_subtrees`,
+    // stored unverified (merkle_tree_v3.rs:223-232; "bound by nothing",
+    // shield_denominated_v3.rs:184-187). An honest C6 proof with garbage there
+    // lands, the pool root stays honest, and this pre-flight used to refuse
+    // every later web deposit until some other client repaired the hints. The
+    // program's own note says what to do instead: rebuild from `LeafInserted`
+    // events. The rebuilt frontier is used ONLY if it folds to the on-chain
+    // root, so a wrong or short history still ends in the refusal below,
+    // before any proof is generated (`denominatedPoolLeafIntegrity.test.ts`,
+    // "[R2-F1]").
+    onProgress?.('Rebuilding the Merkle path from the pool history...');
+    const fromLeaves = await frontierFromPoolHistory(connection, poolConfig.poolPDA, leafCount);
+    if (
+      fromLeaves !== null &&
+      computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, fromLeaves).newRoot === onChainRoot
+    ) {
+      chosen = computeNewRootFromSubtreesV3(newLeaf, leafCount, fromLeaves);
+    } else if (fromLeaves !== null) {
+      // [close-v1, audit v1 F01/F06, web mitigation of a founder item] THE
+      // HISTORY IS WHOLE AND STILL DOES NOT FOLD TO THE ROOT: NOT LAG.
+      //
+      // `frontierFromPoolHistory` answers only when the history accounts for
+      // exactly `leafCount` leaves, none missing. A root those leaves cannot
+      // rebuild is a tree whose leaves are not where their events say: the
+      // C6 insert position is bound to nothing on chain, so a depositor can
+      // fill another empty slot while the event announces `leaf_count`. Every
+      // later rebuild is wrong for ever, so "retry shortly" was a lie; the
+      // stable code lets the page say what it is (close-v1 contract C2).
+      // No root and no position in the message, as below.
+      throw new Error(
+        `${POOL_TREE_DIVERGED}: Shield pre-flight failed: the pool's complete leaf history does not ` +
+          `rebuild the on-chain Merkle root, so a leaf on chain is not where its event says. ` +
+          `Nothing was proved, funded or sent. Deposits into this pool stay refused until the ` +
+          `pool is repaired; retrying will not help.`,
+      );
+    }
+  }
+  if (chosen === null) {
     throw new Error(
       // No root and no position in the message: it is rendered, and the leaf
       // is the one this deposit was about to take (`noteIdentifierTripwire.test.ts`).
@@ -1672,6 +1816,17 @@ export async function prepareShieldInsert(
     );
   }
   const { newRoot, updatedSubtrees, pathElements, pathIndices } = chosen;
+  // [AUDIT v1 r2, fix lane 1, F1] THE HINTS GO WHERE THE PROGRAM PUTS THEM.
+  //
+  // `updatedSubtrees[l]` is the frontier at level l. The program stores
+  // `new_subtrees[i]` at level i + 1 (merkle_tree_v3.rs:228, "i+1 because index
+  // 0 is the leaf itself") and only below INSERT_SUBTREE_DEPTH. Sending the
+  // array unshifted stored level i at i + 1 and dropped level 10 entirely, so
+  // an honest web-only history stopped matching either layout at leaf 1,024.
+  // Level l + 1 at index l, padded to `tree_depth` entries with the new root
+  // (level 15, which the program ignores); `new_subtrees.len() == tree_depth`
+  // is required (merkle_tree_v3.rs:198-201).
+  const hintsForProgram = [...updatedSubtrees.slice(1, MERKLE_DEPTH), newRoot];
 
   // 6. Generate C6 STARK proof.
   //
@@ -1748,7 +1903,7 @@ export async function prepareShieldInsert(
       newRoot,
       oldSubtreeRoot: c6PublicInputs[2],
       newSubtreeRoot: c6PublicInputs[3],
-      newSubtrees: updatedSubtrees,
+      newSubtrees: hintsForProgram,
       secret,
       nullifierPreimage,
       noteBlinding,
@@ -1869,12 +2024,19 @@ const ZERO_VALUE_V3 = 0n;
 // LEAF_INSERTION_EVENTS — mirror mobile lines 456-527
 // Same discriminators / offsets, ported byte-for-byte.
 // ---------------------------------------------------------------------------
+/** `Program <id> invoke [n]`, written by the runtime when a frame opens. */
+const LOG_INVOKE_RE = /^Program ([1-9A-HJ-NP-Za-km-z]{32,44}) invoke \[\d+\]$/;
+/** `Program <id> success` / `Program <id> failed: ...`, written when it closes. */
+const LOG_EXIT_RE = /^Program ([1-9A-HJ-NP-Za-km-z]{32,44}) (?:success|failed)/;
+
 const LEAF_INSERTION_EVENTS: ReadonlyArray<{
   name: string;
   disc: Uint8Array;
   commitmentOffset: number;
   leafIndexOffset: number;
   minLength: number;
+  /** Where the event names its pool, when it does. [AUDIT v1 r2, F3] It must be the walked pool. */
+  poolOffset?: number;
 }> = [
   // V3 universal LeafInserted event (merkle_tree_v3.rs:209)
   // Layout after 8-byte disc:
@@ -1890,6 +2052,7 @@ const LEAF_INSERTION_EVENTS: ReadonlyArray<{
     commitmentOffset: 48,
     leafIndexOffset: 40,
     minLength: 144,
+    poolOffset: 8,
   },
   // V2: MerkleRootChanged — post-hardening universal event
   {
@@ -2437,9 +2600,19 @@ export async function fetchPoolCommitments(
   }
   const oldestSignature = backfillFrom ?? (coldWalk ? walkedOldest : snapshot?.oldestSignature ?? null);
 
-  const out = new Map<string, OnChainCommitment>();
+  // [AUDIT v1 r2, fix lane 1, F2] FILED BY LEAF INDEX, NOT BY COMMITMENT.
+  //
+  // The program does not refuse a commitment that is already on the tree, and
+  // commitments are public, so anybody can insert one twice. Keyed by
+  // commitment, the second insert overwrote the first: a hole in every rebuilt
+  // tree (a root the pool never had), and on a warm walk the owner's note moved
+  // to the later index, where `recoverNotes` (leafIndex === counter) no longer
+  // finds it. The leaf index is what the chain orders by, so it is the key; the
+  // commitment map callers read is derived from it by `commitmentMapFromLeaves`.
+  const byIndex = new Map<number, OnChainCommitment>();
   for (const e of snapshot?.entries ?? []) {
-    out.set(e.commitment, {
+    if (byIndex.has(e.leafIndex)) continue;
+    byIndex.set(e.leafIndex, {
       commitment: BigInt(e.commitment),
       leafIndex: e.leafIndex,
       depositPayer: e.depositPayer,
@@ -2447,6 +2620,8 @@ export async function fetchPoolCommitments(
       signature: e.signature,
     });
   }
+  const zkShieldedId = ZK_SHIELDED_PROGRAM_ID.toBase58();
+  const poolBytes = poolPDA.toBytes();
   for (let i = 0; i < sigs.length; i += batchSize) {
     const batch = sigs.slice(i, i + batchSize);
     const txs = await Promise.all(
@@ -2490,9 +2665,33 @@ export async function fetchPoolCommitments(
       // `OnChainCommitment.depositSlot`.
       const depositSlot = typeof tx?.slot === 'number' ? tx.slot : null;
       let leafHere = false;
+      // [AUDIT v1 r2, fix lane 1, F3] WHICH PROGRAM LOGGED THE LINE.
+      //
+      // `getSignaturesForAddress(poolPDA)` lists every transaction that names
+      // the pool, read-only included, and any program can `sol_log_data` bytes
+      // that start with the LeafInserted discriminator. Only a line logged
+      // while zk_shielded is the running frame is its event. Frames come from
+      // the runtime's own `Program <id> invoke [n]` / `success` / `failed`
+      // lines, which a program cannot write (its `msg!` is prefixed
+      // `Program log:`, its data `Program data:`). A log with no frame line at
+      // all is not something a validator produces, so it carries no frame
+      // information to check and is read as before.
+      const framed = logs.some((l) => LOG_INVOKE_RE.test(l));
+      const frames: string[] = [];
       for (const log of logs) {
+        const invoke = LOG_INVOKE_RE.exec(log);
+        if (invoke) {
+          frames.push(invoke[1]!);
+          continue;
+        }
+        const exit = LOG_EXIT_RE.exec(log);
+        if (exit) {
+          if (frames.length > 0 && frames[frames.length - 1] === exit[1]) frames.pop();
+          continue;
+        }
         const m = log.match(/^Program data: (.+)$/);
         if (!m) continue;
+        if (framed && frames[frames.length - 1] !== zkShieldedId) continue;
         let data: Uint8Array;
         try {
           const b64 = m[1];
@@ -2507,6 +2706,13 @@ export async function fetchPoolCommitments(
         for (const layout of LEAF_INSERTION_EVENTS) {
           if (!bytesEqual(disc, layout.disc)) continue;
           if (data.length < layout.minLength) continue;
+          // [F3] The event names its pool: it must be THIS pool.
+          if (
+            layout.poolOffset !== undefined &&
+            !bytesEqual(data.subarray(layout.poolOffset, layout.poolOffset + 32), poolBytes)
+          ) {
+            continue;
+          }
           const rawIdx = readU64LE(data, layout.leafIndexOffset);
           if (rawIdx > BigInt(Number.MAX_SAFE_INTEGER)) continue;
           const leafIndex = Number(rawIdx);
@@ -2517,7 +2723,8 @@ export async function fetchPoolCommitments(
         }
         if (!decoded) continue;
         leafHere = true;
-        out.set(decoded.commitment.toString(), { ...decoded, depositPayer, depositSlot, signature });
+        // A fresh, frame-checked read of the chain wins over a cached row.
+        byIndex.set(decoded.leafIndex, { ...decoded, depositPayer, depositSlot, signature });
       }
       // Read, succeeded, no leaf: never worth a second read this session.
       if (!leafHere) rememberLeafless(signature);
@@ -2539,7 +2746,7 @@ export async function fetchPoolCommitments(
     // when. Same rule the KV twin already follows (`kvPoolHistory.ts`);
     // measured by `poolHistoryCache.test.ts`, "[SWEEP4-STORAGE] … files the
     // leaves in leaf order".
-    const entries: CachedCommitmentEntry[] = [...out.values()]
+    const entries: CachedCommitmentEntry[] = [...byIndex.values()]
       .map((c) => ({
         commitment: c.commitment.toString(),
         leafIndex: c.leafIndex,
@@ -2555,7 +2762,7 @@ export async function fetchPoolCommitments(
     const nextLeafIndex = await nextLeafIndexPromise;
     const haveIndex = new Set<number>();
     let topIndex = -1;
-    for (const c of out.values()) {
+    for (const c of byIndex.values()) {
       haveIndex.add(c.leafIndex);
       if (c.leafIndex > topIndex) topIndex = c.leafIndex;
     }
@@ -2708,6 +2915,31 @@ export async function fetchPoolCommitments(
   // Read once the re-read list and the given-up count are final, so a
   // signature given up on during this walk counts too (`PoolWalkReport`).
   options.onWalked?.({ unread: walkComplete ? 0 : retry.size + dropped });
+  return commitmentMapFromLeaves(byIndex.values());
+}
+
+/**
+ * [AUDIT v1 r2, fix lane 1, F2] The commitment map every caller reads, built
+ * from leaves filed by index.
+ *
+ * - `get(commitment)` returns the FIRST insertion of that commitment (lowest
+ *   leaf index). A repeat can only come after the original is public, so the
+ *   first one is the owner's, and seed recovery's `leafIndex === counter`
+ *   check keeps finding it.
+ * - Iteration yields EVERY leaf, repeats included: a later insertion of a
+ *   commitment already filed is kept under `<commitment>@<leafIndex>`. Every
+ *   caller that rebuilds the tree or counts what is on it iterates
+ *   `.values()` (`fetchPoolLeavesByIndex`, `leavesByIndexFromCommitments`,
+ *   the worker's `leavesFromCommitments`, the routes' `onTreeAt` /
+ *   `maxLeafOnTree`), so none of them sees a hole. No caller parses a key.
+ */
+export function commitmentMapFromLeaves(leaves: Iterable<OnChainCommitment>): Map<string, OnChainCommitment> {
+  const sorted = [...leaves].sort((a, b) => a.leafIndex - b.leafIndex);
+  const out = new Map<string, OnChainCommitment>();
+  for (const c of sorted) {
+    const key = c.commitment.toString();
+    out.set(out.has(key) ? `${key}@${c.leafIndex}` : key, c);
+  }
   return out;
 }
 
@@ -2764,6 +2996,86 @@ export async function fetchPoolLeavesByIndex(
   const missing: number[] = [];
   for (let i = 0; i <= maxIdx; i++) if (leavesByIndex[i] === ZERO_VALUE_V3) missing.push(i);
   return { leavesByIndex, scannedLeafCount: maxIdx + 1, missing, unread: report.unread };
+}
+
+/**
+ * [AUDIT v1 r2, fix lane 1, F1] The insertion frontier of a tree holding
+ * exactly `leafCount` leaves, rebuilt from the leaves themselves: entry l is
+ * the completed left sibling at level l wherever the next insertion turns
+ * right there (the only entries `computeNewRootFromSubtreesV3` reads), and the
+ * canonical empty-subtree root elsewhere.
+ *
+ * Pure. Returns `null` when `leaves` does not hold exactly `leafCount` leaves,
+ * because a short or long history cannot rebuild the tree the pool has.
+ */
+export function frontierFromLeavesV3(leaves: bigint[], leafCount: number): bigint[] | null {
+  if (!Number.isSafeInteger(leafCount) || leafCount < 0 || leafCount > 1 << MERKLE_DEPTH) return null;
+  if (leaves.length !== leafCount) return null;
+  const zeros = computeZeroHashesV3();
+  const frontier = zeros.slice(0, MERKLE_DEPTH);
+  let nodes = leaves.slice();
+  for (let level = 0; level < MERKLE_DEPTH; level++) {
+    const pos = leafCount >> level;
+    if (pos & 1) frontier[level] = nodes[pos - 1]!;
+    const next: bigint[] = [];
+    for (let i = 0; i < nodes.length; i += 2) {
+      next.push(poseidonHash2(nodes[i]!, i + 1 < nodes.length ? nodes[i + 1]! : zeros[level]!));
+    }
+    nodes = next;
+  }
+  return frontier;
+}
+
+/**
+ * [close-v1, audit v1 F01/F06] True only when the history DECIDES that the tree
+ * diverged: the tree account names this pool, every leaf below its
+ * `leaf_count` is in `leavesByIndex` with none missing, and those leaves do not
+ * fold to the root stored beside that count. A short history (the RPC behind),
+ * an unreadable or foreign account, or any read error answers false: the
+ * caller's own refusal ("retry") stands. One account read.
+ */
+export async function poolTreeDiverged(
+  connection: Connection,
+  poolConfig: PoolConfig,
+  leavesByIndex: bigint[],
+  missing: number[],
+): Promise<boolean> {
+  try {
+    const info = await connection.getAccountInfo(poolConfig.treePDA, 'confirmed');
+    if (!info) return false;
+    const data = new Uint8Array(info.data);
+    if (data.length < 85 || !bytesEqual(data.subarray(8, 40), poolConfig.poolPDA.toBytes())) return false;
+    if (treeHoldsNonCanonicalValue(data)) return false;
+    const leafCount = Number(new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(72, true));
+    if (!Number.isSafeInteger(leafCount) || leafCount < 1 || leavesByIndex.length < leafCount) return false;
+    if (missing.some((i) => i < leafCount)) return false;
+    const frontier = frontierFromLeavesV3(leavesByIndex.slice(0, leafCount), leafCount);
+    if (!frontier) return false;
+    let onChainRoot = 0n;
+    for (let b = 7; b >= 0; b--) onChainRoot = (onChainRoot << 8n) | BigInt(data[40 + b]!);
+    return computeNewRootFromSubtreesV3(ZERO_VALUE_V3, leafCount, frontier).newRoot !== onChainRoot;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The frontier from the pool's leaf history, or `null` when the history read
+ * does not account for every one of the `leafCount` leaves the tree says it
+ * holds. The caller still checks the result against the on-chain root.
+ */
+async function frontierFromPoolHistory(
+  connection: Connection,
+  poolPDA: PublicKey,
+  leafCount: number,
+): Promise<bigint[] | null> {
+  try {
+    const { leavesByIndex, missing } = await fetchPoolLeavesByIndex(connection, poolPDA);
+    if (missing.length > 0 || leavesByIndex.length !== leafCount) return null;
+    return frontierFromLeavesV3(leavesByIndex, leafCount);
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2998,6 +3310,7 @@ export async function prepareUnshield(
   connection: Connection,
   onProgress?: (step: string) => void,
 ): Promise<PrepareUnshieldResult> {
+  assertC1C3SpendAllowed('withdrawal'); // audit v1 F05, see the guard
   // Import starkProver lazily to avoid circular module issues.
   const { starkProver: prover } = await import('./starkProver');
 
@@ -3193,6 +3506,7 @@ export async function unshieldDenominatedStarkV3(
   connection: Connection,
   onProgress?: (step: string) => void,
 ): Promise<string> {
+  assertC1C3SpendAllowed('withdrawal'); // audit v1 F05: before any upload
   const {
     c1ProofResult, c3ProofResult, merkleRoot, nullifierGoldilocks, starkCommitment,
     // [C3-D12] The three values the on-chain walk needs. See
@@ -3769,6 +4083,12 @@ export async function prepareUnshieldV4(
           // HistoryIncompleteError, never with a v3 needle"). HEAD rethrew the
           // builder's error here, which carries none either.
           if (heldBack || !merkleResult) throw new HistoryIncompleteError();
+          // [close-v1, audit v1 F01/F06] Not lag when the history accounts for
+          // every leaf of the tree and still misses its root: a stable code, no
+          // `PRE-FLIGHT FAIL` needle, so no route to the C1 + C3 pair either.
+          if (await poolTreeDiverged(connection, poolConfig, retry.leavesByIndex, retry.missing)) {
+            throw poolTreeDivergedError('withdrawal');
+          }
           throw new Error(
             `PRE-FLIGHT FAIL: the rebuilt Merkle root is not among the pool's known roots ` +
             `(current + ${parsed.historicalRoots.length} historical). Aborting before proof rent is spent. ` +
@@ -4457,6 +4777,14 @@ export function shareableNoteToReceipt(note: ShareableNote): ShieldReceipt {
   if (recomputed !== commitment) {
     throw new Error('Invalid note: commitment does not match its secrets.');
   }
+  // [AUDIT v1 r2, fix lane 1, F4] The note must be spendable in the pool it
+  // names: its commitment binds a token mint, and one minted for another token
+  // is not money in this pool whatever its label says.
+  if (tokenMint !== pubkeyToField(pool.tokenMint)) {
+    throw new Error('Invalid note: its token mint is not the mint of the pool it names.');
+  }
+  // ⚠️ NOT CHECKED HERE: that the commitment sits at `leafIndex` on the tree.
+  // That needs a chain read, which the caller (`handlePoolImportNote`) owns.
 
   return {
     secret,
@@ -4467,8 +4795,10 @@ export function shareableNoteToReceipt(note: ShareableNote): ShieldReceipt {
     leafIndex: note.leafIndex,
     denomination: pool.denominationAtomic,
     pool: note.pool,
-    token: note.token,
-    denominationHuman: note.denominationHuman,
+    // [F4] From the pool table, never from the sender's JSON: the label is
+    // what the screen shows as the amount received.
+    token: pool.token,
+    denominationHuman: pool.denomination,
     shieldedAt: note.shieldedAt ?? Date.now(),
     merkleRoot: note.merkle_root !== undefined ? BigInt(note.merkle_root) : undefined,
   };

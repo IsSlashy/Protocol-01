@@ -23,7 +23,7 @@
  * either the table or the encoder fails.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Keypair, PublicKey, SystemProgram, type Connection } from '@solana/web3.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -266,6 +266,10 @@ describe('subscribe_private_stark instruction layout', () => {
 // ---------------------------------------------------------------------------
 
 describe('prepareSubscribeJob pricing', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   const ephemeral = Keypair.generate();
   const poolConfig = { poolPDA: POOL, denomination: 1 } as never;
   const receipt = { leafIndex: 7 } as never;
@@ -277,6 +281,10 @@ describe('prepareSubscribeJob pricing', () => {
   let conn: Connection;
 
   beforeEach(() => {
+    // close-v1 (audit v1 F05): the C1 + C3 route is built only on an explicit
+    // opt-in now (default off, `closeV1L3C1C3SpendDisabled.test.ts`). This block
+    // prices that route, so it opts in.
+    vi.stubEnv('NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND', '1');
     rentFor = [];
     conn = {
       getMinimumBalanceForRentExemption: async (n: number) => {

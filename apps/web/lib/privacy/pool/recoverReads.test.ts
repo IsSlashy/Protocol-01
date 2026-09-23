@@ -515,24 +515,34 @@ describe('a spend attempt is marked before its ephemeral is funded', () => {
   });
 
   it('exchange: a funding that failed after sending leaves a key the default Recover reads', async () => {
-    stubPrepare('poolUnshieldPrepare', FAR);
-    snapshotAtFunding();
-    await expect(
-      shieldClient.exchangeNoteForIssued({
-        meta: META,
-        token: 'SOL',
-        denomination: DENOM,
-        leafIndex: FAR,
-        pool: POOL_58,
-        owner: OWNER,
-        connection: fakeMainConnection,
-        signOne,
-        claimRetry: { attempts: 1, delayMs: 0 },
-      }),
-    ).rejects.toThrow(/confirmation timed out/);
-    const seen = await recoverFromFundingMoment();
-    expect(seen.attempted).toEqual(probedToday(LEGACY_SEEDS[0]!, FAR));
-    expect(seen.untouched).toEqual([]);
+    // close-v1 (audit v1 F70, F59): the exchange is switched off by default
+    // and refuses before any funding (pinned in closeV1L2Client.test.ts). This
+    // case is about what a funding that DID start leaves for Recover, which is
+    // what the exchange does wherever NEXT_PUBLIC_P01_ALLOW_NOTE_EXCHANGE is
+    // set, so it opts in for its own duration.
+    vi.stubEnv('NEXT_PUBLIC_P01_ALLOW_NOTE_EXCHANGE', '1');
+    try {
+      stubPrepare('poolUnshieldPrepare', FAR);
+      snapshotAtFunding();
+      await expect(
+        shieldClient.exchangeNoteForIssued({
+          meta: META,
+          token: 'SOL',
+          denomination: DENOM,
+          leafIndex: FAR,
+          pool: POOL_58,
+          owner: OWNER,
+          connection: fakeMainConnection,
+          signOne,
+          claimRetry: { attempts: 1, delayMs: 0 },
+        }),
+      ).rejects.toThrow(/confirmation timed out/);
+      const seen = await recoverFromFundingMoment();
+      expect(seen.attempted).toEqual(probedToday(LEGACY_SEEDS[0]!, FAR));
+      expect(seen.untouched).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('relayed withdrawal: it funds nothing, so it marks nothing and its key stays unnamed', async () => {

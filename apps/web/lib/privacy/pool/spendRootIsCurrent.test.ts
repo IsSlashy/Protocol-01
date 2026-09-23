@@ -1067,6 +1067,12 @@ describe('a hole in the readable history refuses instead of naming an older root
     // same line, appending up to five missing leaf indices. It is still reached
     // (the v3 route, V3-1), so the same rule applies. In this world the rebuilt
     // root is unknown on both reads, so it refuses before any proof.
+    //
+    // close-v1 (audit v1 F05): the C1 + C3 spend is now refused first unless
+    // NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND is '1' (pinned in
+    // closeV1L3C1C3SpendDisabled.test.ts). Where it is set, this walk still
+    // runs, so the rule on its warning line still applies: opt in here.
+    vi.stubEnv('NEXT_PUBLIC_P01_ALLOW_C1C3_SPEND', '1');
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const outcome = await prepareUnshield(
@@ -1090,6 +1096,7 @@ describe('a hole in the readable history refuses instead of naming an older root
       expect(h.generateSpendProof).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
+      vi.unstubAllEnvs();
     }
   });
 

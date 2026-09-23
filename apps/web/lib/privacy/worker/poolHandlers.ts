@@ -81,6 +81,7 @@ import {
   executeShield,
   prepareShield,
   prepareContribution,
+  deriveShieldEphemeral,
   type PreparedContribution,
   executeContribution,
   readTreeLeafCount,
@@ -112,7 +113,7 @@ import {
   matchLicense,
   type LicenseTagListing,
 } from '../licenseTagMatch';
-import { claimChallenge } from '../claimChallenge';
+import { claimChallenge, relayEphemeralChallenge } from '../claimChallenge';
 import { noteTag, type NoteTag } from '../pool/noteTag';
 
 // ---------------------------------------------------------------------------
@@ -941,6 +942,8 @@ export interface StoredPendingWire {
   kind?: 'contribution' | 'exchange';
   txSig?: string;
   paymentSignature?: string;
+  /** [close-v1 F57] The height the payment was signed to be valid until (`pendingContribution.ts`). */
+  paymentValidUntil?: number;
   claimProof?: string;
   claimCode?: string;
 }
@@ -1128,6 +1131,7 @@ export type PoolRequest =
   | PoolShieldPrepareRequest
   | PoolContributePrepareRequest
   | PoolContributeExecuteRequest
+  | PoolRelayEphemeralProofRequest
   | PoolShieldExecuteRequest
   | PoolScanRequest
   | PoolSetPassphraseRequest
@@ -1170,6 +1174,35 @@ export interface PoolContributePrepareResponse {
   denomination: number;
   /** The reserved index, echoed so the caller can confirm against it. */
   leafIndex: number;
+}
+
+/**
+ * [close-v1 F11] Prove, for `/api/claim-for-payment`, that this identity holds
+ * the deposit key a relayed contribution's payment funded.
+ *
+ * The fallback of a relayed contribution now mints only once the float's
+ * lamports are back from that key, and it must be told WHICH key: the relay no
+ * longer stores the join in clear. The key is `deriveShieldEphemeral(active
+ * seed, pool, leafIndex)`, the same derivation `prepareContribution` used, so
+ * it can be re-derived after a reload. It signs `relayEphemeralChallenge`,
+ * which is bound to the one payment and says nothing else; the secret never
+ * leaves this worker.
+ */
+export interface PoolRelayEphemeralProofRequest {
+  kind: 'poolRelayEphemeralProof';
+  meta: string;
+  token: PoolToken;
+  denomination: number;
+  leafIndex: number;
+  paymentSignature: string;
+}
+
+export interface PoolRelayEphemeralProofResponse {
+  kind: 'poolRelayEphemeralProof';
+  /** Base58: the deposit key the relay was asked to fund. */
+  ephemeral: string;
+  /** Base64 of its signature over `relayEphemeralChallenge(paymentSignature)`. */
+  proof: string;
 }
 
 export interface PoolContributeExecuteResponse {
@@ -1489,6 +1522,7 @@ export type PoolResponse =
   | PoolShieldPrepareResponse
   | PoolContributePrepareResponse
   | PoolContributeExecuteResponse
+  | PoolRelayEphemeralProofResponse
   | PoolShieldExecuteResponse
   | PoolScanResponse
   | PoolSetPassphraseResponse
@@ -2163,6 +2197,31 @@ async function handlePoolContributeExecute(
   }
 }
 
+/** See `PoolRelayEphemeralProofRequest`. */
+function handlePoolRelayEphemeralProof(
+  req: PoolRelayEphemeralProofRequest,
+): PoolRelayEphemeralProofResponse {
+  const pool = requirePool(req.token, req.denomination);
+  if (!Number.isInteger(req.leafIndex) || req.leafIndex < 0) {
+    throw new Error('A contribution names a leaf index, and this one is not.');
+  }
+  if (typeof req.paymentSignature !== 'string' || !req.paymentSignature) {
+    throw new Error('A relayed contribution proof is bound to a payment, and none was named.');
+  }
+  const ephemeral = deriveShieldEphemeral(requireActiveSeed(req.meta), pool.poolPDA, req.leafIndex);
+  const sig = nacl.sign.detached(
+    utf8ToBytes(relayEphemeralChallenge(req.paymentSignature)),
+    ephemeral.secretKey,
+  );
+  let bin = '';
+  for (let i = 0; i < sig.length; i += 1) bin += String.fromCharCode(sig[i]!);
+  return {
+    kind: 'poolRelayEphemeralProof',
+    ephemeral: ephemeral.publicKey.toBase58(),
+    proof: btoa(bin),
+  };
+}
+
 /**
  * Find the caller's note at `leafIndex`, under whichever seed derivation owns
  * it, and hand back everything a spend needs.
@@ -2263,9 +2322,8 @@ export async function locateOwnedNote(
   //
   // Cleared in the caller's `finally` below instead, so no path leaves the
   // interval running.
-  let commitments: Awaited<ReturnType<typeof fetchPoolCommitments>>;
   const walkReport: { unread?: number } = {};
-  commitments = await fetchPoolCommitments(conn, pool.poolPDA, {
+  const commitments = await fetchPoolCommitments(conn, pool.poolPDA, {
     onWalked: (report) => {
       walkReport.unread = report.unread;
     },
@@ -3319,6 +3377,40 @@ async function handlePoolImportNote(
     );
   }
 
+  /**
+   * ⛔ [close-v1 F35] A NOTE IS FILED AS MONEY ONLY IF THE TREE HOLDS IT, AT ITS LEAF.
+   *
+   * The integrity guard above proves the sender's secrets open the commitment
+   * the note names; it says nothing about whether that commitment was ever
+   * deposited. A note that was never deposited (or names a leaf it does not
+   * sit at) used to be filed as unspent money and fail only at the spend,
+   * after the buyer had acted on it (audit v1, `r2-client/probes/
+   * importnote.probe.test.ts`). The read is pool-wide, like the nullifier read
+   * above, so the RPC is not told which note is being imported. It fails
+   * CLOSED, unlike the nullifier read: the sealed note stays with the caller
+   * (and an issued note's reply stays with the issuer), so a retry loses
+   * nothing, while a note filed unchecked would be spendable-looking money that
+   * may not exist.
+   */
+  let onTree: OnChainCommitment | undefined;
+  try {
+    onProgress?.("Checking the note against the pool's tree...");
+    onTree = (await fetchPoolCommitments(requireConnection(), pool.poolPDA)).get(
+      receipt.commitment.toString(),
+    );
+  } catch {
+    throw new Error(
+      "The pool's history could not be read, so this note could not be checked against the " +
+        'tree. Nothing was imported; retry in a minute.',
+    );
+  }
+  if (!onTree || onTree.leafIndex !== receipt.leafIndex) {
+    throw new Error(
+      "IMPORT_NOT_ON_TREE: This note is not on the pool's tree at the place it names, so it " +
+        'holds no money this pool will pay out. Nothing was imported; ask the sender to check it.',
+    );
+  }
+
   // Same JSON shape `poolShieldExecute` writes, so every consumer of the store
   // treats this note like one of its own. The wire key `deposit_epoch` and the
   // `merklePath` sub-shape are both load-bearing for `extractStoredPath`.
@@ -4290,6 +4382,11 @@ function handlePoolStoreLabel(req: PoolStoreLabelRequest): PoolStoreLabelRespons
  * envelope + whitelist below are what keep this from being a decryption
  * oracle over the note store, and both checks are load-bearing.
  */
+/** A block height as a sealed record may carry one: a non-negative safe integer. */
+function isBlockHeight(h: unknown): h is number {
+  return typeof h === 'number' && Number.isSafeInteger(h) && h >= 0;
+}
+
 function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResponse {
   const candidates = seedsInSearchOrder(requireSeeds(req.meta));
   const payouts: StoredPayoutRecord[] = [];
@@ -4301,6 +4398,7 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
   const pendingDeltas: Array<{
     id: string;
     paymentSignature?: string;
+    paymentValidUntil?: number;
     claimCode?: string;
     at?: number;
   }> = [];
@@ -4419,6 +4517,7 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
         const value = rec[field];
         if (typeof value === 'string' && value) base[field] = value;
       }
+      if (isBlockHeight(rec.paymentValidUntil)) base.paymentValidUntil = rec.paymentValidUntil;
       pendingById.set(rec.id, base);
     } else if (
       rec.kind === 'relayReceipt' &&
@@ -4442,11 +4541,19 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
     } else if (rec.kind === 'pendingDelta' && typeof rec.id === 'string') {
       // An append-only update: what `attachPayment` / `attachClaim` learned
       // after the base was sealed. Applied below, in the order sent.
-      const delta: { id: string; paymentSignature?: string; claimCode?: string; at?: number } = {
+      const delta: {
+        id: string;
+        paymentSignature?: string;
+        paymentValidUntil?: number;
+        claimCode?: string;
+        at?: number;
+      } = {
         id: rec.id,
       };
       if (typeof rec.paymentSignature === 'string' && rec.paymentSignature) {
         delta.paymentSignature = rec.paymentSignature;
+        // The height travels with the signature it describes, never alone.
+        if (isBlockHeight(rec.paymentValidUntil)) delta.paymentValidUntil = rec.paymentValidUntil;
       }
       if (typeof rec.claimCode === 'string' && rec.claimCode) delta.claimCode = rec.claimCode;
       // The reservation time a row written before the storage sweep carried in
@@ -4465,7 +4572,11 @@ function handlePoolOpenRecords(req: PoolOpenRecordsRequest): PoolOpenRecordsResp
       skipped += 1;
       continue;
     }
-    if (delta.paymentSignature) base.paymentSignature = delta.paymentSignature;
+    if (delta.paymentSignature) {
+      base.paymentSignature = delta.paymentSignature;
+      if (delta.paymentValidUntil !== undefined) base.paymentValidUntil = delta.paymentValidUntil;
+      else delete base.paymentValidUntil;
+    }
     if (delta.claimCode) base.claimCode = delta.claimCode;
     if (delta.at !== undefined) base.at = delta.at;
   }
@@ -4516,6 +4627,9 @@ export async function handlePoolRequest<R extends PoolRequest>(
       break;
     case 'poolContributeExecute':
       res = await handlePoolContributeExecute(req, onProgress);
+      break;
+    case 'poolRelayEphemeralProof':
+      res = handlePoolRelayEphemeralProof(req);
       break;
     case 'poolExportNote':
       res = await handlePoolExportNote(req, onProgress);

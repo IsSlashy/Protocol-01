@@ -235,7 +235,9 @@ export type RelayRefusal =
   | 'payment-outstanding'
   | 'no-receipt-store'
   | 'float-too-low'
-  | 'relay-budget-spent';
+  | 'relay-budget-spent'
+  /** [close-v1 F56] The session has no message signer; asked before the payment. */
+  | 'no-message-signer';
 
 /**
  * Thrown when the relay cannot serve this particular job.
@@ -817,6 +819,28 @@ export interface JobFundingRequest {
    */
   signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
   /**
+   * [close-v1 F57] Called with the till payment's signature the moment it is
+   * known: right after `sendRawTransaction` returns (before the confirmation),
+   * or when an outstanding receipt is presented again. A contribution attaches
+   * it to its pending record here, so a relay that fails AFTER the payment
+   * leaves a record that names the payment, and the next click collects what
+   * it bought instead of reserving another leaf and paying again (audit v1,
+   * `r3-client/probes/relayReceiptOrphan.probe.test.ts`). Must not throw.
+   *
+   * `validUntil` is the `lastValidBlockHeight` the payment was signed under,
+   * when this call sent it: past that height a payment the chain does not know
+   * can never land (`paymentOutcome`). Absent for a receipt presented again.
+   */
+  onPaid?: (paymentSignature: string, validUntil?: number) => void;
+  /**
+   * [close-v1 F57, verifier round 1] Called when the payment `onPaid` named is
+   * known to have paid NOTHING: it landed and failed, or it expired without
+   * landing. The caller takes it back off its record; left there, the record
+   * names a payment that bought nothing and every later contribution is
+   * refused with PAYMENT_OUTSTANDING for good. Must not throw.
+   */
+  onPaymentVoid?: (paymentSignature: string) => void;
+  /**
    * The identity whose sealed stores this job belongs to.
    *
    * [SWEEP4 round 1, confirmed item 5] REQUIRED on the relayed path: the
@@ -1012,6 +1036,20 @@ export async function fundEphemeralForJob(
     // could refuse must refuse first. The order below is: is the relay
     // reachable at all, is this job priceable, what are the terms, does this job
     // fit them, and only then ask the wallet.
+    // ⛔ [close-v1 F56] THE MESSAGE SIGNER IS ASKED FOR BEFORE ANY MONEY MOVES.
+    // The relay will not move the float without the payer's signature over the
+    // claim challenge, and this check used to sit AFTER the till payment: a
+    // session without a signer (the "deposit my own note" path never forwarded
+    // one) paid about 1.013 SOL and was then refused, every click
+    // (`closeV1L2Client.test.ts`, F56).
+    if (!req.signMessage) {
+      throw new RelayCannotServeJobError(
+        'no-message-signer',
+        'This session cannot sign a message, so the deployment could not be shown who paid. ' +
+          'Nothing was signed and nothing was paid. Reconnect the wallet and try again.',
+      );
+    }
+    const signMessage = req.signMessage;
     if (!funderConfigured()) {
       // The stale-bundle case, which this repository has already been bitten by:
       // `NEXT_PUBLIC_P01_FUNDER_TICKET` is inlined at BUILD time, so a
@@ -1202,6 +1240,7 @@ export async function fundEphemeralForJob(
       // receipt again rather than making a second one.
       req.onProgress?.('Resuming: your payment already went through, asking the deployment again...');
       paySig = prior.signature;
+      req.onPaid?.(paySig);
     } else {
       // ⛔ FETCHED BEFORE THE WALLET IS ASKED FOR ANYTHING. Sealing the receipt
       // needs only this identity's PUBLIC address, so the write below stays
@@ -1304,28 +1343,64 @@ export async function fundEphemeralForJob(
         createdAt: new Date().toISOString(),
       });
       paySig = sent;
-
-      const payConf = await connection.confirmTransaction(
-        { signature: paySig, blockhash, lastValidBlockHeight },
-        'confirmed',
-      );
-      if (payConf.value.err) {
-        // Landed and failed: nothing moved, so the receipt is worthless and
-        // keeping it would block the retry that should happen.
+      // [close-v1 F57] Before the confirmation, for the same reason as the
+      // receipt above: the payment may land whether or not this process hears.
+      try {
+        req.onPaid?.(paySig, lastValidBlockHeight);
+      } catch {
+        /* the receipt above still holds the payment */
+      }
+      /** Nothing was paid: the receipt and the caller's record both let go of it. */
+      const paidNothing = () => {
         forgetRelayPayment(receiptId);
-        throw new Error(`Payment to the deployment failed: ${JSON.stringify(payConf.value.err)}`);
+        try {
+          req.onPaymentVoid?.(paySig);
+        } catch {
+          /* the record then keeps the payment, and the next click checks the chain */
+        }
+      };
+
+      let payErr: unknown = null;
+      try {
+        const payConf = await connection.confirmTransaction(
+          { signature: paySig, blockhash, lastValidBlockHeight },
+          'confirmed',
+        );
+        payErr = payConf.value.err;
+      } catch (e) {
+        // ⚠️ AN EXPIRY IS NOT A VERDICT BY ITSELF. web3.js throws it once the
+        // block height passes `lastValidBlockHeight`, racing a confirmation it
+        // may simply not have heard yet. So the chain is asked: a payment it
+        // knows is taken as it stands, one it does not know past that height
+        // can never land. Any other failure keeps the receipt and the record.
+        if (!isBlockheightExpiry(e)) throw e;
+        const outcome = await paymentOutcome(connection, paySig, lastValidBlockHeight).catch(
+          () => 'unknown' as const,
+        );
+        if (outcome === 'unknown') throw e;
+        if (outcome === 'void') {
+          paidNothing();
+          throw new Error(
+            'PAYMENT_EXPIRED: The payment to the deployment expired before it landed, so ' +
+              'nothing was paid. ' +
+              'Try again.',
+          );
+        }
+        // 'landed': the payment went through; carry on as if confirmed.
+      }
+      if (payErr) {
+        // Landed and failed: nothing moved, so the receipt is worthless and
+        // keeping it would block the retry that should happen. The caller's
+        // record lets go of it too (verifier round 1,
+        // `verify-r1/probe-failed-payment.test.ts`).
+        paidNothing();
+        throw new Error(`Payment to the deployment failed: ${JSON.stringify(payErr)}`);
       }
     }
 
     req.onProgress?.('The deployment is funding the deposit...');
-    if (!req.signMessage) {
-      throw new Error(
-        'This session cannot sign a message, so the deployment cannot be shown who paid. ' +
-          'Reconnect the wallet and try again.',
-      );
-    }
     const relayProof = Buffer.from(
-      await req.signMessage(new TextEncoder().encode(claimChallenge(paySig))),
+      await signMessage(new TextEncoder().encode(claimChallenge(paySig))),
     ).toString('base64');
     const relayed = await relayToBuyer(
       paySig,
@@ -1455,4 +1530,40 @@ export async function fundEphemeralForJob(
     operatorFeeLamports,
     ...(paymentSignature !== undefined ? { paymentSignature } : {}),
   };
+}
+
+/** `TransactionExpiredBlockheightExceededError`, by name or by its words. */
+function isBlockheightExpiry(e: unknown): boolean {
+  const err = e as { name?: unknown; message?: unknown } | null;
+  return (
+    err?.name === 'TransactionExpiredBlockheightExceededError' ||
+    /block height exceeded/i.test(String(err?.message ?? ''))
+  );
+}
+
+/**
+ * [close-v1 F57, verifier round 1] What a payment the client sent became.
+ *
+ *   'landed'   the chain knows it and it succeeded: money moved.
+ *   'void'     it paid nothing: the chain knows it and it FAILED, or the chain
+ *              does not know it and the confirmed block height is past the
+ *              height it was signed to be valid until, so it can never land.
+ *   'unknown'  anything else, including a chain that cannot be read. The
+ *              caller must treat it as money that may have moved.
+ *
+ * Throws only what the RPC throws; callers treat a throw as 'unknown'.
+ */
+export async function paymentOutcome(
+  connection: Pick<Connection, 'getSignatureStatuses' | 'getBlockHeight'>,
+  signature: string,
+  validUntil?: number,
+): Promise<'landed' | 'void' | 'unknown'> {
+  const { value } = await connection.getSignatureStatuses([signature], {
+    searchTransactionHistory: true,
+  });
+  const status = value?.[0];
+  if (status) return status.err ? 'void' : 'landed';
+  if (typeof validUntil !== 'number' || !Number.isFinite(validUntil)) return 'unknown';
+  const height = await connection.getBlockHeight('confirmed');
+  return height > validUntil ? 'void' : 'unknown';
 }

@@ -1478,11 +1478,13 @@ describe('the callers of this route', () => {
 
   /** Every TEST file under apps/web that drives this route over fetch. */
   const CONSUMERS = [
+    'lib/privacy/pool/closeV1L2Client.test.ts',
     'lib/privacy/pool/contributeFallback.test.ts',
     'lib/privacy/pool/exchangeNote.test.ts',
     'lib/privacy/pool/liveBuyIssuedNote.test.ts',
     'lib/privacy/pool/liveIssuedNoteSubscribeV4.test.ts',
     'lib/privacy/pool/liveNoteInExchange.test.ts',
+    'lib/privacy/pool/storageRefusal.test.ts',
   ];
 
   /** Fetches this route, or routes a stubbed fetch of it. */

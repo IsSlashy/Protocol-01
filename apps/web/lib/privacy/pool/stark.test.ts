@@ -959,3 +959,201 @@ describe('⛔ the client phase-2 range IS the deployed program range', () => {
     ).toEqual(accepted);
   }, 60_000);
 });
+
+// ---------------------------------------------------------------------------
+// [AUDIT-V1 R1 fix4 2026-09-22] Buffer squatting: a third party must not be
+// able to block a key's proof uploads by occupying the derived addresses.
+//
+// Before the fix, `deriveProofBufferKeypair` was the ONLY source of addresses:
+// sha256(domain | authority | circuit | attempt), all public. A 0-byte account
+// at attempt 0 (a plain transfer, or a createAccount signed with the public
+// key and owned by the verifier) parsed as "absent" (< 83 bytes), so the client
+// sent createAccount there, got "already in use", and rethrew: the whole shield
+// / withdrawal / subscribe flow aborted and never looked at attempt 1. Filling
+// the four public attempts blocked even the step-past that did exist.
+// ---------------------------------------------------------------------------
+
+describe('[AUDIT-V1 R1] a squatter cannot block the proof-buffer allocation', () => {
+  const BIG = 30_000;
+  const BIG_BYTES = Uint8Array.from({ length: BIG }, (_, i) => (i * 13) % 241);
+  const bigProof = (): GenericStarkProof => ({
+    proofBytes: BIG_BYTES,
+    circuitId: CIRCUIT_MERKLE_UPDATE,
+    publicInputs: [5n, 6n],
+    proofSize: BIG,
+  });
+
+  interface Occupant {
+    owner: PublicKey;
+    data: Uint8Array;
+    lamports: number;
+  }
+
+  /**
+   * FakeConn that tells addresses apart: occupants sit at fixed addresses, the
+   * one account `createAccount` makes is the FakeConn buffer, every other
+   * address is empty. A `createAccount` to an occupied address fails the way
+   * the system program fails it at preflight (SystemError::AccountAlreadyInUse
+   * = custom error 0, with the "already in use" log line).
+   */
+  class SquatConn extends FakeConn {
+    occupants = new Map<string, Occupant>();
+    created: PublicKey | null = null;
+    createTargets: string[] = [];
+    /** Addresses that read as empty but are taken by the time createAccount lands (a lost race). */
+    raced = new Set<string>();
+
+    override async getAccountInfo(pk: PublicKey) {
+      if (pk.equals(TX_V1_FEATURE_GATE)) return super.getAccountInfo(pk);
+      const occ = this.occupants.get(pk.toBase58());
+      if (occ) return { data: Buffer.from(occ.data), owner: occ.owner, lamports: occ.lamports };
+      if (this.created && pk.equals(this.created)) return super.getAccountInfo(pk);
+      return null;
+    }
+
+    override async sendRawTransaction(raw: Buffer | Uint8Array, opts?: unknown) {
+      for (const ix of decodeInstructions(raw)) {
+        if (ix.programId.equals(SystemProgram.programId) && ix.data.readUInt32LE(0) === 0) {
+          const target = ix.keys[1].pubkey.toBase58();
+          this.createTargets.push(target);
+          if (this.occupants.has(target) || this.raced.has(target)) {
+            throw new Error(
+              'Simulation failed. \nMessage: Transaction simulation failed: Error processing Instruction 0: custom program error: 0x0. \n' +
+                'Logs: \n[\n  "Program 11111111111111111111111111111111 invoke [1]",\n' +
+                `  "Create Account: account Address { address: ${target}, base: None } already in use",\n` +
+                '  "Program 11111111111111111111111111111111 failed: custom program error: 0x0"\n].',
+            );
+          }
+          this.created = ix.keys[1].pubkey;
+          this.exists = false;
+        }
+      }
+      return super.sendRawTransaction(raw, opts);
+    }
+  }
+
+  const publicAddrs = (auth: PublicKey, cid: number, n = 256) =>
+    new Set(Array.from({ length: n }, (_, a) => deriveProofBufferKeypair(auth, cid, a).publicKey.toBase58()));
+
+  const zeroByteVerifierOwned = (): Occupant => ({ owner: STARK_VERIFIER_PROGRAM_ID, data: new Uint8Array(0), lamports: 890_880 });
+  const zeroByteSystemOwned = (): Occupant => ({ owner: SystemProgram.programId, data: new Uint8Array(0), lamports: 890_880 });
+  const foreignHeader = (): Occupant => {
+    const data = new Uint8Array(PROOF_DATA_OFFSET);
+    data.set(Keypair.generate().publicKey.toBytes(), 8);
+    return { owner: STARK_VERIFIER_PROGRAM_ID, data, lamports: 1_500_000 };
+  };
+
+  it('steps past a 0-byte account the verifier owns at attempt 0 (createAccount signed with the public key)', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner();
+    const a0 = deriveProofBufferKeypair(signer.publicKey, CIRCUIT_MERKLE_UPDATE, 0).publicKey.toBase58();
+    conn.occupants.set(a0, zeroByteVerifierOwned());
+    const { proofBuffer } = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    expect(proofBuffer.toBase58()).not.toBe(a0);
+    expect(conn.createTargets).not.toContain(a0);
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('steps past a 0-byte system account at attempt 0 (a plain transfer, no key needed)', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner();
+    const a0 = deriveProofBufferKeypair(signer.publicKey, CIRCUIT_MERKLE_UPDATE, 0).publicKey.toBase58();
+    conn.occupants.set(a0, zeroByteSystemOwned());
+    const { proofBuffer } = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    expect(proofBuffer.toBase58()).not.toBe(a0);
+    expect(conn.createTargets).not.toContain(a0);
+  });
+
+  it('steps past an 82-byte account (one byte short of a header) at attempt 0', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner();
+    const a0 = deriveProofBufferKeypair(signer.publicKey, CIRCUIT_MERKLE_UPDATE, 0).publicKey.toBase58();
+    conn.occupants.set(a0, { owner: STARK_VERIFIER_PROGRAM_ID, data: new Uint8Array(PROOF_DATA_OFFSET - 1), lamports: 1_461_600 });
+    const { proofBuffer } = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    expect(proofBuffer.toBase58()).not.toBe(a0);
+  });
+
+  it('still allocates when a squatter occupies EVERY address computable from the public key', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner();
+    const pub = publicAddrs(signer.publicKey, CIRCUIT_MERKLE_UPDATE);
+    // All three occupant shapes, over the whole public attempt range.
+    const shapes = [zeroByteVerifierOwned, zeroByteSystemOwned, foreignHeader];
+    let i = 0;
+    for (const addr of pub) conn.occupants.set(addr, shapes[i++ % shapes.length]());
+    const { proofBuffer } = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    // The address it landed on is one no public derivation reaches.
+    expect(pub.has(proofBuffer.toBase58())).toBe(false);
+    expect(conn.txs.find((k) => k.includes('createAccount'))).toEqual(['createAccount', 'initV3']);
+    expect(findBufferHoles(BIG_BYTES, conn.account)).toEqual([]);
+  });
+
+  it('the address it falls back to is stable for the same key, so a rerun rearms instead of allocating again', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner();
+    for (const addr of publicAddrs(signer.publicKey, CIRCUIT_MERKLE_UPDATE)) conn.occupants.set(addr, zeroByteVerifierOwned());
+    const first = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    const txsBefore = conn.txs.length;
+    const second = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    expect(second.proofBuffer.toBase58()).toBe(first.proofBuffer.toBase58());
+    const rerun = conn.txs.slice(txsBefore);
+    expect(rerun[0]).toEqual(['reset']);
+    expect(rerun.flat()).not.toContain('createAccount');
+  });
+
+  it('the fallback address differs between keys and is outside the public derivation', async () => {
+    const run = async (s: WalletSigner) => {
+      const conn = new SquatConn(BIG);
+      for (const addr of publicAddrs(s.publicKey, CIRCUIT_MERKLE_UPDATE, 4)) conn.occupants.set(addr, zeroByteVerifierOwned());
+      return (await drive(submitAndVerifyStarkProof(bigProof(), s, conn.asConnection()))).proofBuffer.toBase58();
+    };
+    const signerA = makeSigner();
+    const signerB = makeSigner();
+    const a = await run(signerA);
+    const b = await run(signerB);
+    expect(a).not.toBe(b);
+    expect(publicAddrs(signerA.publicKey, CIRCUIT_MERKLE_UPDATE).has(a)).toBe(false);
+    expect(publicAddrs(signerB.publicKey, CIRCUIT_MERKLE_UPDATE).has(b)).toBe(false);
+  });
+
+  it('a race it loses at createAccount ("already in use") moves it to the next address instead of aborting', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner();
+    const a0 = deriveProofBufferKeypair(signer.publicKey, CIRCUIT_MERKLE_UPDATE, 0).publicKey.toBase58();
+    // Empty when read, taken when the createAccount lands.
+    conn.raced.add(a0);
+    const { proofBuffer } = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    expect(proofBuffer.toBase58()).not.toBe(a0);
+    expect(conn.createTargets[0]).toBe(a0);
+    expect(conn.createTargets).toHaveLength(2);
+  });
+
+  it('a signer without raw signing (browser wallet) still gets past a full public squat', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner({ signBytes: false });
+    const pub = publicAddrs(signer.publicKey, CIRCUIT_MERKLE_UPDATE);
+    for (const addr of pub) conn.occupants.set(addr, zeroByteVerifierOwned());
+    const { proofBuffer } = await drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()));
+    expect(pub.has(proofBuffer.toBase58())).toBe(false);
+  });
+
+  it('an error that is not "already in use" still aborts (no silent retry of a real failure)', async () => {
+    const conn = new SquatConn(BIG);
+    const signer = makeSigner();
+    const orig = conn.sendRawTransaction.bind(conn);
+    conn.sendRawTransaction = async (raw: Buffer | Uint8Array, opts?: unknown) => {
+      const creates = decodeInstructions(raw).some(
+        (ix) => ix.programId.equals(SystemProgram.programId) && ix.data.readUInt32LE(0) === 0,
+      );
+      if (creates) {
+        throw new Error(
+          'Simulation failed. \nMessage: Transaction simulation failed: Attempt to debit an account but found no record of a prior credit.',
+        );
+      }
+      return orig(raw, opts);
+    };
+    await expect(drive(submitAndVerifyStarkProof(bigProof(), signer, conn.asConnection()))).rejects.toThrow(
+      /prior credit/,
+    );
+  });
+});

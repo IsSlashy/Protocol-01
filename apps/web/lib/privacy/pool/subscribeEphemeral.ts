@@ -78,6 +78,7 @@ import {
   type SubscribeBinding,
 } from './subscribePrivateStarkV4';
 import {
+  assertC1C3SpendAllowed,
   fetchSpentNullifierSet,
   goldilocksU64To32,
   isNullifierSpentInSet,
@@ -149,6 +150,8 @@ export async function prepareSubscribeJob(
   onProgress?: (step: string) => void,
   storedPath?: StoredMerklePath,
 ): Promise<PreparedSubscribe> {
+  // [close-v1, audit v1 F05] Refused before anything, in the subscription's own words.
+  assertC1C3SpendAllowed('subscription');
   const base: PreparedUnshield = await prepareUnshieldJob(
     receipt,
     poolConfig,

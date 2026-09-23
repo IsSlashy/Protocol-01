@@ -269,6 +269,11 @@ beforeEach(() => {
   storage = installStorage();
   setPoolSeed('meta', new Uint8Array(64).fill(13));
   vi.stubEnv('NEXT_PUBLIC_P01_FUNDER_TICKET', 'test-ticket');
+  // [close-v1 F70] The exchange is OFF by default in this build (the claim it
+  // buys could be taken by a proof copier; `closeV1L2Client.test.ts` pins the
+  // refusal). This suite pins what the exchange does when it is switched back
+  // on, so the wire and the receipt stay right for that day.
+  vi.stubEnv('NEXT_PUBLIC_P01_ALLOW_NOTE_EXCHANGE', '1');
   fundEphemeralForJob.mockResolvedValue({
     fundedBy: 'funder',
     sweepTo: FUNDER,

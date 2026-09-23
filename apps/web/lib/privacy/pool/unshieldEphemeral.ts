@@ -67,6 +67,7 @@ import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { prepareUnshieldFromPath, type StoredMerklePath } from './unshieldFromPath';
 import { jitterPrefund } from './prefundAmount';
 import {
+  assertC1C3SpendAllowed,
   fetchSpentNullifierSet,
   isNullifierSpentInSet,
   prepareUnshield,
@@ -160,6 +161,9 @@ export async function prepareUnshieldJob(
   onProgress?: (step: string) => void,
   storedPath?: StoredMerklePath,
 ): Promise<PreparedUnshield> {
+  // [close-v1, audit v1 F05] Before any request, proof or pre-fund: the C1 + C3
+  // pair is copyable on the deployed program (`assertC1C3SpendAllowed`).
+  assertC1C3SpendAllowed('withdrawal');
   // Fail fast and free if this note is already spent — otherwise the on-chain
   // NullifierRecord init would reject after the whole upload.
   /**

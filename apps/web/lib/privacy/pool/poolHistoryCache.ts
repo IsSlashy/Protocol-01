@@ -38,7 +38,21 @@ export interface CachedCommitmentEntry {
   signature: string;
 }
 
-export const POOL_HISTORY_VERSION = 2;
+/**
+ * [close-v1, audit v1 F33 / F34 follow-up] 3 since the leaf-map fixes.
+ *
+ * Rows of version 1 and 2 were written by walks that filed leaves BY
+ * COMMITMENT (F33: a commitment inserted twice overwrote its first leaf, a
+ * hole in every rebuilt tree) and accepted a LeafInserted-shaped `Program
+ * data:` line from ANY program in any transaction naming the pool (F34: a
+ * foreign leaf at an index of the caller's choosing). A warm walk does not
+ * re-read what a row already covers, so such a row kept serving the old
+ * mistake after the fix. Every row of an earlier version is therefore
+ * discarded (and deleted where the store can say so), never migrated, and the
+ * next walk is cold: once per device and once for the shared KV twin. Pinned by
+ * `closeV1L3PoolHistoryVersion.test.ts`.
+ */
+export const POOL_HISTORY_VERSION = 3;
 
 /**
  * How many times one signature is asked for before the walk gives up on it and
@@ -97,7 +111,10 @@ export interface PoolHistorySnapshot {
   savedAt: number;
 }
 
-/** The shape shipped on 2026-09-13. Read for migration only; never written. */
+/**
+ * The shape shipped on 2026-09-13. Recognised only so it can be discarded
+ * (see `POOL_HISTORY_VERSION`); never served, never written.
+ */
 export interface PoolHistorySnapshotV1 {
   version: 1;
   key: string;
@@ -182,8 +199,9 @@ export function indexedDbPoolHistoryStore(idb: IDBFactory): PoolHistoryStore {
     async load(key) {
       try {
         const v = await run<StoredPoolHistory | undefined>('readonly', (s) => s.get(key) as IDBRequest<StoredPoolHistory | undefined>);
-        // A v1 row is served so `loadPoolHistory` can migrate it.
-        return v && (v.version === 1 || v.version === POOL_HISTORY_VERSION) ? v : null;
+        // Only the current version is served: an earlier row is a pre-fix
+        // walk's leaf map (`POOL_HISTORY_VERSION`), overwritten by the next save.
+        return v && v.version === POOL_HISTORY_VERSION ? v : null;
       } catch {
         return fallback.load(key);
       }
@@ -333,55 +351,24 @@ function newestLeafSignature(entries: CachedCommitmentEntry[]): string | null {
   return top?.signature ?? null;
 }
 
-/** Fill in the fields a v1 row never had, without inventing what it did not know. */
-function upgradeSnapshot(raw: StoredPoolHistory, key: string): PoolHistorySnapshot {
-  if (raw.version === POOL_HISTORY_VERSION) {
-    return {
-      ...raw,
-      key,
-      oldestSignature: raw.oldestSignature ?? null,
-      reachedOldest: raw.reachedOldest === true,
-      complete: raw.complete === true,
-      retry: Array.isArray(raw.retry) ? raw.retry : [],
-      dropped: typeof raw.dropped === 'number' ? raw.dropped : 0,
-      // A row the round-0 walk of this work package wrote has neither field.
-      gaps: Array.isArray(raw.gaps) ? raw.gaps : [],
-      rewalkAt: typeof raw.rewalkAt === 'number' ? raw.rewalkAt : null,
-      entries: Array.isArray(raw.entries) ? raw.entries : [],
-    };
-  }
-  // v1 recorded only the newest signature, so the oldest transaction it
-  // decoded is the only resume point it left behind. Paging before that one
-  // re-reads a few transactions between it and the true end of the old walk,
-  // which is cheap and cannot skip anything.
-  let oldest: { signature: string; slot: number } | null = null;
-  for (const e of raw.entries ?? []) {
-    if (typeof e.depositSlot !== 'number') continue;
-    if (!oldest || e.depositSlot < oldest.slot) oldest = { signature: e.signature, slot: e.depositSlot };
-  }
+/**
+ * The row as a current snapshot under `key`, or null when it is of an earlier
+ * version: a pre-fix walk's leaf map is never served (`POOL_HISTORY_VERSION`).
+ */
+function currentSnapshot(raw: StoredPoolHistory, key: string): PoolHistorySnapshot | null {
+  if (raw.version !== POOL_HISTORY_VERSION) return null;
   return {
-    version: POOL_HISTORY_VERSION,
+    ...raw,
     key,
-    // NOT `raw.newestSignature`. The 2026-09-13 walk saved whatever was newest
-    // on the pool, and `PoolPanel` rescans the moment a withdrawal lands, so
-    // that field is routinely the device's OWN withdrawal. The walk keeps the
-    // resume point it is given whenever its delta holds nothing eligible, so a
-    // migration that handed it on kept the withdrawal in the new row for as
-    // long as the pool stayed quiet. The newest LEAF's signature is already in
-    // `entries`, so it adds nothing to a dump, and resuming there only re-lists
-    // the few leafless transactions above it (`poolHistoryCache.test.ts`,
-    // "[SWEEP-R1-STORAGE] … nothing new on chain since the old build's last
-    // walk").
-    newestSignature: newestLeafSignature(raw.entries ?? []),
-    oldestSignature: oldest?.signature ?? null,
-    reachedOldest: false,
-    complete: false,
-    retry: [],
-    dropped: 0,
-    gaps: [],
-    rewalkAt: null,
-    entries: raw.entries ?? [],
-    savedAt: raw.savedAt ?? 0,
+    oldestSignature: raw.oldestSignature ?? null,
+    reachedOldest: raw.reachedOldest === true,
+    complete: raw.complete === true,
+    retry: Array.isArray(raw.retry) ? raw.retry : [],
+    dropped: typeof raw.dropped === 'number' ? raw.dropped : 0,
+    // A row the round-0 walk of this work package wrote has neither field.
+    gaps: Array.isArray(raw.gaps) ? raw.gaps : [],
+    rewalkAt: typeof raw.rewalkAt === 'number' ? raw.rewalkAt : null,
+    entries: Array.isArray(raw.entries) ? raw.entries : [],
   };
 }
 
@@ -434,8 +421,8 @@ async function healForeignRows(store: PoolHistoryStore): Promise<void> {
       : null;
     if (target !== null && WELL_FORMED_KEY.test(target)) {
       const raw = await store.load(foreign).catch(() => null);
-      if (raw && !(await store.load(target).catch(() => null))) {
-        const healed = upgradeSnapshot(raw, target);
+      const healed = raw ? currentSnapshot(raw, target) : null;
+      if (healed && !(await store.load(target).catch(() => null))) {
         const entries = healed.entries
           .filter((e) => typeof e?.leafIndex === 'number' && typeof e.signature === 'string')
           .sort((a, b) => a.leafIndex - b.leafIndex);
@@ -479,5 +466,11 @@ export async function loadPoolHistory(
       await store.clear(legacyKey);
     }
   }
-  return { key, snapshot: raw ? upgradeSnapshot(raw, key) : null };
+  const snapshot = raw ? currentSnapshot(raw, key) : null;
+  if (raw && !snapshot) {
+    // A pre-fix row (`POOL_HISTORY_VERSION`): deleted, so a storage dump does
+    // not keep it either, and the walk starts cold.
+    await store.clear(key).catch(() => undefined);
+  }
+  return { key, snapshot };
 }
