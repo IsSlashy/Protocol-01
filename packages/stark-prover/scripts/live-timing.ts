@@ -4,7 +4,7 @@
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --dry-run
  *   npx tsx packages/stark-prover/scripts/live-timing.ts                     # throwaway key, airdrop, C7 + C6
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --circuit 6 --runs 3
- *   npx tsx packages/stark-prover/scripts/live-timing.ts --circuit 0,2,4,5 --v1   # the masked four, since 2026-09-12
+ *   npx tsx packages/stark-prover/scripts/live-timing.ts --circuit 0,1,3 --v1
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --legacy            # the pre-L2 path, for A/B
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --pacing fast       # waves 8 / 150 ms / one batch
  *   npx tsx packages/stark-prover/scripts/live-timing.ts --keypair path.json --rpc https://...
@@ -134,8 +134,8 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 /**
- * [UNIFORM-MASK 2026-09-12] All eight circuits, the witnesses `bench_all_circuits.rs`
- * and `wasm_blob_parity.rs` drive. Public inputs are read back from the JSON in
+ * [UNIFORM-MASK 2026-09-12] The five circuits the shipped blob exports (0, 1, 3, 6, 7),
+ * with the witnesses `bench_all_circuits.rs` and `wasm_blob_parity.rs` drive. Public inputs are read back from the JSON in
  * the order the Rust `public_inputs` vector carries them (stark/src/lib.rs prints
  * them in that order), so the verify instruction sees what the prover committed.
  */
@@ -150,10 +150,7 @@ const big = (v: unknown): bigint => BigInt(v as string | number);
 const DRIVES: Record<number, Drive> = {
   0: { label: 'C0 subscriber_ownership (legacy subscription)', entry: 'generate_stark_proof', args: () => [42n], pubs: (j) => [big(j.commitment)] },
   1: { label: 'C1 pool_commitment (v3 shield pair)', entry: 'generate_pool_commitment_stark_proof', args: () => [111n, 222n, 333n, 444n], pubs: (j) => [big(j.nullifier), big(j.commitment)] },
-  2: { label: 'C2 balance_proof', entry: 'generate_balance_stark_proof', args: () => [42n, 1000n, 777n, 999n], pubs: (j) => [big(j.commitment), big(j.token_mint)] },
   3: { label: 'C3 merkle_path (v3 unshield pair)', entry: 'generate_merkle_path_stark_proof', args: () => [777n, csvOf(CANONICAL_DEPTH, (i) => 1000 + i * 37), csvOf(CANONICAL_DEPTH, (i) => i % 2)], pubs: (j) => [big(j.leaf), big(j.root), big(j.depth)] },
-  4: { label: 'C4 confidential_balance', entry: 'generate_confidential_balance_stark_proof', args: () => [42n, 1000n, 111n, 800n, 222n, 200n, 333n, 999n], pubs: (j) => [big(j.old_commitment), big(j.new_commitment), big(j.amount_hash), big(j.token_mint)] },
-  5: { label: 'C5 transfer', entry: 'generate_transfer_stark_proof', args: () => [13n, 500n, 77n, 400n, 88n, 100n, 150n, 1234n, 555n, 65n, 2222n, 333n, 50n], pubs: (j) => [big(j.nullifier_1), big(j.nullifier_2), big(j.output_commitment_1), big(j.output_commitment_2), big(j.public_amount), big(j.token_mint)] },
   6: { label: 'C6 merkle update (shield)', entry: 'generate_merkle_update_stark_proof', args: () => [0n, 123456789n, csvOf(CANONICAL_DEPTH, (i) => 1000 + i * 7), csvOf(CANONICAL_DEPTH, (i) => i % 2)], pubs: (j) => [big(j.old_leaf), big(j.new_leaf), big(j.old_root), big(j.new_root), big(j.depth)] },
   7: { label: 'C7 spend (unshield v4, subscription)', entry: 'generate_spend_stark_proof', args: () => [11n, 22n, 33n, 44n, csvOf(CANONICAL_DEPTH, (i) => 1000 + i * 7), csvOf(CANONICAL_DEPTH, (i) => i % 2), '111111111,222222222,333333333,444444444'], pubs: (j) => [big(j.nullifier), big(j.root), ...(j.recipient_hash as string[]).map(big)] },
 };
@@ -162,7 +159,7 @@ const DRIVES: Record<number, Drive> = {
 async function proveOne(cid: number): Promise<Proof> {
   const exports = await initStarkWasm() as unknown as Record<string, (...a: Array<bigint | string>) => string>;
   const d = DRIVES[cid];
-  if (!d) throw new Error(`--circuit ${cid}: unknown circuit (0..7)`);
+  if (!d) throw new Error(`--circuit ${cid}: unknown circuit (the blob proves 0, 1, 3, 6 and 7)`);
   const entry = exports[d.entry];
   if (typeof entry !== 'function') throw new Error(`the shipped blob does not export ${d.entry}`);
   const t0 = performance.now();

@@ -63,11 +63,11 @@ export const K = {
   /** docs/BENCHMARK-2026-09-13.md: "cost per run 0.000855 SOL of fees" (live-timing, rent recovered). */
   pipelineFeePerRun: 855_000,
   /**
-   * Proof sizes on the wire from the shipped blob d5583d41, read from the
-   * 2026-09-22 smoke run (sizes, not timings). C7 matches subscribeFloat.ts
+   * Proof sizes on the wire from the shipped blob, read from the 2026-09-22
+   * smoke run (sizes, not timings; the 2026-09-23 reship kept them). C7 matches subscribeFloat.ts
    * MEASURED_PROOF_BYTES.c7.
    */
-  proofBytes: { 0: 74_365, 1: 94_897, 2: 95_777, 3: 79_597, 4: 75_085, 5: 91_261, 6: 82_477, 7: 79_405 } as Record<number, number>,
+  proofBytes: { 0: 74_365, 1: 94_897, 3: 79_597, 6: 82_477, 7: 79_405 } as Record<number, number>,
 } as const;
 
 export const depositNet = K.depositPrefundMeasured - K.depositReturnedMeasured; // 1,003,475,300
@@ -213,7 +213,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const balance = opt('balance');
   console.log(fundingReport({
     n: Number(opt('n') ?? 30), flows, cache,
-    circuits: (opt('circuits') ?? '0,1,2,3,4,5,6,7').split(',').map(Number),
+    circuits: (opt('circuits') ?? '0,1,3,6,7').split(',').map(Number),
     purchaseReusesNote: argv.includes('--purchase-reuses-note'),
   }, balance === undefined ? undefined : Number(balance)));
 }

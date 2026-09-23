@@ -104,7 +104,7 @@ test('maxN returns the boundary exactly', () => {
 
 test('the funding table in docs/BENCHMARK-METHOD.md is the one this module computes', () => {
   const doc = read('docs/BENCHMARK-METHOD.md');
-  const p = planNeed({ n: 30, flows: ['stark-pipeline', 'deposit', 'withdrawal', 'subscription', 'purchase'], cache: 'warm', circuits: [0, 1, 2, 3, 4, 5, 6, 7] });
+  const p = planNeed({ n: 30, flows: ['stark-pipeline', 'deposit', 'withdrawal', 'subscription', 'purchase'], cache: 'warm', circuits: [0, 1, 3, 6, 7] });
   const f = (l: number) => (l / 1e9).toFixed(3);
   assert.ok(doc.includes(`| **all five flows in one run** | ${p.samples} | ${f(p.net)} | **${f(p.minStart)}** | ${f(p.sweepable)} |`), 'the all-flows row of §3 is stale: re-run funding.mts and copy the table');
   for (const [flow, x] of Object.entries(p.perFlow)) {

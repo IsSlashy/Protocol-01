@@ -19,54 +19,6 @@ export function compute_stark_commitment(subscriber_secret) {
 }
 
 /**
- * Generate a compact STARK proof for balance commitment.
- * Returns JSON: { circuit_id: 2, commitment: string, token_mint: string, proof_hex: string, proof_size: number }
- * @param {bigint} spending_key
- * @param {bigint} balance
- * @param {bigint} salt
- * @param {bigint} token_mint
- * @returns {string}
- */
-export function generate_balance_stark_proof(spending_key, balance, salt, token_mint) {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const ret = wasm.generate_balance_stark_proof(spending_key, balance, salt, token_mint);
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
- * Generate a compact STARK proof for confidential balance update.
- * Returns JSON: { circuit_id: 4, old_commitment, new_commitment, amount_hash, token_mint, proof_hex, proof_size }
- * @param {bigint} spending_key
- * @param {bigint} old_balance
- * @param {bigint} old_salt
- * @param {bigint} new_balance
- * @param {bigint} new_salt
- * @param {bigint} amount
- * @param {bigint} amount_salt
- * @param {bigint} token_mint
- * @returns {string}
- */
-export function generate_confidential_balance_stark_proof(spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt, token_mint) {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const ret = wasm.generate_confidential_balance_stark_proof(spending_key, old_balance, old_salt, new_balance, new_salt, amount, amount_salt, token_mint);
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
  * Generate a compact STARK proof for Merkle path inclusion.
  * path_elements and path_indices are comma-separated strings.
  * Returns JSON: { circuit_id: 3, leaf: string, root: string, proof_hex: string, proof_size: number }
@@ -200,38 +152,6 @@ export function generate_stark_proof(subscriber_secret) {
     let deferred1_1;
     try {
         const ret = wasm.generate_stark_proof(subscriber_secret);
-        deferred1_0 = ret[0];
-        deferred1_1 = ret[1];
-        return getStringFromWasm0(ret[0], ret[1]);
-    } finally {
-        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
-    }
-}
-
-/**
- * Generate a compact STARK proof for a 2-in-2-out shielded transfer.
- * Returns JSON: { circuit_id: 5, nullifier_1, nullifier_2, output_commitment_1, output_commitment_2,
- *                  public_amount, token_mint, proof_hex, proof_size }
- * @param {bigint} spending_key
- * @param {bigint} token_mint
- * @param {bigint} in_amount_1
- * @param {bigint} in_rand_1
- * @param {bigint} in_amount_2
- * @param {bigint} in_rand_2
- * @param {bigint} out_amount_1
- * @param {bigint} out_recipient_1
- * @param {bigint} out_rand_1
- * @param {bigint} out_amount_2
- * @param {bigint} out_recipient_2
- * @param {bigint} out_rand_2
- * @param {bigint} public_amount
- * @returns {string}
- */
-export function generate_transfer_stark_proof(spending_key, token_mint, in_amount_1, in_rand_1, in_amount_2, in_rand_2, out_amount_1, out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount) {
-    let deferred1_0;
-    let deferred1_1;
-    try {
-        const ret = wasm.generate_transfer_stark_proof(spending_key, token_mint, in_amount_1, in_rand_1, in_amount_2, in_rand_2, out_amount_1, out_recipient_1, out_rand_1, out_amount_2, out_recipient_2, out_rand_2, public_amount);
         deferred1_0 = ret[0];
         deferred1_1 = ret[1];
         return getStringFromWasm0(ret[0], ret[1]);

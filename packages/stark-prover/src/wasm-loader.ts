@@ -37,25 +37,17 @@ import * as glueUntyped from '../wasm/p01_stark.js';
 /**
  * The subset of the generated glue this loader uses.
  *
- * ⛔ `generate_spend_stark_proof` is absent ON PURPOSE — the shipped blob
+ * ⛔ `generate_spend_stark_proof` is absent ON PURPOSE: the pre-C7 blob
  * (229,640 B / 51a947e3) does not export it. `initStarkWasm` reads it off the
  * module defensively so the loader works against both blobs, and
- * `index.test.ts` pins that it is currently unbound.
+ * `index.test.ts` pins that the shipped blob binds it.
  */
 interface GlueModule {
   initSync(module: { module: WebAssembly.Module }): unknown;
   compute_stark_commitment(secret: bigint): string;
   generate_stark_proof(secret: bigint): string;
   generate_pool_commitment_stark_proof(a: bigint, b: bigint, c: bigint, d: bigint): string;
-  generate_balance_stark_proof(a: bigint, b: bigint, c: bigint, d: bigint): string;
   generate_merkle_path_stark_proof(leaf: bigint, elemsCsv: string, idxCsv: string): string;
-  generate_confidential_balance_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint, g: bigint, h: bigint,
-  ): string;
-  generate_transfer_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint, g: bigint,
-    h: bigint, i: bigint, j: bigint, k: bigint, l: bigint, m: bigint,
-  ): string;
   generate_merkle_update_stark_proof(
     oldLeaf: bigint, newLeaf: bigint, elemsCsv: string, idxCsv: string,
   ): string;
@@ -73,19 +65,8 @@ export interface StarkExports {
   generate_pool_commitment_stark_proof(
     nullifierPreimage: bigint, secret: bigint, depositEpoch: bigint, tokenMint: bigint,
   ): string;
-  generate_balance_stark_proof(
-    spendingKey: bigint, balance: bigint, salt: bigint, tokenMint: bigint,
-  ): string;
   generate_merkle_path_stark_proof(
     leaf: bigint, pathElementsCsv: string, pathIndicesCsv: string,
-  ): string;
-  generate_confidential_balance_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint,
-    e: bigint, f: bigint, g: bigint, h: bigint,
-  ): string;
-  generate_transfer_stark_proof(
-    a: bigint, b: bigint, c: bigint, d: bigint, e: bigint, f: bigint,
-    g: bigint, h: bigint, i: bigint, j: bigint, k: bigint, l: bigint, m: bigint,
   ): string;
   generate_merkle_update_stark_proof(
     oldLeaf: bigint, newLeaf: bigint, pathElementsCsv: string, pathIndicesCsv: string,
@@ -354,10 +335,7 @@ export async function initStarkWasm(source?: WasmSource): Promise<StarkExports> 
       compute_stark_commitment: glue.compute_stark_commitment,
       generate_stark_proof: glue.generate_stark_proof,
       generate_pool_commitment_stark_proof: glue.generate_pool_commitment_stark_proof,
-      generate_balance_stark_proof: glue.generate_balance_stark_proof,
       generate_merkle_path_stark_proof: glue.generate_merkle_path_stark_proof,
-      generate_confidential_balance_stark_proof: glue.generate_confidential_balance_stark_proof,
-      generate_transfer_stark_proof: glue.generate_transfer_stark_proof,
       generate_merkle_update_stark_proof: glue.generate_merkle_update_stark_proof,
       // Present only once the circuit-7 blob ships; optional so this loader
       // works against both, and so a caller that reaches for it before the
@@ -410,8 +388,8 @@ export function resetStarkWasm(): void {
  *
  * ⚠️ They were EXPORTED, so this is a breaking change for any outside consumer
  * that imported them. Nothing in this repository did: the five client copies of
- * the ABI (apps/web, apps/extension, apps/mobile, packages/react-native-zk and
- * this file) are each self-contained, which is the deeper problem and is not
+ * the ABI (apps/web, apps/extension, apps/mobile, packages/react-native-zk, which
+ * was deleted on 2026-09-23, and this file) are each self-contained, which is the deeper problem and is not
  * fixed here.
  */
 

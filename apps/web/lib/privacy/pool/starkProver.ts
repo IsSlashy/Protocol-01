@@ -228,69 +228,6 @@ class StarkProverService {
     };
   }
 
-  async generateBalanceProof(
-    sk: string, balance: string, salt: string, mint: string,
-  ): Promise<GenericStarkProofResult> {
-    const msg = await this.sendRequest((id, worker) => {
-      worker.postMessage({ type: 'generateBalanceProof', id, args: [sk, balance, salt, mint] });
-    });
-    return {
-      circuitId: msg.circuitId ?? 2,
-      publicInputs: msg.publicInputs ?? [],
-      proofHex: msg.proofHex!,
-      proofSize: msg.proofSize!,
-      durationMs: msg.durationMs!,
-    };
-  }
-
-  async generateConfidentialBalanceProof(
-    spendingKey: string, oldBalance: string, oldSalt: string,
-    newBalance: string, newSalt: string,
-    amount: string, amountSalt: string, tokenMint: string,
-  ): Promise<GenericStarkProofResult> {
-    const msg = await this.sendRequest((id, worker) => {
-      worker.postMessage({
-        type: 'generateConfidentialBalanceProof', id,
-        spendingKey, oldBalance, oldSalt, newBalance, newSalt,
-        amount, amountSalt, tokenMint,
-      });
-    });
-    return {
-      circuitId: msg.circuitId ?? 4,
-      publicInputs: msg.publicInputs ?? [],
-      proofHex: msg.proofHex!,
-      proofSize: msg.proofSize!,
-      durationMs: msg.durationMs!,
-    };
-  }
-
-  async generateTransferProof(
-    spendingKey: string, tokenMint: string,
-    inAmount1: string, inRand1: string,
-    inAmount2: string, inRand2: string,
-    outAmount1: string, outRand1: string, outRecipient1: string,
-    outAmount2: string, outRand2: string, outRecipient2: string,
-    publicAmount: string,
-  ): Promise<GenericStarkProofResult> {
-    const msg = await this.sendRequest((id, worker) => {
-      worker.postMessage({
-        type: 'generateTransferProof', id,
-        spendingKey, tokenMint,
-        inAmount1, inRand1, inAmount2, inRand2,
-        outAmount1, outRand1, outRecipient1,
-        outAmount2, outRand2, outRecipient2,
-        publicAmount,
-      });
-    });
-    return {
-      circuitId: msg.circuitId ?? 5,
-      publicInputs: msg.publicInputs ?? [],
-      proofHex: msg.proofHex!,
-      proofSize: msg.proofSize!,
-      durationMs: msg.durationMs!,
-    };
-  }
-
   async generateMerkleUpdateProof(
     oldLeaf: string, newLeaf: string,
     pathElements: string[], pathIndices: number[],

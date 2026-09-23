@@ -1,13 +1,14 @@
 /**
- * webviewProver.test.ts — run the two React Native provers for real.
+ * webviewProver.test.ts — run the React Native (apps/mobile) prover for real.
  *
  * WHY THIS FILE EXISTS
  * ────────────────────
  * `apps/web` and `apps/extension` reach the prover by importing this package,
- * so a type error catches a broken call. The two React Native surfaces cannot
+ * so a type error catches a broken call. The React Native surfaces could not
  * import anything: their prover is an ES5 template string inside a WebView
  * `<script>`, under `script-src 'unsafe-inline' 'wasm-unsafe-eval'`. Nothing
- * compiles it, nothing type-checks it, and `packages/react-native-zk` ships
+ * compiles it, nothing type-checks it, and `packages/react-native-zk` (deleted
+ * 2026-09-23) shipped
  * `"test": "echo \"Tests require React Native environment\""`.
  *
  * 🚨 SO UNTIL THIS FILE, THOSE TWO SURFACES HAD NO EXECUTABLE COVERAGE AT ALL.
@@ -63,21 +64,6 @@ const SURFACES: readonly Surface[] = [
     glue: 'apps/mobile/services/stark/starkGlueIife.ts',
     initRequest: (base64) => ({ type: 'initWasm', wasmBase64: base64 }),
     poolRequest: { type: 'generatePoolProof', id: 'p1', args: ['11', '22', '0', '33'] },
-  },
-  {
-    label: 'packages/react-native-zk',
-    source: 'packages/react-native-zk/src/ZKProver.tsx',
-    constant: 'PROVER_HTML_HEAD',
-    glue: 'packages/react-native-zk/src/glueIife.ts',
-    initRequest: (base64) => ({ type: 'init', wasm: base64 }),
-    poolRequest: {
-      type: 'generatePoolProof',
-      id: 'p1',
-      nullifierPreimage: '11',
-      secret: '22',
-      epoch: '0',
-      mint: '33',
-    },
   },
 ];
 

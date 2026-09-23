@@ -5,9 +5,10 @@
  * The per-circuit figures (C7 8.0 s, C1 5.8 s, ...) come from
  * docs/BENCHMARK-2026-09-13.md §6/§6b, measured on 2026-09-13 with the blob of
  * that day, 0ad6d7f1… (265,324 B). On 2026-09-20 the package reshipped
- * d5583d41… (262,363 B, NTT low-degree extension), and the README and the
+ * d5583d41… (262,363 B, NTT low-degree extension), then 241caaab… (240,172 B,
+ * C2/C4/C5 exports removed) on 2026-09-23, and the README and the
  * CHANGELOG went on quoting the old figures next to the new blob as if they
- * were its own. Nobody has re-measured them with d5583d41; until someone does,
+ * were its own. Nobody has re-measured them with the shipped blob; until someone does,
  * each place that quotes them names the blob and the date, and says so.
  */
 import { describe, it, expect } from 'vitest';
@@ -16,7 +17,7 @@ import { resolve } from 'node:path';
 
 const PKG = resolve(__dirname, '..');
 const OLD = '0ad6d7f1';
-const NEW = 'd5583d41';
+const NEW = '241caaab';
 
 /** The paragraph (blank-line separated) that quotes the C7 end-to-end figure. */
 function timingParagraphs(text: string): string[] {

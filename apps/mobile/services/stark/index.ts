@@ -36,10 +36,7 @@ const STARK_VERIFIER_PROGRAM_ID = new PublicKey(
 
 const CIRCUIT_SUBSCRIBER_OWNERSHIP = 0;
 const CIRCUIT_POOL_COMMITMENT = 1;
-const CIRCUIT_BALANCE_PROOF = 2;
 const CIRCUIT_MERKLE_PATH = 3;
-const CIRCUIT_CONFIDENTIAL_BALANCE = 4;
-const CIRCUIT_TRANSFER = 5;
 const CIRCUIT_MERKLE_UPDATE = 6;
 /** [C7] The spend circuit (v4 withdraw, subscribe); verified through the generic path. */
 const CIRCUIT_SPEND = 7;
@@ -69,7 +66,8 @@ const MAX_REALLOC_STEP = 10_240; // Solana MAX_PERMITTED_DATA_INCREASE per reall
 /** Phase C v1 — uniform proof size target. Padded zero bytes are tolerated by
  * the verifier's `from_bytes` (lower-bound length checks only).
  *
- * Sized to fit the largest active circuit (C3/C5/C6 ~ 138-140KB) plus headroom.
+ * Sized to fit the largest active circuit (C3/C6 ~ 138-140KB; the retired C5
+ * was the same size) plus headroom.
  * Closes leaks L13 (circuit_id at init) + L14 (proof_size variable).
  *
  * Cost: ~1.01 SOL transient rent per flow (refunded on close). 14 resize tx
@@ -945,12 +943,12 @@ async function allocateProofBufferLegacy(
 /**
  * Circuits whose phase 1 + phase 2 fit ONE transaction, with the measured sum
  * (litesvm, 2026-09-12, `docs/UNIFORM-MASKING-2026-09-11.md` §4a): C3 1,044,961,
- * C4 1,219,481, C6 1,075,102, C7 1,080,683 against the 1,400,000 cap. C2 (97%)
- * is not merged; C1 and C5 exceed it; C0 runs both phases in `verify_stark_proof`.
+ * C6 1,075,102, C7 1,080,683 against the 1,400,000 cap. C1 exceeds it; C0 runs
+ * both phases in `verify_stark_proof`. C2, C4 and C5 have no client prover, so
+ * they have no row (same table as packages/stark-prover/src/upload-protocol.ts).
  */
 export const SINGLE_TX_VERIFY_CU: Readonly<Partial<Record<number, number>>> = {
   [CIRCUIT_MERKLE_PATH]: 1_044_961,
-  [CIRCUIT_CONFIDENTIAL_BALANCE]: 1_219_481,
   [CIRCUIT_MERKLE_UPDATE]: 1_075_102,
   [CIRCUIT_SPEND]: 1_080_683,
 };
@@ -1249,9 +1247,6 @@ export {
   STARK_VERIFIER_PROGRAM_ID,
   CIRCUIT_SUBSCRIBER_OWNERSHIP,
   CIRCUIT_POOL_COMMITMENT,
-  CIRCUIT_BALANCE_PROOF,
   CIRCUIT_MERKLE_PATH,
-  CIRCUIT_CONFIDENTIAL_BALANCE,
-  CIRCUIT_TRANSFER,
   CIRCUIT_MERKLE_UPDATE,
 };

@@ -123,12 +123,11 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 const CANONICAL = 'packages/stark-prover/wasm/p01_stark_bg.wasm';
 
-/** The four inlined base64 copies, in the order `stark-wasm-twins.mjs` lists them. */
+/** The three inlined base64 copies, in the order `stark-wasm-twins.mjs` lists them. */
 const TWINS = [
   'apps/web/lib/privacy/pool/starkWasmData.ts',
   'apps/extension/src/shared/services/starkWasmData.ts',
   'apps/mobile/services/stark/wasmData.ts',
-  'packages/react-native-zk/src/wasmData.ts',
 ];
 
 /**

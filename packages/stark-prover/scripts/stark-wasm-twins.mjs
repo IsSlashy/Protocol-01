@@ -10,7 +10,7 @@
  *
  * `packages/stark-prover/wasm/p01_stark_bg.wasm` is a git-tracked, npm-published,
  * PREBUILT binary — the prover every client actually runs. It is inlined as
- * base64 into FOUR more tracked files so it can ship inside a JS bundle (service
+ * base64 into THREE more tracked files so it can ship inside a JS bundle (service
  * worker, WebView, Metro bundle). Nothing in the repo regenerated any of them:
  * there is no `wasm-pack` step in any `package.json` or workflow.
  *
@@ -25,10 +25,10 @@
  *
  * # What --check proves and what it does not
  *
- * --check proves the five artifacts carry the SAME bytes. It does not prove those
+ * --check proves the four artifacts carry the SAME bytes. It does not prove those
  * bytes match `stark/`. That is
  * `packages/stark-prover/src/wireFormat.test.ts`'s job: it drives the checked-in
- * blob and pins all seven circuits' serialized proof length against the literals
+ * blob and pins the five shipped circuits' serialized proof length against the literals
  * `programs/p01_stark_verifier/tests/route_c_trace_pair.rs:1002` pins for the Rust
  * prover. Both gates are required — this one catches a partial reship, that one
  * catches a stale reship.
@@ -70,8 +70,9 @@ const TWINS = [
  *
  * The wire format is agreed with the on-chain verifier and NOTHING on the wire
  * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
- * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
+ * this client generates is rejected. Gated by \`--check\` in CI, and by the five
+ * per-circuit serialized proof lengths (C0, C1, C3, C6, C7) pinned in
+ * \`packages/stark-prover/src/wireFormat.test.ts\`.
  *
  * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
  * fails-closed forgery knobs into the shipping prover.
@@ -96,8 +97,9 @@ const TWINS = [
  *
  * The wire format is agreed with the on-chain verifier and NOTHING on the wire
  * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
- * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
+ * this client generates is rejected. Gated by \`--check\` in CI, and by the five
+ * per-circuit serialized proof lengths (C0, C1, C3, C6, C7) pinned in
+ * \`packages/stark-prover/src/wireFormat.test.ts\`.
  *
  * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
  * fails-closed forgery knobs into the shipping prover.
@@ -116,35 +118,9 @@ const TWINS = [
  *
  * The wire format is agreed with the on-chain verifier and NOTHING on the wire
  * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
- * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
- *
- * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
- * fails-closed forgery knobs into the shipping prover.
- * \`packages/stark-prover/src/wasmProbeScan.test.ts\` scans this file for them and
- * fails.
- */
-`,
-  },
-  {
-    path: 'packages/react-native-zk/src/wasmData.ts',
-    banner: (n) => `/**
- * AUTO-GENERATED — DO NOT EDIT BY HAND.
- *
- * Two generators write this file and both now read the same canonical blob:
- * \`packages/stark-prover/scripts/stark-wasm-twins.mjs --write\` (repo-wide) and
- * this package's own \`scripts/inline-wasm.mjs\` (hooked into prepublishOnly).
- * The latter used to resolve \`node_modules/@protocol-01/stark-prover\` FIRST and
- * so pinned an older generation of the blob — MEASURED 124,562 B against a
- * 192,732 B workspace sibling. It now prefers the sibling and refuses to guess
- * when copies disagree.
- *
- * Source: packages/stark-prover/wasm/p01_stark_bg.wasm (${n} bytes)
- *
- * The wire format is agreed with the on-chain verifier and NOTHING on the wire
- * declares which version produced a proof. A stale copy here means every proof
- * this client generates is rejected. Gated by \`--check\` in CI, and by the seven
- * per-circuit sha256 digests in \`packages/stark-prover/src/wireFormat.test.ts\`.
+ * this client generates is rejected. Gated by \`--check\` in CI, and by the five
+ * per-circuit serialized proof lengths (C0, C1, C3, C6, C7) pinned in
+ * \`packages/stark-prover/src/wireFormat.test.ts\`.
  *
  * NEVER rebuild the blob with \`--features test-probes\`: that compiles the
  * fails-closed forgery knobs into the shipping prover.
@@ -157,8 +133,8 @@ const TWINS = [
 
 // ---------------------------------------------------------------------------
 
-// `scripts/deployed-verifier-check.mjs` walks the same five artifacts from
-// `wasm-artifacts.mjs`. If a sixth client copy is added to one list and not the
+// `scripts/deployed-verifier-check.mjs` walks the same four artifacts from
+// `wasm-artifacts.mjs`. If a fifth client copy is added to one list and not the
 // other, that client ships an UNCHECKED prover. Fail here rather than leave it
 // unchecked.
 {
@@ -254,8 +230,8 @@ if (mode === '--check') {
 }
 
 // 🚨 The copies that ship to npm but are gitignored, so no diff ever shows their
-// drift. specter-sdk lists "wasm" in package.json `files`, and its .gitignore
-// hides the same directory. Checked only WHEN PRESENT: they are build output,
+// drift (none since 2026-09-23, when specter-sdk 0.5.0 stopped shipping a wasm/
+// copy; see PUBLISHED_UNTRACKED_COPIES). Checked only WHEN PRESENT: they are build output,
 // legitimately absent on a fresh clone, and a gate that reddens for a normal
 // reason is a gate someone disables.
 if (mode === '--check') {
@@ -272,7 +248,7 @@ if (mode === '--check') {
     } else {
       console.error(
         `[stark-wasm-twins] DRIFT ${rel} — ${bytes.length.toLocaleString()} bytes against a canonical ` +
-          `${wasm.length.toLocaleString()}. This path is in specter-sdk's package.json "files", so it SHIPS, ` +
+          `${wasm.length.toLocaleString()}. This path is in a package's "files", so it SHIPS, ` +
           `and it is gitignored, so nothing else would have caught it.`,
       );
       failures += 1;

@@ -3,7 +3,7 @@ name: Wasm repro
 # Rebuilds the shipped STARK prover blob (packages/stark-prover/wasm/p01_stark_bg.wasm)
 # from this tree with a pinned toolchain, twice from clean target dirs, and fails
 # unless both builds are byte-identical to each other, to the shipped blob, to its
-# wasm-bindgen glue and to the four base64 twins the clients import. No other
+# wasm-bindgen glue and to the three base64 twins the clients import. No other
 # workflow runs wasm-pack: ci.yml only type-checks the `wasm` feature and checks
 # that the twins agree with the checked-in blob, not that the blob comes from
 # this source.
@@ -43,7 +43,6 @@ on:
       - 'apps/web/lib/privacy/pool/starkWasmData.ts'
       - 'apps/extension/src/shared/services/starkWasmData.ts'
       - 'apps/mobile/services/stark/wasmData.ts'
-      - 'packages/react-native-zk/src/wasmData.ts'
   pull_request:
     branches:
       - master
@@ -60,7 +59,6 @@ on:
       - 'apps/web/lib/privacy/pool/starkWasmData.ts'
       - 'apps/extension/src/shared/services/starkWasmData.ts'
       - 'apps/mobile/services/stark/wasmData.ts'
-      - 'packages/react-native-zk/src/wasmData.ts'
   workflow_dispatch:
 
 permissions:
@@ -88,7 +86,7 @@ jobs:
 
     steps:
       # Before the checkout: the sources must reach rustc byte for byte as they
-      # are in git (seven files under stark/src are stored with CRLF, the rest LF).
+      # are in git (six files under stark/src are stored with CRLF, the rest LF).
       - name: Check out files as stored
         run: git config --global core.autocrlf false
 

@@ -1,13 +1,15 @@
 //! [RESHIP 2026-09-12] The STAGED wasm prover blob against THIS verifier, on
-//! all eight circuits, before either is shipped.
+//! every circuit it proves, before either is shipped. Since the 2026-09-23
+//! reship (blob 241caaab, 240,172 B) that is the live set C0, C1, C3, C6 and C7
+//! (`LIVE_CIRCUITS`); C2, C4 and C5 have no entry point in the blob any more.
 //!
 //! `#[ignore]` by default: it needs proof files that only the wasm blob can
 //! write. Produce them with the Node driver (which loads a blob through its
-//! own wasm-bindgen glue and calls the eight entry points with the witnesses
+//! own wasm-bindgen glue and calls the five entry points with the witnesses
 //! `bench_all_circuits.rs` uses), then point this test at the directory:
 //!
 //! ```text
-//! P01_WASM_PROOFS_DIR=<dir with C0.bin .. C7.bin> \
+//! P01_WASM_PROOFS_DIR=<dir with C0.bin C1.bin C3.bin C6.bin C7.bin> \
 //!   cargo test -p p01_stark_verifier --release --test wasm_blob_parity -- --ignored --nocapture
 //! ```
 //!
@@ -79,12 +81,17 @@ fn phase2(proof: &GenericCompactProof, cid: u8, pubs: &[u64]) -> Result<(), Veri
     }
 }
 
+/// The circuits the shipped blob proves (and the clients use). C2, C4 and C5
+/// stay in the verifier (the deployed program still dispatches them) but the
+/// blob that would write their proofs is gone.
+const LIVE_CIRCUITS: [u8; 5] = [0, 1, 3, 6, 7];
+
 #[test]
 #[ignore]
-fn staged_wasm_proofs_verify_on_all_eight_circuits() {
-    let dir = std::env::var("P01_WASM_PROOFS_DIR").expect("P01_WASM_PROOFS_DIR=<dir with C0.bin .. C7.bin>");
+fn staged_wasm_proofs_verify_on_the_live_circuits() {
+    let dir = std::env::var("P01_WASM_PROOFS_DIR").expect("P01_WASM_PROOFS_DIR=<dir with C0.bin C1.bin C3.bin C6.bin C7.bin>");
     let mut failures = Vec::new();
-    for cid in 0u8..=7 {
+    for cid in LIVE_CIRCUITS {
         let path = format!("{dir}/C{cid}.bin");
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
         let cfg = get_circuit_config(cid).unwrap();
@@ -107,7 +114,7 @@ fn staged_wasm_proofs_verify_on_all_eight_circuits() {
 }
 
 // ---------------------------------------------------------------------------
-// [RESHIP 2026-09-12] The same eight staged proofs through the REAL program:
+// [RESHIP 2026-09-12] The same staged proofs (the live set, `LIVE_CIRCUITS`) through the REAL program:
 // the staged .so on litesvm, the v3 buffer the clients allocate, 3,840-byte
 // chunks (the transaction-v1 chunk size), `verify_stark_proof_v2`, then
 // `verify_deep_ali_phase2` for circuits 1-7 (masked C0 runs both phases inside
@@ -292,7 +299,7 @@ mod svm {
 #[test]
 #[ignore]
 fn staged_wasm_proofs_verify_through_the_staged_program_on_litesvm() {
-    let dir = std::env::var("P01_WASM_PROOFS_DIR").expect("P01_WASM_PROOFS_DIR=<dir with C0.bin .. C7.bin>");
+    let dir = std::env::var("P01_WASM_PROOFS_DIR").expect("P01_WASM_PROOFS_DIR=<dir with C0.bin C1.bin C3.bin C6.bin C7.bin>");
     let so = std::path::PathBuf::from(std::env::var("P01_VERIFIER_SO").expect("P01_VERIFIER_SO=<staged .so>"));
     let so_bytes = std::fs::read(&so).unwrap();
     println!("verifier .so {} ({} bytes, sha256 {})", so.display(), so_bytes.len(), &hex_sha256(&so_bytes)[..16]);
@@ -300,7 +307,7 @@ fn staged_wasm_proofs_verify_through_the_staged_program_on_litesvm() {
     let payer = rig.payer_pk();
     let mut failures = Vec::new();
     println!("{:<4} {:>8} {:>7} {:>10} {:>10} {:>9}", "cid", "bytes", "chunks", "phase1 CU", "phase2 CU", "txs");
-    for cid in 0u8..=7 {
+    for cid in LIVE_CIRCUITS {
         let bytes = std::fs::read(format!("{dir}/C{cid}.bin")).unwrap();
         let pubs = public_inputs(cid);
         let (_kp, buf) = rig.create_v3(bytes.len(), cid);

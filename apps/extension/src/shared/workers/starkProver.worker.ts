@@ -27,7 +27,6 @@ type WorkerInMessage =
   | { type: 'generateProof'; id: string; secret: string }
   | { type: 'computeCommitment'; id: string; secret: string }
   | { type: 'generatePoolProof'; id: string; args: [string, string, string, string] }
-  | { type: 'generateBalanceProof'; id: string; args: [string, string, string, string] }
   | { type: 'generateMerklePathProof'; id: string; leaf: string; pathElements: string[]; pathIndices: number[] }
   | {
       type: 'generateSpendProof';
@@ -41,35 +40,6 @@ type WorkerInMessage =
       pathIndices: number[];
       /** EXACTLY 4 — sha256(recipient) as little-endian u64 limbs. */
       recipientHash: string[];
-    }
-  | {
-      type: 'generateConfidentialBalanceProof';
-      id: string;
-      spendingKey: string;
-      oldBalance: string;
-      oldSalt: string;
-      newBalance: string;
-      newSalt: string;
-      amount: string;
-      amountSalt: string;
-      tokenMint: string;
-    }
-  | {
-      type: 'generateTransferProof';
-      id: string;
-      spendingKey: string;
-      tokenMint: string;
-      inAmount1: string;
-      inRand1: string;
-      inAmount2: string;
-      inRand2: string;
-      outAmount1: string;
-      outRand1: string;
-      outRecipient1: string;
-      outAmount2: string;
-      outRand2: string;
-      outRecipient2: string;
-      publicAmount: string;
     }
   | {
       type: 'generateMerkleUpdateProof';
@@ -217,29 +187,6 @@ function generatePoolProof(id: string, args: [string, string, string, string]) {
   }
 }
 
-function generateBalanceProof(id: string, args: [string, string, string, string]) {
-  const exp = assertReady(id); if (!exp) return;
-  try {
-    const started = performance.now();
-    const jsonStr = exp.generate_balance_stark_proof(
-        BigInt(args[0]), BigInt(args[1]), BigInt(args[2]), BigInt(args[3]),
-      );
-    const elapsed = Math.round(performance.now() - started);
-    const result = JSON.parse(jsonStr);
-    post({
-      type: 'proof', id,
-      circuitId: result.circuit_id,
-      commitment: result.commitment,
-      publicInputs: [result.commitment, result.token_mint],
-      proofHex: result.proof_hex,
-      proofSize: result.proof_size,
-      durationMs: elapsed,
-    });
-  } catch (err) {
-    post({ type: 'error', id, error: err instanceof Error ? err.message : 'Balance proof failed' });
-  }
-}
-
 function generateMerklePathProof(id: string, leaf: string, pathElements: string[], pathIndices: number[]) {
   const exp = assertReady(id); if (!exp) return;
   try {
@@ -351,91 +298,6 @@ function generateSpendProof(
   }
 }
 
-function generateConfidentialBalanceProof(
-  id: string,
-  data: {
-    spendingKey: string; oldBalance: string; oldSalt: string;
-    newBalance: string; newSalt: string;
-    amount: string; amountSalt: string; tokenMint: string;
-  },
-) {
-  const exp = assertReady(id); if (!exp) return;
-  try {
-    const started = performance.now();
-    const ret = exp.generate_confidential_balance_stark_proof(
-      BigInt(data.spendingKey),
-      BigInt(data.oldBalance),
-      BigInt(data.oldSalt),
-      BigInt(data.newBalance),
-      BigInt(data.newSalt),
-      BigInt(data.amount),
-      BigInt(data.amountSalt),
-      BigInt(data.tokenMint),
-    );
-    const jsonStr = ret;
-    const elapsed = Math.round(performance.now() - started);
-    const result = JSON.parse(jsonStr);
-    post({
-      type: 'proof', id,
-      circuitId: 4,
-      publicInputs: [result.old_commitment, result.new_commitment, result.amount_hash, result.token_mint],
-      proofHex: result.proof_hex,
-      proofSize: result.proof_size,
-      durationMs: elapsed,
-    });
-  } catch (err) {
-    post({ type: 'error', id, error: err instanceof Error ? err.message : 'Confidential balance proof failed' });
-  }
-}
-
-function generateTransferProof(
-  id: string,
-  data: {
-    spendingKey: string; tokenMint: string;
-    inAmount1: string; inRand1: string; inAmount2: string; inRand2: string;
-    outAmount1: string; outRand1: string; outRecipient1: string;
-    outAmount2: string; outRand2: string; outRecipient2: string;
-    publicAmount: string;
-  },
-) {
-  const exp = assertReady(id); if (!exp) return;
-  try {
-    const started = performance.now();
-    const ret = exp.generate_transfer_stark_proof(
-      BigInt(data.spendingKey),
-      BigInt(data.tokenMint),
-      BigInt(data.inAmount1),
-      BigInt(data.inRand1),
-      BigInt(data.inAmount2),
-      BigInt(data.inRand2),
-      BigInt(data.outAmount1),
-      BigInt(data.outRecipient1),
-      BigInt(data.outRand1),
-      BigInt(data.outAmount2),
-      BigInt(data.outRecipient2),
-      BigInt(data.outRand2),
-      BigInt(data.publicAmount),
-    );
-    const jsonStr = ret;
-    const elapsed = Math.round(performance.now() - started);
-    const result = JSON.parse(jsonStr);
-    post({
-      type: 'proof', id,
-      circuitId: 5,
-      publicInputs: [
-        result.nullifier_1, result.nullifier_2,
-        result.output_commitment_1, result.output_commitment_2,
-        result.public_amount, result.token_mint,
-      ],
-      proofHex: result.proof_hex,
-      proofSize: result.proof_size,
-      durationMs: elapsed,
-    });
-  } catch (err) {
-    post({ type: 'error', id, error: err instanceof Error ? err.message : 'Transfer proof failed' });
-  }
-}
-
 function generateMerkleUpdateProof(
   id: string,
   oldLeaf: string,
@@ -483,20 +345,11 @@ self.onmessage = (event: MessageEvent<WorkerInMessage>) => {
     case 'generatePoolProof':
       generatePoolProof(data.id, data.args);
       break;
-    case 'generateBalanceProof':
-      generateBalanceProof(data.id, data.args);
-      break;
     case 'generateMerklePathProof':
       generateMerklePathProof(data.id, data.leaf, data.pathElements, data.pathIndices);
       break;
     case 'generateSpendProof':
       generateSpendProof(data.id, data);
-      break;
-    case 'generateConfidentialBalanceProof':
-      generateConfidentialBalanceProof(data.id, data);
-      break;
-    case 'generateTransferProof':
-      generateTransferProof(data.id, data);
       break;
     case 'generateMerkleUpdateProof':
       generateMerkleUpdateProof(data.id, data.oldLeaf, data.newLeaf, data.pathElements, data.pathIndices);

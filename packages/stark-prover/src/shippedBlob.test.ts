@@ -103,8 +103,20 @@ const BLOB = join(here, '..', 'wasm', 'p01_stark_bg.wasm');
  * 2H5p3dqE..., slot 497236376, 2026-09-12). A pin that moves without that
  * evidence says "this is the artifact we ship", not "the chain has taken it".
  */
-const SHIPPED_SHA256 = 'd5583d41c378';
-const SHIPPED_BYTES = 262_363;
+/**
+ * RESHIPPED 2026-09-23: C2, C4 and C5 left the blob.
+ *
+ * The previous value was `d5583d41c378` / 262,363 B (the 2026-09-20 NTT-prover
+ * reship). This build drops the three wasm exports no client calls
+ * (`generate_balance_stark_proof`, `generate_confidential_balance_stark_proof`,
+ * `generate_transfer_stark_proof`) and moves nothing else: C0, C1, C3, C6 and C7
+ * keep the lengths `wireFormat.test.ts` pins against the Rust prover. Rebuilt
+ * twice byte-identically with the `scripts/ci/wasm-repro.mjs` pins, and a
+ * circuit-7 proof from it was ACCEPTED on devnet (see `deployed-verifier.json`,
+ * `accepts_client_blob_sha256_evidence_2026_09_23`).
+ */
+const SHIPPED_SHA256 = '241caaabb505';
+const SHIPPED_BYTES = 240_172;
 
 /**
  * The pre-C7 coset build. NOT "rejected": it was the shipped artifact until
@@ -152,7 +164,7 @@ describe('the shipped STARK prover blob', () => {
     expect(
       actual,
       `The prover blob shipped by @protocol-01/stark-prover changed.\n\n` +
-        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, the 2026-09-20 NTT-prover reship)\n` +
+        `  expected ${SHIPPED_SHA256} (${SHIPPED_BYTES} bytes, the 2026-09-23 reship without C2/C4/C5)\n` +
         `  found    ${actual} (${statSync(BLOB).size} bytes)\n\n` +
         `If this is the 4ace8913 / 192,732-byte build, or the 72a8c700 / 267,610-byte one, a\n` +
         `wasm-pack run overwrote the shipped prover with an older local build. Every proof it\n` +
@@ -160,7 +172,7 @@ describe('the shipped STARK prover blob', () => {
         `~150 buffer-upload transactions and about a SOL of rent.\n\n` +
         `Do NOT update this constant to go green. Restore the blob. Move it only for a\n` +
         `DELIBERATE reship, and only after driving the new blob: wireFormat.test.ts must\n` +
-        `reproduce the Rust prover's byte counts on all eight circuits first.`,
+        `reproduce the Rust prover's byte counts on every circuit the blob exports first.`,
     ).toBe(SHIPPED_SHA256);
   });
 

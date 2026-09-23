@@ -846,15 +846,14 @@ async function allocateProofBufferLegacy(
 /**
  * Circuits whose phase 1 + phase 2 fit ONE transaction, with the measured sum
  * (litesvm, 2026-09-12, `docs/UNIFORM-MASKING-2026-09-11.md` §4a): C3 1,044,961,
- * C4 1,219,481, C6 1,075,102, C7 1,080,683 against the 1,400,000 CU a transaction
- * may request. C2 (1,357,548, 97%) is not merged; C1 (1,429,650) and C5
- * (1,416,705) exceed it; C0 runs both phases inside `verify_stark_proof`. A
+ * C6 1,075,102, C7 1,080,683 against the 1,400,000 CU a transaction may request.
+ * C1 (1,429,650) exceeds it; C0 runs both phases inside `verify_stark_proof`.
+ * C2, C4 and C5 have no client prover, so they have no row. A
  * merged transaction is atomic: a miss costs one failed transaction and the
  * two-transaction path runs instead.
  */
 export const SINGLE_TX_VERIFY_CU: Readonly<Partial<Record<number, number>>> = {
   3: 1_044_961,
-  4: 1_219_481,
   6: 1_075_102,
   7: 1_080_683,
 };

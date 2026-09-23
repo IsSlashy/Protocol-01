@@ -7,6 +7,9 @@
  * postMessage (as strings) and calls the same exports.
  *
  * Depth 11 is `CANONICAL_DEPTH` in stark/src/air/{merkle_path,merkle_update,spend}.rs.
+ *
+ * Only the five circuits the shipped blob exports (0, 1, 3, 6, 7). C2, C4 and C5
+ * left the blob on 2026-09-23; the native bench still proves them.
  */
 
 export const CANONICAL_DEPTH = 11;
@@ -29,19 +32,10 @@ const u = (...xs: number[]) => xs.map(String);
 export const WITNESSES: Witness[] = [
   { circuit: 0, name: 'C0 subscriber_ownership', entry: 'generate_stark_proof', args: u(42), kinds: ['u64'] },
   { circuit: 1, name: 'C1 pool_commitment', entry: 'generate_pool_commitment_stark_proof', args: u(111, 222, 333, 444), kinds: ['u64', 'u64', 'u64', 'u64'] },
-  { circuit: 2, name: 'C2 balance_proof', entry: 'generate_balance_stark_proof', args: u(42, 1000, 777, 999), kinds: ['u64', 'u64', 'u64', 'u64'] },
   {
     circuit: 3, name: 'C3 merkle_path', entry: 'generate_merkle_path_stark_proof',
     args: ['777', csv(CANONICAL_DEPTH, (i) => 1000 + i * 37), csv(CANONICAL_DEPTH, (i) => i % 2)],
     kinds: ['u64', 'csv', 'csv'],
-  },
-  {
-    circuit: 4, name: 'C4 confidential_balance', entry: 'generate_confidential_balance_stark_proof',
-    args: u(42, 1000, 111, 800, 222, 200, 333, 999), kinds: Array(8).fill('u64'),
-  },
-  {
-    circuit: 5, name: 'C5 transfer', entry: 'generate_transfer_stark_proof',
-    args: u(13, 500, 77, 400, 88, 100, 150, 1234, 555, 65, 2222, 333, 50), kinds: Array(13).fill('u64'),
   },
   {
     circuit: 6, name: 'C6 merkle_update', entry: 'generate_merkle_update_stark_proof',
@@ -55,9 +49,12 @@ export const WITNESSES: Witness[] = [
   },
 ];
 
+/** The circuit ids the shipped blob proves, in table order: the default `--circuits`. */
+export const LIVE_CIRCUITS: readonly number[] = WITNESSES.map((w) => w.circuit);
+
 export function witnessFor(circuit: number): Witness {
   const w = WITNESSES.find((x) => x.circuit === circuit);
-  if (!w) throw new Error(`unknown circuit ${circuit} (0..7)`);
+  if (!w) throw new Error(`unknown circuit ${circuit} (the blob proves ${LIVE_CIRCUITS.join(', ')})`);
   return w;
 }
 

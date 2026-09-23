@@ -10,7 +10,7 @@ Everything here runs on Solana **devnet**. Nothing here is a mainnet figure.
 
 **What this benchmark measures: v1 as deployed today. It is a pre-v2
 (pre-WP10) baseline.** The verifier is the deployed program `DGY37k3J…`, the
-prover is the shipped blob `d5583d41…`, deposits go through the current v3
+prover is the shipped blob `241caaab…`, deposits go through the current v3
 deposit pool, and spends take the v4 routes. The v2 protocol (a new verifier
 program and v5 pools, work package WP10 of the plan) is not deployed. When it
 is, it gets its own run and its own manifest; no figure from this baseline
@@ -24,7 +24,7 @@ command.
 
 | flow | where it runs | what one sample is |
 |---|---|---|
-| `native` | this machine, no network | one proof from the Rust prover (release build), per circuit C0–C7 |
+| `native` | this machine, no network | one proof from the Rust prover (release build), per circuit the blob exports (C0, C1, C3, C6, C7) |
 | `wasm-node` | this machine, no network | one proof from the shipped wasm blob in Node, per circuit |
 | `wasm-browser` | this machine, no network | one proof from the shipped wasm blob in a browser Web Worker, per circuit |
 | `stark-pipeline` | devnet | one fresh proof, then upload, on-chain verification and buffer close, per circuit |
@@ -34,9 +34,12 @@ command.
 | `purchase` | devnet + a deployment's API | one note-in exchange: withdraw a note to the till, claim, receive an older note |
 
 The prover under test is the blob shipped in the repository,
-`packages/stark-prover/wasm/p01_stark_bg.wasm`: 262,363 bytes, SHA-256
-`d5583d41c3780a1234b619231963679edc15df247fdc7c56dcc1f85c856365aa`
-(read with `sha256sum` on 2026-09-22).
+`packages/stark-prover/wasm/p01_stark_bg.wasm`: 240,172 bytes, SHA-256
+`241caaabb505b44c0d58c06a603cdc4f9ac6b338b93405dabf2048e7ed3a41e9`
+(read with `sha256sum` on 2026-09-23). It exports a prover for the five
+circuits the product uses, C0, C1, C3, C6 and C7, and the harness measures
+those five. The deployed verifier also accepts C2, C4 and C5; no client proves
+them and the blob has no export for them.
 
 **Which protocol.** Read from the source tree by `scripts/bench/protocol.mts`
 at the start of every run and written to `manifest.json` under `protocol`
@@ -184,17 +187,17 @@ What the model rests on, read in the harness sources:
   buffer's rent free while it runs.
 
 For N = 30 per flow, history cache warm (one uncounted warm-up for each of the
-three spend flows, none for the deposit flow), all eight circuits on
+three spend flows, none for the deposit flow), the five circuits on
 `stark-pipeline`, purchase in the worst case:
 
 | flow | samples (warm-up included) | SOL spent | minimum starting balance, this flow alone | sweepable by hand |
 |---|---|---|---|---|
-| `stark-pipeline` | 240 (30 × 8 circuits) | 0.205 | 0.869 | 0 |
+| `stark-pipeline` | 150 (30 × 5 circuits) | 0.128 | 0.788 | 0 |
 | `deposit` | 30 | 30.104 | 30.714 | 0 |
 | `withdrawal` | 31 | 31.294 | 32.085 | 30.845 |
 | `subscription` | 31 | 31.400 | 32.000 | 0 |
 | `purchase` | 31 | 31.294 | 31.898 | 0 |
-| **all five flows in one run** | 363 | 124.297 | **124.901** | 30.845 |
+| **all five flows in one run** | 273 | 124.220 | **124.824** | 30.845 |
 
 The minimum starting balance of a run is the largest value, over its samples,
 of (SOL spent by every sample before it) + (SOL that sample needs free when it
@@ -483,7 +486,7 @@ Other options:
 - `--n`: samples, default 30.
 - `--cold-n`: samples per wasm cold row, default N. Below 30 with a wasm flow,
   the run cannot write under `docs/bench/` (§5).
-- `--circuits 0,…,7`.
+- `--circuits`: a comma list from 0, 1, 3, 6, 7 (default: all five).
 - `--cache warm|cold` (withdrawal, subscription and purchase only).
 - `--browser <path>|manual`, `--headed`.
 - `--out <dir>`: default `docs/bench/<today>/run-<start time>/` (a run refuses a directory that already holds files), or the temp directory for a
@@ -552,7 +555,8 @@ harness code at commit `beaa87ba`:
     The app's worker comments still say "~100–500 ms" for in-browser proving,
     a figure nobody measured.
 11. **Nothing measured the current blob.** The NTT prover (d5583d41, shipped
-    in commit `f2189991`) has an accepted devnet proof recorded in
+    in commit `f2189991`) and its 2026-09-23 successor without C2, C4 and C5
+    (241caaab) each have an accepted devnet proof recorded in
     `packages/stark-prover/deployed-verifier.json`, and no benchmark.
 12. **The protocol measured was not named.** No earlier result recorded the
     pool program, the pool or the route version it ran against.

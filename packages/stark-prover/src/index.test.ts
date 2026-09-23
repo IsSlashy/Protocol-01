@@ -5,7 +5,7 @@
  *   1. The WASM module loads cleanly in Node 22 from the bundled bytes.
  *   2. Circuit 0 (subscriber_ownership) round-trips: secret → proofBytes
  *      with non-zero length and a non-zero commitment.
- *   3. The factory's API surface matches the privacy-sdk contract
+ *   3. The factory's API surface matches this package's prover contract
  *      (StarkProofGenerator signature).
  *   4. The upload protocol's PDA derivation is stable / deterministic.
  *
@@ -70,13 +70,19 @@ describe('@protocol-01/stark-prover', () => {
       'compute_stark_commitment',
       'generate_stark_proof',
       'generate_pool_commitment_stark_proof',
-      'generate_balance_stark_proof',
       'generate_merkle_path_stark_proof',
-      'generate_confidential_balance_stark_proof',
-      'generate_transfer_stark_proof',
       'generate_merkle_update_stark_proof',
     ] as const) {
       expect(typeof exports[fn], `${fn} is not bound`).toBe('function');
+    }
+    // C2, C4 and C5 left the blob on 2026-09-23: no client proves them. A
+    // blob that still binds them is not the one this package was built from.
+    for (const gone of [
+      'generate_balance_stark_proof',
+      'generate_confidential_balance_stark_proof',
+      'generate_transfer_stark_proof',
+    ]) {
+      expect((exports as unknown as Record<string, unknown>)[gone], `${gone} is still bound`).toBeUndefined();
     }
 
     // ⛔ `exports.memory` USED TO BE ASSERTED HERE AND CANNOT BE ANY MORE. The
@@ -161,7 +167,7 @@ describe('@protocol-01/stark-prover', () => {
   // API surface
   // -------------------------------------------------------------------------
 
-  it('factory returns a generateStarkProof matching the privacy-sdk contract', () => {
+  it('factory returns a generateStarkProof over the live circuit ids', () => {
     const conn = makeMockConnection();
     const payer = Keypair.generate();
     const handle = createStarkProver({ connection: conn, payer });
@@ -214,26 +220,23 @@ describe('@protocol-01/stark-prover', () => {
   // STARK_CIRCUITS enum sanity
   // -------------------------------------------------------------------------
 
-  it('exports the canonical circuit IDs (0-7)', () => {
+  it('exports the circuit IDs the shipped blob proves (0, 1, 3, 6, 7)', () => {
     expect(STARK_CIRCUITS.SUBSCRIBER_OWNERSHIP).toBe(0);
     expect(STARK_CIRCUITS.POOL_COMMITMENT).toBe(1);
-    expect(STARK_CIRCUITS.BALANCE_PROOF).toBe(2);
     expect(STARK_CIRCUITS.MERKLE_PATH).toBe(3);
-    expect(STARK_CIRCUITS.CONFIDENTIAL_BALANCE).toBe(4);
-    expect(STARK_CIRCUITS.TRANSFER).toBe(5);
     expect(STARK_CIRCUITS.MERKLE_UPDATE).toBe(6);
     expect(STARK_CIRCUITS.SPEND).toBe(7);
+    expect(Object.values(STARK_CIRCUITS).sort((a, b) => a - b)).toEqual([0, 1, 3, 6, 7]);
   });
 
   // -------------------------------------------------------------------------
   // Type-shape compatibility check (compile-time assertion)
   // -------------------------------------------------------------------------
 
-  it('StarkProofOutcome shape matches the privacy-sdk contract', () => {
-    // This is a structural compile-time check: if the privacy-sdk's type
-    // drifts, importing it here will fail typecheck. We don't import the
-    // privacy-sdk type at runtime to avoid a circular install dep — the
-    // dev-only import is purely for the assertion.
+  it('StarkProofOutcome keeps its shape', () => {
+    // A structural compile-time check of the contract this package owns
+    // (privacy-sdk 2.0.0 dropped its twin of this type): if the shape drifts,
+    // this literal fails typecheck.
     const outcome: StarkProofOutcome = {
       proofBuffer: new PublicKey('11111111111111111111111111111112'),
       circuitId: 0,

@@ -10,15 +10,35 @@ The version paired with the verifier deployed on devnet on 2026-09-12
 The version on npm before this one, 0.1.3, carries a pre-circuit-7 blob that
 this verifier refuses at the parser; do not pair it with the current program.
 
+### Breaking (before publish): C2, C4 and C5 removed
+
+- The wasm blob no longer exports `generate_balance_stark_proof`,
+  `generate_confidential_balance_stark_proof` or `generate_transfer_stark_proof`,
+  and `StarkExports` no longer declares them. `STARK_CIRCUITS` lost
+  `BALANCE_PROOF` (2), `CONFIDENTIAL_BALANCE` (4) and `TRANSFER` (5);
+  `generateProofBytes` refuses those ids; `SINGLE_TX_VERIFY_CU` lost its C4 row.
+  No client proved these circuits. The deployed verifier still accepts ids 0-7;
+  only this prover stopped building 2, 4 and 5.
+
 ### The prover blob
+
+- **2026-09-23 reship (before publish).** `wasm/p01_stark_bg.wasm` is now
+  `241caaabb505b44c…`, 240,172 bytes: the 2026-09-20 prover without the three
+  exports above. Rebuilt twice byte-identically with the pins of
+  `scripts/ci/wasm-repro.mjs`; the wire lengths of C0, C1, C3, C6 and C7 are
+  unchanged (`src/wireFormat.test.ts`). A circuit-7 proof from it was accepted
+  on devnet at slot 502692190 (signature `3yGgsaUn…`): phase 1 889,882 CU,
+  phase 2 193,269 CU, transaction total 1,083,301 CU, recorded in
+  `deployed-verifier.json` (`accepts_client_blob_sha256_evidence_2026_09_23`).
 
 - **2026-09-20 reship (before publish).** `wasm/p01_stark_bg.wasm` is now
   `d5583d41c3780a12…`, 262,363 bytes: the same prover with the NTT low-degree
   extension (`stark/src/ntt.rs`). Rebuilt twice byte-identically with the pins of
   `scripts/ci/wasm-repro.mjs`; wire lengths unchanged (`src/wireFormat.test.ts`,
   67/67); a circuit-7 proof from it was accepted on devnet at slot 501407541
-  (signature `5Kp9dMnU…`, 889,691 CU, `scripts/c7-live-proof.ts`). The entry
-  below describes the 2026-09-12 blob it replaces.
+  (signature `5Kp9dMnU…`, `scripts/c7-live-proof.ts`): phase 1 889,691 CU,
+  phase 2 192,317 CU, transaction total 1,082,158 CU. The entry below describes
+  the 2026-09-12 blob it replaces.
 
 - `wasm/p01_stark_bg.wasm` is `0ad6d7f1eaed14a8…`, 265,324 bytes. All eight
   circuits carry the same three-part mask (row mask, lift column, randomizer)
@@ -46,7 +66,7 @@ this verifier refuses at the parser; do not pair it with the current program.
   detected on the connection and the 1,000-byte legacy chunks are used where
   it is not active (`txV1: false` forces them).
 - Phase 1 and phase 2 of the verification go in one transaction where the
-  circuit's budget allows (C3, C4, C6, C7); C1, C2 and C5 keep two.
+  circuit's budget allows (C3, C6, C7); C1 keeps two.
 - Chunk sending is paced (`chunkPacing`: waves, delay, batch size) and every
   send retries on the RPC's rate limit; a torn upload is resumed at the
   missing chunks.
@@ -58,13 +78,14 @@ prove + allocate + upload + verify + close, from Node, on 2026-09-13 with the
 blob of that day, `0ad6d7f1…` (265,324 bytes):
 C0 10.9 s · C1 5.8 s · C2 5.5 s · C3 5.3 s · C4 8.1 s · C5 15.9 s (9.7 s of it
 proving) · C6 8.2 s · C7 8.0 s. The 1,000-byte PDA path measured 35–41 s for
-the same C7 proof on the same endpoint. The 2026-09-20 reship `d5583d41…` has
-not been re-measured end to end; these are the figures of `0ad6d7f1…`.
+the same C7 proof on the same endpoint. The 2026-09-20 reship `d5583d41…` and
+the 2026-09-23 reship `241caaab…` have not been re-measured end to end; these
+are the figures of `0ad6d7f1…`.
 
 ### Harness
 
-- `scripts/live-timing.ts` drives all eight circuits against the deployed
-  verifier (`--circuit 0,2,4,5 --v1 --rpc … --keypair …`).
+- `scripts/live-timing.ts` drives the five circuits the blob exports against
+  the deployed verifier (`--circuit 0,1,3 --v1 --rpc … --keypair …`).
 - `scripts/c7-live-proof.ts` submits one honest circuit-7 proof and reads the
   verdict back off the chain; `--tamper` / `--forge` show the refusals.
 

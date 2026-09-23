@@ -48,10 +48,7 @@ export interface StarkProverHandle {
   generateProof(id: string, subscriberSecret: string): void;
   computeCommitment(id: string, subscriberSecret: string): void;
   generatePoolCommitmentProof(id: string, np: string, secret: string, epoch: string, mint: string): void;
-  generateBalanceProof(id: string, sk: string, balance: string, salt: string, mint: string): void;
   generateMerklePathProof(id: string, leaf: string, pathElements: string[], pathIndices: number[]): void;
-  generateConfidentialBalanceProof(id: string, spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string): void;
-  generateTransferProof(id: string, spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string): void;
   generateMerkleUpdateProof(id: string, oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]): void;
   /** [C7] The spend proof. `pathElements`/`pathIndices` must be exactly 12
    *  long (C7's subtree depth, NOT the pool's 15) and `recipientHash` exactly
@@ -127,7 +124,7 @@ const STARK_HTML = `<!DOCTYPE html>
   // ---- Refusals ----
   //
   // The Rust wrappers do not throw. When one refuses -- no CSPRNG for the
-  // blinding mask (C1, C3, C5, C6 and C7 all draw one since the lift-column
+  // blinding mask (C1, C3, C6 and C7 all draw one since the lift-column
   // wave), a path of the wrong arity, a malformed recipient hash -- it returns
   // {"error": "..."} IN PLACE OF the proof JSON. Every handler below checks
   // for that before it reads a field. Until 2026-09-02 only the C7 handler
@@ -156,17 +153,8 @@ const STARK_HTML = `<!DOCTYPE html>
       case 'generatePoolProof':
         generatePoolProof(data.id, data.args);
         break;
-      case 'generateBalanceProof':
-        generateBalanceProofFn(data.id, data.args);
-        break;
       case 'generateMerklePathProof':
         generateMerklePathProofFn(data.id, data.leaf, data.pathElements, data.pathIndices);
-        break;
-      case 'generateConfidentialBalanceProof':
-        generateConfidentialBalanceProofFn(data.id, data);
-        break;
-      case 'generateTransferProof':
-        generateTransferProofFn(data.id, data);
         break;
       case 'generateMerkleUpdateProof':
         generateMerkleUpdateProofFn(data.id, data.oldLeaf, data.newLeaf, data.pathElements, data.pathIndices);
@@ -257,30 +245,6 @@ const STARK_HTML = `<!DOCTYPE html>
     }
   }
 
-  function generateBalanceProofFn(id, args) {
-    try {
-      if (!glue) throw new Error('WASM not initialized');
-      var startTime = performance.now();
-      var jsonStr = glue.generate_balance_stark_proof(
-        BigInt(args[0]), BigInt(args[1]), BigInt(args[2]), BigInt(args[3])
-      );
-      var elapsed = Math.round(performance.now() - startTime);
-      var result = JSON.parse(jsonStr);
-      if (result.error) throw new Error('Prover refused: ' + result.error);
-      post({
-        type: 'proof', id: id,
-        circuitId: result.circuit_id,
-        commitment: result.commitment,
-        publicInputs: [result.commitment, result.token_mint],
-        proofHex: result.proof_hex,
-        proofSize: result.proof_size,
-        durationMs: elapsed
-      });
-    } catch(e) {
-      post({ type: 'error', id: id, error: e.message || 'Balance proof failed' });
-    }
-  }
-
   function generateMerklePathProofFn(id, leaf, pathElements, pathIndices) {
     try {
       if (!glue) throw new Error('WASM not initialized');
@@ -308,36 +272,6 @@ const STARK_HTML = `<!DOCTYPE html>
     }
   }
 
-  function generateConfidentialBalanceProofFn(id, data) {
-    try {
-      if (!glue) throw new Error('WASM not initialized');
-      var startTime = performance.now();
-      var jsonStr = glue.generate_confidential_balance_stark_proof(
-        BigInt(data.spendingKey),
-        BigInt(data.oldBalance),
-        BigInt(data.oldSalt),
-        BigInt(data.newBalance),
-        BigInt(data.newSalt),
-        BigInt(data.amount),
-        BigInt(data.amountSalt),
-        BigInt(data.tokenMint)
-      );
-      var elapsed = Math.round(performance.now() - startTime);
-      var result = JSON.parse(jsonStr);
-      if (result.error) throw new Error('Prover refused: ' + result.error);
-      post({
-        type: 'proof', id: id,
-        circuitId: 4,
-        publicInputs: [result.old_commitment, result.new_commitment, result.amount_hash, result.token_mint],
-        proofHex: result.proof_hex,
-        proofSize: result.proof_size,
-        durationMs: elapsed
-      });
-    } catch(e) {
-      post({ type: 'error', id: id, error: e.message || 'Confidential balance proof failed' });
-    }
-  }
-
   function generateMerkleUpdateProofFn(id, oldLeaf, newLeaf, pathElements, pathIndices) {
     try {
       if (!glue) throw new Error('WASM not initialized');
@@ -358,41 +292,6 @@ const STARK_HTML = `<!DOCTYPE html>
       });
     } catch(e) {
       post({ type: 'error', id: id, error: e.message || 'Merkle update proof failed' });
-    }
-  }
-
-  function generateTransferProofFn(id, data) {
-    try {
-      if (!glue) throw new Error('WASM not initialized');
-      var startTime = performance.now();
-      var jsonStr = glue.generate_transfer_stark_proof(
-        BigInt(data.spendingKey),
-        BigInt(data.tokenMint),
-        BigInt(data.inAmount1),
-        BigInt(data.inRand1),
-        BigInt(data.inAmount2),
-        BigInt(data.inRand2),
-        BigInt(data.outAmount1),
-        BigInt(data.outRecipient1),
-        BigInt(data.outRand1),
-        BigInt(data.outAmount2),
-        BigInt(data.outRecipient2),
-        BigInt(data.outRand2),
-        BigInt(data.publicAmount)
-      );
-      var elapsed = Math.round(performance.now() - startTime);
-      var result = JSON.parse(jsonStr);
-      if (result.error) throw new Error('Prover refused: ' + result.error);
-      post({
-        type: 'proof', id: id,
-        circuitId: 5,
-        publicInputs: [result.nullifier_1, result.nullifier_2, result.output_commitment_1, result.output_commitment_2, result.public_amount, result.token_mint],
-        proofHex: result.proof_hex,
-        proofSize: result.proof_size,
-        durationMs: elapsed
-      });
-    } catch(e) {
-      post({ type: 'error', id: id, error: e.message || 'Transfer proof failed' });
     }
   }
 
@@ -423,7 +322,7 @@ const STARK_HTML = `<!DOCTYPE html>
       if (!glue) throw new Error('WASM not initialized');
       if (typeof glue.generate_spend_stark_proof !== 'function') {
         post({ type: 'error', id: id, error: 'Circuit 7 (SPEND) is not exported by the bundled WASM. '
-          + 'The pre-C7 blob (229,640 B / 51a947e3) exports eight functions; the C7 build has nine.' });
+          + 'The pre-C7 blob (229,640 B / 51a947e3) did not export it; the shipped build exports six functions, this one included.' });
         return;
       }
       // Checked here rather than left to the Rust: it parses the CSV with
@@ -560,34 +459,9 @@ export const StarkProver = forwardRef<StarkProverHandle, StarkProverProps>(
         inject(JSON.stringify({ type: 'generatePoolProof', id, args: [np, secret, epoch, mint] }));
       },
 
-      generateBalanceProof(id: string, sk: string, balance: string, salt: string, mint: string) {
-        if (!webViewRef.current) return;
-        inject(JSON.stringify({ type: 'generateBalanceProof', id, args: [sk, balance, salt, mint] }));
-      },
-
       generateMerklePathProof(id: string, leaf: string, pathElements: string[], pathIndices: number[]) {
         if (!webViewRef.current) return;
         inject(JSON.stringify({ type: 'generateMerklePathProof', id, leaf, pathElements, pathIndices }));
-      },
-
-      generateConfidentialBalanceProof(id: string, spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string) {
-        if (!webViewRef.current) return;
-        inject(JSON.stringify({
-          type: 'generateConfidentialBalanceProof', id,
-          spendingKey, oldBalance, oldSalt, newBalance, newSalt, amount, amountSalt, tokenMint,
-        }));
-      },
-
-      generateTransferProof(id: string, spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string) {
-        if (!webViewRef.current) return;
-        inject(JSON.stringify({
-          type: 'generateTransferProof', id,
-          spendingKey, tokenMint,
-          inAmount1, inRand1, inAmount2, inRand2,
-          outAmount1, outRand1, outRecipient1,
-          outAmount2, outRand2, outRecipient2,
-          publicAmount,
-        }));
       },
 
       generateMerkleUpdateProof(id: string, oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]) {

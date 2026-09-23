@@ -3,45 +3,38 @@
  *
  * The package is a thin runtime adapter: it owns the WASM prover, the chunked
  * upload protocol, and the two-phase DEEP-ALI verify against
- * `p01_stark_verifier`. The host (privacy-sdk) supplies the higher-level
- * subscription/transfer logic.
+ * `p01_stark_verifier`. The host (the Styx web, extension and mobile clients)
+ * supplies the higher-level subscription/transfer logic.
  *
- * `StarkProofOutcome` is duplicated locally rather than imported from the
- * privacy-sdk to avoid a circular runtime dependency at install time — the
- * shape is contractually frozen by the privacy-sdk's `ProverConfig.generateStarkProof`
- * type and is asserted by an interface compatibility test in `src/index.test.ts`.
- *
- * Match must be byte-for-byte. If privacy-sdk rev's the type, bump this
- * package and re-publish.
+ * `StarkProofOutcome` and `StarkProofGenerator` used to mirror privacy-sdk's
+ * `ProverConfig` contract. privacy-sdk 2.0.0 removed that contract
+ * (2026-09-23), so these types are canonical here; the shape test in
+ * `src/index.test.ts` pins them.
  */
 
 import type { PublicKey } from '@solana/web3.js';
 
 // ---------------------------------------------------------------------------
-// Mirror of `@protocol-01/privacy-sdk` ProverConfig contract
+// The prover contract (canonical here since privacy-sdk 2.0.0)
 // ---------------------------------------------------------------------------
 
 /**
  * STARK proof outcome returned by a host-supplied generator.
  *
- * Mirror of the type defined in `@protocol-01/privacy-sdk` —
- * `packages/privacy-sdk/src/types.ts` :: `StarkProofOutcome`. Keep these in
- * sync: the privacy-sdk consumes the return value structurally.
+ * privacy-sdk 1.x carried a structural twin of this type; 2.0.0 removed it.
  */
 export interface StarkProofOutcome {
   /** PDA of the verified STARK proof buffer held by p01_stark_verifier. */
   proofBuffer: PublicKey;
-  /** Circuit identifier (0–6). Informational — callers may log / assert. */
+  /** Circuit identifier (0, 1, 3, 6 or 7). Informational — callers may log / assert. */
   circuitId: number;
   /** Public inputs bound into the STARK transcript, for downstream checks. */
   publicInputs?: bigint[];
 }
 
 /**
- * Host-supplied STARK prover + verifier submitter signature. Mirror of
- * `StarkProofGenerator` in privacy-sdk. The factory `createStarkProver`
- * returns a function matching this signature so callers can plug it directly
- * into `setProverConfig({ generateStarkProof })`.
+ * STARK prover + verifier submitter signature. The factory
+ * `createStarkProver` returns a function matching it.
  */
 export type StarkProofGenerator = (
   circuitId: number,
@@ -116,8 +109,8 @@ export interface StarkProverConfig {
    * consuming program (e.g. `zk_shielded`) can read it cross-program. The
    * caller is then responsible for closing it (see `closeProofBuffer`).
    *
-   * Defaults to `true` — privacy-sdk relies on the buffer surviving to the
-   * shield/unshield/transfer instruction.
+   * Defaults to `true`: the consuming instruction (shield, unshield, subscribe)
+   * reads the buffer after verification.
    */
   retainBuffer?: boolean;
   /**
@@ -144,19 +137,18 @@ export interface StarkProverConfig {
  *
  * 0 = subscriber_ownership (compact proof)
  * 1 = pool_commitment      (denominated shield deposit)
- * 2 = balance_proof        (legacy confidential balance)
  * 3 = merkle_path          (inclusion in the shielded set tree)
- * 4 = confidential_balance (delta + bound to spending key)
- * 5 = transfer             (2-in-2-out shielded transfer, width 6, trace 512)
  * 6 = merkle_update        (depth-15 root rotation for variable-pool shield)
+ * 7 = spend                (see below)
+ *
+ * The deployed verifier also accepts ids 2, 4 and 5 (balance_proof,
+ * confidential_balance, transfer). No client proves them and the shipped wasm
+ * has no export for them, so they are not listed here.
  */
 export const STARK_CIRCUITS = {
   SUBSCRIBER_OWNERSHIP: 0,
   POOL_COMMITMENT: 1,
-  BALANCE_PROOF: 2,
   MERKLE_PATH: 3,
-  CONFIDENTIAL_BALANCE: 4,
-  TRANSFER: 5,
   MERKLE_UPDATE: 6,
   /**
    * [C7] The spend circuit: C1's pool commitment and C3's Merkle path proven in

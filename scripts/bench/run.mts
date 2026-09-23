@@ -49,7 +49,7 @@ import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 
 import { summarize, formatSummary, type Summary } from './stats.mts';
-import { WITNESSES } from './witnesses.mts';
+import { WITNESSES, LIVE_CIRCUITS } from './witnesses.mts';
 import { collectEnvironment, cpuBusyPercent, browserVersion } from './env.mts';
 import { FLOWS, parseFlowLog, type FlowDef, type FlowSample } from './flows/markers.mts';
 import { checkLiveGates, assertDevnetEndpoint, redactSecrets, currentSlot, readDeploySlots, type LiveContext } from './live.mts';
@@ -97,8 +97,10 @@ if (!Number.isInteger(N) || N < 1) fail('--n must be a positive integer.');
 const COLD_N = Number(opt('cold-n') ?? N);
 if (!Number.isInteger(COLD_N) || COLD_N < 1) fail('--cold-n must be a positive integer.');
 const ONLY = parseOnly(opt('only'));
-const CIRCUITS = (opt('circuits') ?? '0,1,2,3,4,5,6,7').split(',').map((c) => Number(c.trim()));
-for (const c of CIRCUITS) if (!(c >= 0 && c <= 7 && Number.isInteger(c))) fail(`--circuits: ${c} is not 0..7`);
+const CIRCUITS = (opt('circuits') ?? LIVE_CIRCUITS.join(',')).split(',').map((c) => Number(c.trim()));
+for (const c of CIRCUITS) {
+  if (!LIVE_CIRCUITS.includes(c)) fail(`--circuits: ${c} is not one the shipped blob proves (${LIVE_CIRCUITS.join(', ')})`);
+}
 const CACHE = opt('cache') ?? 'warm';
 if (CACHE !== 'warm' && CACHE !== 'cold') fail('--cache is warm or cold.');
 const STARTED_AT = new Date().toISOString();

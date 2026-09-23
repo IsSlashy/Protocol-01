@@ -1,7 +1,7 @@
 {
   "name": "@protocol-01/stark-prover",
   "version": "0.2.0",
-  "description": "Quantum-resistant STARK prover for Protocol 01 — drop-in WASM-backed proof generator + on-chain verifier submitter for @protocol-01/privacy-sdk. No trusted setup, no elliptic curves, post-quantum safe.",
+  "description": "STARK prover for Protocol 01 / Styx: WASM-backed proof generator and on-chain verifier submitter. Hash-based, no trusted setup, no elliptic curves in the proof.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -74,7 +74,6 @@
     "tweetnacl": "^1.0.3"
   },
   "devDependencies": {
-    "@protocol-01/privacy-sdk": "workspace:*",
     "@solana/kit": "8.3.0",
     "@solana/web3.js": "^1.98.4",
     "@types/node": "^22.19.19",
@@ -83,7 +82,6 @@
     "vitest": "^3.2.4"
   },
   "peerDependencies": {
-    "@protocol-01/privacy-sdk": "workspace:^",
     "@solana/web3.js": "^1.98.0"
   },
   "engines": {

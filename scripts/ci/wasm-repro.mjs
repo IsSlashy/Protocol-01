@@ -4,7 +4,7 @@
  * pinned toolchain, several times from clean target dirs, and check that every
  * rebuild is byte-identical to each other, to
  * `packages/stark-prover/wasm/p01_stark_bg.wasm`, to its wasm-bindgen glue, and
- * to the four base64 twins the clients actually import.
+ * to the three base64 twins the clients actually import.
  *
  *   node scripts/ci/wasm-repro.mjs [--runs 2] [--work-dir DIR] [--cargo-home DIR]
  *   node --test scripts/ci/wasm-repro.test.mjs     (the comparator; no toolchain)

@@ -4,7 +4,7 @@
  * # What went wrong, once
  *
  * `StarkProverProvider.sendRequestRaw` is the single funnel every
- * `generate*Proof` wrapper goes through — C1, C2, C3, C4, C5, C6 and C7 alike.
+ * `generate*Proof` wrapper goes through — C0, C1, C3, C6 and C7 alike.
  * A `[P01PERF] circuit=… prover=… ms bridge=… ms proofSize=…` line was added to
  * its `resolve`, to benchmark C7. Because the funnel is shared, it did not
  * benchmark C7: it fired on every proof any circuit ever produced, including a
@@ -154,8 +154,6 @@ services/stark/c7Bench.ts instead. Found: ${calls.join(', ')}`).toEqual([]);
     { line: "console.error('[StarkProver] WASM error:'", why: 'boot failure, error object only' },
     { line: "console.log('[StarkProver/WebView]'", why: 'unfiltered, but __DEV__-gated since 2026-08-27 — pinned below' },
     { line: "console.error('[StarkProver] WebView error:'", why: 'transport failure, error object only' },
-    { line: "console.log('[StarkProver] merkle_update + transfer provers wired", why: 'wiring, constant string' },
-    { line: "console.warn('[StarkProver] Failed to wire into ZkService:'", why: 'wiring failure, error object only' },
   ];
 
   it('makes exactly the console calls this file has justified, and no others', () => {

@@ -112,10 +112,10 @@ test('compareArtifacts: a twin carrying a decoy second literal fails', () => {
 
 test('compareArtifacts: a missing twin fails', () => {
   const set = plantedSet();
-  set.twins = set.twins.slice(0, 3);
+  set.twins = set.twins.slice(0, -1);
   const r = compareArtifacts(set);
   assert.equal(r.ok, false);
-  assert.ok(r.problems.some((p) => p.includes(TWIN_PATHS[3])), r.problems.join('\n'));
+  assert.ok(r.problems.some((p) => p.includes(TWIN_PATHS.at(-1))), r.problems.join('\n'));
 });
 
 test('compareArtifacts: two builds that differ fail as non-deterministic, even when one matches', () => {
@@ -270,7 +270,7 @@ test('the shipped blob carries the builder registry prefix and Windows-spelled w
   assert.ok(!paths.some((p) => p.startsWith('stark/src/')), paths.join('\n'));
 });
 
-test('the checked-in blob, glue and four twins agree through the comparator', () => {
+test('the checked-in blob, glue and every registered twin agree through the comparator', () => {
   const twins = TWIN_PATHS.map((path) => ({ path, text: readFileSync(resolve(REPO, path), 'utf8') }));
   const r = compareArtifacts({
     builds: [{ label: 'checked-in', wasm: shippedWasm, glue: shippedGlue }],

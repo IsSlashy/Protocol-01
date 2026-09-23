@@ -249,8 +249,9 @@
         "elf_bytes": 798881
       }
     },
-    "accepts_client_blob_sha256": "d5583d41c3780a1234b619231963679edc15df247fdc7c56dcc1f85c856365aa",
-    "accepts_client_blob_sha256_evidence_2026_09_20": "NTT-prover reship: 0ad6d7f1 (265,324 B) -> d5583d41 (262,363 B), rebuilt twice byte-identically with scripts/ci/wasm-repro.mjs pins (rustc 1.98.1, wasm-pack 0.14.0, wasm-bindgen 0.2.114, binaryen version_117). A circuit-7 proof (79,405 B) from this blob was ACCEPTED by DGY37k3J... on devnet: signature 5Kp9dMnUh5JUak8iDdc2eiHbQajgXmWhyRiSfcX2mdZW9KhRdtRUJiiwMAUNcaRNHWuTskuiTJ6v9csvzaPjLvVd, slot 501407541, 889,691 CU, via scripts/c7-live-proof.ts. Nothing in the `deployed` program record changed; the verifier was not redeployed.",
+    "accepts_client_blob_sha256": "241caaabb505b44c0d58c06a603cdc4f9ac6b338b93405dabf2048e7ed3a41e9",
+    "accepts_client_blob_sha256_evidence_2026_09_23": "C2/C4/C5 exports removed: d5583d41 (262,363 B) -> 241caaab (240,172 B), rebuilt twice byte-identically with scripts/ci/wasm-repro.mjs pins (rustc 1.98.1, wasm-pack 0.14.0, wasm-bindgen 0.2.114, binaryen version_117). A circuit-7 proof (79,405 B) from this blob was ACCEPTED by DGY37k3J... on devnet, both phases in one transaction: signature 3yGgsaUnFMS3PwQrB4DM9nUercdGueE7c8VYjaeSziquDeY64kEcRZEpuptxs9HpPFrqHHYvZVtzyUe32QSFnhCX, slot 502692190; phase 1 (VerifyStarkProofV2) 889,882 CU, phase 2 (VerifyDeepAliPhase2) 193,269 CU, transaction total 1,083,301 CU (getTransaction meta.computeUnitsConsumed, re-read 2026-09-23); 0.000146 SOL (buffer closed, rent recovered), via scripts/c7-live-proof.ts on 2026-09-23. Nothing in the `deployed` program record changed; the verifier was not redeployed. The 2026-09-20 entry below is history.",
+    "accepts_client_blob_sha256_evidence_2026_09_20": "NTT-prover reship: 0ad6d7f1 (265,324 B) -> d5583d41 (262,363 B), rebuilt twice byte-identically with scripts/ci/wasm-repro.mjs pins (rustc 1.98.1, wasm-pack 0.14.0, wasm-bindgen 0.2.114, binaryen version_117). A circuit-7 proof (79,405 B) from this blob was ACCEPTED by DGY37k3J... on devnet: signature 5Kp9dMnUh5JUak8iDdc2eiHbQajgXmWhyRiSfcX2mdZW9KhRdtRUJiiwMAUNcaRNHWuTskuiTJ6v9csvzaPjLvVd, slot 501407541, phase 1 (VerifyStarkProofV2) 889,691 CU, phase 2 (VerifyDeepAliPhase2) 192,317 CU, transaction total 1,082,158 CU (phase split re-read with a read-only getTransaction on 2026-09-23), via scripts/c7-live-proof.ts. Nothing in the `deployed` program record changed; the verifier was not redeployed.",
     "accepts_client_blob_sha256_note": [
       "UNKNOWN, and deliberately left null rather than guessed.",
       "",
@@ -460,24 +461,22 @@
       "still RED. Reshipping the client blob does not and must not green anything on the chain side."
     ],
     "path": "packages/stark-prover/wasm/p01_stark_bg.wasm",
-    "sha256": "d5583d41c3780a1234b619231963679edc15df247fdc7c56dcc1f85c856365aa",
-    "bytes": 262363,
+    "sha256": "241caaabb505b44c0d58c06a603cdc4f9ac6b338b93405dabf2048e7ed3a41e9",
+    "bytes": 240172,
     "proof_format_generation": "b2",
     "generation_evidence": {
-      "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node THROUGH THE GENERATED GLUE (initSync) and generates one proof per shipping circuit on eight fixed witnesses. The three unmasked circuits (C0, C2, C4) are judged by proof sha256; the five masked circuits (C1, C3, C5, C6, C7) draw a fresh CSPRNG mask per proof and are judged by exact proof LENGTH, pinned in src/wireFormat.test.ts. The generation is the column that ALL EIGHT rows match; a mixture, an unrecognised digest, a refusal or a wrong length is UNCLASSIFIABLE and fails the gate.",
+      "method": "BEHAVIOURAL. scripts/prover-behaviour.mjs instantiates this blob under Node THROUGH THE GENERATED GLUE (initSync) and generates one proof per circuit the blob exports on five fixed witnesses (C0, C1, C3, C6, C7; C2, C4 and C5 left the blob on 2026-09-23). All five draw a fresh CSPRNG mask per proof and are judged by exact proof LENGTH, pinned in src/wireFormat.test.ts. The generation is the column that ALL FIVE rows match; a mixture, an unrecognised digest, a refusal or a wrong length is UNCLASSIFIABLE and fails the gate.",
       "measured_digests": {
-        "C0 subscriber_ownership": "47641 B  157f45be56f966afeaa0bbb43255e17e16e0de07a2817429c7d554923b30930e",
+        "C0 subscriber_ownership": "74365 B  masked, length only",
         "C1 pool_commitment": "94897 B  masked, length only",
-        "C2 balance_proof": "69761 B  c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c",
         "C3 merkle_path": "79597 B  masked, length only",
-        "C4 confidential_balance": "81457 B  6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0",
-        "C5 transfer": "89821 B  masked, length only",
         "C6 merkle_update": "82477 B  masked, length only",
         "C7 spend": "79405 B  masked, length only"
       },
-      "_previous_b1_digests": "The eight rows above are the B2 column (three digests, five lengths). The B1 column this block used to carry, for whoever needs to recognise the older artifact: C0 45001 B e4aad105..., C1 65801 B 935d918c..., C2 66681 B 063d86a1..., C3 75637 B 2d97f56f..., C4 78377 B f8778367..., C5 76357 B 78afe9bb..., C6 78517 B 8e1166f5.... All seven are still pinned as the `b1` column of the fixture table in scripts/prover-behaviour.mjs, so the gate can still name a B1 blob rather than merely refusing to classify it.",
+      "_measured_digests_2026_09_23": "Re-measured off 241caaab by driving it (prover-behaviour.mjs, deployed-verifier-check.mjs). The C2, C4 and C5 rows are gone with their exports; the C0 row used to quote the legacy 47,641 B digest 157f45be..., which the masked C0 (74,365 B, since 2026-09-12) can never emit.",
+      "_previous_b1_digests": "The five rows above are the B2 column: five masked lengths (C0, C1, C3, C6, C7), no digests. The B1 column this block used to carry, for whoever needs to recognise the older artifact: C0 45001 B e4aad105..., C1 65801 B 935d918c..., C2 66681 B 063d86a1..., C3 75637 B 2d97f56f..., C4 78377 B f8778367..., C5 76357 B 78afe9bb..., C6 78517 B 8e1166f5.... Only the C0 B1 digest is still pinned, as the `b1` column of the fixture table in scripts/prover-behaviour.mjs, so the gate can still name a B1 blob rather than merely refusing to classify it. C2, C4 and C5 left that table with their exports on 2026-09-23; the C1, C3 and C6 rows already carried no b1 digest at f0f8a51b.",
       "why_not_length": "B1 changed WHAT FRI FOLDS without adding or removing a byte. MEASURED 2026-07-31 by driving both blobs: the pre-B1 blob 5fe610c9 and the B1 blob emit the SAME SEVEN LENGTHS, to the byte (45,001 / 65,801 / 66,681 / 75,637 / 78,377 / 76,357 / 78,517), and SEVEN DIFFERENT DIGESTS. Between those two generations content is the only discriminator there is. B2 is different \u2014 it widens three wire fields, so the seven lengths DID move (to the numbers above) \u2014 but that is not licence to classify on length: a blob can be given any length and only content is expensive to fake, so the verdict stays on the digest and the length stays an observation.",
-      "corroboration": "The three B2 digests and five masked lengths above are pinned independently in packages/stark-prover/src/wireFormat.test.ts (Pin.sha256, driving this blob) and in programs/p01_stark_verifier/tests/b1_deep_binding.rs (FIXTURE_C*_SHA256, computed from the Rust prover over the same seven witnesses). The gate reads both files and refuses to classify if either stops carrying them, so the reference cannot be moved in one file.",
+      "corroboration": "The five masked lengths above (C0, C1, C3, C6, C7) carry no digest, because each proof draws a fresh CSPRNG mask. Each length is pinned independently in packages/stark-prover/src/wireFormat.test.ts (Pin.absolute and the C7 block, driving this blob) and in programs/p01_stark_verifier/tests/cross_circuit_confusion.rs (computed from the Rust prover); C1, C3 and C6 are also pinned in programs/p01_stark_verifier/tests/b1_deep_binding.rs. scripts/prover-behaviour.mjs reads those files (lengthPinnedIn) and refuses to classify if one of them stops pinning the length, so the reference cannot be moved in one file.",
       "string_scan_kept_as_corroboration": {
         "method": "byte scan of the blob for panic and assert message literals, split by ERA, controlled by domain-separation tags present in every generation. This DECIDES NOTHING. It is kept because it catches two things the digests are silent about \u2014 a string-stripped artifact, and an artifact that was not built from the source in this tree \u2014 and because a blob that proves one generation while its strings claim another is the measured four-byte edit and gets named as such.",
         "_era_split_2026_08_02": "The four literals used to be ONE list called BLOB_B1_MARKERS, with the scan returning 'b1' if ANY of them hit. Two of the four are [B2]-only strings, so on a correct B2 tree the scan said 'b1' while the blob proved 'b2' and the check named 'the blob PROVES one generation and its panic strings CLAIM another' fired on an honest artifact, with a remedy ('reship the blob from this tree') that could never clear it. Now BLOB_MARKERS_B1 and BLOB_MARKERS_B2 are separate and the scan is a real three-way discriminator: pre-B1 carries neither, B1 carries the first, B2 carries both.",
@@ -493,7 +492,7 @@
         "_merged_2026_08_03": "Two lots split this list independently on 2026-08-02 and the merge kept ONE of them, not a blend: BLOB_MARKERS_B1 / BLOB_MARKERS_B2 in deployed-verifier-check.mjs, with classifyBlob requiring the WHOLE B2 era before it says b2. The other lot's classifyBlobStrings said b2 on any single B2 marker and is deleted; the difference is recorded on BLOB_MARKERS_B2. The deployed-ELF side is NOT two-valued as that lot's note said: classifyElf answers 'b1+' when it can only see 'B1 or newer', and generationsAreCompatible is what compares it. See deployed.generation_evidence.this_scan_cannot_say_b2.",
         "controls_present": [
           "the 8-byte NUL-padded domain tags rlc-c1, rlc-c2, rlc-c3, rlc-c5",
-          "proof_hex (the wasm_api JSON key, 7 occurrences)"
+          "proof_hex (the wasm_api JSON key, 5 occurrences since 2026-09-23)"
         ],
         "_controls_shrunk_2026_08_03": "bnd-c5 and bnd-c6 were in the list above and were REMOVED, because a CORRECT build of this tree no longer emits them and the remedy the gate printed ('reship the blob') could never have cleared it. That is the second time a byte scan here fired on an honest artifact -- see _era_split_2026_08_02 for the first. MEASURED over both blobs, raw byte occurrences of all six boundary tags: old (2a962ca9) had bnd-c1 1, bnd-c3 1, bnd-c5 1, bnd-c6 1 and bnd-c2 0, bnd-c4 0 -- exactly the four circuits that HAD a boundary fold; new (2613ffed) has all six at 0, while rlc-c1/c2/c3/c5 and proof_hex are untouched, so nothing was stripped. CAUSE: commit 109a4aa6, the C2/C4 binding fix, routed all six tags through one match returning *b\"bnd-cN\\0\\0\" BY VALUE as [u8;8]; a value needs no address, so LLVM emits immediates instead of a data-segment constant, and the only surviving by-reference use is inside #[cfg(test)] mod tests, which no wasm-pack build sees. PROOF THE BEHAVIOUR DID NOT MOVE WITH THE STRINGS: C5 and C6 emit proofs byte-identical to the pre-fold blob (28ef7176, b8dc81e0), impossible if their tag had stopped being absorbed, and C2/C4 match the digests the Rust prover pins independently. The presence of a tag STRING is a codegen artifact, not a semantic invariant; what remains in the list is a stripped-artifact canary and nothing more."
       },
@@ -540,7 +539,7 @@
     "bytes \u2014 litesvm can execute a fetched programdata payload, which tests/cu_budget.rs already does for",
     "a locally built .so, so it is known-possible in this repo, just not from a build script.",
     "",
-    "Shipping apps/web, apps/extension, apps/mobile or packages/react-native-zk from this tree makes",
+    "Shipping apps/web, apps/extension or apps/mobile from this tree makes",
     "EVERY proof those clients generate fail on chain with FriFoldCheckFailed. Ship the program first."
   ]
 }

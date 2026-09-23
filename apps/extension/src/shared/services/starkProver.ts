@@ -4,7 +4,7 @@
  * Browser-extension twin of `apps/mobile/providers/StarkProverProvider.tsx`.
  * The provider/context abstraction does not fit the extension cleanly because
  * the prover is used by non-React call sites (background service worker,
- * programmatic zk.ts flows), so we expose a plain singleton instead.
+ * programmatic pool flows), so we expose a plain singleton instead.
  *
  * Responsibilities:
  *  - Spawn the worker lazily on first use (keeps popup cold-start fast).
@@ -12,8 +12,10 @@
  *    submitting proof requests.
  *  - Multiplex multiple proof requests onto the single worker via an id-keyed
  *    pending-request map, with a 60s timeout per request.
- *  - Mirror the mobile StarkProverProvider public API 1:1 so `zk.ts` can be
- *    refactored by swapping imports, not logic.
+ *  - Mirror the mobile StarkProverProvider public API for the circuits the
+ *    shipped blob still exports. The circuit-2/4/5 methods (balance,
+ *    confidential balance, transfer) were removed on 2026-09-23 with the V1
+ *    `zk.ts` client, their only caller, and with their blob exports.
  */
 
 import type { StarkWorkerOutMessage } from '../workers/starkProver.worker';
@@ -185,69 +187,6 @@ class StarkProverService {
     });
     return {
       circuitId: msg.circuitId ?? 1,
-      publicInputs: msg.publicInputs ?? [],
-      proofHex: msg.proofHex!,
-      proofSize: msg.proofSize!,
-      durationMs: msg.durationMs!,
-    };
-  }
-
-  async generateBalanceProof(
-    sk: string, balance: string, salt: string, mint: string,
-  ): Promise<GenericStarkProofResult> {
-    const msg = await this.sendRequest((id, worker) => {
-      worker.postMessage({ type: 'generateBalanceProof', id, args: [sk, balance, salt, mint] });
-    });
-    return {
-      circuitId: msg.circuitId ?? 2,
-      publicInputs: msg.publicInputs ?? [],
-      proofHex: msg.proofHex!,
-      proofSize: msg.proofSize!,
-      durationMs: msg.durationMs!,
-    };
-  }
-
-  async generateConfidentialBalanceProof(
-    spendingKey: string, oldBalance: string, oldSalt: string,
-    newBalance: string, newSalt: string,
-    amount: string, amountSalt: string, tokenMint: string,
-  ): Promise<GenericStarkProofResult> {
-    const msg = await this.sendRequest((id, worker) => {
-      worker.postMessage({
-        type: 'generateConfidentialBalanceProof', id,
-        spendingKey, oldBalance, oldSalt, newBalance, newSalt,
-        amount, amountSalt, tokenMint,
-      });
-    });
-    return {
-      circuitId: msg.circuitId ?? 4,
-      publicInputs: msg.publicInputs ?? [],
-      proofHex: msg.proofHex!,
-      proofSize: msg.proofSize!,
-      durationMs: msg.durationMs!,
-    };
-  }
-
-  async generateTransferProof(
-    spendingKey: string, tokenMint: string,
-    inAmount1: string, inRand1: string,
-    inAmount2: string, inRand2: string,
-    outAmount1: string, outRand1: string, outRecipient1: string,
-    outAmount2: string, outRand2: string, outRecipient2: string,
-    publicAmount: string,
-  ): Promise<GenericStarkProofResult> {
-    const msg = await this.sendRequest((id, worker) => {
-      worker.postMessage({
-        type: 'generateTransferProof', id,
-        spendingKey, tokenMint,
-        inAmount1, inRand1, inAmount2, inRand2,
-        outAmount1, outRand1, outRecipient1,
-        outAmount2, outRand2, outRecipient2,
-        publicAmount,
-      });
-    });
-    return {
-      circuitId: msg.circuitId ?? 5,
       publicInputs: msg.publicInputs ?? [],
       proofHex: msg.proofHex!,
       proofSize: msg.proofSize!,

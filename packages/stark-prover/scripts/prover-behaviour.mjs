@@ -81,7 +81,8 @@
  *                `b1` / `preB1` columns of C0, C2, C4 and C5 still classify an
  *                OLD blob this way.
  *
- *   MASKED rows  all eight since 2026-09-12. The proof is driven and decoded and its
+ *   MASKED rows  all of them since 2026-09-12 (five since 2026-09-23, when C2, C4 and
+ *                C5 left the blob). The proof is driven and decoded and its
  *                LENGTH must equal what the current generation emits — the
  *                same number `wireFormat.test.ts` (`absolute`),
  *                `b1_deep_binding.rs` (`len`) and `cross_circuit_confusion.rs`
@@ -162,7 +163,7 @@
  * # What this DOES NOT prove
  *
  * That the blob is the current generation on every input. This is a SAMPLE:
- * eight fixed witnesses. A blob rigged to recognise those eight and replay
+ * five fixed witnesses. A blob rigged to recognise those five and replay
  * canned proof bytes for them, while proving something else for everything
  * else, would classify clean here. That is not a four-byte edit — it means
  * carrying a second prover, or ~600 KB of canned proofs, inside an artifact
@@ -309,29 +310,6 @@ const FIXTURES = [
     lengthPinnedIn: LENGTH_PINS,
   },
   {
-    label: 'C2 balance_proof',
-    masked: true,
-    // [UNIFORM-MASK 2026-09-12] 69,761 -> 95,777 (n 512, width 6): the three-part
-    // mask. The b2 digest that sat here, c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c
-    // (69,761 B), is recorded for a bisect and given NO column -- see C0.
-    bytes: 95_777,
-    bytesPreB2: 66_681,
-    // [BIND-C2C4 2026-08-03] MOVED by the C2 boundary fold, and the blob was
-    // reshipped in the SAME commit, so this column still describes the artifact on
-    // disk — which is the only thing that makes it a measurement rather than a wish.
-    // MEASURED off the freshly built blob and equal, byte for byte, to the digest
-    // the Rust prover pins independently at b1_deep_binding.rs FIXTURE_C2_SHA256.
-    // Superseded pre-fold B2 digest, recorded so a stale artifact stays legible in a
-    // bisect: 6541e57b85419fd87a4227bf08cfc2f151d0179870ba04d5011338843cd51ce8.
-    // It is deliberately NOT given a column: a pre-fold blob must refuse to classify,
-    // because this tree's verifier rejects every proof it emits.
-    b1: '063d86a18071ae369132c12a69c5af0e3c2efbe82f6340e6d7ec910be80fd49f',
-    preB1: '5171c80e65ba6ed63c0b5a58f58b0bad11a060a60445be483f797d4777cc7d33',
-    entry: 'generate_balance_stark_proof',
-    drive: () => [42n, 1000n, 777n, 999n],
-    lengthPinnedIn: LENGTH_PINS,
-  },
-  {
     label: 'C3 merkle_path',
     masked: true,
     // [ZK-LIFT 2026-08-31] 78,877 -> 79,597: the lift column, 22 x 4 + 2 = 90
@@ -339,49 +317,6 @@ const FIXTURES = [
     bytes: 79_597,
     entry: 'generate_merkle_path_stark_proof',
     drive: () => [777n, csv(15, (i) => 1000 + i), csv(15, (i) => i % 2)],
-    lengthPinnedIn: LENGTH_PINS,
-  },
-  {
-    label: 'C4 confidential_balance',
-    masked: true,
-    // [UNIFORM-MASK 2026-09-12] 81,457 -> 75,085 (n 512, width 6, 22 queries):
-    // the three-part mask. The b2 digest that sat here,
-    // 6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0 (81,457 B),
-    // is recorded for a bisect and given NO column -- see C0.
-    bytes: 75_085,
-    bytesPreB2: 78_377,
-    // [BIND-C2C4 2026-08-03] MOVED by the C4 boundary fold, same cause and same
-    // reshipped-in-the-same-commit rule as C2 above. MEASURED off the freshly built
-    // blob, equal to b1_deep_binding.rs FIXTURE_C4_SHA256. Superseded pre-fold B2
-    // digest: f4918f36632e011049366c079489b8f70858113f45831bcd76e0cf630d92929a.
-    b1: 'f877836723d0711e7190c2fd5c8a5c6d0476f21794d39ffd47a075f57d53e3e7',
-    preB1: 'fbb631a3146225798360fcf80defb748664b2848ae0e59c88e6c9ec6342b2818',
-    entry: 'generate_confidential_balance_stark_proof',
-    drive: () => [42n, 1000n, 111n, 800n, 222n, 200n, 333n, 999n],
-    lengthPinnedIn: LENGTH_PINS,
-  },
-  {
-    label: 'C5 transfer',
-    masked: true,
-    // [ZK-MASK 2026-08-30/31] 78,877 -> 89,821: the blinding region is committed.
-    // This row was a DIGEST row until then; its last deterministic b2 digest was
-    // a9e3805e504ac0468632739d615ac7d90e34843f27442685f8b30efb7723b5ed (78,877 B),
-    // recorded here for a bisect and deliberately given NO column — the shipped
-    // prover draws a fresh mask and can never emit it again, and a pre-mask blob
-    // must refuse to classify. ⛔ Do NOT copy b1_deep_binding.rs FIXTURE_C5_SHA256
-    // in here either: `fixture_c5` feeds a FIXED mask and is reproducible; the
-    // shipped prover is not, and a copied digest would fail at random rather than
-    // fail honestly (wireFormat.test.ts says the same on its C5 row).
-    //
-    // `b1` and `preB1` stay: those generations were deterministic on C5 and were
-    // measured, so an old blob's C5 row is still named in the table.
-    // [UNIFORM-MASK 2026-09-12] 89,821 -> 91,261: two more columns (width 9).
-    bytes: 91_261,
-    bytesPreB2: 76_357,
-    b1: '78afe9bbd533913771d5c2438e279934114fe4c6db934b67b43c0644376ea125',
-    preB1: '373f74ccff5a6a1ff5cbbb284f670e1df66f6909ca5c7eb46d78aa872a5ff574',
-    entry: 'generate_transfer_stark_proof',
-    drive: () => [13n, 500n, 77n, 400n, 88n, 100n, 150n, 1234n, 555n, 65n, 2222n, 333n, 50n],
     lengthPinnedIn: LENGTH_PINS,
   },
   {
@@ -419,8 +354,13 @@ const FIXTURES = [
 // freshness assertion in wireFormat.test.ts. The B1-class gap named in [MASK]
 // above is now open on all eight, and closed only by the record
 // (`accepts_client_blob_sha256`) and the on-chain acceptance behind it.
+//
+// [MENAGE 2026-09-23] C2, C4 and C5 left the table with their wasm exports: no
+// client proves them, so the shipped blob has no entry point to drive. Their
+// b1 / preB1 digests went with the rows; C0's b1 / preB1 columns still name an
+// old blob, and an old blob's C2/C4/C5 rows can no longer classify a new one.
 const EXPECTED_DIGEST_ROWS = [];
-const EXPECTED_MASKED_ROWS = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7'];
+const EXPECTED_MASKED_ROWS = ['C0', 'C1', 'C3', 'C6', 'C7'];
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
@@ -558,9 +498,9 @@ export function fixtureTableProblem() {
     lines: [
       ...lines,
       '',
-      'These three digests and five lengths are what decides which generation the shipped prover is. They',
-      'are pinned in more than one place on purpose — here, in a Rust integration test and in a vitest',
-      'suite, the lengths in a second Rust test as well — so that moving them is not a one-file edit.',
+      'These five lengths are what decides which generation the shipped prover is. They are pinned in',
+      'more than one place on purpose — here, in a Rust integration test and in a vitest suite, some in',
+      'a second Rust test as well — so that moving them is not a one-file edit.',
       'Refusing to classify while they disagree.',
     ],
   };

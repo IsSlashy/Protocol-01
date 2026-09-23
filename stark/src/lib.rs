@@ -37,14 +37,20 @@
 //!
 //! # Circuits (AIR definitions)
 //!
-//! | Circuit                 | Circom Equivalent          | Status |
-//! |-------------------------|----------------------------|--------|
-//! | subscriber_ownership    | subscriber_ownership.circom| POC    |
-//! | balance_proof           | balance_proof.circom       | TODO   |
-//! | confidential_balance    | confidential_balance.circom| TODO   |
-//! | denominated_pool        | denominated_pool.circom    | TODO   |
-//! | denominated_transfer    | denominated_transfer.circom| TODO   |
-//! | transfer                | transfer.circom            | TODO   |
+//! `air/` holds the eight AIRs the deployed verifier accepts (ids 0-7). The
+//! wasm build exports a prover for the five the clients use:
+//!
+//! | Id | Circuit              | wasm export                            |
+//! |----|----------------------|----------------------------------------|
+//! | 0  | subscriber_ownership | `generate_stark_proof`                 |
+//! | 1  | denominated_pool     | `generate_pool_commitment_stark_proof` |
+//! | 3  | merkle_path          | `generate_merkle_path_stark_proof`     |
+//! | 6  | merkle_update        | `generate_merkle_update_stark_proof`   |
+//! | 7  | spend                | `generate_spend_stark_proof`           |
+//!
+//! C2 (balance_proof), C4 (confidential_balance) and C5 (transfer) keep their
+//! AIRs and native generators in `compact` for the verifier's regression
+//! suites, and have no wasm export.
 //!
 //! # Field
 //!
@@ -55,9 +61,6 @@
 pub mod air;
 pub mod poseidon;
 pub mod prover;
-
-#[cfg(feature = "std")]
-pub mod verifier;
 
 pub mod compact;
 
@@ -79,29 +82,13 @@ pub use air::denominated_pool::{
     build_pool_commitment_trace, compute_pool_values, DenominatedPoolAir,
     DenominatedPoolPublicInputs,
 };
-pub use air::balance_proof::{
-    build_balance_proof_trace, compute_balance_commitment, BalanceProofAir,
-    BalanceProofPublicInputs,
-};
-pub use air::confidential_balance::{
-    build_confidential_balance_trace, compute_confidential_balance, ConfidentialBalanceAir,
-    ConfidentialBalancePublicInputs,
-};
-pub use air::transfer::{
-    build_transfer_trace, compute_transfer, TransferAir, TransferPublicInputs,
-    TransferInput, TransferOutput,
-};
-pub use prover::{prove_subscriber_ownership, StarkProofBytes};
 pub use compact::{
     generate_subscriber_ownership_proof,
-    generate_pool_commitment_proof, generate_balance_compact_proof,
+    generate_pool_commitment_proof,
     generate_merkle_path_compact_proof, generate_merkle_update_compact_proof,
-    generate_confidential_balance_compact_proof,
-    generate_transfer_compact_proof, GenericCompactProofData,
+    GenericCompactProofData,
     CIRCUIT_SUBSCRIBER_OWNERSHIP, CIRCUIT_POOL_COMMITMENT,
-    CIRCUIT_BALANCE_PROOF, CIRCUIT_MERKLE_PATH,
-    CIRCUIT_CONFIDENTIAL_BALANCE, CIRCUIT_TRANSFER,
-    CIRCUIT_MERKLE_UPDATE,
+    CIRCUIT_MERKLE_PATH, CIRCUIT_MERKLE_UPDATE,
 };
 pub use winterfell::math::fields::f64::BaseElement;
 /// [C7 drift pins] `winterfell` is not a dependency of the verifier crate, so
@@ -110,9 +97,6 @@ pub use winterfell::math::fields::f64::BaseElement;
 /// hand-rolled `fn ZERO()`. Re-exported so a cross-crate pin can do field
 /// arithmetic without the verifier taking a winterfell dependency of its own.
 pub use winterfell::math::{FieldElement, StarkField};
-
-#[cfg(feature = "std")]
-pub use verifier::verify_subscriber_ownership;
 
 /// Draw `n` uniform Goldilocks elements from the OS CSPRNG, by rejection.
 ///
@@ -248,9 +232,7 @@ mod wasm_api {
 
     use crate::compact::{
         generate_subscriber_ownership_proof, generate_pool_commitment_proof,
-        generate_balance_compact_proof, generate_merkle_path_compact_proof,
-        generate_merkle_update_compact_proof,
-        generate_confidential_balance_compact_proof, generate_transfer_compact_proof,
+        generate_merkle_path_compact_proof, generate_merkle_update_compact_proof,
         generate_spend_compact_proof,
     };
 
@@ -334,94 +316,6 @@ mod wasm_api {
             proof_data.circuit_id,
             proof_data.public_inputs[0],
             proof_data.public_inputs[1],
-            proof_hex,
-            proof_data.proof_bytes.len()
-        )
-    }
-
-    /// Generate a compact STARK proof for balance commitment.
-    /// Returns JSON: { circuit_id: 2, commitment: string, token_mint: string, proof_hex: string, proof_size: number }
-    #[wasm_bindgen]
-    pub fn generate_balance_stark_proof(
-        spending_key: u64,
-        balance: u64,
-        salt: u64,
-        token_mint: u64,
-    ) -> String {
-        // [ZK-MASK-C2 2026-09-11] The blinding region, drawn fresh for THIS
-        // proof. ⛔ REFUSES RATHER THAN FALLING BACK, for the reason every
-        // other masked entry states: no proof fails loudly, a weak mask
-        // succeeds and leaks. A zero-filled default would leave rows 128..511
-        // predictable and the carry column would give up `owner_mint` again.
-        let mask = match BlindingMask::draw(crate::air::balance_proof::MASK_LEN) {
-            Ok(m) => m,
-            Err(e) => {
-                return format!(
-                    r#"{{"error":"no CSPRNG available, refusing to build a C2 proof: {}"}}"#,
-                    e,
-                );
-            }
-        };
-
-        let proof_data = generate_balance_compact_proof(
-            spending_key, balance, salt, token_mint, &mask,
-        );
-        let proof_hex = proof_data.proof_bytes.iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>();
-
-        format!(
-            r#"{{"circuit_id":{},"commitment":"{}","token_mint":"{}","proof_hex":"{}","proof_size":{}}}"#,
-            proof_data.circuit_id,
-            proof_data.public_inputs[0],
-            proof_data.public_inputs[1],
-            proof_hex,
-            proof_data.proof_bytes.len()
-        )
-    }
-
-    /// Generate a compact STARK proof for confidential balance update.
-    /// Returns JSON: { circuit_id: 4, old_commitment, new_commitment, amount_hash, token_mint, proof_hex, proof_size }
-    #[wasm_bindgen]
-    pub fn generate_confidential_balance_stark_proof(
-        spending_key: u64,
-        old_balance: u64,
-        old_salt: u64,
-        new_balance: u64,
-        new_salt: u64,
-        amount: u64,
-        amount_salt: u64,
-        token_mint: u64,
-    ) -> String {
-        // [ZK-MASK-C4 2026-09-11] The blinding region, drawn fresh for THIS
-        // proof. REFUSES RATHER THAN FALLING BACK: a zero-filled default would
-        // leave rows 224..511 predictable and the carry column would give up
-        // `owner_mint` again, exactly as the 2026-09-03 audit measured.
-        let mask = match BlindingMask::draw(crate::air::confidential_balance::MASK_LEN) {
-            Ok(m) => m,
-            Err(e) => {
-                return format!(
-                    r#"{{"error":"no CSPRNG available, refusing to build a C4 proof: {}"}}"#,
-                    e,
-                );
-            }
-        };
-
-        let proof_data = generate_confidential_balance_compact_proof(
-            spending_key, old_balance, old_salt, new_balance, new_salt,
-            amount, amount_salt, token_mint, &mask,
-        );
-        let proof_hex = proof_data.proof_bytes.iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>();
-
-        format!(
-            r#"{{"circuit_id":{},"old_commitment":"{}","new_commitment":"{}","amount_hash":"{}","token_mint":"{}","proof_hex":"{}","proof_size":{}}}"#,
-            proof_data.circuit_id,
-            proof_data.public_inputs[0],
-            proof_data.public_inputs[1],
-            proof_data.public_inputs[2],
-            proof_data.public_inputs[3],
             proof_hex,
             proof_data.proof_bytes.len()
         )
@@ -539,67 +433,6 @@ mod wasm_api {
             proof_data.public_inputs[2],
             proof_data.public_inputs[3],
             proof_data.public_inputs[4],
-            proof_hex,
-            proof_data.proof_bytes.len()
-        )
-    }
-
-    /// Generate a compact STARK proof for a 2-in-2-out shielded transfer.
-    /// Returns JSON: { circuit_id: 5, nullifier_1, nullifier_2, output_commitment_1, output_commitment_2,
-    ///                  public_amount, token_mint, proof_hex, proof_size }
-    #[wasm_bindgen]
-    pub fn generate_transfer_stark_proof(
-        spending_key: u64,
-        token_mint: u64,
-        in_amount_1: u64,
-        in_rand_1: u64,
-        in_amount_2: u64,
-        in_rand_2: u64,
-        out_amount_1: u64,
-        out_recipient_1: u64,
-        out_rand_1: u64,
-        out_amount_2: u64,
-        out_recipient_2: u64,
-        out_rand_2: u64,
-        public_amount: u64,
-    ) -> String {
-                // [C5-N1024] The blinding region, drawn fresh for THIS proof.
-        //
-        // ⛔ REFUSES RATHER THAN FALLING BACK. Until 2026-08-29 this entry drew
-        // NOTHING — it was the only shipping circuit with no mask at all, which
-        // is why `air_aware_recovery_c5.rs` recovered all four note amounts and
-        // `owner` from one honest proof.
-        let mask = match BlindingMask::draw(crate::air::transfer::MASK_LEN) {
-            Ok(m) => m,
-            Err(e) => {
-                return format!(
-                    r#"{{"error":"no CSPRNG available, refusing to build a C5 proof: {}"}}"#,
-                    e,
-                );
-            }
-        };
-
-let proof_data = generate_transfer_compact_proof(
-            spending_key, token_mint,
-            in_amount_1, in_rand_1, in_amount_2, in_rand_2,
-            out_amount_1, out_recipient_1, out_rand_1,
-            out_amount_2, out_recipient_2, out_rand_2,
-            public_amount,
-            &mask
-        );
-        let proof_hex = proof_data.proof_bytes.iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>();
-
-        format!(
-            r#"{{"circuit_id":{},"nullifier_1":"{}","nullifier_2":"{}","output_commitment_1":"{}","output_commitment_2":"{}","public_amount":"{}","token_mint":"{}","proof_hex":"{}","proof_size":{}}}"#,
-            proof_data.circuit_id,
-            proof_data.public_inputs[0],
-            proof_data.public_inputs[1],
-            proof_data.public_inputs[2],
-            proof_data.public_inputs[3],
-            proof_data.public_inputs[4],
-            proof_data.public_inputs[5],
             proof_hex,
             proof_data.proof_bytes.len()
         )

@@ -80,5 +80,5 @@ export default defineConfig({
   },
   outDir: 'dist',
   // Treat the host SDK + Solana web3 as externals — peer deps.
-  external: ['@protocol-01/privacy-sdk', '@solana/web3.js'],
+  external: ['@solana/web3.js'],
 });

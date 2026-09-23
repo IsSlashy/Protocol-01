@@ -21,7 +21,6 @@ import {
   type StarkProverHandle,
   type StarkProverMessage,
 } from '../services/stark/StarkProver';
-import { getZkService } from '../services/zk';
 import { assertSpendWitness, CIRCUIT_SPEND } from '../services/stark/spendWitness';
 
 // ---------------------------------------------------------------------------
@@ -53,9 +52,6 @@ interface StarkProverContextType {
   generateProof: (subscriberSecret: string) => Promise<StarkProofResult>;
   computeCommitment: (subscriberSecret: string) => Promise<string>;
   generatePoolCommitmentProof: (np: string, secret: string, epoch: string, mint: string) => Promise<GenericStarkProofResult>;
-  generateBalanceProof: (sk: string, balance: string, salt: string, mint: string) => Promise<GenericStarkProofResult>;
-  generateConfidentialBalanceProof: (spendingKey: string, oldBalance: string, oldSalt: string, newBalance: string, newSalt: string, amount: string, amountSalt: string, tokenMint: string) => Promise<GenericStarkProofResult>;
-  generateTransferProof: (spendingKey: string, tokenMint: string, inAmount1: string, inRand1: string, inAmount2: string, inRand2: string, outAmount1: string, outRand1: string, outRecipient1: string, outAmount2: string, outRand2: string, outRecipient2: string, publicAmount: string) => Promise<GenericStarkProofResult>;
   generateMerkleUpdateProof: (oldLeaf: string, newLeaf: string, pathElements: string[], pathIndices: number[]) => Promise<GenericStarkProofResult>;
   /** V3 — circuit 3 (merkle_path). Proves `leaf` is at `root` via the supplied
    *  path. Used by `unshield_denominated_stark_v3` stacked on top of C1. */
@@ -162,7 +158,7 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
         // ⛔ DO NOT PUT A `[P01PERF]` LINE (or any other per-proof log) HERE.
         //
         // This function is the single funnel for EVERY generate*Proof wrapper
-        // below — C1, C2, C3, C4, C5, C6 and C7 all come through it. A line
+        // below — C0, C1, C3, C6 and C7 all come through it. A line
         // emitted from this resolve is therefore not a benchmark: it fires on a
         // real user's spend, on the device, in production. `babel.config.js`
         // has `transform-remove-console` COMMENTED OUT (line 51) and nothing
@@ -247,73 +243,6 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
       });
       return {
         circuitId: msg.circuitId ?? 1,
-        publicInputs: msg.publicInputs ?? [],
-        proofHex: msg.proofHex!,
-        proofSize: msg.proofSize!,
-        durationMs: msg.durationMs!,
-      };
-    },
-    [sendRequestRaw],
-  );
-
-  const generateBalanceProof = useCallback(
-    async (sk: string, balance: string, salt: string, mint: string): Promise<GenericStarkProofResult> => {
-      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
-        proverRef.current!.generateBalanceProof(id, sk, balance, salt, mint);
-      });
-      return {
-        circuitId: msg.circuitId ?? 2,
-        publicInputs: msg.publicInputs ?? [],
-        proofHex: msg.proofHex!,
-        proofSize: msg.proofSize!,
-        durationMs: msg.durationMs!,
-      };
-    },
-    [sendRequestRaw],
-  );
-
-  const generateConfidentialBalanceProof = useCallback(
-    async (
-      spendingKey: string, oldBalance: string, oldSalt: string,
-      newBalance: string, newSalt: string,
-      amount: string, amountSalt: string, tokenMint: string,
-    ): Promise<GenericStarkProofResult> => {
-      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
-        proverRef.current!.generateConfidentialBalanceProof(
-          id, spendingKey, oldBalance, oldSalt, newBalance, newSalt, amount, amountSalt, tokenMint,
-        );
-      });
-      return {
-        circuitId: msg.circuitId ?? 4,
-        publicInputs: msg.publicInputs ?? [],
-        proofHex: msg.proofHex!,
-        proofSize: msg.proofSize!,
-        durationMs: msg.durationMs!,
-      };
-    },
-    [sendRequestRaw],
-  );
-
-  const generateTransferProof = useCallback(
-    async (
-      spendingKey: string, tokenMint: string,
-      inAmount1: string, inRand1: string,
-      inAmount2: string, inRand2: string,
-      outAmount1: string, outRand1: string, outRecipient1: string,
-      outAmount2: string, outRand2: string, outRecipient2: string,
-      publicAmount: string,
-    ): Promise<GenericStarkProofResult> => {
-      const msg = await sendRequestRaw<StarkProverMessage>((id) => {
-        proverRef.current!.generateTransferProof(
-          id, spendingKey, tokenMint,
-          inAmount1, inRand1, inAmount2, inRand2,
-          outAmount1, outRand1, outRecipient1,
-          outAmount2, outRand2, outRecipient2,
-          publicAmount,
-        );
-      });
-      return {
-        circuitId: msg.circuitId ?? 5,
         publicInputs: msg.publicInputs ?? [],
         proofHex: msg.proofHex!,
         proofSize: msg.proofSize!,
@@ -431,67 +360,11 @@ export function StarkProverProvider({ children }: StarkProverProviderProps) {
     return () => { cancelled = true; };
   }, [isReady, generatePoolCommitmentProof, generateMerklePathProof]);
 
-  // Wire circuit 6 (merkle_update) + circuit 5 (transfer) provers into
-  // ZkService so shield/transfer/unshield can generate STARK proofs without
-  // threading the hook through every caller.
-  useEffect(() => {
-    if (!isReady) return;
-    try {
-      const zkService = getZkService();
-      zkService.setMerkleUpdateProver(async (oldLeaf, newLeaf, pathElements, pathIndices) => {
-        const result = await generateMerkleUpdateProof(oldLeaf, newLeaf, pathElements, pathIndices);
-        return {
-          circuitId: result.circuitId,
-          publicInputs: result.publicInputs,
-          proofHex: result.proofHex,
-          proofSize: result.proofSize,
-        };
-      });
-      // V3 — wire C3 (merkle_path) prover the same way C6 is wired.
-      zkService.setMerklePathProver(async (leaf, pathElements, pathIndices) => {
-        const result = await generateMerklePathProof(leaf, pathElements, pathIndices);
-        return {
-          circuitId: result.circuitId,
-          publicInputs: result.publicInputs,
-          proofHex: result.proofHex,
-          proofSize: result.proofSize,
-        };
-      });
-      zkService.setTransferProver(async (
-        spendingKey, tokenMint,
-        inAmount1, inRand1, inAmount2, inRand2,
-        outAmount1, outRand1, outRecipient1,
-        outAmount2, outRand2, outRecipient2,
-        publicAmount,
-      ) => {
-        const result = await generateTransferProof(
-          spendingKey, tokenMint,
-          inAmount1, inRand1, inAmount2, inRand2,
-          outAmount1, outRand1, outRecipient1,
-          outAmount2, outRand2, outRecipient2,
-          publicAmount,
-        );
-        return {
-          circuitId: result.circuitId,
-          publicInputs: result.publicInputs,
-          proofHex: result.proofHex,
-          proofSize: result.proofSize,
-        };
-      });
-      console.log('[StarkProver] merkle_update + transfer provers wired into ZkService');
-    } catch (err) {
-      console.warn('[StarkProver] Failed to wire into ZkService:', err);
-    }
-  }, [isReady, generateMerkleUpdateProof, generateMerklePathProof, generateTransferProof]);
-
   const contextValue: StarkProverContextType = {
     isReady,
     generateProof,
     computeCommitment,
     generatePoolCommitmentProof,
-    generateBalanceProof,
-    generateConfidentialBalanceProof,
-    generateTransferProof,
     generateMerkleUpdateProof,
     generateMerklePathProof,
     generateSpendProof,
@@ -519,9 +392,6 @@ export function useStarkProver(): StarkProverContextType {
       generateProof: notAvailable as any,
       computeCommitment: notAvailable as any,
       generatePoolCommitmentProof: notAvailable as any,
-      generateBalanceProof: notAvailable as any,
-      generateConfidentialBalanceProof: notAvailable as any,
-      generateTransferProof: notAvailable as any,
       generateMerkleUpdateProof: notAvailable as any,
       generateMerklePathProof: notAvailable as any,
       generateSpendProof: notAvailable as any,

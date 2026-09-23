@@ -32,8 +32,8 @@
  *
  * PROVES: the checked-in blob (and every inlined twin) is the exact artifact
  * `deployed-verifier.json` records as compatible with the deployed program, and
- * that its proof-format generation — MEASURED by generating eight proofs with it,
- * hashing the three deterministic ones and measuring the five masked ones, not
+ * that its proof-format generation — MEASURED by generating five proofs with it
+ * and measuring each one (all five circuits are masked), not
  * read off it — equals the generation that record attributes to the deployment.
  *
  * DOES NOT PROVE: that a proof from this blob verifies on chain. Only a real
@@ -106,10 +106,11 @@
  *
  * # Generation detection — the CLIENT side is measured, not read
  *
- * The client blob's generation comes from what it DOES: eight fixed witnesses in,
- * one per shipping circuit, eight serialized proofs out, and every one must match
- * the same column of the fixture table in scripts/prover-behaviour.mjs. For the
- * three deterministic circuits (C0, C2, C4) that is the sha256 of the proof. B1
+ * The client blob's generation comes from what it DOES: five fixed witnesses in,
+ * one per circuit the blob exports (C0, C1, C3, C6, C7; C2, C4 and C5 left the
+ * blob on 2026-09-23), five serialized proofs out, and every one must match
+ * the same column of the fixture table in scripts/prover-behaviour.mjs. Until
+ * 2026-09-12 the deterministic circuits (C0, C2, C4) were judged by the sha256 of the proof. B1
  * was length-preserving on every circuit it touched, so length alone cannot
  * separate those generations (MEASURED: both blobs emit 45,001 / 65,801 / 66,681
  * / 75,637 / 78,377 / 76,357 / 78,517 bytes) and the CONTENT digests are the
@@ -143,7 +144,7 @@
  * them is read to reach it.
  *
  * What the digests do NOT prove is that the blob is B1 on every input; they are an
- * eight-witness sample, and on the masked rows a length is all there is. See the
+ * five-witness sample, and on the masked rows a length is all there is. See the
  * "What this DOES NOT prove" section of scripts/prover-behaviour.mjs.
  *
  * The DEPLOYED side is still classified by scanning the ELF for msg! literals,
@@ -196,7 +197,7 @@
  *
  *   2. THE GATE VERIFIED A PROGRAM ONE SHIPPED CODE PATH DOES NOT CALL. The SDK
  *      cross-check read one key. packages/privacy-sdk/src/modules/instantUnshield.ts
- *      pins a SECOND verifier id, and it is a different live devnet deployment.
+ *      (deleted 2026-09-23) pinned a SECOND verifier id, and it is a different live devnet deployment.
  *      See verifierConstantsInPrivacySdk for the measurement; every such constant
  *      is swept now.
  *
@@ -659,7 +660,7 @@ function programIdFromAnchorToml(anchorSection) {
  * The roots below are every package and app that pins a verifier id in code. It
  * was `packages/privacy-sdk/src` alone until 2026-08-02, which meant that the
  * FOUR other client-side pins — packages/stark-prover/src/types.ts,
- * packages/zkspl-sdk/src/constants.ts, apps/web, apps/extension, apps/mobile —
+ * packages/zkspl-sdk/src/constants.ts (deleted 2026-09-23), apps/web, apps/extension, apps/mobile —
  * were unchecked by the gate that exists to prove the client and the deployment
  * interlock. They all happen to agree today; "happen to" is the problem.
  *
@@ -674,8 +675,6 @@ const SDK_ROOT = 'packages/privacy-sdk/src';
 const CLIENT_ID_ROOTS = [
   'packages/privacy-sdk/src',
   'packages/stark-prover/src',
-  'packages/zkspl-sdk/src',
-  'packages/react-native-zk/src',
   'apps/web/lib',
   'apps/extension/src',
   'apps/mobile/services',
@@ -723,8 +722,8 @@ function verifierConstantsInPrivacySdk() {
   const out = [];
   // `new PublicKey('…')` OR a bare string literal: two of the five roots pin the
   // id as a plain string (packages/stark-prover/src/types.ts
-  // DEFAULT_STARK_VERIFIER_PROGRAM_ID, packages/zkspl-sdk/src/constants.ts
-  // STARK_VERIFIER_PROGRAM_ID), and a regex that only understood PublicKey would
+  // DEFAULT_STARK_VERIFIER_PROGRAM_ID, and until 2026-09-23 the deleted
+  // packages/zkspl-sdk/src/constants.ts STARK_VERIFIER_PROGRAM_ID), and a regex that only understood PublicKey would
   // have swept a root and found nothing, which reads identically to a clean root.
   const re = new RegExp(
     `const\\s+([A-Za-z0-9_]*STARK_VERIFIER[A-Za-z0-9_]*)\\s*(?::[^=]*)?=\\s*(?:new PublicKey\\(\\s*)?'(${B58_ID})'`,
@@ -1556,10 +1555,10 @@ try {
 }
 const blobSha = sha256(blob);
 
-// THE VERDICT. The blob is driven — eight witnesses in, one per shipping circuit
-// — and the generation is whichever column of the fixture table ALL eight match:
-// C0, C2 and C4 by proof digest; C1, C3, C5, C6 and C7, which draw a fresh
-// CSPRNG mask per proof and so have no digest, by proof LENGTH. Driven THROUGH
+// THE VERDICT. The blob is driven — five witnesses in, one per circuit the blob
+// exports (C0, C1, C3, C6, C7) — and the generation is whichever column of the
+// fixture table ALL five match. Every one of them draws a fresh CSPRNG mask per
+// proof since 2026-09-12 and so has no digest; they match by proof LENGTH. Driven THROUGH
 // the generated wasm-bindgen glue since 2026-09-02, because a masked prover asks
 // the host for randomness. Nothing here reads a string out of the artifact or
 // out of any Rust source, so no rename in any file changes what this returns.
@@ -1614,10 +1613,9 @@ if (blobGen === null) {
   fail('the checked-in prover blob could not be classified by what it DOES', [
     `  ${blobBehaviour.problem ?? 'the reference fixture table was rejected; see the failure above'}`,
     ...(blobBehaviour.results.length > 0 ? ['', ...describeBehaviour(blobBehaviour), ''] : ['']),
-    'The generation is decided by driving the blob against eight fixed witnesses, one per shipping circuit.',
-    'C0, C2 and C4 are deterministic and their proof DIGESTS must match one column of the fixture table,',
-    'because B1 was length-preserving and only the CONTENT moved. C1, C3, C5, C6 and C7 draw a fresh',
-    'CSPRNG mask per proof, so no digest can describe them and their proof LENGTHS must equal what the',
+    'The generation is decided by driving the blob against five fixed witnesses, one per circuit it exports',
+    '(C0, C1, C3, C6, C7). Each draws a fresh CSPRNG mask per proof, so no digest can describe it and its',
+    'proof LENGTH must equal what the',
     'current generation emits — the numbers wireFormat.test.ts pins against the Rust prover. A blob that',
     'matches no column, or mixes columns, is a prover this gate has never seen, and there is no safe',
     'default: guessing would guess "pre-b1", which is exactly the guess that ships a B1 client at a',
@@ -1659,7 +1657,7 @@ if (blobStrings.generation === null) {
 // B1, and that combination has no innocent explanation.
 if (blobGen !== null && blobStrings.generation !== null && blobGen !== blobStrings.generation) {
   fail('the blob PROVES one generation and its panic strings CLAIM another', [
-    `  driving the blob (eight witnesses)      ${blobGen}`,
+    `  driving the blob (five witnesses)       ${blobGen}`,
     `  scanning the blob for panic literals    ${blobStrings.generation} (${blobStrings.hits.length}/${BLOB_ALL_MARKERS.length} era markers)`,
     '',
     ...describeBehaviour(blobBehaviour),
@@ -1676,7 +1674,7 @@ if (blobGen !== null && blobStrings.generation !== null && blobGen !== blobStrin
 // 3. the twins — what the clients actually import
 // ---------------------------------------------------------------------------
 //
-// apps/web, apps/extension, apps/mobile and packages/react-native-zk import the
+// apps/web, apps/extension and apps/mobile import the
 // inlined base64, never the .wasm. Checking only the canonical blob would check
 // a file no client ships.
 
@@ -1761,7 +1759,7 @@ if (blobGen !== null && deployedGen !== blobGen) {
     `  client blob  ${blobGen.padEnd(7)} ${blobSha}  (${blob.length.toLocaleString()} B, this tree)`,
     `  deployed     ${String(deployedGen).padEnd(7)} ${deployed.elf_sha256}  (${Number(deployed.elf_bytes ?? 0).toLocaleString()} B, ${deployed.cluster} slot ${deployed.last_deployed_slot})`,
     '',
-    `The client generation was MEASURED by driving the blob, not read off it (${(blobBehaviour.ms / 1000).toFixed(1)} s, all eight circuits):`,
+    `The client generation was MEASURED by driving the blob, not read off it (${(blobBehaviour.ms / 1000).toFixed(1)} s, all five exported circuits):`,
     ...describeBehaviour(blobBehaviour),
     '',
     'EVERY PROOF THIS CLIENT GENERATES WILL BE REJECTED WITH FriFoldCheckFailed.',

@@ -5,8 +5,8 @@
  *
  * `wasm/p01_stark_bg.wasm` is a git-tracked, npm-published, PREBUILT binary. It
  * is the prover every client actually runs: the extension worker (via an inlined
- * base64 copy), mobile (via `@protocol-01/react-native-zk`'s inlined copy), and
- * the privacy-SDK loader. Nothing in the repo rebuilds it — there is no
+ * base64 copy), mobile (via the inlined copy in apps/mobile/services/stark/wasmData.ts),
+ * and the web app. Nothing in the repo rebuilds it — there is no
  * `wasm-pack` step in any `package.json` or workflow — so it drifts silently from
  * `stark/` while every Rust-side test stays green.
  *
@@ -27,7 +27,8 @@
  *
  * # What this pins
  *
- * The exact serialized proof length of all seven shipping circuits, two ways:
+ * The exact serialized proof length of every circuit the shipped blob exports
+ * (C0, C1, C3, C6 here and C7 below), two ways:
  *
  *   1. Against the absolute literals `route_c_trace_pair.rs:1002` pins for the
  *      Rust prover. If the WASM and the Rust prover disagree by one byte, this
@@ -183,23 +184,6 @@ const PINS: Pin[] = [
     inputs: { nullifierPreimage: '42', secret: '17', depositEpoch: '7', tokenMint: '11' },
   },
   {
-    label: 'C2 balance_proof',
-    circuitId: STARK_CIRCUITS.BALANCE_PROOF,
-    // [UNIFORM-MASK 2026-09-12] width 4 -> 6 (lift + randomizer), n 512.
-    traceWidth: 6,
-    numQueries: 27,
-    // preRouteC: RETIRED 2026-09-12 — this geometry no longer exists.
-    quotientSegments: 8,
-    // 69,761 -> 95,777.
-    absolute: 95_777,
-    // sha256: RETIRED 2026-09-12 — C2 draws a fresh mask per proof. The
-    // [BIND-C2C4] digest c3961423c1573f04e4c62ea4b0cf7e15c6146507fa2b015cc7a5f473cfbb8a7c
-    // (69,761 B) described the deterministic shape; `b1_deep_binding.rs`
-    // FIXTURE_C2_SHA256 pins the masked shape with a FIXED probe mask, which the
-    // shipped prover never uses. See `Pin.sha256`.
-    inputs: { spendingKey: '42', balance: '1000', salt: '777', tokenMint: '999' },
-  },
-  {
     label: 'C3 merkle_path',
     circuitId: STARK_CIRCUITS.MERKLE_PATH,
     // [ZK-LIFT 2026-08-31] The COMMITTED width, and it moved twice: the
@@ -215,62 +199,6 @@ const PINS: Pin[] = [
       leaf: '777',
       pathElements: csv(Array.from({ length: 15 }, (_, i) => 1000 + i)),
       pathIndices: csv(Array.from({ length: 15 }, (_, i) => i % 2)),
-    },
-  },
-  {
-    label: 'C4 confidential_balance',
-    circuitId: STARK_CIRCUITS.CONFIDENTIAL_BALANCE,
-    // [UNIFORM-MASK 2026-09-12] width 4 -> 6, n 512, queries 27 -> 22.
-    traceWidth: 6,
-    numQueries: 22,
-    // preRouteC: RETIRED 2026-09-12 — this geometry no longer exists.
-    quotientSegments: 8,
-    // 81,457 -> 75,085 (five fewer queries outweigh the two columns).
-    absolute: 75_085,
-    // sha256: RETIRED 2026-09-12 — C4 draws a fresh mask per proof. The
-    // [BIND-C2C4] digest 6a7f55050d85af39f05a81a3d8bc715d90f63ee62c7bba9d72fb57462f8bc5c0
-    // (81,457 B) described the deterministic shape. See C2 and `Pin.sha256`.
-    inputs: {
-      spendingKey: '42',
-      oldBalance: '1000',
-      oldSalt: '111',
-      newBalance: '800',
-      newSalt: '222',
-      amount: '200',
-      amountSalt: '333',
-      tokenMint: '999',
-    },
-  },
-  {
-    label: 'C5 transfer',
-    circuitId: STARK_CIRCUITS.TRANSFER,
-    // [UNIFORM-MASK 2026-09-12] width 7 -> 9 (lift + randomizer), 89,821 -> 91,261.
-    traceWidth: 9,
-    numQueries: 22,
-    // preRouteC: RETIRED 2026-08-31 — this geometry no longer exists.
-    quotientSegments: 8,
-    absolute: 91_261,
-    // sha256: RETIRED 2026-08-31 — C5 draws a fresh mask per proof.
-    // `stark/src/lib.rs:425` calls `draw_blinding_mask(transfer::MASK_LEN)`, so
-    // two proofs over the same witness differ. ⛔ DO NOT re-pin this to the Rust
-    // fixture's digest: `fixture_c5` feeds a FIXED mask and is reproducible, the
-    // SHIPPED prover is not, and a copied digest would fail at random rather than
-    // fail honestly. The length above still pins, and it is the half that
-    // catches a format change. See `Pin.sha256`.
-    inputs: {
-      spendingKey: '13',
-      tokenMint: '500',
-      inAmount1: '77',
-      inRand1: '400',
-      inAmount2: '88',
-      inRand2: '100',
-      outAmount1: '150',
-      outRecipient1: '1234',
-      outRand1: '555',
-      outAmount2: '65',
-      outRecipient2: '2222',
-      outRand2: '333',
-      publicAmount: '50',
     },
   },
   {
@@ -324,7 +252,7 @@ describe('checked-in WASM prover — Route C wire format', () => {
     expect(typeof exports.generate_spend_stark_proof).toBe('function');
   });
 
-  // Proof generation is synchronous and, for C5, ~30 s of it. Two proofs back
+  // Proof generation is synchronous and, for the larger circuits, seconds of it. Two proofs back
   // to back in one test blocked the worker's event loop long enough for the
   // vitest worker <-> host RPC to time out (`[vitest-worker]: Timeout calling
   // "onTaskUpdate"`), which vitest counts as an unhandled error and turns

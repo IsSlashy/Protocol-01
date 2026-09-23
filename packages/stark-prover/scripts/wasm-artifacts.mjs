@@ -1,7 +1,7 @@
 /**
  * wasm-artifacts.mjs — the ONE list of files that carry the STARK prover blob.
  *
- * There are five REGISTERED: the canonical `.wasm` plus four base64 twins inlined into
+ * There are four REGISTERED: the canonical `.wasm` plus three base64 twins inlined into
  * client source so the prover can ship inside a JS bundle (service worker,
  * WebView, Metro bundle). Two gates walk this list and they must walk the SAME
  * list, so it lives here instead of being duplicated:
@@ -29,8 +29,9 @@ export const GLUE = 'packages/stark-prover/wasm/p01_stark.js';
 
 /**
  * Repo-relative paths of the inlined twins, each a TS module exporting one
- * `STARK_WASM_BASE64` literal. These are what apps/web, apps/extension,
- * apps/mobile and packages/react-native-zk actually import at runtime — none of
+ * `STARK_WASM_BASE64` literal. These are what apps/web, apps/extension and
+ * apps/mobile actually import at runtime (packages/react-native-zk was deleted
+ * on 2026-09-23) — none of
  * them reads the canonical `.wasm` — so a gate that only checks the canonical
  * blob checks a file no client ships.
  */
@@ -38,7 +39,6 @@ export const TWIN_PATHS = [
   'apps/web/lib/privacy/pool/starkWasmData.ts',
   'apps/extension/src/shared/services/starkWasmData.ts',
   'apps/mobile/services/stark/wasmData.ts',
-  'packages/react-native-zk/src/wasmData.ts',
 ];
 
 /**
@@ -52,18 +52,20 @@ export const TWIN_PATHS = [
  * contains.
  *
  * A tracked-but-unchecked copy at least shows up in a review. This one does not:
- * a reship updates the four registered twins, leaves this one a generation
+ * a reship updates the three registered twins, leaves this one a generation
  * behind, and publishes it. Measured 2026-08-29: all three copies carry the
  * canonical `72a8c700…`, so this is LATENT, not broken.
  *
  * ⚠️ Checked only WHEN PRESENT. They are build output and are legitimately
  * absent on a fresh clone, so a missing file is reported and not failed — a gate
  * that goes red for a normal reason is a gate someone disables.
+ *
+ * EMPTY SINCE 2026-09-23. specter-sdk 0.5.0 removed `./proving`: its `files`
+ * no longer lists `wasm`, its tsup build no longer copies the blob, and its
+ * .gitignore went with the directory. No package ships an untracked copy now;
+ * the list and the loop that reads it stay so a new one has a place to go.
  */
-export const PUBLISHED_UNTRACKED_COPIES = [
-  'packages/specter-sdk/wasm/p01_stark_bg.wasm',
-  'packages/specter-sdk/dist/wasm/p01_stark_bg.wasm',
-];
+export const PUBLISHED_UNTRACKED_COPIES = [];
 
 /** The binding a twin module exports, and the only literal a client ever loads. */
 export const TWIN_EXPORT = 'STARK_WASM_BASE64';

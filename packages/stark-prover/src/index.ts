@@ -1,15 +1,14 @@
 /**
  * `@protocol-01/stark-prover` — public entry point.
  *
- * Drop-in WASM-backed STARK prover for `@protocol-01/privacy-sdk`. Builds
+ * WASM-backed STARK prover of the Styx clients. Builds
  * proofs locally (Goldilocks field, Blake3 Merkle, DEEP-ALI), uploads them
  * in chunks to `p01_stark_verifier` on Solana, runs the two-phase verify,
  * and returns the verified proof buffer PDA.
  *
- * Usage (host: privacy-sdk):
+ * Usage:
  *
  * ```ts
- * import { Privacy } from '@protocol-01/privacy-sdk';
  * import { createStarkProver } from '@protocol-01/stark-prover';
  *
  * const proverFactory = createStarkProver({
@@ -18,10 +17,8 @@
  *   onProgress: (step) => console.log('[STARK]', step),
  * });
  *
- * const sdk = new Privacy({ connection, wallet: keypair });
- * sdk.setProverConfig({ generateStarkProof: proverFactory.generateStarkProof });
- *
- * await sdk.shield({ amount: 1_000_000n, mint: USDC_MINT });
+ * const outcome = await proverFactory.generateStarkProof(circuitId, privateInputs);
+ * // outcome.proofBuffer: the verified proof buffer PDA.
  * ```
  *
  * The package is runtime-agnostic: works in Node 22+, modern browsers
@@ -162,42 +159,12 @@ interface PoolProofJson {
   proof_size: number;
 }
 
-interface BalanceProofJson {
-  circuit_id: 2;
-  commitment: string;
-  token_mint: string;
-  proof_hex: string;
-  proof_size: number;
-}
-
 interface MerklePathProofJson {
   circuit_id: 3;
   leaf: string;
   root: string;
   /** Merkle tree depth — 3rd public input, bound on-chain (CANONICAL_DEPTH=15). */
   depth: number;
-  proof_hex: string;
-  proof_size: number;
-}
-
-interface ConfBalanceProofJson {
-  circuit_id: 4;
-  old_commitment: string;
-  new_commitment: string;
-  amount_hash: string;
-  token_mint: string;
-  proof_hex: string;
-  proof_size: number;
-}
-
-interface TransferProofJson {
-  circuit_id: 5;
-  nullifier_1: string;
-  nullifier_2: string;
-  output_commitment_1: string;
-  output_commitment_2: string;
-  public_amount: string;
-  token_mint: string;
   proof_hex: string;
   proof_size: number;
 }
@@ -261,19 +228,6 @@ export function generateProofBytes(
         publicInputs: [BigInt(json.nullifier), BigInt(json.commitment)],
       };
     }
-    case STARK_CIRCUITS.BALANCE_PROOF: {
-      const sk = BigInt(asString(privateInputs.spendingKey, 'spendingKey'));
-      const balance = BigInt(asString(privateInputs.balance, 'balance'));
-      const salt = BigInt(asString(privateInputs.salt, 'salt'));
-      const mint = BigInt(asString(privateInputs.tokenMint, 'tokenMint'));
-      const json = JSON.parse(
-        exports.generate_balance_stark_proof(sk, balance, salt, mint),
-      ) as BalanceProofJson;
-      return {
-        proofBytes: hexToBytes(json.proof_hex),
-        publicInputs: [BigInt(json.commitment), BigInt(json.token_mint)],
-      };
-    }
     case STARK_CIRCUITS.MERKLE_PATH: {
       const leaf = BigInt(asString(privateInputs.leaf, 'leaf'));
       const elements = asStringArray(privateInputs.pathElements);
@@ -289,63 +243,6 @@ export function generateProofBytes(
       return {
         proofBytes: hexToBytes(json.proof_hex),
         publicInputs: [BigInt(json.leaf), BigInt(json.root), BigInt(depth)],
-      };
-    }
-    case STARK_CIRCUITS.CONFIDENTIAL_BALANCE: {
-      const sk = BigInt(asString(privateInputs.spendingKey, 'spendingKey'));
-      const oldBal = BigInt(asString(privateInputs.oldBalance, 'oldBalance'));
-      const oldSalt = BigInt(asString(privateInputs.oldSalt, 'oldSalt'));
-      const newBal = BigInt(asString(privateInputs.newBalance, 'newBalance'));
-      const newSalt = BigInt(asString(privateInputs.newSalt, 'newSalt'));
-      const amount = BigInt(asString(privateInputs.amount, 'amount'));
-      const amountSalt = BigInt(asString(privateInputs.amountSalt, 'amountSalt'));
-      const mint = BigInt(asString(privateInputs.tokenMint, 'tokenMint'));
-      const ret = exports.generate_confidential_balance_stark_proof(
-        sk, oldBal, oldSalt, newBal, newSalt, amount, amountSalt, mint,
-      );
-      const json = JSON.parse(ret) as ConfBalanceProofJson;
-      return {
-        proofBytes: hexToBytes(json.proof_hex),
-        publicInputs: [
-          BigInt(json.old_commitment),
-          BigInt(json.new_commitment),
-          BigInt(json.amount_hash),
-          BigInt(json.token_mint),
-        ],
-      };
-    }
-    case STARK_CIRCUITS.TRANSFER: {
-      const sk         = BigInt(asString(privateInputs.spendingKey, 'spendingKey'));
-      const tokenMint  = BigInt(asString(privateInputs.tokenMint, 'tokenMint'));
-      const inAmt1     = BigInt(asString(privateInputs.inAmount1, 'inAmount1'));
-      const inRand1    = BigInt(asString(privateInputs.inRand1, 'inRand1'));
-      const inAmt2     = BigInt(asString(privateInputs.inAmount2, 'inAmount2'));
-      const inRand2    = BigInt(asString(privateInputs.inRand2, 'inRand2'));
-      const outAmt1    = BigInt(asString(privateInputs.outAmount1, 'outAmount1'));
-      const outRecip1  = BigInt(asString(privateInputs.outRecipient1, 'outRecipient1'));
-      const outRand1   = BigInt(asString(privateInputs.outRand1, 'outRand1'));
-      const outAmt2    = BigInt(asString(privateInputs.outAmount2, 'outAmount2'));
-      const outRecip2  = BigInt(asString(privateInputs.outRecipient2, 'outRecipient2'));
-      const outRand2   = BigInt(asString(privateInputs.outRand2, 'outRand2'));
-      const publicAmt  = BigInt(asString(privateInputs.publicAmount, 'publicAmount'));
-      const ret = exports.generate_transfer_stark_proof(
-        sk, tokenMint,
-        inAmt1, inRand1, inAmt2, inRand2,
-        outAmt1, outRecip1, outRand1,
-        outAmt2, outRecip2, outRand2,
-        publicAmt,
-      );
-      const json = JSON.parse(ret) as TransferProofJson;
-      return {
-        proofBytes: hexToBytes(json.proof_hex),
-        publicInputs: [
-          BigInt(json.nullifier_1),
-          BigInt(json.nullifier_2),
-          BigInt(json.output_commitment_1),
-          BigInt(json.output_commitment_2),
-          BigInt(json.public_amount),
-          BigInt(json.token_mint),
-        ],
       };
     }
     case STARK_CIRCUITS.MERKLE_UPDATE: {
@@ -380,7 +277,8 @@ export function generateProofBytes(
       if (!exports.generate_spend_stark_proof) {
         throw new Error(
           'Circuit 7 (SPEND) is not exported by the bundled WASM. The pre-C7 blob '
-          + '(229,640 B / 51a947e3) exports seven proof functions and compute_stark_commitment, eight in all; the C7 build has nine. '
+          + '(229,640 B / 51a947e3) has no generate_spend_stark_proof; the shipped blob exports it with the other four '
+          + 'proof functions and compute_stark_commitment, six in all. '
           + 'See packages/stark-prover/README.md for the rebuild command.',
         );
       }
@@ -399,7 +297,7 @@ export function generateProofBytes(
       // exists.
       // 🚨 THIS LITERAL WAS 12 AND THE CIRCUIT HAD MOVED TO 11. The shipped
       // Rust prover checks `path_elements.len() != CANONICAL_DEPTH` with
-      // CANONICAL_DEPTH = 11 (`stark/src/lib.rs:531`, `air/spend.rs:429`), and
+      // CANONICAL_DEPTH = 11 (`stark/src/lib.rs:494`, `air/spend.rs:429`), and
       // the on-chain verifier agrees (`verify.rs:6538`). A guard one deeper than
       // the circuit rejects every honest spend before the wasm is reached, and
       // it reads like a caller bug rather than a stale constant.
@@ -443,7 +341,10 @@ export function generateProofBytes(
       };
     }
     default:
-      throw new Error(`Unsupported STARK circuit_id: ${circuitId}. Valid range is 0-7.`);
+      throw new Error(
+        `Unsupported STARK circuit_id: ${circuitId}. This prover builds circuits 0, 1, 3, 6 and 7; `
+        + 'the verifier also accepts 2, 4 and 5, but no client proves them and the blob has no export for them.',
+      );
   }
 }
 
@@ -493,9 +394,9 @@ export interface StarkProverHandle {
 
 /**
  * Create a STARK prover bound to a Solana connection + payer. The returned
- * handle's `generateStarkProof` matches the
- * `ProverConfig.generateStarkProof` signature from privacy-sdk and can be
- * passed to `setProverConfig` directly.
+ * handle's `generateStarkProof` has the `StarkProofGenerator` signature
+ * (src/types.ts), which this package owns since privacy-sdk 2.0.0 dropped its
+ * `ProverConfig`.
  */
 export function createStarkProver(
   config: StarkProverConfig,

@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const BASELINE_LABEL =
-  'pre-v2 (pre-WP10) baseline: v1 as deployed (verifier DGY37k3J…, blob d5583d41, v3 deposit pool, v4 spend routes). v2 is not deployed.';
+  'pre-v2 (pre-WP10) baseline: v1 as deployed (verifier DGY37k3J…, blob 241caaab, v3 deposit pool, v4 spend routes). v2 is not deployed.';
 
 export interface ProtocolRecord {
   baseline: string;
