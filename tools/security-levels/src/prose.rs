@@ -104,6 +104,12 @@ pub enum Family {
     /// the v1 Poseidon, whose figures are 32 and 21.
     Sha256,
     Poseidon,
+    /// The per-note blinding of a circuit-7 withdrawal (finding F66, audit v1
+    /// close-out 2026-09-23). Like a hash tag it must be on the figure's own
+    /// text. A blinding figure matches the blinding line of the generated
+    /// document: its width whatever the regime, its expected classical search
+    /// cost, or, with a quantum word, its Grover cost.
+    Blinding,
 }
 
 /// A figure as written: one value (`low == high`) or a range.
@@ -177,13 +183,13 @@ pub const DEPENDENCY_DIRECTORIES: &[&str] = &["node_modules", ".next", ".turbo"]
 pub const LOCAL_ONLY_FILES: &[(&str, &str)] = &[
     (
         "docs/stark-migration-assessment.md",
-        "gitignored under \"Internal project planning docs (keep local only)\" (.gitignore:286). It carries a stale \
+        "gitignored under \"Internal project planning docs (keep local only)\" (.gitignore:287). It carries a stale \
          \"127-bit conjectured\" twice (lines 69 and 205); as shipped the conjectured figures are 45.60 to 46.91. \
          Un-ignoring it is a founder decision, and the stale figure is reported as a finding instead",
     ),
     (
         "docs/full-technical-inventory.md",
-        "gitignored under the same block (.gitignore:281); its one figure is an amount width, not a level",
+        "gitignored under the same block (.gitignore:282); its one figure is an amount width, not a level",
     ),
     (
         "docs/HANDOFF-2026-09-14.md",
@@ -191,6 +197,19 @@ pub const LOCAL_ONLY_FILES: &[(&str, &str)] = &[
          docs/HANDOFF-2026-09-14.md itself). Drop this row once it is committed",
     ),
     ("docs/FACTS-2026-09-14.md", "untracked on 2026-09-20, same commit as the handoff note above"),
+    (
+        "docs/WHITEPAPER.md",
+        "untracked on 2026-09-23: a white paper another session is still writing, not part of the audit-v1 \
+         close commits. Its four \"64-bit\" figures are widths (a v1 commitment, the challenge field), not \
+         levels; the close-v1 gate r1 measured that ledger rows on it are dead in a clean checkout \
+         (every_ledger_entry_still_covers_a_figure red). Drop this row, and add its not-a-level rows, in the \
+         commit that adds the file",
+    ),
+    (
+        "docs/CLAIMS.md",
+        "untracked on 2026-09-23, written by the same session as docs/WHITEPAPER.md and not part of the \
+         audit-v1 close commits. Drop this row in the commit that adds the file, with any ledger rows it needs",
+    ),
 ];
 
 const SECURITY_WORDS: &[&str] = &[
@@ -220,6 +239,7 @@ const FAMILY_WORDS: &[(Family, &[&str])] = &[
     (Family::Collision, &["collision"]),
     (Family::Sha256, &["sha-256", "sha256", "sha 256"]),
     (Family::Poseidon, &["poseidon"]),
+    (Family::Blinding, &["blinding", "aveuglement"]),
 ];
 
 /// Named entities decoded (the ones the docs use, and every named space).
@@ -671,7 +691,7 @@ fn figures_in_view(chars: &[char]) -> Vec<Figure> {
 /// wrapped figure spans), or a table row would borrow its neighbour's hash.
 fn window_families(lines: &[&str], i: usize, own: &str) -> Vec<Family> {
     let window = lines[i.saturating_sub(1)..(i + 2).min(lines.len())].join("\n");
-    let is_hash_tag = |f: &Family| matches!(f, Family::Collision | Family::Sha256 | Family::Poseidon);
+    let is_hash_tag = |f: &Family| matches!(f, Family::Collision | Family::Sha256 | Family::Poseidon | Family::Blinding);
     let mut families: Vec<Family> = families_in(&window).into_iter().filter(|f| !is_hash_tag(f)).collect();
     families.extend(families_in(own).into_iter().filter(|f| is_hash_tag(f)));
     families.sort();
@@ -883,6 +903,25 @@ fn soft_wrap(lines: &[&str], i: usize) -> Option<(String, usize, usize)> {
 /// line break is read on the two lines joined (`soft_wrap`), and replaces what
 /// the second line alone reads for the same "bit" ("130 bits" becomes "110 to
 /// 130 bits").
+/// How far from a figure, in view chars, "blinding" or "aveuglement" may sit
+/// for the figure to be read as the note blinding's (`Family::Blinding`). The
+/// family words are otherwise read per line, and a long line that mentions
+/// the blinding once would lend it to every figure on it (a mask
+/// min-entropy "2·width·63 bits" beside a blinding sentence, for one).
+const BLINDING_RADIUS: usize = 40;
+
+fn blinding_near(chars: &[char], f: &Figure) -> bool {
+    let lo = f.start.saturating_sub(BLINDING_RADIUS);
+    let hi = (f.end + BLINDING_RADIUS).min(chars.len());
+    let around: String = chars[lo..hi].iter().collect();
+    around.contains("blinding") || around.contains("aveuglement")
+}
+
+/// The line's families, less `Blinding` when no blinding word is near `f`.
+fn families_for(families: &[Family], chars: &[char], f: &Figure) -> Vec<Family> {
+    families.iter().copied().filter(|x| *x != Family::Blinding || blinding_near(chars, f)).collect()
+}
+
 pub fn scan_text(path: &str, text: &str) -> Vec<Hit> {
     let lines: Vec<&str> = text.lines().collect();
     let mut hits = Vec::new();
@@ -891,6 +930,7 @@ pub fn scan_text(path: &str, text: &str) -> Vec<Hit> {
         let mut figures = figures_in_view(&own.chars);
         let mut wrapped: Vec<Figure> = Vec::new();
         let mut joined = String::new();
+        let mut joined_chars: Vec<char> = Vec::new();
         if let Some((j, boundary, skip)) = soft_wrap(&lines, i) {
             let v = view(&j);
             // the first view char of line i's part
@@ -903,6 +943,7 @@ pub fn scan_text(path: &str, text: &str) -> Vec<Hit> {
                 figures.retain(|g| !ends.contains(&own.raw[g.end - 1]));
                 wrapped = joined_figs.into_iter().filter(|f| f.end > b && ends.contains(&in_line(f))).collect();
                 joined = j;
+                joined_chars = v.chars.clone();
             }
         }
         let table = is_table_row(line);
@@ -910,13 +951,14 @@ pub fn scan_text(path: &str, text: &str) -> Vec<Hit> {
             let families = window_families(&lines, i, &joined);
             let circuits = line_circuits(&lines, i, &joined, table || is_table_row(lines[i - 1]));
             for figure in wrapped {
+                let families = families_for(&families, &joined_chars, &figure);
                 hits.push(Hit {
                     path: path.to_string(),
                     line_no: i,
                     line_end: i + 1,
                     line: joined.clone(),
                     figure,
-                    families: families.clone(),
+                    families,
                     circuits: circuits.clone(),
                 });
             }
@@ -927,13 +969,14 @@ pub fn scan_text(path: &str, text: &str) -> Vec<Hit> {
         let families_window = window_families(&lines, i, line);
         let circuits = line_circuits(&lines, i, line, table);
         for figure in figures {
+            let families = families_for(&families_window, &own.chars, &figure);
             hits.push(Hit {
                 path: path.to_string(),
                 line_no: i + 1,
                 line_end: i + 1,
                 line: line.to_string(),
                 figure,
-                families: families_window.clone(),
+                families,
                 circuits: circuits.clone(),
             });
         }
@@ -1120,7 +1163,9 @@ pub fn scan_repo(root: &Path) -> Vec<Hit> {
 
 /// What `docs/SECURITY-LEVELS.md` publishes: (regime or hash, integer) pairs;
 /// apart from them the quantum (BHT) collision figures of each hash; and the
-/// regime figures of each circuit, by label.
+/// regime figures of each circuit, by label. The note blinding line (F66)
+/// sits in the first two sets under `Family::Blinding`: its width in both,
+/// its expected classical search in the first, its Grover cost in the second.
 #[derive(Clone, Debug, Default)]
 pub struct Published(
     pub BTreeSet<(Family, u32)>,
@@ -1158,7 +1203,22 @@ pub fn parse_published(doc: &str) -> Published {
             continue;
         }
         let Ok(v) = parts[2].parse::<u32>() else { continue };
-        if parts[1] == "collision-quantum" {
+        if parts[0] == "blinding" {
+            // the width holds in either regime; the search costs in their own
+            match parts[1] {
+                "width" => {
+                    set.insert((Family::Blinding, v));
+                    quantum.insert((Family::Blinding, v));
+                }
+                "search" => {
+                    set.insert((Family::Blinding, v));
+                }
+                "search-quantum" => {
+                    quantum.insert((Family::Blinding, v));
+                }
+                _ => {}
+            }
+        } else if parts[1] == "collision-quantum" {
             if let Some(f) = family_of(parts[0], "collision") {
                 quantum.insert((f, v));
             }
@@ -1212,6 +1272,12 @@ pub fn figure_matches_in(fig: &Figure, families: &[Family], circuits: &[String],
             says_collision && !fig.preimage && set.contains(&(f, lo)) && set.contains(&(f, hi))
         }
         Family::Collision => false,
+        // a blinding figure needs "blinding" on its own text; a quantum word
+        // selects the Grover cost, and the width matches either way
+        Family::Blinding => {
+            let set = if says_quantum { &published.1 } else { &published.0 };
+            set.contains(&(f, lo)) && set.contains(&(f, hi))
+        }
         _ => match &scope {
             Some(scope) if !scope.is_empty() => {
                 scope.iter().all(|set| set.iter().any(|&(g, v)| g == f && lo <= v && v <= hi))

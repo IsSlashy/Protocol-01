@@ -1,7 +1,40 @@
-# The zero-knowledge argument, and exactly what it does and does not say
+# The hiding argument, and exactly what it does and does not say
 
-**2026-08-31, revised 2026-09-01.** Devnet. Circuits C1, C3, C6, C7 — the
-denominated-pool production path.
+**2026-08-31, revised 2026-09-01, 2026-09-02 and 2026-09-23.** Devnet.
+Circuits C1, C3, C6, C7 — the denominated-pool production path.
+
+> ⛔ **What the fourth revision changed (2026-09-23, audit v1 finding F69):
+> the simulation argument below does not hold as written.** §2 step 5 lets the
+> simulator `S` ignore the per-row quotient identity, and §3.1 justified that
+> by conditioning on the constrained columns' next-row evaluations `T_c(g·x)`
+> at the opened rows, as if no proof carried them. Every proof carries them:
+> each query publishes the next-row pair `T(g·x)`, `T(−g·x)` with its own
+> authentication path, and the on-chain verifier Merkle-checks that pair
+> against the trace root (`programs/p01_stark_verifier/src/verify.rs`, the
+> next-row pair check). With those published values and the public inputs,
+> anyone evaluates the per-row quotient identity at every opened row. Measured
+> on real C7 proofs by `stark/tests/next_row_openings_are_published.rs`: every
+> next-row pair authenticates (44 of 44 over two proofs), the identity holds on
+> every opened row from wire data alone (88 of 88), and it fails on every row
+> once one next-row value moves by one (0 of 88); the audit's probe read 176 of
+> 176 on four proofs. A transcript from `S` satisfies each identity with
+> probability about `1/p`, so a distinguisher separates `S` from an honest
+> prover with public data in one evaluation.
+>
+> So the claim of §1 is **withdrawn**, and nothing in this file is a proof of
+> hiding any more. What still stands: the marginal results of §3 (every
+> committed value measured uniform in the mask), the counting of §3.1 and
+> §3.2 read as counting, and the recovery harnesses, which recover no witness
+> from a masked proof. What F69 does **not** show: a witness leak. The
+> identity is a consistency relation every honest proof satisfies; it tells
+> the simulator apart, and says nothing about the witness beyond what the
+> verifier's own equations already do. Whether a corrected simulator exists —
+> one that samples the next-row openings together with the trace block (S1
+> measured the block and those frames jointly uniform, rank 100 of 100 at two
+> queries) and then solves the quotient openings on the verifier's equations
+> AND the per-row identities — is open. It has not been executed, and nothing
+> below claims it. Sections 1 to 7 are kept as they were argued, with each
+> sentence F69 breaks marked where it stands.
 
 > **What the revision changed.** The table in §3 asserted the FRI layers and the
 > terminal polynomial were uniform *by an argument* — linear functionals of an
@@ -20,7 +53,8 @@ denominated-pool production path.
 > (`a_simulator_with_no_witness_produces_the_verifier_s_own_law`), and doing so
 > found four directions the verifier never checks and the blinding columns never
 > reach — the quotient identity at each opened row, satisfied by the honest
-> prover through next-row values nobody publishes. §3.1 is rewritten around that.
+> prover through next-row values this revision took to be unpublished (they
+> are published: fourth revision). §3.1 is rewritten around that.
 >
 > **What the third revision changed (2026-09-02, later the same day).** Running
 > the same accounting at the query count the proof actually ships with found a
@@ -42,13 +76,16 @@ of scope, it is said so rather than left to be inferred.
 
 ## 1. The statement
 
-> For circuits C1, C3, C6 and C7, the compact STARK proof system is
-> **statistical zero-knowledge in the random-oracle model**.
+> ⛔ **Withdrawn 2026-09-23 (finding F69), not claimed:** "for circuits C1,
+> C3, C6 and C7, the compact STARK proof system is statistical zero-knowledge
+> in the random-oracle model". The argument for it does not hold as written.
 
-Concretely: there is an efficient simulator `S` that, given only the public
+What it meant: there is an efficient simulator `S` that, given only the public
 inputs and **no witness**, produces a transcript the deployed verifier accepts,
 and that transcript is distributed identically to an honest prover's on every
-value the wire carries.
+value the wire carries. The `S` of §2 fails the last clause: the wire carries
+the next-row openings, and with them the per-row quotient identity, which `S`
+does not satisfy.
 
 Two words in that sentence are load-bearing and neither is decoration.
 **Statistical**, in the random-oracle model, and with no failure event of its
@@ -103,8 +140,11 @@ oracle.
    ⚠️ One identity `S` does **not** satisfy, on purpose: `Q(x) = C(x)/Z_T(x) +
    B(x)` at the opened rows themselves. The verifier stopped evaluating it when
    B7 retired the per-query arm, so it is not an equation of the verifier and
-   `S` ignores it. The honest prover satisfies it anyway — and §3.1 is about why
-   that difference is invisible.
+   `S` ignores it. The honest prover satisfies it anyway — and §3.1 argued that
+   difference was invisible. ⛔ **It is visible, and this is where the argument
+   fails (F69):** the next-row values the identity reads are on the wire and
+   Merkle-checked, so anyone evaluates it, and a transcript from this `S` fails
+   it.
 
    ⛔ **And one structure `S` must satisfy that the verifier does not check.**
    `D` has degree at most `n − 2`, so FRI layer `l` is a polynomial of degree at
@@ -190,8 +230,9 @@ was true. The argument under it was not.
 `a_simulator_with_no_witness_produces_the_verifier_s_own_law` (S1). It
 conditions first on the *trace block* — the constrained columns' OOD claims and
 opened pairs, 60 values — where the map is affine by Lagrange, and on forty
-values nobody publishes: those columns' **next-row evaluations** `T_c(g·x)` at
-the opened rows. Then it counts, against the verifier's own equations written
+values it took to be unpublished: those columns' **next-row evaluations**
+`T_c(g·x)` at the opened rows. ⛔ They are published, each pair with its
+authentication path (F69, fourth revision). Then it counts, against the verifier's own equations written
 out on the wire (seven folds and a terminal per query, plus the DEEP-ALI
 identity: 17):
 
@@ -216,7 +257,10 @@ two different masks, both `61 + 4 + 17 = 82`.
 
 So, given the block: four directions are uniform because the hidden frames are,
 sixty-one because the lift and randomizer are, and seventeen are determined.
-**The honest rest is uniform on exactly the verifier's solution set.** That is
+**The honest rest is uniform on exactly the verifier's solution set.** ⛔
+Withdrawn (F69): the "hidden" frames are published, so those four directions are
+fixed by public data, and the honest rest lies on the verifier's solution set
+cut by the four per-row identities, which `S` does not sample. That is
 the law `S` samples in step 5 — and S1 then builds three transcripts from the
 equations and public data alone and runs them through the same residual
 functions the honest transcript is checked with. All 17 hold on each.
@@ -260,8 +304,8 @@ So at the shipping query count the honest transcript was **not** uniform on the
 verifier's solution set by any argument this document could make — the honest
 quotient openings lay in a witness-dependent 160-dimensional affine family
 inside a 315-dimensional free space. Whether an efficient distinguisher could
-exploit that is a different question, and not the one statistical
-zero-knowledge asks.
+exploit that is a different question, and not the one a simulation argument
+asks.
 
 **The fix is one factor in one constraint per circuit.** The lift constraint's
 gate is now a one-hot period-`n` column times `nba` — `row0_flag` on C7,
@@ -285,7 +329,9 @@ directions the blinding never takes and the verifier never checks, moved by mask
 entries that leave every published value of their column untouched (built
 analytically from the Lagrange basis, applied, and confirmed to leave the block
 fixed) — and it is moved affinely and in full rank; at 22 queries it is exactly
-the 44 local identities. The **low-degree term is new**: FRI's intermediate
+the 44 local identities. ⛔ Those mask moves leave every published value of
+their column untouched only if the next-row openings are not published; they
+are (F69), so the 44 directions are determined by public data, not hidden. The **low-degree term is new**: FRI's intermediate
 layers are polynomials of degree `≤ (n − 2)/2^l`, and 44 opened values of a
 16-coefficient layer satisfy relations that no blinding can move and the
 verifier does not check, because it does not need to — soundness comes from the
@@ -295,7 +341,10 @@ simulator reproduces them by building its layers from a random low-degree `D`
 public data alone passes all 177 verifier equations and every one of the
 relations. So at the shipping query count, given the opened trace values, the
 honest rest is uniform on exactly the set that the verifier's equations and
-FRI's own degree structure cut out, and the simulator samples that set. S1's
+FRI's own degree structure cut out, and the simulator samples that set. ⛔
+Withdrawn (F69): that set must also be cut by the 44 per-row identities the
+published next-row openings make checkable, and the simulator does not sample
+it. S1's
 two-query result is unchanged by the new gate: `61 + 4 + 17 = 82` on both
 witnesses.
 
@@ -351,7 +400,8 @@ Three assumptions, named rather than buried.
 
 ## 5. What is NOT claimed
 
-- ⛔ **Not perfect zero-knowledge of the proof string.** The simulated VIEW is
+- ⛔ **Not perfect zero-knowledge of the proof string (not claimed), and since
+  2026-09-23 not the statistical kind either (F69, fourth revision).** The simulated VIEW is
   identically distributed since the `z` resampling of 2026-09-12 (no failure
   event left), but the Merkle roots are deterministic functions of leaves that
   are not all uniform, so their hiding is the random-oracle step, statistical
@@ -374,9 +424,11 @@ Three assumptions, named rather than buried.
   deployment property, entirely independent of the cryptography, and it must not
   be blurred into the ZK claim.
 - ⛔ **Devnet.** There is no mainnet deployment.
-- ⛔ **An executed argument, not a quantified proof.** S1 runs the simulator
-  against the verifier's equations and shows the honest law equals the simulated
-  one — on **two witnesses at two queries, and one witness at the shipping
+- ⛔ **An executed argument, not a quantified proof, and since 2026-09-23 not
+  a sufficient one (F69).** S1 runs the simulator against the verifier's
+  equations and shows the honest law equals the simulated one on those
+  equations — not on the per-row identities the published next-row openings
+  make checkable — on **two witnesses at two queries, and one witness at the shipping
   twenty-two**, with the oracle programmed and the Merkle roots not modelled. A
   simulation theorem quantifies over every witness and every challenge; X6
   covers eight witnesses for the marginal result. That is the honest distance
@@ -390,8 +442,10 @@ Three assumptions, named rather than buried.
   §2 step 1 argues *structurally* that the positions are the terminal node of the
   Fiat-Shamir chain, and that argument is read off the verifier's own source. It
   is not a measurement, and nothing here measures the nonce at all.
-- ⛔ **Soundness is unchanged and is not what this document is about.** 42 to 52
-  bits, floor-bound by the field, and no ZK result moves it.
+- ⛔ **Soundness is unchanged and is not what this document is about.** As
+  shipped, docs/SECURITY-LEVELS.md gives unique decoding 41 to 45 bits,
+  conjectured 45 to 46 bits and Johnson (BCIKS20, the headline) 13 to 16 bits,
+  and no hiding result moves them.
 
 ---
 
@@ -419,6 +473,11 @@ Fifteen tests. The six that carry the argument:
   queries with FRI's low-degree relations, and a 22-query transcript from public
   data; `#[ignore]`d for cost, run by hand:
   `cargo test -p p01-stark --release --lib affine_reach -- --ignored --nocapture`
+- `stark/tests/next_row_openings_are_published.rs` — F69, the test that breaks
+  the argument: parses real C7 proofs, authenticates every next-row pair
+  against the trace root, and evaluates the per-row quotient identity from
+  wire data alone (every row holds; every row fails once one next-row value
+  moves). `cargo test -p p01-stark --release --test next_row_openings_are_published -- --nocapture`
 
 ⛔ Every one of them prints a **control** alongside its result: a Poseidon column
 reaching the same values at degree 7. Every value in this pipeline moves when the
@@ -433,26 +492,28 @@ The harness is `stark/src/compact/zk_hiding.rs`, a `#[cfg(test)]` child module o
 
 ## 7. The sentence
 
-What can be said, in full:
+What can be said, in full, since 2026-09-23:
 
-> Every value our prover publishes is provably uniform, and we measured it at
-> every committed position — rank 7 of 7 on the free quotient claims, degree 1 on
-> all 65,536 committed quotient values, on the DEEP composition and on all seven
-> FRI layers, on all four production circuits. Given the opened trace values,
-> the rest of the transcript is exactly uniform on the verifier's own solution
-> set, and a simulator built from those equations and no witness passes every
-> one of them. The proof is statistically zero-knowledge in the random-oracle
-> model.
+> Every committed value our prover publishes is provably uniform in the mask,
+> and we measured it at every committed position — rank 7 of 7 on the free
+> quotient claims, degree 1 on all 65,536 committed quotient values, on the
+> DEEP composition and on all seven FRI layers, on all four production circuits.
+> No witness has been recovered from a masked proof. The simulation argument we
+> published for statistical hiding does not hold as written: it treated the
+> next-row openings as hidden, and every proof publishes them. A corrected
+> simulator has not been executed, so no hiding theorem is claimed.
 
-The two qualifiers stay attached. **"Statistically"** and **"in the
-random-oracle model"** are what make the sentence true, and a technical audience
-will respect them far more than their absence.
+The sentence this section used to print ended with a claim of statistical
+hiding in the random-oracle model. It is withdrawn, not reworded: the
+qualifiers were never the problem, the simulator was.
 
 🚨 **And there is a third qualifier that belongs in any conversation where this
 sentence is challenged**, even though it does not fit in the sentence: the
 simulator has been **run**, not only described — against the verifier's
 equations, at the algebraic layer, with the hash oracle programmed — on two
-witnesses and one query set. §2 is the argument, §3.1 executes it, and neither
+witnesses and one query set, and running it against the verifier's equations
+alone is exactly what hid F69: the per-row identities are not the verifier's
+equations, and the next-row openings make them public all the same. §2 is the argument, §3.1 executes it, and neither
 quantifies over every witness and every challenge. Anyone who asks for the
 simulation argument should be pointed at §2 and S1 and told plainly what is
 executed, what is measured on one witness, and what is structural. Do not let
@@ -460,5 +521,5 @@ the exhaustiveness of the sweeps stand in for a quantification over witnesses �
 they are different claims, and only one of them is finished.
 
 And one thing to say separately, not folded in: **the upgrade key is a single
-key.** Do not say "trustless" on the same breath as "zero-knowledge". They are
-different properties and only one of them is proven.
+key.** Do not say "trustless", and do not say "zero-knowledge": the first is
+false of the deployment and the second is not claimed.

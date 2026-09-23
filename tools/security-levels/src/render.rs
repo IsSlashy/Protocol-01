@@ -284,6 +284,44 @@ fn hash_section(out: &mut String) {
     );
 }
 
+fn blinding_section(out: &mut String) {
+    let bl = calc::note_blinding_line();
+    let _ = writeln!(out, "## The note blinding (circuit 7 withdrawal)\n");
+    let _ = writeln!(
+        out,
+        "A withdrawal on circuit 7 publishes the note's nullifier and no commitment. What keeps that nullifier from being \
+         matched to its deposit is the note's blinding, a {w}-bit PRF output of the wallet seed \
+         (`apps/web/lib/privacy/pool/noteBlinding.ts`, `MASK_63`): linking the two means finding a blinding `b` with \
+         `commitment = Poseidon(nullifier, Poseidon(b, mint))` among the deposit commitments, one hash pair per \
+         candidate. Withdrawals that republish the commitment (the phone, and notes deposited before the blinding was \
+         randomised) are matched by reading it, and this line does not apply to them. It is not a proof-system term: it \
+         is a search cost, computed, not measured (finding F66).\n",
+        w = bl.width_bits
+    );
+    let _ = writeln!(
+        out,
+        "| Blinding width | Complete search (hash pairs) | Expected search (hash pairs) | Quantum search (Grover queries) | Other deposits that still fit |"
+    );
+    let _ = writeln!(out, "|---|---|---|---|---|");
+    let _ = writeln!(
+        out,
+        "| {} | {} | {} | {} | {:.2} |",
+        bl.width_bits,
+        b(bl.complete_search),
+        b(bl.expected_search),
+        b(bl.grover),
+        (bl.false_fit * 100.0).floor() / 100.0
+    );
+    let _ = writeln!(
+        out,
+        "\nThe three search columns are base-2 logarithms. The quantum column is sqrt(2^{w}), constant factors dropped as \
+         in the BHT lines above. The last column is 1 - exp(-2^{w}/p): the chance that a deposit which is not the one \
+         spent fits some blinding anyway, so even a complete search leaves that fraction of the other deposits \
+         standing.\n",
+        w = bl.width_bits
+    );
+}
+
 fn term_table(out: &mut String, title: &str, row: &Row) {
     let p = &row.p;
     let sampler = row.results[0].sampler;
@@ -342,6 +380,10 @@ pub fn published_figures() -> Vec<(String, String, u32)> {
         out.push((h.slug.to_string(), "collision".to_string(), calc::floor_bits(h.collision)));
         out.push((h.slug.to_string(), "collision-quantum".to_string(), calc::floor_bits(h.collision_quantum)));
     }
+    let bl = calc::note_blinding_line();
+    out.push(("blinding".to_string(), "width".to_string(), bl.width_bits));
+    out.push(("blinding".to_string(), "search".to_string(), calc::floor_bits(bl.expected_search)));
+    out.push(("blinding".to_string(), "search-quantum".to_string(), calc::floor_bits(bl.grover)));
     out
 }
 
@@ -361,7 +403,9 @@ fn published_section(out: &mut String) {
          read nor checked: a figure in one fails nothing, nothing in it ships, and the test re-checks with git \
          (where git can read the tree) that none of them is tracked. A PDF or PPTX is not read at all and must have a \
          text source of the same name that is. The figures below are the floors of the \
-         as-shipped v1 figures above. The v2 figures are candidates and are not published.\n"
+         as-shipped v1 figures above, and of the note blinding line (width, expected classical search, Grover search), \
+         which a figure matches only when its own text says \"blinding\". The v2 figures are candidates and are not \
+         published.\n"
     );
     let _ = writeln!(out, "<!-- published-figures:begin -->");
     let _ = writeln!(out, "```text");
@@ -384,6 +428,7 @@ pub fn document() -> String {
     v1_summary(&mut out, &v1_rows);
     v2_summary(&mut out, &v2_rows);
     hash_section(&mut out);
+    blinding_section(&mut out);
     let _ = writeln!(out, "## Every error term\n");
     let _ = writeln!(
         out,

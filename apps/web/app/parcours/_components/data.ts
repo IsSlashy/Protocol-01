@@ -510,11 +510,11 @@ export const LIMITS = [
   },
   {
     label: 'Ce que la solidité vaut',
-    body: "47 à 52 bits sous conjecture, 42 à 46 bits inconditionnellement. Pas 128. Sous Grover ces chiffres sont divisés par deux, autour de 21 à 26 bits : post-quantique décrit ici le CHOIX des primitives, à base de fonctions de hachage et sans couplages, pas un niveau de sécurité post-quantique quantifié.",
+    body: "Tel que déployé, par circuit : 41 à 45 bits en décodage unique (théorème), 13 à 16 bits en Johnson BCIKS20, le chiffre de tête, et 45 à 46 bits sous conjecture. Pas 128. Sous Grover, la borne quantique vaut la moitié : 20 à 22 bits en décodage unique. Post-quantique décrit ici le CHOIX des primitives, à base de fonctions de hachage et sans couplages, pas un niveau de sécurité post-quantique quantifié. Chaque chiffre vient du calculateur, avec son régime, dans docs/SECURITY-LEVELS.md.",
   },
   {
     label: 'Liaison dépôt-retrait',
-    body: "Le retrait republie le commitment de la note en entrée publique, donc n'importe qui peut apparier un retrait à son dépôt. Ce n'est pas un défaut d'interface, et aucun correctif côté client ne le répare : c'est la forme même des entrées publiques du circuit. Le circuit qui ferme ce trou est spécifié et en cours.",
+    body: "Depuis l'application web, une note déposée récemment se retire par le circuit 7, qui ne publie aucun commitment : seul l'aveuglement de 63 bits de la note sépare le retrait de son dépôt. Le téléphone republie encore le commitment de la note en entrée publique, comme toute note déposée avant que l'aveuglement soit tiré au hasard : ces retraits-là, n'importe qui peut les apparier à leur dépôt.",
   },
   {
     label: "Ce qui est publié n'est pas à jour",

@@ -30,7 +30,6 @@ historical	docs/AUDIT-2026-09-03.md	quotes ~85-bit collision resistance from the
 not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	Use the **full 256-bit** recipient hash		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
 not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	A single felt gives 64-bit binding		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
 not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	truncates to the same 64 bits		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
-not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	puts a 63-bit secret blinding		the width of the blinding secret
 not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	masked to 63 bits		the width of the blinding secret
 not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	A single-felt recipient_hash gives 64-bit binding		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
 not-a-level	docs/C7_SPEND_CIRCUIT_PLAN.md	grind a keypair colliding on 64 bits		recipient-hash binding widths of a design option (a grind costs 2^64); binding widths are not computed here
@@ -39,7 +38,6 @@ historical	docs/HANDOFF-2026-09-02.md	still quotes ~85-bit collision resistance 
 not-a-level	docs/HANDOFF-2026-09-02.md	first, or 128 bits about		quotes the forbidden phrase of the standing rules, not a level
 not-a-level	docs/HANDOFF-2026-09-11.md	« 128 bits »		quotes the forbidden phrase of the standing rules, not a level
 not-a-level	docs/LEAK-LEDGER.md	min-entropie ≥ 2·largeur·63 bits		the min-entropy of the masks, a privacy figure
-not-a-level	docs/LEAK-LEDGER.md	republierait le blinding 63 bits		the width of the blinding secret
 not-a-level	docs/LEAK-LEDGER.md	Capacité d'éponge 64 bits		the v1 sponge capacity; its collision cost 2^32 is the v1-digest hash line
 not-a-level	docs/LEAK-LEDGER.md	3 bits de bucket		a bucket-index width (a privacy leak size)
 not-a-level	docs/LEAK-LEDGER.md	log2(travail)−22` bits choisis par preuve		the nonce bits a prover chooses per proof (log2 of its work minus 22), a privacy figure; read since fix round 2 blanks the backticks
@@ -65,12 +63,6 @@ verified	docs/protocol-01-design-document.html	it binds and the 22 bits of		GRIN
 verified	docs/protocol-01-design-document.html	that is 4.000 bits per query		log2(1/rho) = 4 at rho = 1/16, the per-query term of the conjectured regime (the term tables' 130.00 is 27 x 4 + 22)
 historical	docs/protocol-01-design-document.html	104 to 124 bits, which the project no longer stands behind		the withdrawn figures, said so; the range wraps across the line break (read whole since fix round 2)
 not-a-level	docs/protocol-01-design-document.html	floor bound by the 64&#8209;bit challenge		the challenge field width
-stale	docs/_sections/16-security.html	the measured 42 to 46 bit		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
-stale	docs/_sections/16-security.html	to about 21 to 26 bits		the quantum lines as shipped (CMS19, half) are 20.98 to 22.92 for unique decoding and 22.80 to 23.45 for the conjecture; 26 is half of the retired C0 figure 52
-stale	docs/protocol-01-design-document.html	the measured 42 to 46 bit		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
-stale	docs/protocol-01-design-document.html	to about 21 to 26 bits		the quantum lines as shipped (CMS19, half) are 20.98 to 22.92 for unique decoding and 22.80 to 23.45 for the conjecture; 26 is half of the retired C0 figure 52
-stale	docs/_sections/18-verify.html	Soundness is 42 to 46 bits unconditional		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
-stale	docs/protocol-01-design-document.html	Soundness is 42 to 46 bits unconditional		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
 not-a-level	docs/arcium-integration.md	Goldilocks 64-bit field		a field width
 not-a-level	docs/arcium-integration.md	a fresh 64-bit `computation_offset`		an integer width
 stale	docs/distribution-strategy-2026-07-01.md	solo-built a 124-bit on-chain STARK verifier		the withdrawn 124-bit figure stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46
@@ -89,7 +81,6 @@ not-a-level	docs/privy-removal-spec.md	from ~64 to ~128+ bits		owner-key entropy
 not-a-level	docs/privy-removal-spec.md	or accept ~64 bits and only fix doc/marketing		owner-key entropy, not a soundness level
 not-a-level	docs/project-tree.html	Uses 64-bit range checks		an amount width
 not-a-level	docs/project-tree.html	range-check difference to 64 bits		an amount width
-stale	docs/quantum-resistance.md	~85-bit quantum collision resistance		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
 external	docs/quantum-resistance.md	Grover (256→128 bit, sufficient)		symmetric-cipher key sizes, outside the calculator
 external	docs/quantum-resistance.md	Grover (128-bit post-quantum)		generic Grover preimage bound of 256-bit hashes; the collision bound Merkle binding needs is SHA-256's 85.33 (hash lines)
 external	docs/quantum-resistance.md	Required logical qubits for 255-bit ECC		an elliptic-curve size, outside the calculator
@@ -97,7 +88,7 @@ external	docs/quantum-resistance.md	| XSalsa20-Poly1305 (256-bit key) | 256 bits
 external	docs/quantum-resistance.md	| AES-256-CBC | 256 bits | 128 bits |		symmetric-cipher key sizes, outside the calculator
 verified	docs/quantum-resistance.md	| SHA-256 | 128-bit collision | 85-bit collision (BHT) |		both SHA-256 hash lines, 128.00 classical and 85.33 quantum; the scanner cannot tell the two columns apart
 not-a-level	docs/quantum-resistance.md	| Poseidon (BN254 field, 254-bit) |		a field width
-stale	docs/quantum-resistance.md	| ~127-bit collision | ~85-bit collision |		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
+historical	docs/quantum-resistance.md	| ~127-bit collision | ~85-bit collision |		the retired BN254 Poseidon tree's figures, labelled retired on their line (audit v1 round 2, fix lane 3); the v1 digest row below it quotes 32.00 / 21.33
 external	docs/quantum-resistance.md	| Keccak256 | 128-bit collision | ~85-bit collision |		generic bounds of a hash the proof system does not use
 external	docs/quantum-resistance.md	| HKDF-SHA256 | 256-bit PRF | 128-bit PRF |		key-derivation strength, outside the calculator
 external	docs/quantum-resistance.md	All symmetric primitives already use 256-bit keys		symmetric-cipher key sizes, outside the calculator
@@ -105,18 +96,21 @@ external	docs/quantum-resistance.md	| XSalsa20-Poly1305 (nacl.secretbox) | 256-b
 external	docs/quantum-resistance.md	| X25519+XSalsa20-Poly1305 (nacl.box) | 256-bit | 128-bit key, but X25519 BROKEN |		symmetric-cipher key sizes, outside the calculator
 external	docs/quantum-resistance.md	| AES-256-CBC | 256-bit | 128-bit (SAFE) |		symmetric-cipher key sizes, outside the calculator
 external	docs/quantum-resistance.md	| XSalsa20-Poly1305 (BLE), PIN-derived (NFC) | 256-bit | 128-bit (SAFE) |		symmetric-cipher key sizes, outside the calculator
-stale	docs/quantum-resistance.md	| Poseidon (BN254 field) | Note commitments, nullifier derivation, owner key derivation, Merkle tree | ~85-bit collision, ~127-bit preimage |		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
 verified	docs/quantum-resistance.md	| SHA-256 | View tag generation, stealth seed derivation, key derivation, metadata hashing | ~85-bit collision, ~128-bit preimage |		85 is SHA-256's quantum collision bound (85.33) and the row has no quantum word for the scanner; 128 is Grover's preimage bound for a 256-bit digest (256/2), and the calculator publishes no preimage line, so both are checked by hand
 external	docs/quantum-resistance.md	| SHA-512 | Ed25519→X25519 private key conversion (internal) | ~170-bit collision, ~256-bit preimage |		generic bounds of a hash the proof system does not use
 external	docs/quantum-resistance.md	| BLAKE2b | Fast hashing, keyed MAC (in p01-js SDK) | ~85-bit collision, ~128-bit preimage |		generic bounds of a hash the proof system does not use
 external	docs/quantum-resistance.md	| Keccak256 | Verification key hashing (on-chain), Winternitz Vault | ~85-bit collision, ~128-bit preimage |		generic bounds of a hash the proof system does not use
-stale	docs/quantum-resistance.md	All hash functions provide at least 85-bit collision resistance post-quantum		the v1 Poseidon digest is one Goldilocks element: 21.33 quantum, 32.00 classical (finding F2)
-stale	docs/quantum-resistance.md	resulting in ~85-bit collision resistance		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
 external	docs/quantum-resistance.md	Proof size: ~4,437 bytes at 128-bit security		a 2025 measurement study's figure (ePrint 2025/1741) for another system
-stale	docs/quantum-resistance.md	~85-bit collision resistance (Poseidon over BN254 field)		the BN254 Poseidon tree is retired; v1 nodes and leaves are one Goldilocks element: collision 32.00 classical, 21.33 quantum (finding F2)
-stale	docs/quantum-resistance.md	higher post-quantum collision resistance at ~128 bits		SHA-256's quantum collision bound is 85.33 (BHT); 128.00 is its classical bound
 external	docs/quantum-resistance.md	HKDF(sha256) | SAFE (128-bit)		key-derivation strength, outside the calculator
 external	docs/quantum-resistance.md	| Quantum security | Hash preimage (~128-bit PQ) | Hash preimage + one-time (~128-bit PQ) | EUF-CMA under hash assumptions (~128-bit PQ) |		signature-scheme preimage bounds, outside the calculator
+historical	docs/quantum-resistance.md	The "~85-bit" Poseidon figures of this archive are those of the retired BN254 tree		describes the BN254 figure as retired (correction note, audit v1 round 2, fix lane 3)
+not-a-level	docs/quantum-resistance.md	keeps ONE field element (64 bits) as its digest		the width of the v1 digest (finding F2)
+verified	docs/quantum-resistance.md	generic collision cost of 32.00 bits classical		the v1-digest classical collision line of docs/SECURITY-LEVELS.md (32.00); the line also names the quantum figure, so the scanner reads it as quantum
+not-a-level	docs/quantum-resistance.md	keeps a digest of 256 bits or more		a digest width
+not-a-level	docs/quantum-resistance.md	the v1 pool digest is one 64-bit field element		the width of the v1 digest (finding F2)
+not-a-level	docs/quantum-resistance.md	The retired BN254 Poseidon kept 254 bits; the v1 pool keeps one 64-bit Goldilocks element		digest widths of the retired BN254 tree and of the v1 pool
+verified	docs/quantum-resistance.md	generic collision 32.00 bits classical, 21.33 quantum		the v1-digest collision lines of docs/SECURITY-LEVELS.md, 32.00 classical and 21.33 quantum; the scanner reads the line as quantum
+not-a-level	docs/quantum-resistance.md	a 256-bit digest whose generic quantum collision cost is 85.33 bits		the SHA-256 digest width; 85.33 is its quantum collision line
 stale	docs/quantum-wallet-ux-design.md	Réduit security 124-bit → 62-bit		124 is withdrawn and 62 is half of it; no v1 quantum line reaches it: 20.98 to 23.45 as shipped (CMS19), and SHA-256's quantum collision bound is 85.33
 stale	docs/quantum-wallet-ux-design.md	infaisable (62-bit		62 is half of the withdrawn 124; the v1 quantum lines are 20.98 to 23.45 as shipped (CMS19)
 stale	docs/quantum-wallet-ux-design.md	~62-bit residual security on Poseidon		the v1 Poseidon digest's quantum collision bound is 21.33, the quantum soundness lines 20.98 to 23.45
@@ -163,22 +157,38 @@ external	docs/strk20-vs-protocol01-technique-2026-07-22.html	ce qui n'atteint 96
 external	docs/strk20-vs-protocol01-technique-2026-07-22.html	masqué par hash-and-add, salt 120 bits		STRK20's amount salt, another system
 historical	docs/strk20-vs-protocol01-technique-2026-07-22.html	« Blake3-256, 32 requêtes, folding 8, pas de grinding, 128 bits »		quotes the brief's wrong parameter line as the text to correct
 stale	docs/strk20-vs-protocol01-technique-2026-07-22.html	grinding 16 bits, 124 ou 104 bits e		the withdrawn 124 / 104 figures (27 or 22 queries x 4 + 16) stated as current; v1 as shipped: unique decoding 41 to 45, BCIKS20 Johnson 13 to 16, conjectured 45 to 46; grinding is 22
-stale	docs/zk-simulation-argument.md	42 to 52 bits, floor-bound by the field		stated as the current soundness (lines 393-394, the figure wrapped across the break): unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45) and conjectured 45.60 to 46.91 (floors 45 to 46); 52 is no circuit's figure, it was C0 before the uniform masks, and 42 is the uniform-challenge model's floor
 not-a-level	docs/zk-simulation-argument.md	`2 · width · 63` bits of min-entropy		the min-entropy of an unopened leaf preimage, a privacy figure (the same quantity as the LEAK-LEDGER row); read since fix round 2 blanks the backticks
-stale	apps/web/i18n/en.ts	16x blowup and 16 bits of grinding		the live site's parameter list: Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
 historical	apps/web/i18n/en.ts	This page used to claim 124 bits		the withdrawn figure, said so
-stale	apps/web/i18n/fr.ts	facteur de blowup 16 et 16 bits de grinding		the live site's parameter list: Protocol 01 grinds 22 bits since B2 (GRINDING_BITS = 22 in compact_proof.rs and stark/src/compact.rs)
+verified	apps/web/i18n/en.ts	16x blowup and 22 bits of grinding		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+verified	apps/web/i18n/en.ts	balance_proof) and 22 bits of grinding		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+not-a-level	apps/web/i18n/en.ts	hashing has a 256-bit output		the output width of SHA-256, not a security level
+not-a-level	apps/web/i18n/en.ts	Merkle nodes are one 64-bit Goldilocks element, whose collision		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+verified	apps/web/i18n/en.ts	is 32.00 bits classically and 21.33 bits against a quantum attacker		the v1-digest line of docs/SECURITY-LEVELS.md (Poseidon t=3, one Goldilocks element): 32.00 classical, 21.33 quantum (BHT); the sentence names SHA-256 for the proof hash, so the scanner cannot tell which hash the figures belong to
+not-a-level	apps/web/i18n/en.ts	a 64-bit digest: two notes		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+verified	apps/web/i18n/en.ts	(32.00 bits classically, 21.33 bits against a quantum attacker		the v1-digest line of docs/SECURITY-LEVELS.md (Poseidon t=3, one Goldilocks element): 32.00 classical, 21.33 quantum (BHT); the sentence names SHA-256 for the proof hash, so the scanner cannot tell which hash the figures belong to
+not-a-level	apps/web/i18n/en.ts	The commitment is one 64-bit Goldilocks element, so a depositor		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/en.ts	because the 64-bit commitment admits two openings		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/en.ts	but a 64-bit commitment admits two (docs		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/en.ts	the v1 pool digest is one 64-bit element		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/en.ts	a commitment is one 64-bit element, so a depositor		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
 historical	apps/web/i18n/fr.ts	Cette page annon\u00e7ait 124 bits		the withdrawn figure, said so
+verified	apps/web/i18n/fr.ts	facteur de blowup 16 et 22 bits de grinding		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+verified	apps/web/i18n/fr.ts	balance_proof) et 22 bits de grinding		GRINDING_BITS = 22 (compact_proof.rs), the g column of docs/SECURITY-LEVELS.md
+not-a-level	apps/web/i18n/fr.ts	a une sortie de 256 bits		the output width of SHA-256, not a security level
+not-a-level	apps/web/i18n/fr.ts	un seul élément de Goldilocks de 64 bits, dont la borne de collision		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+verified	apps/web/i18n/fr.ts	est de 32,00 bits en classique et de 21,33 bits face à un attaquant quantique		the v1-digest line of docs/SECURITY-LEVELS.md (Poseidon t=3, one Goldilocks element): 32.00 classical, 21.33 quantum (BHT); the sentence names SHA-256 for the proof hash, so the scanner cannot tell which hash the figures belong to
+not-a-level	apps/web/i18n/fr.ts	un condensé de 64 bits : deux notes		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+verified	apps/web/i18n/fr.ts	(32,00 bits en classique, 21,33 bits face à un attaquant quantique		the v1-digest line of docs/SECURITY-LEVELS.md (Poseidon t=3, one Goldilocks element): 32.00 classical, 21.33 quantum (BHT); the sentence names SHA-256 for the proof hash, so the scanner cannot tell which hash the figures belong to
+not-a-level	apps/web/i18n/fr.ts	un seul élément de Goldilocks de 64 bits, donc un déposant		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/fr.ts	engagement de 64 bits admet deux ouvertures		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/fr.ts	mais un engagement de 64 bits en admet deux		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/fr.ts	le condensé du pool v1 est un seul élément de 64 bits		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
+not-a-level	apps/web/i18n/fr.ts	un engagement est un seul élément de 64 bits, donc un déposant		the width of a v1 commitment or digest, one Goldilocks element (finding F2), not a security level
 historical	apps/web/app/demo/pitch/page.tsx	a security level of 124 bits that measurement contradicts		the withdrawn figure, said so
 historical	apps/web/app/docs/page.tsx	Deleting the old "124-bit" claim		the withdrawn figure, said so
-stale	apps/web/app/parcours/_components/data.ts	47 à 52 bits sous conjecture, 42 à 46 bits inconditionnellement		conjectured as shipped is 45.60 to 46.91 (floors 45 to 46); 52 was C0 before the uniform masks, 47 is the uniform-challenge model; unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
-stale	apps/web/app/parcours/_components/data.ts	autour de 21 à 26 bits		the quantum lines as shipped (CMS19, half) are 20.98 to 22.92 for unique decoding and 22.80 to 23.45 for the conjecture; 26 is half of the retired C0 figure 52
 historical	apps/web/app/parcours/page.tsx	Ma documentation annonçait 124 bits		the withdrawn figure, said so
 historical	apps/web/app/parcours/page.tsx	chaque requête valait environ 1 bit et non 4		the per-query value before the composition fix, told in the past tense
 historical	apps/web/app/parcours/page.tsx	et les 124 bits annoncés en valaient réellement		the withdrawn figure, said so
 verified	apps/web/app/parcours/page.tsx	et 4,000 bits par requête		log2(1/rho) = 4 at rho = 1/16, the per-query term of the conjectured regime (the term tables' 130.00 is 27 x 4 + 22)
 historical	apps/web/app/parcours/page.tsx	le terme de requête avait gagné 72 à 87 bits		a past measurement told in the past tense: a gain of the query term, not a level; not re-derived here
-stale	apps/web/app/parcours/page.tsx	autour de 48 à 52 bits		the Fiat-Shamir field floor is 45.60 to 46.91 as shipped (46.60 to 47.91 uniform), the Field floor rows of the conjectured regime; 52 was C0 before the uniform masks
-stale	apps/web/app/parcours/page.tsx	47 à 52 bits sous conjecture		conjectured as shipped is 45.60 to 46.91 (floors 45 to 46); 52 was C0 before the uniform masks, 47 is the uniform-challenge model
-stale	apps/web/app/parcours/page.tsx	42 à 46 bits inconditionnellement		unique decoding as shipped is 41.96 to 45.85 (floors 41 to 45): 42 to 46 is the uniform-challenge model, and the deployed verifier samples challenges as u64 mod p
 historical	apps/web/app/updates/page.tsx	the 124-bit soundness figure is withdrawn		the withdrawn figure, said so

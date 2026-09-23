@@ -1,4 +1,5 @@
-//! Poseidon round constants and MDS matrices for Goldilocks field.
+//! Poseidon round constants and linear layers for Goldilocks field.
+//! The t=3 matrix is MDS; the t=5 matrix is NOT (see MDS_MATRIX_T5).
 //!
 //! Field: p = 2^64 - 2^32 + 1 (Goldilocks)
 //! S-box: x^7 (alpha = 7)
@@ -95,7 +96,8 @@ pub const ROUND_CONSTANTS_T3: [BaseElement; 90] = [
     BaseElement::new(0x915ddc43210c9ec9), BaseElement::new(0x2a80ed66544fbdba), BaseElement::new(0xc3a3fe8987b2bcab),
 ];
 
-/// MDS matrix for t=3 (circulant construction).
+/// MDS matrix for t=3 (circulant construction); MDS is checked by
+/// `linear_layer_tests::the_t3_matrix_is_mds` (19 square submatrices, none singular).
 pub const MDS_MATRIX_T3: [[BaseElement; 3]; 3] = [
     [BaseElement::new(3), BaseElement::new(1), BaseElement::new(1)],
     [BaseElement::new(1), BaseElement::new(3), BaseElement::new(1)],
@@ -181,7 +183,18 @@ pub const ROUND_CONSTANTS_T5: [BaseElement; 150] = [
     BaseElement::new(0x4bc6cfe798eaf7d5), BaseElement::new(0xdde978eacb8def74),
 ];
 
-/// MDS matrix for t=5 (circulant construction).
+/// Linear layer for t=5: 4I + J (5 on the diagonal, 1 elsewhere). It is NOT MDS,
+/// despite the constant's name. Measured (`linear_layer_tests` below): 60 of its
+/// 251 square submatrices are singular mod p, and the difference (1,-1,0,0,0)
+/// comes out as (4,-4,0,0,0), weight 2 in and weight 2 out, so its branch number
+/// is at most 4 where MDS needs 6. The wide-trail argument Poseidon relies on does
+/// not hold for this layer.
+///
+/// Nothing live uses it: no AIR, no on-chain program and no web path calls
+/// `hash4` / `permutation_t5`; every circuit hashes with t=3, whose matrix above
+/// IS MDS. Do not adopt the t=5 path as-is. Replacing this matrix changes `hash4`
+/// and its pinned parity vector and TypeScript mirrors, so it is a migration
+/// (tracked as F1 in docs/LEAK-LEDGER.md), not an edit.
 pub const MDS_MATRIX_T5: [[BaseElement; 5]; 5] = [
     [BaseElement::new(5), BaseElement::new(1), BaseElement::new(1), BaseElement::new(1), BaseElement::new(1)],
     [BaseElement::new(1), BaseElement::new(5), BaseElement::new(1), BaseElement::new(1), BaseElement::new(1)],
@@ -189,3 +202,116 @@ pub const MDS_MATRIX_T5: [[BaseElement; 5]; 5] = [
     [BaseElement::new(1), BaseElement::new(1), BaseElement::new(1), BaseElement::new(5), BaseElement::new(1)],
     [BaseElement::new(1), BaseElement::new(1), BaseElement::new(1), BaseElement::new(1), BaseElement::new(5)],
 ];
+
+#[cfg(test)]
+mod linear_layer_tests {
+    //! What the two linear layers ARE, measured: every square submatrix is
+    //! tested for singularity mod p. A matrix is MDS exactly when none is.
+    //! The t=5 matrix fails that test, so this file must not call it MDS.
+    use super::{MDS_MATRIX_T3, MDS_MATRIX_T5};
+    use winterfell::math::{fields::f64::BaseElement, FieldElement};
+
+    /// Determinant mod p of the submatrix `rows x cols`, by Gaussian
+    /// elimination in the field.
+    fn det<const N: usize>(m: &[[BaseElement; N]; N], rows: &[usize], cols: &[usize]) -> BaseElement {
+        let k = rows.len();
+        let mut a: Vec<Vec<BaseElement>> =
+            rows.iter().map(|&r| cols.iter().map(|&c| m[r][c]).collect()).collect();
+        let mut d = BaseElement::ONE;
+        for i in 0..k {
+            let Some(p) = (i..k).find(|&r| a[r][i] != BaseElement::ZERO) else {
+                return BaseElement::ZERO;
+            };
+            if p != i {
+                a.swap(p, i);
+                d = -d;
+            }
+            d *= a[i][i];
+            let inv = a[i][i].inv();
+            for r in (i + 1)..k {
+                let f = a[r][i] * inv;
+                for c in i..k {
+                    let v = a[i][c];
+                    a[r][c] -= f * v;
+                }
+            }
+        }
+        d
+    }
+
+    fn subsets(n: usize, k: usize) -> Vec<Vec<usize>> {
+        (0u32..(1 << n))
+            .filter(|m| m.count_ones() as usize == k)
+            .map(|m| (0..n).filter(|i| m & (1 << i) != 0).collect())
+            .collect()
+    }
+
+    /// (square submatrices, of which singular mod p)
+    fn minors<const N: usize>(m: &[[BaseElement; N]; N]) -> (usize, usize) {
+        let (mut total, mut singular) = (0, 0);
+        for k in 1..=N {
+            for r in subsets(N, k) {
+                for c in subsets(N, k) {
+                    total += 1;
+                    if det(m, &r, &c) == BaseElement::ZERO {
+                        singular += 1;
+                    }
+                }
+            }
+        }
+        (total, singular)
+    }
+
+    /// The t=3 matrix, which every live circuit, the pool program and the web
+    /// client use, IS MDS: 19 square submatrices, none singular mod p.
+    #[test]
+    fn the_t3_matrix_is_mds() {
+        assert_eq!(minors(&MDS_MATRIX_T3), (19, 0));
+    }
+
+    /// The t=5 matrix (4I + J) is NOT MDS: 60 of its 251 square submatrices
+    /// are singular mod p, and the sum-zero difference (1,-1,0,0,0) leaves the
+    /// layer as (4,-4,0,0,0), weight 2 in and weight 2 out, so its branch
+    /// number is at most 4 where MDS needs 6.
+    #[test]
+    fn the_t5_matrix_is_not_mds() {
+        assert_eq!(minors(&MDS_MATRIX_T5), (251, 60));
+        let x = [BaseElement::ONE, -BaseElement::ONE, BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO];
+        let mut y = [BaseElement::ZERO; 5];
+        for i in 0..5 {
+            for j in 0..5 {
+                y[i] += MDS_MATRIX_T5[i][j] * x[j];
+            }
+        }
+        let four = BaseElement::new(4);
+        assert_eq!(y, [four, -four, BaseElement::ZERO, BaseElement::ZERO, BaseElement::ZERO]);
+    }
+
+    /// The flaw this pins: the doc comment on `MDS_MATRIX_T5` called it an
+    /// "MDS matrix", which the test above shows it is not. The constant keeps
+    /// its name (renaming it is a change to `mod.rs` and to every mirror), so
+    /// its documentation has to carry the correction: it must say "NOT MDS"
+    /// and must not open with the old claim.
+    #[test]
+    fn the_t5_matrix_is_not_documented_as_mds() {
+        let src = include_str!("constants.rs");
+        let decl = src
+            .find("pub const MDS_MATRIX_T5")
+            .expect("MDS_MATRIX_T5 declaration");
+        let doc: Vec<&str> = src[..decl]
+            .lines()
+            .rev()
+            .skip_while(|l| l.trim().is_empty())
+            .take_while(|l| l.trim_start().starts_with("///"))
+            .collect();
+        let doc = doc.into_iter().rev().collect::<Vec<_>>().join("\n");
+        assert!(
+            !doc.contains("/// MDS matrix for t=5"),
+            "MDS_MATRIX_T5 is documented as an MDS matrix, and it is not:\n{doc}"
+        );
+        assert!(
+            doc.contains("NOT MDS"),
+            "MDS_MATRIX_T5's documentation must say it is NOT MDS:\n{doc}"
+        );
+    }
+}

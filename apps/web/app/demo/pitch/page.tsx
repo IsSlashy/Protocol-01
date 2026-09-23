@@ -521,12 +521,14 @@ function Slide4Notes() {
           </p>
           <p>
             <strong>
-              What is still published is the note commitment. A withdrawal
-              republishes the same commitment the deposit inserted into the tree,
-              so a deposit and its withdrawal can currently be paired by anyone.
+              From this web app, a recently deposited note is withdrawn on
+              circuit 7, which publishes no commitment: only the note&apos;s
+              63-bit blinding keeps the withdrawal apart from its deposit.
             </strong>{" "}
-            Hiding that link is the next circuit, not a shipped feature, and no
-            client-side change can fix it.
+            The phone still republishes the commitment the deposit inserted
+            into the tree, and so does any note deposited before the blinding
+            was randomised: those withdrawals can be paired with their deposit
+            by anyone.
           </p>
         </div>
         {/* The six SOL buckets and the SPL side, read off SOL_POOLS_V3 and

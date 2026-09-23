@@ -502,6 +502,42 @@ pub fn hash_lines() -> Vec<HashLine> {
     ]
 }
 
+/// The per-note blinding of a v1 pool note (finding F66). A circuit-7
+/// withdrawal publishes the note's nullifier and no commitment; linking it to
+/// its deposit means finding a blinding `b` with
+/// `commitment = Poseidon(nullifier, Poseidon(b, mint))` among the deposit
+/// commitments, one hash pair per candidate.
+///
+/// * `complete_search`: log2 of the candidates, the whole blinding space;
+/// * `expected_search`: log2 of the expected work to reach the right one when
+///   it is there (half the space);
+/// * `grover`: log2 of the Grover oracle queries for one marked item in the
+///   space, sqrt(2^w), constant factors dropped as in the BHT hash lines;
+/// * `false_fit`: the probability that a deposit which is NOT the one spent
+///   still fits some blinding, 1 - exp(-2^w / p): a complete search leaves
+///   that fraction of the other deposits standing.
+#[derive(Clone, Debug)]
+pub struct BlindingLine {
+    pub width_bits: u32,
+    pub complete_search: f64,
+    pub expected_search: f64,
+    pub grover: f64,
+    pub false_fit: f64,
+}
+
+pub fn note_blinding_line() -> BlindingLine {
+    let w = crate::params::NOTE_BLINDING_BITS;
+    let p = crate::goldilocks::MODULUS as f64;
+    let space = 2f64.powi(w as i32);
+    BlindingLine {
+        width_bits: w,
+        complete_search: w as f64,
+        expected_search: w as f64 - 1.0,
+        grover: w as f64 / 2.0,
+        false_fit: 1.0 - (-space / p).exp(),
+    }
+}
+
 /// The integer a document may quote: nothing larger than the value.
 pub fn floor_bits(x: f64) -> u32 {
     if x <= 0.0 {

@@ -89,6 +89,16 @@ For R and R-128 the conjectured column is above what SHA-256 allows a non-intera
 
 The v1 digest line is not a proof-system term: it is the cost of two openings with one commitment, which lets a depositor spend twice (finding F2). It bounds every v1 pool circuit, whatever its soundness column says.
 
+## The note blinding (circuit 7 withdrawal)
+
+A withdrawal on circuit 7 publishes the note's nullifier and no commitment. What keeps that nullifier from being matched to its deposit is the note's blinding, a 63-bit PRF output of the wallet seed (`apps/web/lib/privacy/pool/noteBlinding.ts`, `MASK_63`): linking the two means finding a blinding `b` with `commitment = Poseidon(nullifier, Poseidon(b, mint))` among the deposit commitments, one hash pair per candidate. Withdrawals that republish the commitment (the phone, and notes deposited before the blinding was randomised) are matched by reading it, and this line does not apply to them. It is not a proof-system term: it is a search cost, computed, not measured (finding F66).
+
+| Blinding width | Complete search (hash pairs) | Expected search (hash pairs) | Quantum search (Grover queries) | Other deposits that still fit |
+|---|---|---|---|---|
+| 63 | 63.00 | 62.00 | 31.50 | 0.39 |
+
+The three search columns are base-2 logarithms. The quantum column is sqrt(2^63), constant factors dropped as in the BHT lines above. The last column is 1 - exp(-2^63/p): the chance that a deposit which is not the one spent fits some blinding anyway, so even a complete search leaves that fraction of the other deposits standing.
+
 ## Every error term
 
 Each cell is the term's own figure, -log2 of its probability. Folds are summed over their rounds (`--terms` prints each round). n/a: the regime has no such term.
@@ -271,7 +281,7 @@ n = 1024, w = 36, k = 8, L = 44, LDE = 32768, rho = 1/32, rho+ = 1026/32768, r =
 
 ## Published v1 figures
 
-`tools/security-levels/tests/prose.rs` reads the block below. A figure in README.md, docs/, apps/web/i18n/ or apps/web/app/ must be one of these for the regime its sentence names and for every circuit it is about (the circuits it names, or every v1 circuit when it names none), or be listed with a reason in `tools/security-levels/prose-ledger.tsv`. What is read, exactly: every file under those four roots whose extension is one of md, mdx, html, htm, ts, tsx, js, jsx, mjs, txt, except this file, the directories node_modules, .next, .turbo, dist and build, and the local-only files listed in `prose::LOCAL_ONLY_FILES` (gitignored or untracked, so a clean checkout does not have them). A file under those roots that is not read because of its extension, or because it sits in a dist or build directory, is checked by `prose::unread_files_with_figures`, and the test fails if it states a figure. A local-only file is neither read nor checked: a figure in one fails nothing, nothing in it ships, and the test re-checks with git (where git can read the tree) that none of them is tracked. A PDF or PPTX is not read at all and must have a text source of the same name that is. The figures below are the floors of the as-shipped v1 figures above. The v2 figures are candidates and are not published.
+`tools/security-levels/tests/prose.rs` reads the block below. A figure in README.md, docs/, apps/web/i18n/ or apps/web/app/ must be one of these for the regime its sentence names and for every circuit it is about (the circuits it names, or every v1 circuit when it names none), or be listed with a reason in `tools/security-levels/prose-ledger.tsv`. What is read, exactly: every file under those four roots whose extension is one of md, mdx, html, htm, ts, tsx, js, jsx, mjs, txt, except this file, the directories node_modules, .next, .turbo, dist and build, and the local-only files listed in `prose::LOCAL_ONLY_FILES` (gitignored or untracked, so a clean checkout does not have them). A file under those roots that is not read because of its extension, or because it sits in a dist or build directory, is checked by `prose::unread_files_with_figures`, and the test fails if it states a figure. A local-only file is neither read nor checked: a figure in one fails nothing, nothing in it ships, and the test re-checks with git (where git can read the tree) that none of them is tracked. A PDF or PPTX is not read at all and must have a text source of the same name that is. The figures below are the floors of the as-shipped v1 figures above, and of the note blinding line (width, expected classical search, Grover search), which a figure matches only when its own text says "blinding". The v2 figures are candidates and are not published.
 
 <!-- published-figures:begin -->
 ```text
@@ -343,5 +353,8 @@ sha256 collision 128
 sha256 collision-quantum 85
 v1-digest collision 32
 v1-digest collision-quantum 21
+blinding width 63
+blinding search 62
+blinding search-quantum 31
 ```
 <!-- published-figures:end -->

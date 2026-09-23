@@ -541,17 +541,22 @@ export default function ParcoursPage() {
                   Elle a montré que le terme de requête avait gagné 72 à 87 bits, mais que la
                   réponse n&apos;en gagnait que <strong>4 à 9</strong>. Chaque défi de Fiat-Shamir
                   est un unique élément de Goldilocks, donc l&apos;ensemble est plafonné par la
-                  taille du corps de défi, autour de 48 à 52 bits, et le grinding ne peut pas
-                  soulever ce plancher parce que le nonce est absorbé en dernier. La construction
-                  est passée de limitée par les requêtes à limitée par le plancher : plus de
+                  taille du corps de défi : pour le vérifieur déployé, qui tire ses défis en u64
+                  modulo p, ce plancher vaut autour de 45 à 46 bits sous conjecture, et le
+                  grinding ne peut pas le soulever parce que le nonce est absorbé en dernier. La
+                  construction est passée de limitée par les requêtes à limitée par le plancher : plus de
                   requêtes et plus de grinding sont désormais des leviers morts, et le test
                   l&apos;affirme au lieu de le raconter.
                 </p>
                 <p>
-                  Le chiffre que je peux défendre est donc celui de ma propre mesure :{' '}
-                  <strong>47 à 52 bits sous conjecture</strong>{' '}et{' '}
-                  <strong>42 à 46 bits inconditionnellement</strong>. Personne d&apos;autre ne
-                  l&apos;a relu. Le 124 a été retiré du README, qui ne revendique plus aucun chiffre
+                  Le chiffre que je peux défendre est donc celui du calculateur pour le vérifieur
+                  tel qu&apos;il est déployé (docs/SECURITY-LEVELS.md) :{' '}
+                  <strong>45 à 46 bits sous conjecture</strong>{' '}et{' '}
+                  <strong>41 à 45 bits inconditionnellement</strong>, en décodage unique. Le
+                  régime de Johnson (BCIKS20), que le calculateur prend pour titre, donne
+                  moins, <strong>13 à 16 bits</strong> sous Johnson, parce que son terme de
+                  batching croît avec le carré du domaine rapporté au corps de Goldilocks.
+                  Personne d&apos;autre ne l&apos;a relu. Le 124 a été retiré du README, qui ne revendique plus aucun chiffre
                   de solidité audité et écrit que la configuration FRI ne permet d&apos;en dériver
                   aucun. C&apos;est moins beau, et c&apos;est ce que je peux montrer.
                 </p>

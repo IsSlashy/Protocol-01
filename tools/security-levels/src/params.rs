@@ -129,6 +129,14 @@ pub const CONSTRAINT_BOUND: usize = 64;
 /// Nominal output size of SHA-256, the Merkle and transcript hash of v1 and v2.
 pub const SHA256_BITS: u32 = 256;
 
+/// Width of the per-note blinding the web client puts in a v1 commitment
+/// (`apps/web/lib/privacy/pool/noteBlinding.ts`: `MASK_63 = (1n << 63n) - 1n`,
+/// kept under 2^63 so the reduction mod p is injective). On a circuit-7
+/// withdrawal, which publishes the nullifier and no commitment, it is the only
+/// secret between that nullifier and the deposit's commitment (finding F66).
+/// `tests/blinding_line.rs` re-reads the mask from the TypeScript source.
+pub const NOTE_BLINDING_BITS: u32 = 63;
+
 /// Display name of a v1 circuit id. No parameter depends on it; the prose
 /// check reads it as the circuit's name (`prose::circuits_in`).
 pub fn v1_name(id: u8) -> String {

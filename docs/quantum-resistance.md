@@ -2,6 +2,10 @@
 
 > **Note, 2026-09-14.** This document is a dated archive. The programs `p01_quantum_vault`, `specter` it names were closed on devnet on 2026-09-13 (`docs/HANDOFF-2026-09-13.md` §11).
 > The live program list, the circuit count (8) and the measured timings are in `README.md` and `docs/BENCHMARK-2026-09-13.md`.
+>
+> **Correction, 2026-09-22 (internal audit v1, round 2).** Two ratings below were wrong for the pool that runs today, and are corrected in place:
+> - **Pool commitments and Merkle nodes are not SAFE in v1.** The "~85-bit" Poseidon figures of this archive are those of the retired BN254 tree. The v1 pool hashes with Poseidon t=3 over Goldilocks and keeps ONE field element (64 bits) as its digest. `docs/SECURITY-LEVELS.md` (hash-collision lines) gives that digest a generic collision cost of 32.00 bits classical and 21.33 quantum: two openings of one commitment, so one deposit spent twice (finding F2, open in v1; the v2 design uses a four-element Poseidon2 digest).
+> - **The WOTS+ stealth claim is not enforced.** WOTS+ exists only in client code (`packages/specter-sdk/src/quantum/wots.ts`); no program in `programs/` verifies it, so a claim is authorised by its Ed25519 signature alone.
 
 
 **Document version:** 1.1
@@ -36,7 +40,7 @@ Protocol 01 is a privacy layer for Solana using ZK-STARKs (Winterfell, migrated 
 
 **Key findings (updated 2026-04-17):**
 - **The proof system is now fully quantum-resistant** — STARKs with hash-only assumptions replaced Groth16/BN254 across all 7 shielded-pool instructions (P3.1–P3.7). The Groth16 verifier has been removed.
-- **Stealth address key exchange is now hybrid post-quantum** — every new stealth payment uses X25519 + ML-KEM-768 with transcript-bound HKDF. V1 is rejected end-to-end; an HNDL attacker who harvests today's announcements cannot decrypt them without breaking both ECDH *and* ML-KEM.
+- **Stealth address key exchange is now hybrid post-quantum, but its keys are not** — every new stealth payment uses X25519 + ML-KEM-768 with transcript-bound HKDF, and V1 is rejected end-to-end. The keys themselves are re-derived from the Ed25519 wallet, not drawn on their own: the SDK derives the ML-KEM-768 seed by HKDF from the same mnemonic seed as the Ed25519 keys (`deriveKemSeed`), and the note-encryption address of the web app and the extension (`deriveNoteEncryptionKeys` in `noteCrypto.ts`) takes both its X25519 and its ML-KEM-768 keypair by HKDF from a wallet seed that is one Ed25519 wallet signature (web) or the Ed25519 secret key itself (extension). An HNDL attacker who harvests today's announcements needs ECDH *and* ML-KEM, or the wallet secret those keys come from: the hybrid protects the exchange, and the keys are only as safe as that Ed25519 wallet secret. (Correction of 2026-09-23, audit v1 finding F65; README.md says the same.)
 - **Stealth claims can now be authenticated with a hash-based signature** alongside the Ed25519 signature. The on-chain verifier that enforces "both must be valid" is the next post-quantum step (the SDK is ready).
 - **Wallet signatures remain Ed25519** — this is a Solana-level dependency; see §2.1. Solana's Dilithium testnet (Project Eleven) and SIMD-0296 are the ecosystem path forward.
 - **HNDL defense posture for stealth addresses is now "as good as any L1 payment network has"** — short of waiting for Solana's native Dilithium/Kyber support, the hybrid stealth + WOTS+ claim construction is the maximum client-side defense available today.
@@ -49,8 +53,8 @@ Protocol 01 is a privacy layer for Solana using ZK-STARKs (Winterfell, migrated 
 | Component | Primitive | Status | Threat | Timeline |
 |-----------|----------|--------|--------|----------|
 | Commitments (zkSPL) | Poseidon | SAFE | Grover (halved, still sufficient) | N/A |
-| Commitments (shielded pool) | Poseidon | SAFE | Grover (halved, still sufficient) | N/A |
-| Merkle trees | Poseidon | SAFE | ~85-bit quantum collision resistance | N/A |
+| Commitments (shielded pool) | Poseidon t=3 over Goldilocks, one-element digest (v1) | NOT SAFE (v1, finding F2) | Generic collision 32.00 classical, 21.33 quantum (`docs/SECURITY-LEVELS.md`): one deposit spent twice | Open in v1; v2 design: four-element Poseidon2 digest |
+| Merkle trees | Poseidon t=3 over Goldilocks, one-element nodes (v1) | NOT SAFE (v1, finding F2) | Generic collision 32.00 classical, 21.33 quantum (`docs/SECURITY-LEVELS.md`) | Open in v1; v2 design: four-element Poseidon2 digest |
 | Symmetric encryption | XSalsa20-Poly1305 | SAFE | Grover (256→128 bit, sufficient) | N/A |
 | Metadata encryption | AES-256-CBC | SAFE | Grover (256→128 bit, sufficient) | N/A |
 | Hash functions | SHA-256, Keccak256, SHA-512 | SAFE | Grover (128-bit post-quantum) | N/A |
@@ -58,7 +62,7 @@ Protocol 01 is a privacy layer for Solana using ZK-STARKs (Winterfell, migrated 
 | Random generation | nacl.randomBytes | SAFE | Not affected by quantum | N/A |
 | **ZK proof verification** | **STARK (Winterfell + SHA-256)** ✓ shipped | **SAFE** | **Hash assumptions only** | **N/A** |
 | **Stealth addresses (key exchange)** | **Hybrid X25519 + ML-KEM-768** ✓ shipped | **SAFE (hybrid)** | **Safe unless BOTH ECDH and ML-KEM fall** | **N/A** |
-| **Stealth claim signature (SDK)** | **Ed25519 + WOTS+ (hash-based)** ✓ shipped | **SAFE (hybrid)** | **Safe unless BOTH Ed25519 and SHA-256 fall** | **Verifier: pending (P4.6 roadmap)** |
+| **Stealth claim signature (SDK)** | **Ed25519 + WOTS+ (hash-based)**, SDK only | **NOT ENFORCED (Ed25519 only on chain)** | **No program verifies WOTS+; a claim is authorised by Ed25519 alone, which Shor breaks** | **Verifier never shipped (P4.6); `specter` closed 2026-09-13** |
 | **Long-term commitment primitive** | **SHA-512 domain-separated** ✓ shipped (SDK) | **SAFE** | **2^256 PQ preimage margin** | **N/A** |
 | **Wallet signatures** | **Ed25519** | **BROKEN (Solana-level)** | **Shor — O(n³)** | **2035-2045** |
 | **VK on-chain storage (legacy)** | **BN254 curve points** | **REMOVED** | n/a — Groth16 deprecated in P3.7 | — |
@@ -97,11 +101,12 @@ Protocol 01 is a privacy layer for Solana using ZK-STARKs (Winterfell, migrated 
 | XSalsa20-Poly1305 (256-bit key) | 256 bits | 128 bits | SAFE |
 | AES-256-CBC | 256 bits | 128 bits | SAFE |
 | SHA-256 | 128-bit collision | 85-bit collision (BHT) | SAFE |
-| Poseidon (BN254 field, 254-bit) | ~127-bit collision | ~85-bit collision | SAFE |
+| Poseidon (BN254 field, 254-bit) | ~127-bit collision | ~85-bit collision | retired (the BN254 tree, gone with Groth16) |
+| Poseidon t=3 over Goldilocks, one-element digest (v1 pool) | 32.00 collision (birthday) | 21.33 collision (BHT) | NOT SAFE (finding F2, `docs/SECURITY-LEVELS.md`) |
 | Keccak256 | 128-bit collision | ~85-bit collision | SAFE |
 | HKDF-SHA256 | 256-bit PRF | 128-bit PRF | SAFE |
 
-**Mitigation:** All symmetric primitives already use 256-bit keys. No changes needed.
+**Mitigation:** All symmetric primitives already use 256-bit keys. No changes needed for them. The v1 pool digest is not a key-size question: it needs a wider digest (v2 design), see the correction at the top.
 
 ### 1.3 Harvest Now, Decrypt Later (HNDL)
 
@@ -287,21 +292,21 @@ RECIPIENT (scanning):
 
 ### 2.4 Layer 4: Hash Functions
 
-**Status: SAFE — no changes required**
+**Status: SAFE, except the v1 pool's one-element Poseidon digest (the Poseidon row)**
 
 | Hash Function | Usage | Post-Quantum Security |
 |---------------|-------|----------------------|
-| Poseidon (BN254 field) | Note commitments, nullifier derivation, owner key derivation, Merkle tree | ~85-bit collision, ~127-bit preimage |
+| Poseidon t=3 over Goldilocks, one-element digest (v1; the BN254 Poseidon is retired) | Pool leaf commitments and Merkle nodes | NOT SAFE: 32.00 collision classical, 21.33 quantum (finding F2, `docs/SECURITY-LEVELS.md`) |
 | SHA-256 | View tag generation, stealth seed derivation, key derivation, metadata hashing | ~85-bit collision, ~128-bit preimage |
 | SHA-512 | Ed25519→X25519 private key conversion (internal) | ~170-bit collision, ~256-bit preimage |
 | BLAKE2b | Fast hashing, keyed MAC (in p01-js SDK) | ~85-bit collision, ~128-bit preimage |
 | Keccak256 | Verification key hashing (on-chain), Winternitz Vault | ~85-bit collision, ~128-bit preimage |
 
-All hash functions provide at least 85-bit collision resistance post-quantum, which is computationally infeasible even for quantum computers (2^85 operations ≈ 3.8 × 10^25).
+Every hash in this table except Poseidon keeps a digest of 256 bits or more, so its generic quantum collision cost is 2^85 operations or more. Poseidon is the exception: the v1 pool digest is one 64-bit field element, and a classical birthday search finds a collision in about 2^32 evaluations (finding F2).
 
 ### 2.5 Layer 5: Commitments
 
-**Status: SAFE — already quantum-resistant**
+**Status: archive (circom era).** The rows below describe the retired BN254 circuits. The v1 pool commitment is a one-element Goldilocks Poseidon digest and is NOT SAFE (finding F2, §2.4).
 
 | Commitment Scheme | Construction | Files | Quantum Status |
 |-------------------|-------------|-------|---------------|
@@ -325,7 +330,7 @@ These Pedersen commitments are NOT used in the current ZK circuits (which use Po
 - Poseidon is an algebraic hash function over a prime field (BN254 Fr)
 - It has no dependency on elliptic curve discrete logarithm problems
 - Shor's algorithm does not apply to hash functions
-- Grover's algorithm provides only a quadratic speedup (√N), resulting in ~85-bit collision resistance — still computationally infeasible
+- Grover-type search gives a generic speedup only, so the collision cost is set by the digest width. The retired BN254 Poseidon kept 254 bits; the v1 pool keeps one 64-bit Goldilocks element, whose collision costs about 2^32 classical and 2^21.33 quantum evaluations (finding F2)
 
 **Important distinction:** The Poseidon hash itself runs over the BN254 scalar field, but this is just the arithmetic field for computation — it does NOT depend on the BN254 curve's discrete log hardness. If Protocol 01 migrates from Groth16/BN254 to STARKs, Poseidon can be computed over any sufficiently large prime field.
 
@@ -420,7 +425,7 @@ Lattice-based SNARKs (based on LWE/SIS assumptions) could provide SNARK-like suc
 
 ### 2.7 Layer 7: Merkle Trees
 
-**Status: SAFE — Poseidon-based**
+**Status: NOT SAFE in v1 — one-element Poseidon nodes (finding F2)**. The table is the circom-era layout, kept as an archive.
 
 | Implementation | File | Depth | Hash |
 |---------------|------|-------|------|
@@ -429,9 +434,9 @@ Lattice-based SNARKs (based on LWE/SIS assumptions) could provide SNARK-like suc
 | On-chain Merkle state | `programs/zk_shielded/src/state/merkle_tree.rs` | 15 | Root stored (not computed on-chain) |
 | In-circuit verification | `circuits/merkle.circom` | 15/20 | Poseidon |
 
-**Post-quantum security:** ~85-bit collision resistance (Poseidon over BN254 field). This is sufficient — no practical attack is feasible at this security level.
+**Post-quantum security:** the BN254 figure this line used to give is retired with that tree. The v1 pool's Merkle nodes are one Goldilocks element: generic collision 32.00 bits classical, 21.33 quantum (`docs/SECURITY-LEVELS.md`, finding F2).
 
-**Future consideration:** If migrating to STARKs, consider using SHA-256 for Merkle trees (native Solana syscall support, higher post-quantum collision resistance at ~128 bits). However, this would change the in-circuit hash function and affect proof generation performance.
+**Future consideration:** SHA-256 for the pool Merkle trees (native Solana syscall, a 256-bit digest whose generic quantum collision cost is 85.33 bits) would change the in-circuit hash function and affect proof generation performance. The v2 design widens the Poseidon2 digest to four elements instead.
 
 ### 2.8 Layer 8: Key Derivation
 
@@ -956,7 +961,7 @@ import {
 **Dependency on Solana L1 PQC roadmap:**
 - Ed25519 wallet signatures remain the only residual classical-ECDLP dependency Protocol 01 exposes to users. Everything else is either hash-based (SAFE), lattice-based (SAFE under Module-LWE), or hybrid (SAFE unless BOTH halves fall).
 - The realistic unlock is Solana's Dilithium (ML-DSA) mainnet deployment. Project Eleven demonstrated feasibility in Dec 2025; SIMD-0296 (4KB transactions) is the blocker. No mainnet timeline yet.
-- **Until Solana ships Dilithium**, users should treat Protocol 01's quantum resistance as: "all *new* stealth payments and all proof-system operations are post-quantum safe, *but* the wallet key that authorizes these operations is Ed25519 and will remain classical-vulnerable until the base layer upgrades."
+- **Until Solana ships Dilithium**, users should treat Protocol 01's quantum resistance as: "the proof-system operations are post-quantum by construction; *new* stealth payments are post-quantum safe only as far as their keys are, and their X25519 + ML-KEM-768 keys are re-derived from the Ed25519 wallet (in the web app, by HKDF from one Ed25519 wallet signature), so they are only as safe as that wallet secret; and the wallet key that authorizes these operations is Ed25519 and will remain quantum-vulnerable until the base layer upgrades." (Corrected 2026-09-23, audit v1 finding F65: this line used to call new stealth payments post-quantum safe without saying where their keys come from.)
 
 ---
 

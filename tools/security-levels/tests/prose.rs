@@ -35,13 +35,45 @@ use p01_security_levels::{repo_root, DOC_PATH};
 ///   checkout does not have it, and it left the scan with the other
 ///   `prose::LOCAL_ONLY_FILES` (G-WP1-b) taking its one stale row and its two
 ///   "127-bit conjectured" figures with it. They stay a finding in
-///   `scratchpad/v2-run/WP1-REPORT.md` and in that file's entry.
-const STALE_FIGURES: usize = 53;
+///   `scratchpad/v2-run/WP1-REPORT.md` and in that file's entry;
+/// * 50 in 38 rows after audit v1 round 1 (fix lane 2), which LOWERED it:
+///   the three stale figures of `apps/web/app/parcours/page.tsx` (the field
+///   floor "48 à 52", "47 à 52 bits sous conjecture", "42 à 46 bits
+///   inconditionnellement") now quote the as-shipped floors, and their rows
+///   are gone;
+/// * 41 in 31 rows after audit v1 round 2 (fix lane 3), which LOWERED it by
+///   nine: `docs/quantum-resistance.md` no longer rates the v1 pool's Poseidon
+///   digest at the retired BN254 tree's "~85-bit" (six rows, seven figures,
+///   gone; the digest line of the generated file is quoted instead), the
+///   SHA-256 quantum collision claim above its 85.33 line is gone, and the
+///   BN254 row of its Grover table is labelled retired on its line (one row,
+///   two figures, relabelled historical). `tests/design_doc_params.rs` holds
+///   those lines.
+/// * 29 in 20 rows after the audit v1 close-out (lane L5, 2026-09-23), which
+///   LOWERED it by twelve, all by fixing the prose, none by relabelling: the
+///   design document's soundness and quantum ranges ("the measured 42 to 46
+///   bit", "to about 21 to 26 bits", "Soundness is 42 to 46 bits
+///   unconditional", pages 16 and 18 and the assembled HTML: six rows, six
+///   figures) now quote the as-shipped floors; `docs/zk-simulation-argument.md`
+///   no longer states "42 to 52 bits" as current (one row, one figure);
+///   `/parcours` (`data.ts`) quotes the calculator per regime (two rows, three
+///   figures); and the grinding parameter ("16 bits of grinding", two rows,
+///   two figures), fixed in en.ts by the audit's own round and in fr.ts by
+///   the close-out's i18n lane, now reads 22 and is listed as verified. `tests/design_doc_params.rs` and
+///   `apps/web/__tests__/lib/closeV1L5DocsPdf.test.ts` hold those lines. The
+///   same round added 24 non-stale rows for the audit-era en.ts / fr.ts
+///   figures (digest widths, the v1-digest collision line, the grinding
+///   parameter) and dropped two not-a-level rows whose 63-bit blinding figures
+///   now match the generated file's note-blinding line (finding F66).
+const STALE_FIGURES: usize = 29;
 
 /// FNV-1a (64-bit) of the ledger's stale rows as sorted "path<TAB>snippet"
 /// lines joined by "\n": relabelling a stale row, or swapping it for another,
-/// changes it even when the count does not move.
-const STALE_ROWS_FNV1A: u64 = 0xa46e_6ef8_a579_8a33;
+/// changes it even when the count does not move. Re-pinned by the audit v1
+/// close-out (lane L5, 2026-09-23): eleven stale rows removed because their
+/// lines were fixed (see `STALE_FIGURES`), none added, none relabelled; the
+/// twenty left are all in dated or archived notes under `docs/`.
+const STALE_ROWS_FNV1A: u64 = 0xce98_f5e0_6cb2_6253;
 
 fn published() -> prose::Published {
     let doc = fs::read_to_string(repo_root().join(DOC_PATH)).unwrap_or_default();

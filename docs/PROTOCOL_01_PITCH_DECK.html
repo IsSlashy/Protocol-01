@@ -243,8 +243,8 @@
       <h3 class="pink" style="margin-top: 3mm;">ML-KEM-768 finalised</h3>
       <p class="small muted">
         NIST published the post-quantum KEM standard.<br>
-        Hybrid X25519 + ML-KEM-768 stealth addresses are now production-grade.<br>
-        Privacy that survives a future quantum adversary.
+        Hybrid X25519 + ML-KEM-768 stealth addresses now build on a standard KEM.<br>
+        ML-KEM resists Shor, but the web app re-derives its keys from one Ed25519 wallet signature: they are only as safe as that wallet key. Spend authority is Ed25519 too.
       </p>
     </div>
     <div class="card card-yellow">
@@ -273,7 +273,8 @@
     Drop-in SDK for any online merchant.<br>
     Customer subscribes from the Protocol 01 wallet (or via QR scan).<br>
     Merchant receives SOL or USDC at their own retailer wallet.<br>
-    Every link between the two is severed by ZK-STARK proofs and hybrid post-quantum stealth addresses.
+    Between the two: a denominated pool, STARK proofs checked on chain, hybrid post-quantum stealth addresses.<br>
+    Today a subscription stays linkable to the customer's wallet: the wallet funds the one-time key in the clear (README, &ldquo;The pool hides neither today&rdquo;).
   </p>
 
   <div class="grid-4" style="margin-top: 8mm;">
@@ -286,12 +287,12 @@
       <div class="stat-label">Merchant platform cut</div>
     </div>
     <div class="card card-yellow stat">
-      <div class="stat-num yellow">~10s</div>
-      <div class="stat-label">On-chain settlement</div>
+      <div class="stat-num yellow">23.0 s</div>
+      <div class="stat-label">Subscribe, measured on devnet</div>
     </div>
     <div class="card card-green stat">
       <div class="stat-num green">PQ</div>
-      <div class="stat-label">Post-quantum hardened</div>
+      <div class="stat-label">Proofs &amp; KEM; keys still from Ed25519</div>
     </div>
   </div>
 
@@ -397,11 +398,11 @@ setInterval(<span class="kw">async</span> () =&gt; {
     </div>
   </div>
 
-  <h3 style="margin-top: 6mm; margin-bottom: 2mm;">What the merchant never sees</h3>
+  <h3 style="margin-top: 6mm; margin-bottom: 2mm;">What the merchant can find today (v1, devnet)</h3>
   <div style="display: flex; gap: 3mm;">
-    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-red">HIDDEN</span> The customer's wallet identity</p></div>
-    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-red">HIDDEN</span> The customer's transaction history</p></div>
-    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-red">HIDDEN</span> Any link between two subscribers</p></div>
+    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-yellow">LINKABLE</span> The customer's wallet: absent from the subscription transaction, but it funds the one-time key in the clear, three RPC calls away</p></div>
+    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-yellow">LINKABLE</span> The note spent: matchable to the deposit that published its commitment</p></div>
+    <div style="flex: 1; padding: 3mm 4mm;" class="card"><p class="micro"><span class="badge badge-red">PUBLIC</span> The subscription vaults: anyone can enumerate a merchant's subscribers</p></div>
   </div>
 
   <div class="footer"><span>Protocol 01 / Pitch Deck</span><span>Slide 06 / 11</span></div>
@@ -460,7 +461,7 @@ setInterval(<span class="kw">async</span> () =&gt; {
     <div class="card card-cyan stat"><div class="stat-num cyan">4</div><div class="stat-label">Programs on the product path</div></div>
     <div class="card card-pink stat"><div class="stat-num pink">11</div><div class="stat-label">Packages on npm</div></div>
     <div class="card card-yellow stat"><div class="stat-num yellow">8</div><div class="stat-label">STARK AIRs</div></div>
-    <div class="card card-green stat"><div class="stat-num green">18.6 s</div><div class="stat-label">Private deposit, devnet</div></div>
+    <div class="card card-green stat"><div class="stat-num green">18.6 s</div><div class="stat-label">Pool deposit (shield), devnet</div></div>
   </div>
 
   <div class="grid-2" style="margin-top: 6mm;">
@@ -510,7 +511,7 @@ setInterval(<span class="kw">async</span> () =&gt; {
   <h3 style="margin-top: 5mm; margin-bottom: 2mm;">Versus the rails merchants use today</h3>
   <table>
     <tr><th>Provider</th><th class="num">Take rate</th><th>Privacy</th><th>Settlement</th></tr>
-    <tr><td><span class="badge badge-cyan">Protocol 01</span></td><td class="num mono cyan bold">0.80%</td><td><span class="badge badge-green">Native ZK</span></td><td class="small">~10s on-chain</td></tr>
+    <tr><td><span class="badge badge-cyan">Protocol 01</span></td><td class="num mono cyan bold">0.80%</td><td><span class="badge badge-yellow">Pool, linkable today</span></td><td class="small">18.6 s / 23.0 s / 20.8 s (deposit / subscribe / withdraw, devnet)</td></tr>
     <tr><td>Stripe (cards)</td><td class="num mono">2.90%</td><td><span class="badge badge-red">None</span></td><td class="small">2-7 days</td></tr>
     <tr><td>Patreon</td><td class="num mono">8-12%</td><td><span class="badge badge-red">None</span></td><td class="small">Monthly</td></tr>
     <tr><td>Coinbase Commerce</td><td class="num mono">1.00%</td><td><span class="badge badge-red">None</span></td><td class="small">~30 min finality</td></tr>
@@ -544,7 +545,7 @@ setInterval(<span class="kw">async</span> () =&gt; {
       <ul class="small" style="line-height: 2; padding-left: 5mm;">
         <li>Custom on-chain <span class="cyan bold">FRI/STARK verifier</span> (Goldilocks field, Poseidon AIR, 8 circuits, 801 KB SBF binary)</li>
         <li>Hybrid <span class="cyan bold">X25519 + ML-KEM-768</span> stealth address construction (own design, not a reference port)</li>
-        <li>Blinding masks on all 8 circuits; hiding is statistical in the random-oracle model, measured by the X5 test (docs/zk-simulation-argument.md)</li>
+        <li>Blinding masks on all 8 circuits: every committed proof value measured uniform by the X5 test; the simulation argument is being redone, since the next-row openings it treated as hidden are published (docs/zk-simulation-argument.md)</li>
         <li>Deterministic <span class="cyan bold">HKDF note-secret derivation</span> &mdash; one seed, every shielded note recoverable cross-device</li>
         <li>Custom <span class="cyan bold">MPC bridge to Arcium Cerberus</span> &mdash; 9 Arcis circuits, threshold compute</li>
         <li><span class="cyan bold">10 program crates</span>, 11 packages on npm, three clients &mdash; all written by the same person</li>
@@ -576,7 +577,7 @@ setInterval(<span class="kw">async</span> () =&gt; {
   <h1>What we need to ship.</h1>
   <p class="lead">
     The core is built.<br>
-    The cryptography is proven.<br>
+    The cryptography is built and measured; the external audit is still ahead.<br>
     The chain is ready.<br>
     What stands between Protocol 01 and 100 paying merchants on mainnet:
   </p>

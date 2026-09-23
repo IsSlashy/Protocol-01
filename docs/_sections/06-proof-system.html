@@ -6,9 +6,10 @@
 
   <p class="lede">
     One prime field, Goldilocks, with Poseidon in the circuit and SHA&#8209;256 in
-    the proof's own trees. Every value below comes from the branch the deployed
-    verifier was built from, <span class="mono">b7-drop-aligned-checks</span>, and
-    not from master.
+    the proof's own trees. Every value below is read from the verifier's source,
+    <span class="mono">compact_proof.rs</span>, as redeployed to devnet in commit
+    <span class="mono">22cc9e82</span> on 2026&#8209;09&#8209;12; no parameter in that
+    file has changed since, and master carries it.
   </p>
 
   <table>
@@ -19,12 +20,15 @@
     <tr><td>MDS matrix</td><td>Circulant <span class="mono">[[3,1,1],[1,3,1],[1,1,3]]</span>, determinant 20, all nine minors invertible</td></tr>
     <tr><td>Round constants</td><td>90, byte&#8209;identical as an ordered list between prover and verifier</td></tr>
     <tr><td>Proof tree hash</td><td>SHA&#8209;256, 32&#8209;byte nodes, leaf tag <span class="mono">0x00</span>, node tag <span class="mono">0x01</span></td></tr>
-    <tr><td>FRI</td><td>Blowup 16, fold factor 2, terminal polynomial of 16 coefficients, degree bound 1</td></tr>
-    <tr><td>Queries</td><td>27 on circuits 0, 1, 2 and 4; 22 on circuits 3, 5, 6 and 7; 22 bits of grinding</td></tr>
+    <tr><td>FRI</td><td>Blowup 16, fold factor 2. Terminal polynomial: 16 coefficients, degree bound 1, on circuits 1, 2, 3, 5 and 6; 32 coefficients, degree bound 2, on circuits 0, 4 and 7</td></tr>
+    <tr><td>Queries</td><td>27 on circuits 1 and 2; 22 on circuits 0, 3, 4, 5, 6 and 7; 22 bits of grinding</td></tr>
     <tr><td>Trace</td><td>Committed on a multiplicative coset, shift <span class="mono">h = 7</span>, at no extra wire bytes</td></tr>
   </table>
   <p class="note" style="margin-top:2mm;">
-    Master has no leaf tags, no degree bound and no coset shift, so three rows above.
+    The leaf and node tags, the terminal degree bound and the coset shift were
+    written on <span class="mono">b7-drop-aligned-checks</span> and reached master
+    in the 2026&#8209;08&#8209;24 reconcile, <span class="mono">140dcb3e</span>. Every row
+    is the verifier's, per circuit where circuits differ.
   </p>
 
   <div class="cols" style="margin-top:4mm;">

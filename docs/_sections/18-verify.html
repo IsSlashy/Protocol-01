@@ -7,7 +7,7 @@
   <p class="lede">
     Each row names a claim made earlier and the exact target that settles it.
     Every RPC call goes to https://api.devnet.solana.com except the one row that
-    names mainnet&#8209;beta, and all of it was read on 11 August 2026.
+    names mainnet&#8209;beta; read on 11 August 2026 unless a row says later.
   </p>
 
   <table>
@@ -35,12 +35,12 @@
         <td>Read <span class="mono">HfSsGRgVFJ</span>&#8230; the 0.1 SOL pool, with <span class="mono">getAccountInfo</span>: next_leaf_index and note_count, per <span class="mono">pool_v3.rs</span>. The 1 SOL pool <span class="mono">6NUS4E5PhQ</span>&#8230; holds 6 over 25.</td>
       </tr>
       <tr>
-        <td>The prover on npm emits the bytes the 4 August verifier accepted; master carries the blob the 12 September verifier was measured with</td>
-        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 12 September 2026: 265,324 bytes, digest <span class="mono">0ad6d7f1</span>, per-circuit signatures in BENCHMARK-2026-09-13 §6.</td>
+        <td>The prover on npm emits the bytes the 4 August verifier accepted; master carries a blob the 12 September verifier accepts</td>
+        <td><span class="mono">npm pack @protocol-01/stark-prover</span>, then hash <span class="mono">package/wasm/p01_stark_bg.wasm</span>: 229,640 bytes, sha256 <span class="mono">51a947e3</span> (0.1.3). On master since 20 September 2026: 262,363 bytes, <span class="mono">d5583d41</span> (before it, <span class="mono">0ad6d7f1</span>).</td>
       </tr>
       <tr>
-        <td>Soundness is 42 to 46 bits unconditional, not the 104 to 124 the source claims</td>
-        <td>Read the block above <span class="mono">B2_CONJECTURED_FORGERY_BITS</span> in <span class="mono">b1_deep_binding.rs</span>, branch <span class="mono">b7-drop-aligned-checks</span>.</td>
+        <td>Soundness is 41 to 45 bits under unique decoding and 13 to 16 under the headline Johnson bound, as shipped</td>
+        <td><span class="mono">cargo run --manifest-path tools/security-levels/Cargo.toml</span> prints <span class="mono">docs/SECURITY-LEVELS.md</span> from the verifier's own constants.</td>
       </tr>
       <tr>
         <td>The live homepage still publishes claims this document contradicts</td>
@@ -63,9 +63,7 @@ C  0.995 SOL withdrawn to a fresh address, 2026-08-04
       The deployed verifier's bytes match a hash recorded in this repository, but
       the commit behind them was never pushed, so that custody chain ends with
       us. The forged-proof and tampered-input rejections are simulations with no
-      signature to look up. And no on-device proving time can be repeated: the
-      180 second figure quoted for it is a client timeout constant, and the
-      instrumentation for a real one exists only as a proposal.
+      signature to look up. And BENCHMARK-2026-09-13 timed blob 0ad6d7f1 only.
     </p>
   </div>
 </div>
