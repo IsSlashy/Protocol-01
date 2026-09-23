@@ -52,6 +52,7 @@ import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
 import PoolPanel from "@/components/pay/PoolPanel";
 import NoteTag from "@/components/pay/NoteTag";
+import en from "@/i18n/en";
 import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
 
 // ---------------------------------------------------------------------------
@@ -1547,5 +1548,289 @@ describe("READY-1: the Shield click never becomes an own deposit without a choic
     expect(m.fetchIssuableNote).toHaveBeenCalledTimes(2);
     expect(m.contributeToPool, "the click went on the mount's answer").not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: CONTINUE })).not.toBeNull();
+  });
+});
+
+/**
+ * AUDIT v1 round 1 (fix lane 2): an ISSUED note is held on this device only.
+ *
+ * The contribution (the default Shield click when stock is issuable) and the
+ * exchange both leave the buyer an issued note. Its secrets come from the
+ * treasury seed, so the buyer's seed scan never finds it; the claim code that
+ * could fetch the issuer's kept reply again (issue-note/route.ts, "A RETRY IS
+ * NOT A SECOND SALE") was deleted by `clearContribution` and never shown. A
+ * wiped site store, a private window or a new device then lost the 1 SOL note
+ * with no warning, and the issuer's custody disclosure was dropped on the
+ * contribution card. Red log: scratchpad audit-v1-opus/r1-fix2/red-poolpanel.log.
+ */
+describe("audit r1: an issued note is held on this device only", () => {
+  const CODE_A = "claimCodeAAAA0001";
+  const CODE_B = "claimCodeBBBB0002";
+  const SHOW_CODE = /^Show recovery code$/;
+  const ONLY_COPY = /This device holds the only copy of this note/;
+
+  function stockContribution(code: string) {
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL", issuableNow: true });
+    m.contributeToPool.mockResolvedValue({
+      txSig: "FundedDepositSig11111111111111111111111111111",
+      leafIndex: FUNDED_LEAF,
+      commitment: FUNDED_COMMITMENT,
+      claimCode: code,
+      fundedBy: "funder",
+      depositLanded: true,
+    });
+    m.requestIssuedNote.mockResolvedValue(
+      issued(noteView({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT, tag: OTHER_TAG }), CANARY_LEAF),
+    );
+  }
+
+  async function shieldOnce() {
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /^Shield 1 SOL$/ }));
+    await screen.findByText("Your 1 SOL note is in the pool");
+    return { user, view };
+  }
+
+  it("a contribution: the card renders the issuer's custody disclosure", async () => {
+    stockContribution(CODE_A);
+    const { view } = await shieldOnce();
+    expect(m.contributeToPool).toHaveBeenCalledTimes(1);
+    expect(view.container.textContent).toContain("ISSUER DISCLOSURE, rendered verbatim.");
+  });
+
+  it("a contribution: the card says this device holds the only copy, and hands over the recovery code on request", async () => {
+    stockContribution(CODE_A);
+    const { user, view } = await shieldOnce();
+    expect(view.container.textContent).toMatch(ONLY_COPY);
+    expect(view.container.textContent).toMatch(/your wallet seed cannot rebuild it/i);
+    // Off the screen until asked, like every other id on these cards.
+    expect(view.container.innerHTML).not.toContain(CODE_A);
+    await user.click(screen.getByRole("button", { name: SHOW_CODE }));
+    expect(view.container.textContent).toContain(CODE_A);
+  });
+
+  it("an own deposit carries no only-copy warning: the seed rebuilds it", async () => {
+    m.scanPool.mockResolvedValue({ notes: [], shieldedBalance: 0, poolSizes: [], complete: true });
+    m.shieldToPool.mockResolvedValue({
+      txSig: OWN_DEPOSIT_SIG,
+      commitment: CANARY_COMMITMENT,
+      leafIndex: CANARY_LEAF,
+      denomination: 1,
+      encryptedNote: "p01enc1:blob",
+      fundedLamports: 0,
+      fundedBy: "funder",
+      walletPaidLamports: 1_013_000_000,
+      operatorFeeLamports: 10_000_000,
+      tag: TAG,
+    });
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitFor(() => expect(m.scanPool).toHaveBeenCalled());
+    await user.click(await screen.findByRole("button", { name: /^Shield 1 SOL$/ }));
+    await chooseOwnDeposit(user);
+    await screen.findByText("Your 1 SOL note is in the pool");
+    expect(view.container.textContent).not.toMatch(ONLY_COPY);
+    expect(screen.queryByRole("button", { name: SHOW_CODE })).toBeNull();
+  });
+
+  it("an exchange: the same warning, and its recovery code on request", async () => {
+    m.exchangeNoteForIssued.mockResolvedValue({
+      spendSig: EXCHANGE_SIG,
+      claimCode: CODE_B,
+      issued: issued(
+        noteView({ leafIndex: FUNDED_LEAF, commitment: FUNDED_COMMITMENT, tag: OTHER_TAG }),
+        FUNDED_LEAF,
+      ),
+    });
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /Exchange for an older note/ }));
+    await screen.findByText(/Exchanged your 1 SOL note for an older one/);
+    expect(view.container.textContent).toMatch(ONLY_COPY);
+    expect(view.container.innerHTML).not.toContain(CODE_B);
+    await user.click(screen.getByRole("button", { name: SHOW_CODE }));
+    expect(view.container.textContent).toContain(CODE_B);
+  });
+
+  it("a recovery code brings the note back: the issuer is asked again with that code", async () => {
+    m.requestIssuedNote.mockResolvedValue(
+      issued(noteView({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT, tag: THIRD_TAG }), CANARY_LEAF),
+    );
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.type(screen.getByLabelText(/^Recovery code$/), `  ${CODE_A}  `);
+    await user.click(screen.getByRole("button", { name: /^Restore the note$/ }));
+    await waitFor(() => expect(m.requestIssuedNote).toHaveBeenCalledTimes(1));
+    expect(m.requestIssuedNote.mock.calls[0][0]).toMatchObject({
+      meta: "meta-1",
+      walletPubkey: OWNER.toBase58(),
+      token: "SOL",
+      denomination: 1,
+      claimCode: CODE_A,
+    });
+    // Nothing is paid to restore.
+    expect(m.contributeToPool).not.toHaveBeenCalled();
+    expect(m.shieldToPool).not.toHaveBeenCalled();
+    await waitFor(() => expect(within(view.container).getByText(THIRD_TAG.text)).toBeInTheDocument());
+    expect(canariesIn(view.container.innerHTML)).toEqual([]);
+  });
+
+  it("a malformed recovery code asks nobody", async () => {
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.type(screen.getByLabelText(/^Recovery code$/), "short");
+    await user.click(screen.getByRole("button", { name: /^Restore the note$/ }));
+    expect(m.requestIssuedNote).not.toHaveBeenCalled();
+    expect(view.container.textContent).toMatch(/not a recovery code/i);
+  });
+});
+
+/**
+ * close-v1, lane L4.
+ *
+ * F07 (resume part). A resumed contribution is an issued note too, held on
+ * this device only. The resume path now returns the claim code it redeemed
+ * (contract C1: `resumeContribution` outcome gains `claimCode`), so the card
+ * hands it over like the contribution card does, and renders the issuer's
+ * disclosure the resume returns (`IssuedNoteOutcome.disclosure`: "Render it").
+ *
+ * F05 and the pre-flights. The builders refuse before anything is paid, with a
+ * message that starts with a code (contract C2); the panel shows the sentence
+ * for that code, not the code.
+ */
+describe("close-v1: the resumed card and the refusal codes", () => {
+  const CODE_R = "claimCodeRRRR0003";
+  const SHOW_CODE = /^Show recovery code$/;
+  const ONLY_COPY = /This device holds the only copy of this note/;
+
+  it("a resumed contribution: the only-copy warning, its recovery code on request, and the issuer's disclosure", async () => {
+    m.resumeContribution.mockResolvedValue({
+      ...issued(noteView({ leafIndex: FUNDED_LEAF, commitment: FUNDED_COMMITMENT, tag: OTHER_TAG }), FUNDED_LEAF),
+      claimCode: CODE_R,
+    });
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /^Shield 1 SOL$/ }));
+    await screen.findByText("Your 1 SOL note is in the pool");
+    expect(m.contributeToPool).not.toHaveBeenCalled();
+    expect(view.container.textContent).toMatch(ONLY_COPY);
+    expect(view.container.textContent).toContain("ISSUER DISCLOSURE, rendered verbatim.");
+    expect(view.container.innerHTML).not.toContain(CODE_R);
+    await user.click(screen.getByRole("button", { name: SHOW_CODE }));
+    expect(view.container.textContent).toContain(CODE_R);
+    expect(canariesIn(view.container.innerHTML)).toEqual([]);
+  });
+
+  it("a deposit refused by a pre-flight shows the sentence for its code, not the code", async () => {
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL", issuableNow: true });
+    m.contributeToPool.mockRejectedValue(new Error("POOL_DEPOSITS_BRICKED: non-canonical value at slot 7"));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /^Shield 1 SOL$/ }));
+    expect((await screen.findAllByText(/stops new deposits/)).length).toBeGreaterThan(0);
+    expect(view.container.textContent).not.toContain("POOL_DEPOSITS_BRICKED");
+  });
+
+  it("a withdrawal refused because only the C1 + C3 pair could spend the note says it cannot be spent here until v2", async () => {
+    m.unshieldFromPool.mockRejectedValue(new Error("C1C3_SPEND_DISABLED: v3 unshield refused by the builder"));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /^Withdraw$/ }));
+    expect((await screen.findAllByText(/cannot be spent from this web app until v2/)).length).toBeGreaterThan(0);
+    expect(view.container.textContent).not.toContain("C1C3_SPEND_DISABLED");
+  });
+
+  it("an exchange the deployment switched off says so, with nothing spent", async () => {
+    m.exchangeNoteForIssued.mockRejectedValue(new Error("EXCHANGE_DISABLED: the issuer does not take pool withdrawals"));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /Exchange for an older note/ }));
+    expect((await screen.findAllByText(/switched off on this deployment/)).length).toBeGreaterThan(0);
+    expect(view.container.textContent).not.toContain("EXCHANGE_DISABLED");
+  });
+
+  // Verifier round 2: the three error paths no test reached. Each rejects with
+  // a coded message and must show the dictionary sentence under its own line.
+  it("a restore refused with a code shows the sentence under the form, not the code", async () => {
+    m.requestIssuedNote.mockRejectedValueOnce(new Error("POOL_TREE_DIVERGED: root 12 != 34"));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.type(screen.getByLabelText(/^Recovery code$/), CODE_R);
+    await user.click(screen.getByRole("button", { name: /^Restore the note$/ }));
+    await waitFor(() => expect(m.requestIssuedNote).toHaveBeenCalledTimes(1));
+    const form = screen.getByRole("button", { name: /^Restore the note$/ }).closest("form") as HTMLElement;
+    await waitFor(() => expect(form.textContent).toContain(en.pay.errors.poolTreeDiverged));
+    expect(view.container.textContent).not.toContain("POOL_TREE_DIVERGED");
+  });
+
+  it("a recovery refused with a code shows the sentence, not the code", async () => {
+    m.recoverStuckFunds.mockRejectedValue(new Error("POOL_TREE_DIVERGED: root 56 != 78"));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /Recover funds from a failed attempt/ }));
+    await waitFor(() => expect(m.recoverStuckFunds).toHaveBeenCalled());
+    expect((await screen.findAllByText(en.pay.errors.poolTreeDiverged)).length).toBeGreaterThan(0);
+    expect(view.container.textContent).not.toContain("POOL_TREE_DIVERGED");
+  });
+
+  // Verifier round 2: an own deposit made after a contribution is the buyer's
+  // own note, which the seed rebuilds. The contribution's only-copy warning and
+  // its recovery code belong to the earlier card and must not carry over.
+  it("an own deposit after a contribution drops the earlier only-copy warning and its code", async () => {
+    const CODE_E = "claimCodeEEEE0007";
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL", issuableNow: true });
+    m.contributeToPool.mockResolvedValue({
+      txSig: "FundedDepositSig11111111111111111111111111111",
+      leafIndex: FUNDED_LEAF,
+      commitment: FUNDED_COMMITMENT,
+      claimCode: CODE_E,
+      fundedBy: "funder",
+      depositLanded: true,
+    });
+    m.requestIssuedNote.mockResolvedValue(
+      issued(noteView({ leafIndex: CANARY_LEAF, commitment: CANARY_COMMITMENT, tag: OTHER_TAG }), CANARY_LEAF),
+    );
+    m.shieldToPool.mockResolvedValue({
+      txSig: OWN_DEPOSIT_SIG,
+      commitment: CANARY_COMMITMENT,
+      leafIndex: CANARY_LEAF,
+      denomination: 1,
+      encryptedNote: "p01enc1:blob",
+      fundedLamports: 0,
+      fundedBy: "funder",
+      walletPaidLamports: 1_013_000_000,
+      operatorFeeLamports: 10_000_000,
+      tag: TAG,
+    });
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await waitForRows(1);
+    await user.click(screen.getByRole("button", { name: /^Shield 1 SOL$/ }));
+    await screen.findByText("Your 1 SOL note is in the pool");
+    // Positive control: the contribution card carries the warning.
+    expect(view.container.textContent).toMatch(ONLY_COPY);
+    expect(m.contributeToPool).toHaveBeenCalledTimes(1);
+
+    // The deployment stops answering: the next click is an own deposit.
+    m.fetchIssuableNote.mockResolvedValue(null);
+    await user.click(screen.getByRole("button", { name: /^Shield 1 SOL$/ }));
+    await chooseOwnDeposit(user);
+    await waitFor(() => expect(m.shieldToPool).toHaveBeenCalledTimes(1));
+    await screen.findByText("Your 1 SOL note is in the pool");
+    await waitFor(() => expect(view.container.textContent).not.toMatch(ONLY_COPY));
+    expect(screen.queryByRole("button", { name: SHOW_CODE })).toBeNull();
+    expect(view.container.innerHTML).not.toContain(CODE_E);
+    expect(m.contributeToPool).toHaveBeenCalledTimes(1);
   });
 });

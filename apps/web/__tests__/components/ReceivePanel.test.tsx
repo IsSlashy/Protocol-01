@@ -328,3 +328,19 @@ describe("without a pool session", () => {
     expect(ADAPTER.scan).not.toHaveBeenCalled();
   });
 });
+
+// close-v1, lane L4: an imported note whose commitment is not at its leaf is
+// refused by the worker with `IMPORT_NOT_ON_TREE` (lane L2, finding F35). The
+// panel shows the sentence for that code, in the visitor's language.
+describe("close-v1: an import refused as not on the tree", () => {
+  it("shows the sentence for IMPORT_NOT_ON_TREE, not the code", async () => {
+    importReceivedNote.mockRejectedValue(new Error("IMPORT_NOT_ON_TREE: leaf 47 holds another commitment"));
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await screen.findByRole("button", { name: /Copy my address/i });
+    await pasteBlob(user, SEALED);
+    await user.click(screen.getByRole("button", { name: /Add it to my notes/i }));
+    await screen.findByText(/not in the pool at the leaf it names/);
+    expect(view.container.textContent).not.toContain("IMPORT_NOT_ON_TREE");
+  });
+});

@@ -56,20 +56,27 @@ const combinedSecret = hkdf(x25519Secret, hybridSecret);`,
     // 10th detail added 2026-08-06: it states why no bit-level security figure
     // appears here. Deleting the old "124-bit" claim without saying anything
     // would read as an oversight rather than a measurement.
+    // Rewritten in close-v1 (audit v1, finding F21): it no longer says the rate
+    // the prover achieves was measured lower than the configured one, which
+    // was false (the verifier enforces rate 1/16 on every v1 circuit). It now
+    // gives what the verifier enforces and points at docs/SECURITY-LEVELS.md,
+    // where every figure stands next to its regime.
     detailCount: 10,
     codeExample: `// STARK proof: hash-based, no trusted setup. There is no elliptic curve
 // anywhere in the proof system, so Shor has nothing to attack in it.
 const starkProof = await starkProver.generateProof(secret);
 
-// Upload proof buffer -> on-chain FRI verifier -> 878,756 CU in phase 1
-// and 193,200 CU in phase 2, measured on devnet 2026-09-02
+// Upload proof buffer -> on-chain FRI verifier -> an accepted circuit-7
+// proof measured at 889,691 CU, both phases in one transaction, on devnet
+// 2026-09-20
 await submitStarkProof(program, proofBuffer, commitment, circuitId);
-// 7 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
+// 8 AIRs over the Goldilocks field. DEEP-ALI quotient check at the OOD
 // point is implemented (programs/p01_stark_verifier/src/verify.rs:670-673).
-// No soundness bit-count is published here. The one this line used to
-// carry came from "queries x log2(blowup)", arithmetic that was measured
-// to be wrong for this FRI configuration, and no measured figure has
-// replaced it. Do not reinstate a bit-count without one.
+// No soundness bit-count is published here: every figure, per circuit and
+// with its regime, is computed in docs/SECURITY-LEVELS.md. The one this
+// line used to carry came from "queries x log2(blowup)", the conjectured
+// formula presented as a bound. Do not reinstate a bit-count without its
+// regime.
 // Replaces legacy Groth16/BN254 (see "Legacy / Migration History")`,
   },
   {
@@ -80,9 +87,11 @@ await submitStarkProof(program, proofBuffer, commitment, circuitId);
 // 1. User generates a STARK proof locally (no remote prover)
 const starkProof = await starkProver.generateProof(noteInputs);
 
-// 2. Optional: instant path via p01_liquidity prefund so the user
-//    doesn't have to front ~0.85 SOL of proof-buffer rent
-await liquidity.prefund({ ephemeralSigner, proofBuffer, amount });
+// 2. The instant path (p01_liquidity prefund) is disabled. The deployed
+//    program pays against a proof buffer it never checks for membership,
+//    so it can be drained (audit v1, finding F27); the SDK refuses to
+//    build the call. The proof-buffer rent is fronted in public and comes
+//    back when the buffers close.
 
 // 3. Buffer verifies on-chain -> funds release to a one-time
 //    recipient. The unshield transaction itself names an ephemeral
@@ -144,8 +153,9 @@ const nullifier = Poseidon([commitment, spendingKeyHash]);
     i18nKey: "solanaIntegration",
     detailCount: 6,
     codeExample: `// v1.0.2: every spend verifies through the custom on-chain
-// FRI verifier (no Winterfell dep, Goldilocks + Blake3; 878,756 CU in
-// phase 1, 193,200 CU in phase 2, measured on devnet 2026-09-02).
+// FRI verifier (no Winterfell dep, Goldilocks field, SHA-256 Merkle
+// commitments; an accepted circuit-7 proof measured at 889,691 CU with
+// both phases in one transaction on devnet, 2026-09-20).
 let positions = fiat_shamir_positions(trace_root, commitment);
 for pos in positions {
     verify_merkle_path(proof, pos, trace_root)?;
@@ -190,8 +200,9 @@ const starkProof = await starkProver.generateProof({
 
 // 2. Upload the proof to a buffer account (measured 2026-09-02: 79,405
 //    bytes on the wire for circuit 7, 94,897 for circuit 1) then call
-//    the on-chain FRI verifier (no Winterfell dep, custom Goldilocks +
-//    Blake3 implementation; 878,756 CU phase 1, 193,200 CU phase 2)
+//    the on-chain FRI verifier (no Winterfell dep, custom Goldilocks
+//    field, SHA-256 Merkle commitments; an accepted circuit-7 proof
+//    measured at 889,691 CU, both phases in one transaction, 2026-09-20)
 await submitStarkProof(program, proofBuffer, circuitId);
 
 // 3. Instruction reads the verified buffer and releases funds
@@ -353,8 +364,10 @@ await zkspl.send(amount, recipient);  // Confidential transfer
 import { Protocol01 } from '@protocol-01/p01-js';
 await p01.createSubscription({ amount: 9.99, interval: 'monthly' });
 
-// === @protocol-01/privacy-toolkit: Merkle + Poseidon ===
-import { IncrementalMerkleTree, poseidon2 } from '@protocol-01/privacy-toolkit';
+// === @protocol-01/privacy-toolkit: BN254 Poseidon, legacy Groth16 helpers ===
+// Not the pool hash: the Styx pool and its STARK proofs use Poseidon over
+// Goldilocks, and a commitment built here is not accepted there.
+import { createCommitment, getZeroHashes } from '@protocol-01/privacy-toolkit';
 
 // === @protocol-01/auth-sdk: Auth Integration ===
 import { P01AuthClient } from '@protocol-01/auth-sdk';
@@ -469,8 +482,9 @@ await executeTool("privacy_shield", { amount: 0.1 });
 
 // AFTER: Winterfell STARKs over Goldilocks (current)
 const proof = await starkProver.generateProof(secret);
-// Hash-based (Blake3 + Poseidon), no trusted setup, custom on-chain
-// FRI verifier, 8 AIRs (one per accepted circuit id); proofs measured
+// Hash-based: SHA-256 for the Merkle commitments and the transcript,
+// Poseidon inside the circuits (Blake3 was tried and dropped). No trusted
+// setup, custom on-chain FRI verifier, 8 AIRs (one per accepted circuit id); proofs measured
 // 2026-09-12 at 74,365 bytes (subscriber ownership) to 95,777 (balance
 // proof), docs/BENCHMARK-2026-09-13.md §6`,
   },

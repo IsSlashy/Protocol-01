@@ -61,6 +61,7 @@ import { RECEIVE_NOTE_PHASES } from "@/lib/pay/flowProgress";
 import FlowProgress from "./FlowProgress";
 import SuccessBurst from "./SuccessBurst";
 import NoteTag from "./NoteTag";
+import { localizePoolError } from "./errorCodes";
 import { formatAmount, timeAgo, truncate } from "./util";
 import { useT } from "@/i18n";
 
@@ -188,7 +189,9 @@ export default function ReceivePanel({
       setReceived(outcome);
       setBlob("");
     } catch (e) {
-      setImportError((e as Error).message || t("pay.receive.errImport"));
+      // A note whose commitment is not at its leaf is refused with
+      // IMPORT_NOT_ON_TREE (close-v1, F35): said in the visitor's language.
+      setImportError(localizePoolError((e as Error).message || t("pay.receive.errImport"), t));
     } finally {
       setImporting(false);
       setImportStep(null);

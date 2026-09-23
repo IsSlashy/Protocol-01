@@ -769,21 +769,25 @@ const unshieldResult = await unshieldTokens({
       <Block title={t('sdkDemo.privacyToolkitTitle')} note={t('sdkDemo.privacyToolkitDesc')}>
         <CodeBlock
           title={t('sdkDemo.privacyToolkitCodeTitle')}
-          code={`import { poseidonHash, MerkleTree, WOTSKeypair } from '@protocol-01/privacy-toolkit';
+          code={`import {
+  createCommitment,
+  computeNullifier,
+  getZeroHashes,
+  generateSecret,
+  generateNullifierPreimage,
+} from '@protocol-01/privacy-toolkit';
 
-// Poseidon hash for ZK-friendly commitments
-const commitment = poseidonHash([amount, owner, randomness, tokenId]);
+// BN254 Poseidon (poseidon-lite), from the earlier Groth16 design.
+// Not the pool hash: the Styx pool, its STARK circuits and the on-chain
+// verifier use Poseidon over Goldilocks, so a value built here is not
+// accepted there.
+const nullifierPreimage = generateNullifierPreimage();
+const secret = generateSecret();
+const commitment = createCommitment(nullifierPreimage, secret, epoch, tokenId);
+const nullifier = computeNullifier(nullifierPreimage, secret);
 
-// Build Merkle tree of note commitments
-const tree = new MerkleTree(20); // depth 20
-tree.insert(commitment);
-const proof = tree.getProof(0); // path for leaf 0
-
-// WOTS+ one-time signature, hash-based.
-// Transaction signatures on Solana stay Ed25519, and stay classical.
-const wots = WOTSKeypair.generate(secret, chainIndex);
-const signature = wots.sign(messageHash);
-const valid = WOTSKeypair.verify(wots.publicKey, messageHash, signature);`}
+// Empty-subtree hashes of a depth-20 BN254 Merkle tree.
+const zeros = getZeroHashes(20);`}
         />
       </Block>
 
@@ -1648,8 +1652,10 @@ const stream = await p01.streams.create({
 // return money to the subscriber. A merchant may refund off-band
 // from its own wallet, but that is the merchant's own transfer.
 
-// Only the SUBSCRIBER can pause and resume:
-// Called from subscriber's wallet only
+// Pause and resume are sent from the subscriber's wallet.
+// Devnet v1 caveat: the on-chain check binds a pause or resume
+// proof to the vault commitment alone, so a copied public proof
+// can be replayed by another key. Not audited.
 await p01.streams.pause({ streamId: stream.id });
 await p01.streams.resume({ streamId: stream.id });`}
         />
@@ -1674,12 +1680,14 @@ const activeStreams = await p01.streams.query({
 // Verify subscription with locked price
 const subscription = await p01.streams.get(streamId);
 
-// ONLY the subscriber can pause and resume (from their wallet)
-// Developer CANNOT pause, resume or modify!
+// Pause and resume are sent from the subscriber's wallet.
+// Devnet v1: a published pause or resume proof is bound to the
+// vault commitment only and can be replayed by another key, and
+// the program is upgradeable by a single key. Not audited.
 // There is NO cancel: the protocol cannot refund a subscriber.
 await p01.streams.pause({
   streamId: "stream_abc123",
-  // Requires subscriber's wallet signature
+  // Signed by the subscriber's wallet in the normal flow
 });`}
         />
       </Block>
@@ -1730,7 +1738,16 @@ await p01.streams.pause({
                   // one screen. The price lock still has its say opposite,
                   // under "developers CANNOT raise your price".
                   t('sdkDemo.cancelOneClick'),
-                  t('sdkDemo.noModifyWithoutPermission'),
+                  // sdkDemo.noModifyWithoutPermission ("Nobody can modify
+                  // without your permission") is no longer printed. On devnet
+                  // v1 it is false twice: pause_private_stark and
+                  // resume_private_stark accept any payer whose verified C0
+                  // buffer hashes to sha256(commitment), so a published proof
+                  // can be replayed under another key
+                  // (programs/zk_shielded/tests/c0_replay.rs), and one CLI key
+                  // with no multisig can upgrade the program
+                  // (docs/zk-simulation-argument.md). Pinned by
+                  // __tests__/pages/SDKDemoSecurityClaims.test.tsx.
                   t('sdkDemo.viewPaymentHistory'),
                 ].map((line) => (
                   <li key={line} className="styx-card-note" style={{ marginBottom: "0.5rem" }}>
@@ -1745,7 +1762,12 @@ await p01.streams.pause({
               <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                 {[
                   t('sdkDemo.raisePrice'),
-                  t('sdkDemo.cancelWithoutYou'),
+                  // sdkDemo.cancelWithoutYou ("Pause or end your subscription
+                  // without you") is no longer listed: anyone holding a copy of
+                  // a published C0 pause proof, the merchant included, can
+                  // pause or resume the vault again (same replay as above).
+                  // Restore it only once the program binds the C0 proof to the
+                  // subscriber's key and a fresh nonce.
                   t('sdkDemo.changeBilling'),
                   t('sdkDemo.chargeMore'),
                 ].map((line) => (

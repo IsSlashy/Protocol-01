@@ -144,10 +144,15 @@ describe('the send disclosure states BOTH halves of what a withdrawal publishes'
    * `commitment = poseidon(nullifier, poseidon(epoch, token_mint))`, so its leaf
    * comes back from a few thousand candidate epochs.
    *
-   * `prepareUnshieldJobV4` now refuses that note, so it routes to the C1 + C3
-   * pair — visibly matchable, and honest about it. The copy has to say that,
-   * because "this app no longer links your deposit" would otherwise be a promise
-   * broken by exactly the note the user is least likely to think about.
+   * `prepareUnshieldJobV4` now refuses that note. It used to route to the C1 + C3
+   * pair — visibly matchable, and honest about it. Since close-v1 (finding F05:
+   * a C1 + C3 spend binds no payee, so a copier of its public proof bytes takes
+   * the note) the web builders refuse that pair by default
+   * (`C1C3_SPEND_DISABLED`), so such a note cannot be spent from this web app
+   * until v2. The copy has to say that, because "this app no longer links your
+   * deposit" would otherwise be a promise broken by exactly the note the user is
+   * least likely to think about, and "withdraws it the old way" would now
+   * promise a spend the app refuses.
    *
    * ⛔ The guard and this sentence are one claim in two files. Delete the guard
    * and this test still passes; that is why `unshieldV4Job.test.ts` pins the
@@ -157,7 +162,8 @@ describe('the send disclosure states BOTH halves of what a withdrawal publishes'
     const copy = copyOf(SEND_FORM);
     expect(copy).toMatch(/deposited before we randomised the blinding/);
     expect(copy).toMatch(/deposit epoch/);
-    expect(copy).toMatch(/withdraws it the old way rather than pretend/);
+    expect(copy).not.toMatch(/withdraws it the old way/);
+    expect(copy).toMatch(/cannot be spent from this web app until v2/);
     // And the claim it does make is scoped, not universal.
     expect(copy).toMatch(/for a note deposited recently/);
   });

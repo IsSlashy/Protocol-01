@@ -245,9 +245,19 @@ describe('the subscribe cost disclosure, read before signing', () => {
       // Et le bloc lui-meme doit exister. Les assertions ci-dessus prouvent que
       // le chiffre est interpole plutot qu'en dur ; celle-ci prouve qu'il y a
       // une phrase ou l'interpoler.
+      // close-v1 (F05): the in-flight sentence moved to the dictionary as
+      // pay.subscribe.floatNote (en and fr). The panel calls it and interpolates
+      // the two figures into it, so pin both halves: the call here, the
+      // sentence and its two placeholders in the dictionary.
       expect(rendered, 'the cost disclosure shown before signing is gone').toMatch(
-        /is temporarily locked|is locked while|sits in a refundable/,
+        /t\('pay\.subscribe\.floatNote'\)/,
       );
+      expect(enDict.pay.subscribe.floatNote).toMatch(/is temporarily locked|is locked while|sits in a refundable/);
+      expect(enDict.pay.subscribe.floatNote).toContain('{c7}');
+      expect(enDict.pay.subscribe.floatNote).toContain('{pair}');
+      expect(frDict.pay.subscribe.floatNote).toContain('{c7}');
+      expect(frDict.pay.subscribe.floatNote).toContain('{pair}');
+      expect(frDict.pay.subscribe.floatNote).toMatch(/dépôt remboursable/);
       // And the progress note shown DURING the flow reads from it too.
       expect(rendered).toMatch(/\$\{SUBSCRIBE_FLOAT_SOL\.c7\}/);
       expect(rendered).toMatch(/\$\{SUBSCRIBE_FLOAT_SOL\.pair\}/);

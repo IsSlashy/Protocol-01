@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import DocsPage from '@/app/docs/page';
+import { TOPIC_ORDER } from '@/components/docs/nav';
+import en from '@/i18n/en';
 
 /**
  * /docs was rebuilt as a documentation SHELL: a grouped sidebar (components/docs/Sidebar)
@@ -193,11 +195,17 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
-    it('states in the description that the proofs are not zero-knowledge today', () => {
+    // Audit v1 round 1 (axis 8): the description said only the spend circuit
+    // was masked, "unlike the other seven", which understated the code (masks
+    // on all eight since the 2026-09-12 redeploy). It still must deny the
+    // property, and still must name the witness recovery it replaced.
+    it('states in the description that the proofs are not zero-knowledge, and that all eight circuits are masked', () => {
       openTopic('STARK Proofs (Goldilocks)');
       expect(
-        screen.getByText(/not zero-knowledge today: trace values can be recovered/),
+        screen.getByText(/not zero-knowledge as a proven property\. Until 31 August 2026 a private witness was recovered/),
       ).toBeInTheDocument();
+      expect(screen.getByText(/Masks now ship on all eight circuits/)).toBeInTheDocument();
+      expect(screen.queryAllByText(/unlike the other seven/)).toHaveLength(0);
     });
 
     // This assertion is what kept the stale number alive. It pinned "809,812 CU
@@ -207,13 +215,21 @@ describe('DocsPage -- Privacy technologies documentation', () => {
     // figure. It is not: a pin only proves the string did not move. The
     // replacements below come from docs/BENCHMARK-2026-09-02.md, which reads
     // the compute units back off the transactions.
+    //
+    // The same thing happened again (audit v1 round 1, axis 8): the verifier
+    // was redeployed on 2026-09-12 at slot 497,235,406, and the line kept the
+    // 2026-09-02 slot and its CU figures. The figure now is the circuit-7 proof
+    // from the shipped blob accepted on 2026-09-20, read back off that
+    // transaction (packages/stark-prover/deployed-verifier.json,
+    // accepts_client_blob_sha256_evidence_2026_09_20).
     it('mentions the custom on-chain FRI verifier and its measured CU cost', () => {
       openTopic('STARK Proofs (Goldilocks)');
       expect(
-        screen.getByText(/878,756 CU in phase 1 and 193,200 CU in phase 2/),
+        screen.getByText(/both phases in one transaction at 889,691 CU/),
       ).toBeInTheDocument();
-      expect(screen.getByText(/redeployed on devnet 2026-09-02 in slot 491,973,056/)).toBeInTheDocument();
+      expect(screen.getByText(/redeployed on devnet 2026-09-12 in slot 497,235,406/)).toBeInTheDocument();
       expect(screen.queryAllByText(/809,812 CU/)).toHaveLength(0);
+      expect(screen.queryAllByText(/slot 491,973,056/)).toHaveLength(0);
     });
 
     // The page published "124-bit soundness with DEEP-ALI" in three places. The
@@ -500,10 +516,14 @@ describe('DocsPage -- Privacy technologies documentation', () => {
       ).toBeInTheDocument();
     });
 
-    it('guarantees no double-spending via unique nullifiers', () => {
+    // Audit v1 round 1 (axis 8): "Nullifiers are unique per commitment" is false
+    // in v1. The commitment is one 64-bit Goldilocks element, so two openings of
+    // one commitment carry two nullifiers (docs/SECURITY-LEVELS.md, finding F2).
+    it('does not guarantee against double spending in v1, and names finding F2', () => {
       openTopic('Security Model');
+      expect(screen.queryAllByText(/Nullifiers are unique per commitment/)).toHaveLength(0);
       expect(
-        screen.getByText('No double-spending: Nullifiers are unique per commitment'),
+        screen.getByText(/^Double spending, not guaranteed in v1: .*Open as finding F2 in docs\/SECURITY-LEVELS\.md/),
       ).toBeInTheDocument();
     });
   });
@@ -639,5 +659,125 @@ describe('DocsPage -- Privacy technologies documentation', () => {
         screen.getByText('Devnet software. Not audited. Use funds you can afford to lose.'),
       ).toBeInTheDocument();
     });
+  });
+});
+
+/**
+ * close-v1, lane L4: what the internal v1 audit left open on /docs.
+ *
+ *  F27  the shielded-pool sample advertised `liquidity.prefund(...)`, the
+ *       deployed p01_liquidity path a judge drained in litesvm with the
+ *       deployed ELF. The path is disabled in the SDK (lane L6); the sample
+ *       must not teach it.
+ *  F24  the page's own samples still named 7 AIRs, the 2026-09-02 phase CU
+ *       figures and a Blake3 verifier (Blake3 was dropped: sol_blake3 is gated
+ *       off, the verifier hashes with SHA-256).
+ *  F68  the client-SDK sample presented privacy-toolkit as the Merkle and
+ *       Poseidon of the stack; it is BN254 Poseidon (poseidon-lite), not the
+ *       Goldilocks Poseidon of the pool, and it exports neither
+ *       `IncrementalMerkleTree` nor `poseidon2`.
+ *  F21  detail10 said the achieved FRI rate was "measured lower"; the verifier
+ *       enforces 1/16 on every v1 circuit.
+ *  F46  zkSPL: threshold and conservation are not enforced.
+ *  F53  Poseidon width t=5 announced with an MDS matrix; live paths use t=3.
+ */
+describe('DocsPage -- close-v1 (audit v1 residuals)', () => {
+  beforeEach(() => {
+    window.scrollTo = vi.fn();
+    render(<DocsPage />);
+  });
+
+  function codeOf(topicTitle: string, sectionId: string): string {
+    openTopic(topicTitle);
+    const pre = document.querySelector(`#${sectionId}-code pre`);
+    expect(pre).not.toBeNull();
+    return pre!.textContent ?? '';
+  }
+
+  it('F27: the shielded-pool sample does not call liquidity.prefund, and says the instant path is disabled', () => {
+    const code = codeOf('Shielded Pool & Relayer', 'shielded-pool');
+    expect(code).not.toMatch(/liquidity\.prefund/);
+    expect(code).toMatch(/instant path[\s\S]{0,80}disabled/i);
+  });
+
+  it('F24: the STARK sample names 8 AIRs and the current accepted-proof figure', () => {
+    const code = codeOf('STARK Proofs (Goldilocks)', 'zk-proofs');
+    expect(code).not.toMatch(/\b7 AIRs\b/);
+    expect(code).toMatch(/\b8 AIRs\b/);
+    expect(code).not.toMatch(/878,756/);
+    expect(code).toMatch(/889,691 CU/);
+    // The "measured to be wrong" story is F21's false claim in comment form.
+    expect(code).not.toMatch(/measured\s+(\/\/\s*)?to be wrong/);
+    expect(code).toMatch(/docs\/SECURITY-LEVELS\.md/);
+  });
+
+  it('F24: no sample presents Blake3 as the verifier hash', () => {
+    for (const [title, id] of [
+      ['Solana On-Chain Verification', 'solana-integration'],
+      ['On-Chain Relayer (deployed, not operated)', 'private-relay'],
+    ] as const) {
+      const code = codeOf(title, id);
+      expect(code, id).not.toMatch(/Goldilocks \+[\s/]*Blake3/);
+      expect(code, id).not.toMatch(/878,756/);
+    }
+  });
+
+  // Verifier round 1: the check above covered two samples, and the
+  // migration-history sample kept "Hash-based (Blake3 + Poseidon)" while its
+  // own detail3 says Blake3 was tried and dropped. Walk every topic instead.
+  it('F24: no sample on any topic presents Blake3 as a hash in use', () => {
+    const sections = en.docs.sections as unknown as Record<string, { title?: string }>;
+    const checked: string[] = [];
+    for (const id of TOPIC_ORDER) {
+      const key = id.replace(/-([a-z0-9])/g, (_, c: string) => c.toUpperCase());
+      const title = sections[key]?.title;
+      if (!title) continue; // special topics (architecture, security, quantum-wallet) carry no sample
+      openTopic(title);
+      const pre = document.querySelector(`#${id}-code pre`);
+      if (!pre) continue;
+      const code = pre.textContent ?? '';
+      checked.push(id);
+      expect(code, id).not.toMatch(/Goldilocks \+[\s/]*Blake3/);
+      expect(code, id).not.toMatch(/Blake3 \+ Poseidon/);
+      for (const line of code.split('\n').filter((l) => /blake3/i.test(l))) {
+        // Blake3 may only be named as what was dropped.
+        expect(line, id).toMatch(/dropped|not used|removed|gated off/i);
+      }
+    }
+    // Anti-vacuity: the walk reached the samples that matter here.
+    expect(checked).toEqual(expect.arrayContaining(['solana-integration', 'private-relay', 'migration-history']));
+    expect(checked.length).toBeGreaterThanOrEqual(20);
+  });
+
+  it('F24: the migration-history sample names the hashes the verifier and circuits use', () => {
+    const code = codeOf(en.docs.sections.migrationHistory.title, 'migration-history');
+    expect(code).toMatch(/SHA-256/);
+    expect(code).toMatch(/Poseidon/);
+  });
+
+  it('F68: the client-SDK sample labels privacy-toolkit as BN254 Poseidon, not the pool hash, and imports what it exports', () => {
+    const code = codeOf('Client SDK Architecture', 'client-sdk');
+    expect(code).not.toMatch(/IncrementalMerkleTree|poseidon2/);
+    const line = code.split('\n').find((l) => l.includes('=== @protocol-01/privacy-toolkit')) ?? '';
+    expect(line).toMatch(/BN254/);
+    expect(code).toMatch(/not the (Styx )?pool/i);
+  });
+
+  it('F21: detail10 gives the FRI configuration the verifier enforces', () => {
+    openTopic('STARK Proofs (Goldilocks)');
+    const line = screen.getByText(/No bit-level security number is published here/);
+    expect(line.textContent).toMatch(/1\/16/);
+    expect(line.textContent).not.toMatch(/measured lower/);
+  });
+
+  it('F46: the zkSPL topic says threshold and conservation are not enforced', () => {
+    openTopic('Confidential Balances (zkSPL)');
+    expect(screen.getAllByText(/not enforced/).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('F53: the Poseidon topic names t=3 and does not announce t=5 with an MDS matrix', () => {
+    openTopic('Poseidon Hash Function');
+    expect(screen.queryAllByText(/t=3 and t=5 widths, circulant MDS matrix/)).toHaveLength(0);
+    expect(screen.getByText(/t=3/)).toBeInTheDocument();
   });
 });

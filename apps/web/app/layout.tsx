@@ -80,9 +80,12 @@ export const metadata: Metadata = {
    * come back while probe `P3b` of `verify/p01-verify.mjs` stands. That probe
    * carries the recovery measurement — four C1 witnesses, the spend secret
    * among them, out of published proof bytes in 5 ms — and it is pinned FAIL by
-   * construction. Seven of the eight circuits apply no trace blinding at all.
-   * The eighth, `spend`, does apply a coset LDE and 128 CSPRNG-drawn mask rows
-   * — and that still is not secrecy: it buys UNDERDETERMINATION, 90 published
+   * construction. When this was written seven of the eight circuits applied no
+   * trace blinding at all; since the 2026-09-12 verifier redeploy all eight
+   * ship one uniform masking scheme (audit v1, F24), measured uniform on the
+   * channels tested, which is still a measurement and not a simulation proof.
+   * Before that, `spend` alone applied a coset LDE and 128 CSPRNG-drawn mask
+   * rows — and that was not secrecy: it bought UNDERDETERMINATION, 90 published
    * evaluations against ~138 unknowns, and the recovery above was itself
    * performed on an underdetermined system because the AIR constraints supply
    * the equations the openings do not. So the proofs are succinct and verified
@@ -100,7 +103,7 @@ export const metadata: Metadata = {
    */
   title: "Styx Protocol",
   description:
-    "On Solana anyone can see who you pay and how much. Styx hides both with proofs built to outlast quantum computers. On devnet, not audited, no mainnet.",
+    "On Solana anyone can see who you pay. Styx pays a one-time stealth address instead and spends notes with hash-based STARK proofs. Its stealth keys derive from your Ed25519 wallet key, so they are only as quantum-safe as that key. On devnet, not audited, no mainnet.",
   keywords: [
     "privacy",
     "solana",
@@ -115,7 +118,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Styx Protocol",
     description:
-      "Payments on Solana that hide who you pay and how much, with proofs built to outlast quantum computers. On devnet, not audited.",
+      "Payments on Solana to one-time stealth addresses, spent with hash-based STARK proofs. The stealth keys derive from your Ed25519 wallet key. On devnet, not audited.",
     type: "website",
     locale: "en_US",
   },
@@ -123,7 +126,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Styx Protocol",
     description:
-      "Payments on Solana that hide who you pay and how much, with proofs built to outlast quantum computers. On devnet, not audited.",
+      "Payments on Solana to one-time stealth addresses, spent with hash-based STARK proofs. The stealth keys derive from your Ed25519 wallet key. On devnet, not audited.",
   },
 };
 

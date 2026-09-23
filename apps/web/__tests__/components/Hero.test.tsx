@@ -70,10 +70,18 @@ describe('Hero -- Privacy-first landing section', () => {
       ).toBeInTheDocument();
     });
 
-    it('closes on the three verifiable properties: self-custody, open source, no KYC', () => {
+    // Since 2026-09-22 the code is source-available (PolyForm Strict 1.0.0),
+    // not open source: the closing line must not claim otherwise.
+    // Audit v1 round 1 (axis 8): a note the deployment issues is derived from
+    // its treasury seed, so it can spend it until the holder does
+    // (app/api/issue-note/route.ts header). "Self-custody" alone said otherwise.
+    it('closes on what holds: wallet keys on the device, who else can spend an issued note, source available, no KYC', () => {
       expect(
-        screen.getByText('Self-custody. Open source. No KYC.')
+        screen.getByText(
+          'Your wallet keys stay on your device. A note this deployment hands you is not yours alone: it can spend it until you do. Source available. No KYC.'
+        )
       ).toBeInTheDocument();
+      expect(screen.queryAllByText(/^Self-custody\. /)).toHaveLength(0);
     });
   });
 

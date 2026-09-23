@@ -136,7 +136,7 @@ const SERIF_H3 = {
 const TITLE = "Devnet app · Styx Protocol";
 
 const DESCRIPTION =
-  "Shield, withdraw and subscribe on Solana devnet. Recipients stand behind one-time hybrid stealth addresses, X25519 with ML-KEM-768. Your wallet signs every transaction it sends, and a deposit is paid through this deployment rather than straight into the pool. Not audited, and there is no mainnet deployment.";
+  "Shield, withdraw and subscribe on Solana devnet. Recipients stand behind one-time hybrid stealth addresses, X25519 with ML-KEM-768, whose keys are derived from your Ed25519 wallet key. Your wallet signs every transaction it sends, and a deposit is paid through this deployment rather than straight into the pool. Not audited, and there is no mainnet deployment.";
 
 /* A link preview is shorter than a meta description and gets read on its own,
    so it leads with the two disclosures rather than the primitives. */

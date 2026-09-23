@@ -57,6 +57,8 @@ import StaleWorkerNotice from './StaleWorkerNotice';
 import SuccessBurst from './SuccessBurst';
 import NoteTag from './NoteTag';
 import ChainIdsReveal from './ChainIdsReveal';
+import IssuedNoteOnlyCopy from './IssuedNoteOnlyCopy';
+import { localizePoolError } from './errorCodes';
 import { truncate } from './util';
 import { useT } from '@/i18n';
 import { translateInterval } from "@/lib/pay/intervalLabel";
@@ -372,6 +374,7 @@ export default function SubscribePanel({
   signOne,
   token,
   onBusyChange,
+  claimCode: initialClaimCode,
 }: {
   meta: string;
   owner: PublicKey;
@@ -385,6 +388,15 @@ export default function SubscribePanel({
    * died and starting a second one, which would lock a second proof buffer.
    */
   onBusyChange?: (busy: boolean) => void;
+  /**
+   * A claim code the mounting page already holds, for a buyer who holds no
+   * note on a stocked deployment (the claim path of `handleSubscribe`). The
+   * field that used to take one is off this screen (see `ISSUANCE_UI`), and no
+   * page passes one today, so the claim path sends ''. Given one, the note
+   * redeemed against it is an issued note held on this device only, and this
+   * code is the recovery code the card hands over (close-v1, F07).
+   */
+  claimCode?: string;
 }) {
   /* Every sentence in this panel used to be English written into the JSX,
      on a site that serves French by country. They are `pay.subscribe.*`
@@ -612,10 +624,18 @@ const ISSUANCE_UI = true;
    * until the recipient does. Paraphrasing that is how it becomes "it's private".
    */
   const [issuedDisclosure, setIssuedDisclosure] = useState<string | null>(null);
+  /**
+   * The code the issued note above was issued against, when this tab knows
+   * it: the exchange returns it, and a redeemed claim is the code typed in.
+   * An issued note's only copy is this device (close-v1, F07), and this code
+   * is what "Restore the note" on the Shield tab takes to bring it back, so
+   * it is handed over behind a click while the note is held unspent.
+   */
+  const [issuedClaimCode, setIssuedClaimCode] = useState<string | null>(null);
   /** The claim redeemed for a note. Held here, never persisted: it is worth one
    *  note and consumed on first redemption, so storing it would keep a spent
    *  bearer value around and invite a retry that cannot work. */
-  const [claimCode, setClaimCode] = useState('');
+  const [claimCode, setClaimCode] = useState(initialClaimCode ?? '');
   /**
    * What this deployment issues, ASKED ON MOUNT rather than only at click time.
    *
@@ -859,12 +879,13 @@ const ISSUANCE_UI = true;
           onProgress: setStep,
         });
         setIssuedDisclosure(issued.disclosure);
+        setIssuedClaimCode(claimCode.trim() || null);
         setNotes((prev) => [...prev, issued.note]);
         setSelectedNote(noteKey(issued.note));
         spending = issued.note;
         issuedThisClick = true;
       } catch (e) {
-        setError((e as Error).message || 'No note could be issued.');
+        setError(localizePoolError((e as Error).message || 'No note could be issued.', t));
         return;
       } finally {
         setSubmitting(false);
@@ -918,6 +939,7 @@ const ISSUANCE_UI = true;
       // list keeps offering it until the pool scan catches up.
       setSpentHere((prev) => new Set(prev).add(noteKey(heldNote)));
       setIssuedDisclosure(exchanged.issued.disclosure);
+      setIssuedClaimCode(exchanged.claimCode || null);
       setNotes((prev) => [...prev, exchanged.issued.note]);
       setSelectedNote(noteKey(exchanged.issued.note));
       return exchanged.issued.note;
@@ -1118,7 +1140,7 @@ const ISSUANCE_UI = true;
       });
       void rescan();
     } catch (e) {
-      const message = (e as Error).message || 'Subscription failed.';
+      const message = localizePoolError((e as Error).message || 'Subscription failed.', t);
       setError(message);
       // Only the swap's after-spend error carries one (see `errorSpend`).
       const spendSig = (e as { spendSig?: string }).spendSig;
@@ -1566,6 +1588,17 @@ const ISSUANCE_UI = true;
             {issuedDisclosure}
           </p>
         )}
+        {/* An issued note held here and not yet spent: this device holds its
+            only copy (close-v1, F07). The purchase that was to spend it did
+            not complete, so the buyer keeps it, and the warning and its
+            recovery code are shown as the Shield tab shows them. */}
+        {issuedDisclosure && !result && (
+          <IssuedNoteOnlyCopy
+            key={issuedClaimCode ?? 'issued'}
+            claimCode={issuedClaimCode ?? undefined}
+            restoreWhere="shieldTab"
+          />
+        )}
 
         {error && (
           <p className="flex items-start gap-1.5 text-sm text-p01-red">
@@ -1613,7 +1646,8 @@ const ISSUANCE_UI = true;
         </button>
 
         {/* The longest flow in the product: ~78 chunk uploads on circuit 7, and
-          ~150 across two proofs when the note falls back to the C1 + C3 pair.
+          ~150 across two proofs on the C1 + C3 pair, which this web app no
+          longer runs (close-v1, F05: the builders refuse it by default).
           The bar moves on the worker's real steps; the raw step string stays
           visible underneath as the second-plane detail.
 
@@ -1626,11 +1660,9 @@ const ISSUANCE_UI = true;
               phases={SUBSCRIBE_PHASES}
               step={step}
               running={submitting}
-              note={
-                `About ${SUBSCRIBE_FLOAT_SOL.c7} SOL sits in a refundable deposit while this ` +
-                `runs, or about ${SUBSCRIBE_FLOAT_SOL.pair} if this note falls back to the ` +
-                `C1 + C3 pair; it is returned when the proof buffers close.`
-              }
+              note={t('pay.subscribe.floatNote')
+                .replace('{c7}', `${SUBSCRIBE_FLOAT_SOL.c7}`)
+                .replace('{pair}', `${SUBSCRIBE_FLOAT_SOL.pair}`)}
             />
             {step && <p className="text-center font-mono text-[11px] text-p01-text-dim">{step}</p>}
           </>
@@ -1640,6 +1672,16 @@ const ISSUANCE_UI = true;
         {result && (
           <div className="card p-4">
             <SuccessBurst label={t('pay.subscribe.openLabel')} />
+
+            {/* The issuer's own statement, when the note this subscription
+              spent was issued to the buyer (close-v1, F09). It used to be
+              shown only while no result existed, and a purchase sets the
+              result in the same click, so it never reached the buyer. */}
+            {issuedDisclosure ? (
+              <p className="mt-3 rounded-lg border border-p01-border p-3 font-mono text-[11px] text-p01-text-dim">
+                {issuedDisclosure}
+              </p>
+            ) : null}
 
             <div className="mt-3 rounded-lg border border-p01-cyan/40 bg-p01-void p-3">
               <div className="flex items-center justify-between gap-3">

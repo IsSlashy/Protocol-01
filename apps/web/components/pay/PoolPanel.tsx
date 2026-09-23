@@ -67,6 +67,8 @@ import {
   SWEEP_HOME_WARNING,
 } from "@/lib/pay/sweepDestination";
 import FlowProgress from "./FlowProgress";
+import IssuedNoteOnlyCopy from "./IssuedNoteOnlyCopy";
+import { localizePoolError } from "./errorCodes";
 import SuccessBurst from "./SuccessBurst";
 import {
   HANDOFFS_CHANGED_EVENT,
@@ -154,6 +156,9 @@ const CHAIN_ID_RUN = /[1-9A-HJ-NP-Za-km-z]{32,}/g;
 function withoutChainIds(message: string): string {
   return message.replace(CHAIN_ID_RUN, "(id hidden)");
 }
+
+/** The claim-code shape `/api/issue-note` accepts (route.ts, the 402 check). */
+const RECOVERY_CODE = /^[A-Za-z0-9_-]{8,64}$/;
 
 /** Set once the disclosure has been shown expanded; after that it starts
  *  collapsed with its one-line summary still visible. The content itself never
@@ -270,7 +275,16 @@ export default function PoolPanel({
    */
   const [contributed, setContributed] = useState<{
     disclosure: string;
+    /** The code this note was issued against: the only way to fetch it again
+     *  (`IssuedNoteOnlyCopy`). */
+    claimCode?: string;
   } | null>(null);
+  /** "Restore the note": a recovery code typed back in (`IssuedNoteOnlyCopy`). */
+  const [restoreCode, setRestoreCode] = useState("");
+  const [restoring, setRestoring] = useState(false);
+  const [restoreOutcome, setRestoreOutcome] = useState<
+    { ok: true; tag?: NoteTagValue } | { ok: false; message: string } | null
+  >(null);
   const [busyNote, setBusyNote] = useState<string | null>(null);
   /**
    * The note-in exchange that just completed: the note given up, the note
@@ -286,6 +300,8 @@ export default function PoolPanel({
      *  `PoolPanel.test.tsx` "state 5: the exchange card"). */
     issuedTag?: NoteTagValue;
     disclosure: string;
+    /** The code the received note was issued against (`IssuedNoteOnlyCopy`). */
+    claimCode?: string;
   } | null>(null);
   const [withdrawn, setWithdrawn] = useState<
     {
@@ -924,6 +940,10 @@ export default function PoolPanel({
     }
     setError(null);
     setResult(null);
+    // A card's issued-note state belongs to the click that set it: left over,
+    // an own deposit after a contribution would carry the only-copy warning
+    // and the earlier recovery code.
+    setContributed(null);
     setReadinessAsk(null);
     setTreasuryAsk(false);
     setShielding(true);
@@ -1038,7 +1058,18 @@ export default function PoolPanel({
         },
       );
       if (resumed) {
-        setContributed(null);
+        // A resumed contribution is a contribution: an ISSUED note, held on
+        // this device only, whose issuer disclosure the resume returns
+        // (`IssuedNoteOutcome.disclosure`, "Render it"). Since close-v1 the
+        // resume also returns the claim code it redeemed (contract C1), so the
+        // card hands it over as the contribution card does. Read defensively:
+        // a worker built before C1 simply has no code, and the card then
+        // carries the warning without one.
+        const resumedCode =
+          "claimCode" in resumed && typeof resumed.claimCode === "string" && resumed.claimCode
+            ? resumed.claimCode
+            : undefined;
+        setContributed({ disclosure: resumed.disclosure, claimCode: resumedCode });
         setResult({
           txSig: '',
           commitment: resumed.note.commitment,
@@ -1104,8 +1135,11 @@ export default function PoolPanel({
         // The note is in hand: the record that said one was owed has done its
         // job. Left in place, the next Shield click would present the spent
         // claim again through `resumeContribution` and be refused (409).
+        // The record goes, and with it this device's copy of the claim code:
+        // the card hands the code to the buyer instead (`IssuedNoteOnlyCopy`),
+        // because the note it bought is not derivable from their seed.
         clearContribution(gave.pendingId);
-        setContributed({ disclosure: got.disclosure });
+        setContributed({ disclosure: got.disclosure, claimCode: gave.claimCode });
         setResult({
           txSig: gave.txSig,
           // The note the buyer HOLDS, which is the issued note — never the one
@@ -1154,7 +1188,7 @@ export default function PoolPanel({
       setResult(outcome);
       void rescan();
     } catch (e) {
-      setError((e as Error).message || "Shield failed.");
+      setError(localizePoolError((e as Error).message || "Shield failed.", t));
     } finally {
       setShielding(false);
       setStep(null);
@@ -1244,7 +1278,7 @@ export default function PoolPanel({
       // reload, where the user has asked for it.
       void rescan();
     } catch (e) {
-      setError((e as Error).message || t("pay.pool.errWithdrawalFailed"));
+      setError(localizePoolError((e as Error).message || t("pay.pool.errWithdrawalFailed"), t));
     } finally {
       setBusyNote(null);
       setStep(null);
@@ -1293,6 +1327,7 @@ export default function PoolPanel({
         denomination: note.denomination,
         issuedTag: out.issued.note.tag,
         disclosure: out.issued.disclosure,
+        claimCode: out.claimCode,
       });
       void rescan();
     } catch (e) {
@@ -1306,7 +1341,7 @@ export default function PoolPanel({
       // sentence, whatever the lib wrote; it waits behind the reveal under the
       // line (`PoolPanel.test.tsx`, "an exchange that spent but did not collect
       // keeps the spend off the error line until asked").
-      const said = (e as Error).message || "Exchange failed.";
+      const said = localizePoolError((e as Error).message || "Exchange failed.", t);
       const message = spendSig ? said.split(spendSig).join("(signature hidden)") : said;
       setError(message);
       setErrorSpend(spendSig ? { message, sig: spendSig } : null);
@@ -1324,6 +1359,48 @@ export default function PoolPanel({
    * mark (RECOVER-1; `PoolPanel.test.tsx`, "the default click asks for no deep
    * check; a labelled button asks for it on every pool").
    */
+  /**
+   * Redeem a recovery code again (`IssuedNoteOnlyCopy`): the issuer hands the
+   * same code the reply it kept, and `requestIssuedNote` opens it with the
+   * address this wallet's pool seed derives for that code, then stores it
+   * through the received-note path. No transaction, nothing paid.
+   */
+  async function handleRestore() {
+    const code = restoreCode.trim();
+    setRestoreOutcome(null);
+    if (!RECOVERY_CODE.test(code)) {
+      setRestoreOutcome({
+        ok: false,
+        message: t("pay.pool.restoreBadCode"),
+      });
+      return;
+    }
+    setRestoring(true);
+    try {
+      const got = await requestIssuedNote({
+        meta,
+        walletPubkey: owner.toBase58(),
+        token: "SOL",
+        denomination,
+        claimCode: code,
+        onProgress: setStep,
+      });
+      setRestoreCode("");
+      setRestoreOutcome({ ok: true, tag: got.note.tag });
+      void rescan();
+    } catch (e) {
+      setRestoreOutcome({
+        ok: false,
+        message: withoutChainIds(
+          localizePoolError((e as Error).message || t("pay.pool.restoreFailed"), t),
+        ),
+      });
+    } finally {
+      setRestoring(false);
+      setStep(null);
+    }
+  }
+
   async function handleRecover(everyNote: boolean) {
     setError(null);
     setRecovered(null);
@@ -1434,7 +1511,7 @@ export default function PoolPanel({
       }
       setRecovered(parts.join(" "));
     } catch (e) {
-      setError((e as Error).message || t("pay.pool.errRecovery"));
+      setError(localizePoolError((e as Error).message || t("pay.pool.errRecovery"), t));
     } finally {
       setRecovering(false);
       setStep(null);
@@ -1959,6 +2036,20 @@ export default function PoolPanel({
                   {t("pay.pool.contributedNote")}
                 </p>
               )}
+              {/* The issuer's custody and linkability disclosure, as the
+                  exchange card renders it. `/api/issue-note` returns it for
+                  whatever screen shows the note, and this card, the default
+                  Shield click's, used to store it and drop it (audit v1
+                  round 1). */}
+              {contributed?.disclosure ? (
+                <p className="mt-2 text-xs text-p01-text-dim">{contributed.disclosure}</p>
+              ) : null}
+              {contributed ? (
+                <IssuedNoteOnlyCopy
+                  key={contributed.claimCode ?? "resumed"}
+                  claimCode={contributed.claimCode}
+                />
+              ) : null}
               {/* Unconditional, and it mirrors SubscribePanel's funding
                   paragraph on purpose.
 
@@ -2062,6 +2153,7 @@ export default function PoolPanel({
                 </span>
               </p>
               <p className="mt-2 text-xs text-p01-text-dim">{exchanged.disclosure}</p>
+              <IssuedNoteOnlyCopy key={exchanged.spendSig} claimCode={exchanged.claimCode} />
               {/* The spend of the note given up, behind a click
                   (PoolPanel.test.tsx, "keeps the exchange's withdrawal off the
                   card until asked"). */}
@@ -2215,6 +2307,48 @@ export default function PoolPanel({
         {recovering && step && (
           <p className="text-center text-xs text-p01-text-dim">{step}</p>
         )}
+        {/* "Restore the note": the recovery code an issued note's card hands
+            over (`IssuedNoteOnlyCopy`), typed back in. The issuer replays the
+            reply it kept for that code, and only this wallet's pool seed opens
+            it. Nothing is paid. */}
+        <form
+          className="space-y-1 text-xs"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleRestore();
+          }}
+        >
+          <label htmlFor="p01-recovery-code" className="block text-p01-text-muted">
+            {t("pay.pool.recoveryCodeLabel")}
+          </label>
+          <div className="flex gap-2">
+            <input
+              id="p01-recovery-code"
+              value={restoreCode}
+              onChange={(e) => setRestoreCode(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              className="min-w-0 flex-1 rounded border border-p01-border bg-transparent px-2 py-1 font-mono text-xs text-p01-text"
+            />
+            <button
+              type="submit"
+              disabled={restoring || shielding || !!busyNote}
+              className="btn-secondary px-3 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("pay.pool.restoreButton")}
+            </button>
+          </div>
+          {restoreOutcome ? (
+            restoreOutcome.ok ? (
+              <p className="flex items-center gap-2 text-p01-cyan">
+                {t("pay.pool.restoredNote")} <NoteTag tag={restoreOutcome.tag} />
+              </p>
+            ) : (
+              <p className="text-p01-red">{restoreOutcome.message}</p>
+            )
+          ) : null}
+          {restoring && step && <p className="text-p01-text-dim">{step}</p>}
+        </form>
       </div>
 
       {/* ── Context column: what you hold and what it reveals ─────────────── */}

@@ -30,6 +30,7 @@ import userEvent from "@testing-library/user-event";
 import type { Connection, PublicKey } from "@solana/web3.js";
 
 import SubscribePanel from "@/components/pay/SubscribePanel";
+import en from "@/i18n/en";
 import { BEARER_CLIPBOARD_CLEAR_MS } from "@/lib/pay/bearerClipboard";
 import { NATIVE_SOL_SENTINEL_MINT } from "@/lib/privacy/serviceRegistry";
 import type { PoolNoteView } from "@/lib/privacy/worker/poolHandlers";
@@ -44,6 +45,7 @@ const m = vi.hoisted(() => ({
   fetchIssuableNote: vi.fn(),
   subscribeFromPool: vi.fn(),
   exchangeNoteForIssued: vi.fn(),
+  requestIssuedNote: vi.fn(),
   recordSpentNote: vi.fn(),
   recordSubscription: vi.fn(),
   loadServiceRegistry: vi.fn(),
@@ -60,7 +62,7 @@ vi.mock("@/lib/privacy/shieldClient", async (importOriginal) => {
     loadEncryptedNotes: async () => [],
     knownSpentNoteKeys: async () => ({ keys: new Set<string>(), staleWorker: false, lostSession: false }),
     resolveSpentNotes: async () => ({ spent: [] }),
-    requestIssuedNote: vi.fn(),
+    requestIssuedNote: (...a: unknown[]) => m.requestIssuedNote(...a),
     exchangeNoteForIssued: (...a: unknown[]) => m.exchangeNoteForIssued(...a),
     scanPool: (...a: unknown[]) => m.scanPool(...a),
     scanPoolLocal: (...a: unknown[]) => m.scanPoolLocal(...a),
@@ -183,7 +185,7 @@ const OWNER = {
 const connection = { rpcEndpoint: "https://fake.test" } as unknown as Connection;
 const signOne = vi.fn(async (tx: unknown) => tx);
 
-function renderPanel() {
+function renderPanel(opts: { claimCode?: string } = {}) {
   return render(
     <SubscribePanel
       meta="meta-1"
@@ -191,6 +193,7 @@ function renderPanel() {
       connection={connection}
       signOne={signOne as never}
       token="SOL"
+      {...(opts.claimCode !== undefined ? { claimCode: opts.claimCode } : {})}
     />,
   );
 }
@@ -461,5 +464,173 @@ describe("the success card names the circuit that ran (sweep r1, screen)", () =>
     expect(unknown, "an absent version earned the circuit-7 sentence").not.toBe(v4);
     expect(unknown).not.toMatch(/[Cc]ircuit 7 ran/);
     expect(unknown).toMatch(/commitment/);
+  });
+});
+
+/**
+ * close-v1, lane L4.
+ *
+ * F09. The issuer's custody and linkability disclosure (`/api/issue-note`'s
+ * `disclosure`, "Render it") never reached a buyer here: the panel stored it
+ * and showed it only while no result existed, and a purchase sets the result
+ * in the same click, so the success card was the one place it never appeared.
+ * The pre-issuance warning had its middle sentence emptied
+ * (`pay.subscribe.issuedBody1` and `issuedNot` were '').
+ *
+ * F07. A note this tab obtains by exchange is an ISSUED note: its only copy is
+ * this device. When the purchase after the exchange fails, the buyer is left
+ * holding it with no warning and no recovery code.
+ *
+ * F05. The builders refuse the copyable C1 + C3 spend (`C1C3_SPEND_DISABLED`,
+ * lane L3); the panel says what that means instead of printing the code.
+ */
+describe("close-v1: issued notes and refusal codes on the Subscribe tab", () => {
+  const CODE_X = "claimCodeXXXX0004";
+  const ISSUED_TAG = { text: "3TZZ-VRGX", color: "#4f9d4f" };
+
+  function exchangeTo(outcome: "succeeds" | "fails") {
+    const selfDeposited = new Error("this note was deposited by this wallet");
+    selfDeposited.name = "SelfDepositedNoteError";
+    m.subscribeFromPool.mockReset();
+    m.subscribeFromPool.mockRejectedValueOnce(selfDeposited);
+    if (outcome === "succeeds") {
+      m.subscribeFromPool.mockResolvedValueOnce({
+        txSig: OPEN_TX_SIG,
+        vaultPDA: VAULT,
+        licenseKey: LICENSE_KEY,
+        licenseScheme: "v2",
+        fundedBy: "funder",
+        reachableViaDeposit: false,
+        reachableViaSpendFunder: false,
+        noteProvenance: "received",
+        version: "v4",
+      });
+    } else {
+      m.subscribeFromPool.mockRejectedValueOnce(new Error("The funder did not answer. Nothing was spent."));
+    }
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL" });
+    m.exchangeNoteForIssued.mockResolvedValueOnce({
+      spendSig: EXCHANGE_SIG,
+      claimCode: CODE_X,
+      issued: {
+        note: noteView({ leafIndex: 424242, commitment: "99887766554433", tag: ISSUED_TAG }),
+        leafIndex: 424242,
+        merklePath: "none",
+        disclosure: "ISSUER DISCLOSURE, rendered verbatim.",
+      },
+    });
+  }
+
+  async function lock() {
+    const user = userEvent.setup();
+    const view = renderPanel();
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await user.click(await screen.findByRole("button", { name: /1 SOL note/ }));
+    await user.click(screen.getByRole("button", { name: /^Lock 1 SOL with Test VPN$/ }));
+    return { user, view };
+  }
+
+  it("F09: a purchase paid with an issued note shows the issuer's disclosure on the success card", async () => {
+    exchangeTo("succeeds");
+    const { view } = await lock();
+    await screen.findByText(/License key/);
+    expect(m.exchangeNoteForIssued).toHaveBeenCalledTimes(1);
+    expect(view.container.textContent).toContain("ISSUER DISCLOSURE, rendered verbatim.");
+  });
+
+  it("F07: an exchanged note left unspent carries the only-copy warning and its recovery code on request", async () => {
+    exchangeTo("fails");
+    const { user, view } = await lock();
+    await screen.findByText(/The funder did not answer/);
+    expect(view.container.textContent).toMatch(/This device holds the only copy of this note/);
+    // Verifier round 2: read the warning itself, not the whole panel. "Shield
+    // tab" is already on screen from the cost copy, so a panel-wide match
+    // stayed green when the warning pointed at a restore form "here", which
+    // this tab does not have.
+    const warning = screen.getByText(/This device holds the only copy of this note/).closest("p");
+    expect(warning?.textContent).toContain(en.pay.pool.issuedOnlyCopyWithCodeShieldTab.trim());
+    expect(warning?.textContent).toMatch(/“Restore the note” on the Shield tab/);
+    expect(warning?.textContent).not.toContain(en.pay.pool.issuedOnlyCopyWithCode.trim());
+    expect(view.container.innerHTML).not.toContain(CODE_X);
+    await user.click(screen.getByRole("button", { name: /^Show recovery code$/ }));
+    expect(view.container.textContent).toContain(CODE_X);
+    expect(idWindowsIn(view.container.innerHTML, [EXCHANGE_SIG])).toEqual([]);
+  });
+
+  it("F09: the pre-issuance warning says the deployment deposited the note and can spend it", async () => {
+    m.scanPool.mockResolvedValue({ notes: [], shieldedBalance: 0, poolSizes: [], complete: true });
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL" });
+    renderPanel();
+    await screen.findByText(/A note will be issued to you by this deployment/);
+    const p = screen.getByText(/A note will be issued to you by this deployment/).closest("p");
+    expect(p?.textContent).toMatch(/deposited by this deployment/);
+    expect(p?.textContent).toMatch(/can spend/);
+    // Verifier round 2: the negation is its own key, rendered in bold. Emptied,
+    // the sentence says the opposite ("It does hide you from this deployment").
+    expect(p?.textContent).toMatch(/does not\s*hide you from this deployment/);
+    expect(p?.textContent).not.toMatch(/does\s+hide you/);
+  });
+
+  // Verifier round 2: the redeemed-claim path. A buyer who holds no note and
+  // brings a claim code gets an ISSUED note redeemed against that code; if the
+  // purchase that was to spend it fails, the note stays on this device only,
+  // and the code it was issued against is what brings it back.
+  it("F07: a note redeemed from a claim code and left unspent hands that code over on request", async () => {
+    const CODE_C = "claimCodeCCCC0005";
+    m.scanPool.mockResolvedValue({ notes: [], shieldedBalance: 0, poolSizes: [], complete: true });
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL" });
+    m.requestIssuedNote.mockResolvedValueOnce({
+      note: noteView({ leafIndex: 424243, commitment: "99887766554400", tag: ISSUED_TAG }),
+      leafIndex: 424243,
+      merklePath: "none",
+      disclosure: "ISSUER DISCLOSURE, rendered verbatim.",
+    });
+    m.subscribeFromPool.mockReset();
+    m.subscribeFromPool.mockRejectedValue(new Error("The funder did not answer. Nothing was spent."));
+    const user = userEvent.setup();
+    const view = renderPanel({ claimCode: `  ${CODE_C}  ` });
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await user.click(await screen.findByRole("button", { name: /^Subscribe$/ }));
+    await screen.findByText(/The funder did not answer/);
+    expect(m.requestIssuedNote).toHaveBeenCalledTimes(1);
+    expect(m.requestIssuedNote.mock.calls[0][0]).toMatchObject({ claimCode: CODE_C });
+    expect(view.container.textContent).toMatch(/This device holds the only copy of this note/);
+    expect(view.container.innerHTML).not.toContain(CODE_C);
+    await user.click(screen.getByRole("button", { name: /^Show recovery code$/ }));
+    expect(view.container.textContent).toContain(CODE_C);
+  });
+
+  // Verifier round 2: the claim path's own catch. The issuer or the worker
+  // refuses with a coded message; the line under the button says the sentence.
+  it("F05: a claim refused with a code shows the sentence, not the code", async () => {
+    m.scanPool.mockResolvedValue({ notes: [], shieldedBalance: 0, poolSizes: [], complete: true });
+    m.fetchIssuableNote.mockResolvedValue({ denomination: 1, token: "SOL" });
+    m.requestIssuedNote.mockRejectedValueOnce(new Error("IMPORT_NOT_ON_TREE: leaf 3 commitment mismatch"));
+    const user = userEvent.setup();
+    const view = renderPanel({ claimCode: "claimCodeDDDD0006" });
+    await user.click(await screen.findByRole("button", { name: /Test VPN/ }));
+    await user.click(await screen.findByRole("button", { name: /^Subscribe$/ }));
+    await waitFor(() => expect(m.requestIssuedNote).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(view.container.querySelector("p.text-p01-red")?.textContent ?? "").toContain(
+        en.pay.errors.importNotOnTree,
+      ),
+    );
+    expect(view.container.textContent).not.toContain("IMPORT_NOT_ON_TREE");
+    expect(m.subscribeFromPool).not.toHaveBeenCalled();
+  });
+
+  it("F05: a subscription refused because only the C1 + C3 pair could spend the note says so in words", async () => {
+    m.subscribeFromPool.mockReset();
+    m.subscribeFromPool.mockRejectedValue(new Error("C1C3_SPEND_DISABLED: v3 subscribe refused by the builder"));
+    const { view } = await lock();
+    // The error line, not the cost box: the cost box states the same limit on
+    // every render, which is exactly why this reads the line under the button.
+    await waitFor(() =>
+      expect(view.container.querySelector("p.text-p01-red")?.textContent ?? "").toMatch(
+        /cannot be spent from this web app until v2/,
+      ),
+    );
+    expect(view.container.textContent).not.toContain("C1C3_SPEND_DISABLED");
   });
 });
