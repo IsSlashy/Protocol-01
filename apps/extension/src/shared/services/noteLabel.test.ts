@@ -123,7 +123,8 @@ describe('noteLabel — a denominated note is named by its secrets', () => {
 
 describe('noteLabel — a note it cannot name is not a crash', () => {
   it('a legacy zk note has no nullifier preimage, so it has no name', () => {
-    // `store/shielded.ts` ShieldedNote: amount, commitment, leafIndex, createdAt.
+    // The retired V1 `store/shielded.ts` ShieldedNote (deleted 2026-09-23):
+    // amount, commitment, leafIndex, createdAt. Old profiles may still hold one.
     // Its commitment is on chain; naming a note by it is the leak this replaces.
     const legacy = { amount: '1500000000', commitment: 'commitment_hash_1', leafIndex: 0 };
     expect(noteLabel(legacy as never)).toBeNull();

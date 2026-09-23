@@ -211,10 +211,11 @@ function App() {
           <Route path="/denominated-transfer" element={<Navigate to="/shield/send-note" replace />} />
           <Route path="/denominated-import" element={<Navigate to="/shield/receive-note" replace />} />
 
-          {/* ⛔ PARKED 2026-08-23, not deleted. Founder ruling: personal
-              payments are parked and the agent is retired. The files stay so
-              the work is recoverable; the routes go so nothing lands on them.
-              /swap and /confidential were already unreachable in practice. */}
+          {/* ⛔ PARKED 2026-08-23, DELETED 2026-09-23. Founder ruling: personal
+              payments are parked and the agent is retired. The page files were
+              removed in the 2026-09-23 cleanup (git history keeps them); the
+              redirects stay because old deep links and a restored pendingPath
+              can still name these paths. */}
           <Route path="/agent" element={<Navigate to="/discover" replace />} />
           <Route path="/stealth-payments" element={<Navigate to="/shield" replace />} />
           <Route path="/swap" element={<Navigate to="/" replace />} />

@@ -510,7 +510,7 @@ export function parseVaultAccount(data: Buffer, address: string): VaultInfo {
 
 /**
  * Build pause_normal instruction.
- * Mirrors mobile buildPauseNormalIx lines 260-273.
+ * The mobile twin (buildPauseNormalIx) was removed on 2026-09-23 (no mobile screen paused a normal vault).
  */
 function buildPauseNormalIx(
   subscriber: PublicKey,
@@ -530,7 +530,7 @@ function buildPauseNormalIx(
 
 /**
  * Build resume_normal instruction.
- * Mirrors mobile buildResumeNormalIx lines 276-292.
+ * The mobile twin (buildResumeNormalIx) was removed on 2026-09-23 (no mobile screen resumed a normal vault).
  */
 function buildResumeNormalIx(
   subscriber: PublicKey,
@@ -615,7 +615,7 @@ function buildClaimPeriodIx(
 
 /**
  * Build pause_private_stark instruction.
- * Mirrors mobile buildPausePrivateStarkIx lines 907-925.
+ * Mirrors mobile buildPausePrivateStarkIx (apps/mobile/services/subscriptionVault/index.ts).
  * stark_proof_buffer is mut because the handler invalidates it post-use.
  */
 function buildPausePrivateStarkIx(
@@ -638,7 +638,7 @@ function buildPausePrivateStarkIx(
 
 /**
  * Build resume_private_stark instruction.
- * Mirrors mobile buildResumePrivateStarkIx lines 931-949.
+ * Mirrors mobile buildResumePrivateStarkIx (apps/mobile/services/subscriptionVault/index.ts).
  */
 function buildResumePrivateStarkIx(
   payer: PublicKey,
@@ -685,7 +685,7 @@ export function goldilocksU64To32(commitment: bigint): Uint8Array {
 
 /**
  * Pause a normal vault (subscriber only).
- * Mirrors mobile pauseNormal lines 454-475.
+ * The mobile twin (pauseNormal) was removed on 2026-09-23 (no mobile screen paused a normal vault).
  */
 export async function pauseNormal(vaultAddress: string): Promise<string> {
   const { signer, connection } = createWalletSigner();
@@ -702,7 +702,7 @@ export async function pauseNormal(vaultAddress: string): Promise<string> {
 
 /**
  * Resume a normal vault (subscriber only).
- * Mirrors mobile resumeNormal lines 480-501.
+ * The mobile twin (resumeNormal) was removed on 2026-09-23 (no mobile screen resumed a normal vault).
  */
 export async function resumeNormal(vaultAddress: string): Promise<string> {
   const { signer, connection } = createWalletSigner();
@@ -747,7 +747,7 @@ export async function claimPeriod(vaultAddress: string): Promise<string> {
 
 /**
  * Build subscribe_private_stark instruction.
- * Mirrors mobile buildSubscribePrivateStarkIx lines 828-901.
+ * Mirrors mobile buildSubscribePrivateStarkIx (apps/mobile/services/subscriptionVault/index.ts).
  *
  * Args: nullifier[32], merkle_root[32], min_epoch u64,
  *       subscriber_commitment[32], rate u64, interval_slots u64,
@@ -1331,7 +1331,7 @@ export async function subscribePrivate(params: {
  * FEASIBLE: circuit 0 (subscriber_ownership) is fully available in the
  * extension via starkProver.generateProof(secret).
  *
- * Mirrors mobile pausePrivateStark lines 712-759.
+ * Mirrors mobile pausePrivateStark (apps/mobile/services/subscriptionVault/index.ts).
  *
  * @param vaultAddress - Vault PDA address (base58)
  * @param subscriberSecret - Subscriber secret bigint (stored in vault store)
@@ -1382,7 +1382,7 @@ export async function pausePrivate(
  *
  * FEASIBLE: circuit 0 available in the extension.
  *
- * Mirrors mobile resumePrivateStark lines 770-817.
+ * Mirrors mobile resumePrivateStark (apps/mobile/services/subscriptionVault/index.ts).
  *
  * @param vaultAddress - Vault PDA address (base58)
  * @param subscriberSecret - Subscriber secret bigint (stored in vault store)

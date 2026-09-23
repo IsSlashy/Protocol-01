@@ -1,11 +1,13 @@
 /**
- * The four things a private balance can do, and the one path off it.
+ * The things a private balance can do, and the one path off it.
  *
  * WHY THIS SUITE EXISTS
  * ─────────────────────
  * Shield, withdraw, send a note and recover were spread across a dashboard and
  * three separate screens, and the only test coverage was `ShieldedWallet.test`
- * asserting that four buttons had four labels. Nothing checked that pressing
+ * asserting that four buttons had four labels. (Recover, the stealth-payment
+ * scan, was removed on 2026-09-23 together with the V1 store it called: once
+ * the specter program closed it could only ever report zero.) Nothing checked that pressing
  * them reached the store, that a refusal surfaced, or that a note which cannot
  * be spent yet says so.
  *
@@ -36,8 +38,6 @@ vi.mock('react-router-dom', async () => {
 /* ── Store doubles ─────────────────────────────────────────────────────── */
 
 const mockShieldNote = vi.fn();
-const mockScan = vi.fn();
-const mockSweepAll = vi.fn();
 const mockSetError = vi.fn();
 
 /**
@@ -79,7 +79,6 @@ function freshNote(denominationHuman = 1, id = 'commit-fresh') {
 let notes: ReturnType<typeof matureNote>[] = [];
 let poolError: string | null = null;
 let poolLoading = false;
-let shieldedInitialized = true;
 
 const poolState = () => ({
   getNotes: () => notes,
@@ -96,18 +95,6 @@ vi.mock('@/shared/store/denominatedPool', () => ({
   }),
 }));
 
-vi.mock('@/shared/store/shielded', () => ({
-  useShieldedStore: () => ({
-    scanStealthPayments: mockScan,
-    sweepAllStealthPayments: mockSweepAll,
-    isInitialized: shieldedInitialized,
-  }),
-}));
-
-vi.mock('@/shared/store/wallet', () => ({
-  useWalletStore: () => ({ publicKey: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU' }),
-}));
-
 const view = () => render(<MemoryRouter><Shield /></MemoryRouter>);
 
 beforeEach(() => {
@@ -115,13 +102,10 @@ beforeEach(() => {
   notes = [];
   poolError = null;
   poolLoading = false;
-  shieldedInitialized = true;
   mockShieldNote.mockResolvedValue({
     txSig: 'sig',
     receipt: { commitment: { toString: () => 'commit-new' } },
   });
-  mockScan.mockResolvedValue({ found: 0, amount: 0, payments: [] });
-  mockSweepAll.mockResolvedValue({ swept: 0 });
   Object.assign(navigator, { clipboard: { writeText: vi.fn() } });
 });
 
@@ -258,50 +242,16 @@ describe('note sharing', () => {
   });
 });
 
-/* ── RECOVER ───────────────────────────────────────────────────────────── */
+/* ── NO DEAD RECOVERY ──────────────────────────────────────────────────── */
 
 describe('recover', () => {
-  it('says nothing about unswept funds until a scan has actually run', () => {
-    // An untouched screen must not imply "you have nothing out there". That is
-    // an absence the screen has not checked.
+  it('offers no stealth-payment scan, which could only ever report zero', () => {
+    // The Recover action scanned a closed program (specter, FgKhXak…,
+    // 2026-09-13) and always answered "Nothing unswept". A button whose only
+    // possible answer is "nothing" states an absence it never checked.
     view();
-    expect(screen.queryByText(/unswept/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Nothing unswept/i)).not.toBeInTheDocument();
-  });
-
-  it('scans and reports an empty result as a checked fact', async () => {
-    view();
-    fireEvent.click(screen.getByRole('button', { name: /Recover/i }));
-    await waitFor(() => expect(mockScan).toHaveBeenCalled());
-    expect(await screen.findByText(/Nothing unswept/i)).toBeInTheDocument();
-  });
-
-  it('reports what it found and offers to sweep it', async () => {
-    mockScan.mockResolvedValue({ found: 2, amount: 0.75, payments: [] });
-    view();
-    fireEvent.click(screen.getByRole('button', { name: /Recover/i }));
-    expect(await screen.findByText(/2 unswept payments, 0\.7500 SOL/i)).toBeInTheDocument();
-    // ⚠️ And it says what sweeping costs in privacy, because it moves money to
-    // the user's public wallet.
-    expect(screen.getByText(/to your wallet, in public/i)).toBeInTheDocument();
-  });
-
-  it('sweeps to the connected wallet, never to an address it invented', async () => {
-    mockScan.mockResolvedValue({ found: 1, amount: 0.1, payments: [] });
-    view();
-    fireEvent.click(screen.getByRole('button', { name: /Recover/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /Sweep to my wallet/i }));
-    await waitFor(() =>
-      expect(mockSweepAll).toHaveBeenCalledWith('7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'),
-    );
-  });
-
-  it('is unavailable before the shielded service is up', () => {
-    // Pressing it uninitialised returns an empty result, which reads as
-    // "nothing to recover" and is a different claim entirely.
-    shieldedInitialized = false;
-    view();
-    expect(screen.getByRole('button', { name: /Recover/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /Recover/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/stealth addresses/i)).not.toBeInTheDocument();
   });
 });
 

@@ -31,7 +31,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["inject.js", "polyfills.js", "circuits/*"],
+      "resources": ["inject.js", "polyfills.js"],
       "matches": ["https://protocol-01.dev/*", "http://localhost:*/*"]
     }
   ],
@@ -47,13 +47,6 @@
     "https://*.solana.com/*",
     "https://*.helius.dev/*",
     "https://*.triton.one/*",
-    "https://*.jup.ag/*",
-    "https://token.jup.ag/*",
-    "https://quote-api.jup.ag/*",
-    "https://api.alternative.me/*",
-    "https://price.jup.ag/*",
-    "https://api.groq.com/*",
-    "https://generativelanguage.googleapis.com/*",
     "https://api.coingecko.com/*"
   ],
   "content_security_policy": {

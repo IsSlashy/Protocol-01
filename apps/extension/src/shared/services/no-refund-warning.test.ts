@@ -51,7 +51,8 @@ const PAYING_SCREENS = ['CreateSubscription.tsx', 'ApproveSubscription.tsx'] as 
 const SUBSCRIPTION_SCREENS = [
   ...PAYING_SCREENS,
   'SubscriptionDetails.tsx',
-  'SubscriptionVaults.tsx',
+  // SubscriptionVaults.tsx left this list on 2026-09-23: the parked page was
+  // deleted, so there is no screen left to scan, not a looser rule.
   'Subscriptions.tsx',
 ] as const;
 

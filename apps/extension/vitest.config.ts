@@ -10,7 +10,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/__tests__/setup.ts'],
     environmentMatchGlobs: [
-      // ZK proof tests need Node.js Worker threads (snarkjs/ffjavascript)
+      // Reads the shipped STARK artefacts from disk (node:fs, node:path).
       ['src/shared/services/denominatedPool.test.ts', 'node'],
     ],
     css: true,

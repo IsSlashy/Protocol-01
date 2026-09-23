@@ -4,8 +4,7 @@
  * The Home page is the primary view of the Protocol 01 wallet, displaying:
  * - Wallet header with PROTOCOL branding and DEVNET badge
  * - Balance card with USD value and SOL amount
- * - Action buttons (Send, Receive, Swap, Buy)
- * - Shielded Wallet card (ZK-protected privacy)
+ * - Action buttons (Send, Receive, Shield, Subscribe)
  * - Devnet faucet card (test SOL)
  * - Assets section with SOL and SPL tokens
  * - Recent Activity section with transaction history
@@ -13,7 +12,7 @@
  * Validates:
  * - Balance display and formatting
  * - Action button navigation
- * - Shielded wallet card rendering
+ * - No retired V1 balance strip
  * - Faucet card on devnet
  * - Transaction list rendering
  * - Loading states
@@ -70,17 +69,6 @@ vi.mock('@/shared/store/wallet', () => ({
     ],
     isLoadingTransactions: false,
     fetchTransactions: mockFetchTransactions,
-  }),
-}));
-
-vi.mock('@/shared/store/settings', () => ({
-  useSettingsStore: () => ({ shieldedWalletEnabled: true, initialize: vi.fn() }),
-}));
-
-vi.mock('@/shared/store/shielded', () => ({
-  useShieldedStore: () => ({
-    shieldedBalance: 1.5,
-    isInitialized: true,
   }),
 }));
 
@@ -183,20 +171,15 @@ describe('Home', () => {
     expect(screen.getByText(/Pay a merchant without an account/i)).toBeInTheDocument();
   });
 
-  it('shows one private balance strip, reporting the shielded balance', () => {
+  it('shows no retired V1 balance strip', () => {
     // Was two cards pointing at the same screen, one of which advertised
-    // itself as a dead end.
+    // itself as a dead end, then one strip showing the retired V1 note sum.
+    // The V1 client is gone (2026-09-23); the Shield verb is the way in.
     view();
-    expect(screen.getByText('Private balance')).toBeInTheDocument();
-    expect(screen.getByText(/1\.50 SOL shielded/)).toBeInTheDocument();
+    expect(screen.queryByText('Private balance')).not.toBeInTheDocument();
+    expect(screen.queryByText(/SOL shielded/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Legacy/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/no exit/i)).not.toBeInTheDocument();
-  });
-
-  it('opens the shield tab from the private balance strip', () => {
-    view();
-    fireEvent.click(screen.getByText('Private balance'));
-    expect(mockNavigate).toHaveBeenCalledWith('/shield');
   });
 
   it('offers the devnet faucet without giving it a card above the product', () => {

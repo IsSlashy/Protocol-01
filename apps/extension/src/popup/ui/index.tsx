@@ -373,7 +373,9 @@ export function ActionGrid({
   actions: { label: string; icon: LucideIcon; onClick: () => void; disabled?: boolean }[];
 }) {
   return (
-    <div className="grid grid-cols-4 gap-2">
+    // Literal class names so Tailwind keeps both; the grid follows the count
+    // instead of leaving an empty fourth cell under three actions.
+    <div className={cn('grid gap-2', actions.length === 3 ? 'grid-cols-3' : 'grid-cols-4')}>
       {actions.map((a) => (
         <button
           key={a.label}

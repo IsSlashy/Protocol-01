@@ -326,11 +326,6 @@ export const USDC_POOLS_V3: PoolConfig[] = [
 
 export const ALL_POOLS_V3: PoolConfig[] = [...SOL_POOLS_V3, ...USDC_POOLS_V3];
 
-/** Mirror mobile getPoolsForTokenV3 line 2842. */
-export function getPoolsForTokenV3(token: 'SOL' | 'USDC'): PoolConfig[] {
-  return token === 'SOL' ? SOL_POOLS_V3 : USDC_POOLS_V3;
-}
-
 /** Mirror mobile findPoolV3 line 2846. */
 export function findPoolV3(token: 'SOL' | 'USDC', denomination: number): PoolConfig | undefined {
   return ALL_POOLS_V3.find(p => p.token === token && p.denomination === denomination);

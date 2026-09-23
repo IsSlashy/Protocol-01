@@ -6,8 +6,9 @@
  * the note's secrets by `shared/services/noteLabel.ts`; a note it cannot name
  * (a legacy `zk:` note) renders nothing, and the row keeps its amount only.
  *
- * Pinned by the render tests of the three screens (`ShieldedWallet.test.tsx`,
- * `DenominatedUnshield.test.tsx`, `DenominatedTransfer.test.tsx`: the tag is
+ * Pinned by the render tests of the screens that use it
+ * (`DenominatedUnshield.test.tsx`, `DenominatedTransfer.test.tsx`; the third,
+ * `ShieldedWallet.test.tsx`, was deleted with its screen on 2026-09-23: the tag is
  * present, the leaf and the commitment are not, and two notes that differ only
  * in leaf, commitment and shield time render the same text).
  */

@@ -6,10 +6,9 @@
  * `return 'current'` — every subscription rendered ACTIVE, i.e. exactly the bug
  * — and all 122 extension tests stayed green. This file closes that.
  *
- * `SubscriptionVaults.tsx` itself cannot be covered here: `vitest.config.ts`
- * excludes `src/popup/**` because react-router-dom pulls a second React copy
- * and every `render()` throws. The store is the last layer that IS testable,
- * and it is the single place the badge's answer is decided.
+ * `SubscriptionVaults.tsx`, the page that showed the badge, was deleted on
+ * 2026-09-23 (it was parked behind a redirect). The store is the single place
+ * the entitlement answer is decided, so the pin stays.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';

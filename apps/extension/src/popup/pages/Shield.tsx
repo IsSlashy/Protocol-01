@@ -24,11 +24,12 @@
  * on a different screen minutes later. The countdown is on the note from the
  * moment it is created.
  *
- * ⛔ LEGACY V1 IS SHOWN AND NEVER SUMMED. `ShieldedWallet` added retired V1
- * balance into one "Shielded Balance" headline and presented the total as
- * spendable, while the home screen labelled the same money "no exit, V1
- * retired". Both cannot be true. V1 sits in its own row here, outside the
- * headline, labelled with what it is.
+ * ⛔ LEGACY V1 IS NEVER SUMMED. `ShieldedWallet` added retired V1 balance into
+ * one "Shielded Balance" headline and presented the total as spendable, while
+ * the home screen labelled the same money "no exit, V1 retired". Both cannot be
+ * true. The V1 client and the stealth-payment recovery block were removed
+ * (2026-09-23): V1 could not be spent, and the recovery scan could only ever
+ * return zero once the specter program was closed.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -40,15 +41,11 @@ import {
   Clock,
   Copy,
   Download,
-  Loader2,
-  Radar,
   Send,
   ShieldPlus,
 } from 'lucide-react';
 
 import { useDenominatedPoolStore } from '@/shared/store/denominatedPool';
-import { useShieldedStore } from '@/shared/store/shielded';
-import { useWalletStore } from '@/shared/store/wallet';
 import {
   ActionGrid,
   Amount,
@@ -87,7 +84,6 @@ function maturityOf(shieldedAt: number | undefined): { ready: boolean; label: st
 
 export default function Shield() {
   const navigate = useNavigate();
-  const { publicKey } = useWalletStore();
   const {
     getNotes,
     shieldNote,
@@ -95,17 +91,11 @@ export default function Shield() {
     error: poolError,
     setError,
   } = useDenominatedPoolStore();
-  const { scanStealthPayments, sweepAllStealthPayments, isInitialized } = useShieldedStore();
 
   const [denomination, setDenomination] = useState<number>(OPEN_DENOMINATION);
   const [progress, setProgress] = useState<string | null>(null);
   const [justShielded, setJustShielded] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-
-  // Recovery: scanning for stealth payments that were never swept.
-  const [scanning, setScanning] = useState(false);
-  const [sweeping, setSweeping] = useState(false);
-  const [found, setFound] = useState<{ count: number; amount: number } | null>(null);
 
   const notes = getNotes();
 
@@ -141,28 +131,6 @@ export default function Shield() {
       // and showing our own would lose the on-chain reason.
     } finally {
       setProgress(null);
-    }
-  };
-
-  const handleScan = async () => {
-    setScanning(true);
-    setFound(null);
-    try {
-      const res = await scanStealthPayments();
-      setFound({ count: res.found, amount: res.amount });
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  const handleSweep = async () => {
-    if (!publicKey) return;
-    setSweeping(true);
-    try {
-      await sweepAllStealthPayments(publicKey);
-      setFound(null);
-    } finally {
-      setSweeping(false);
     }
   };
 
@@ -262,7 +230,7 @@ export default function Shield() {
           </Panel>
         )}
 
-        {/* ── The four things you can do with a private balance ── */}
+        {/* ── The three things you can do with a private balance ── */}
         <div>
           <Eyebrow>Move it</Eyebrow>
           <div className="mt-2.5">
@@ -285,51 +253,10 @@ export default function Shield() {
                   icon: Download,
                   onClick: () => navigate('/shield/receive-note'),
                 },
-                {
-                  label: 'Recover',
-                  icon: Radar,
-                  onClick: () => void handleScan(),
-                  disabled: !isInitialized || scanning,
-                },
               ]}
             />
           </div>
         </div>
-
-        {/* Recovery result. Only rendered once a scan has actually run, so an
-            untouched screen does not imply anything about what is out there. */}
-        {(scanning || found) && (
-          <Panel tone={found && found.count > 0 ? 'warn' : 'quiet'}>
-            {scanning ? (
-              <p className="flex items-center gap-2 text-sm text-p01-text-muted">
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                Scanning for payments sent to your stealth addresses
-              </p>
-            ) : found && found.count > 0 ? (
-              <>
-                <p className="text-sm text-p01-text">
-                  {found.count} unswept payment{found.count > 1 ? 's' : ''}, {found.amount.toFixed(4)} SOL.
-                </p>
-                <p className="mt-1 text-tiny text-p01-text-muted">
-                  These sit at one-time addresses only your key controls. Sweeping moves them to
-                  your wallet, in public.
-                </p>
-                <Button
-                  variant="secondary"
-                  className="mt-3"
-                  loading={sweeping}
-                  onClick={() => void handleSweep()}
-                >
-                  Sweep to my wallet
-                </Button>
-              </>
-            ) : (
-              <p className="text-sm text-p01-text-muted">
-                Nothing unswept. Every payment sent to your stealth addresses has been collected.
-              </p>
-            )}
-          </Panel>
-        )}
 
         {/* ── The notes, each carrying its own next step ── */}
         <div>

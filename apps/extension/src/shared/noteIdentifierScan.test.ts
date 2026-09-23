@@ -2,8 +2,9 @@
  * NO SOURCE IN THIS PACKAGE NAMES A NOTE — ON SCREEN OR IN A LOG.
  *
  * WHY A SOURCE SCAN AS WELL AS RENDER TESTS. The three screens EXT-UI reworked
- * are covered by render tests (`ShieldedWallet.test.tsx`,
- * `DenominatedUnshield.test.tsx`, `DenominatedTransfer.test.tsx`), and a render
+ * are covered by render tests (`ShieldedWallet.test.tsx`, deleted with its
+ * screen on 2026-09-23, `DenominatedUnshield.test.tsx`,
+ * `DenominatedTransfer.test.tsx`), and a render
  * test is the stronger evidence: it measures what a user sees. But a render test
  * only covers a screen someone wrote a test for, and it cannot see a
  * `console.warn` on a path no test walks. Every surface below was reached by no
@@ -230,9 +231,11 @@ function errorValueHits(source: string, file = '<planted>'): Hit[] {
  * Fix round 2 adds the store and the subscription service: both printed the
  * circuit-7 refusal under the neutral name `v4Refusal`, and that reason carried
  * the deposit epoch (`wp-logs/verify/EXT-UI-r2-probe/epoch-probe.log`).
+ *
+ * `services/zk.ts` (the retired V1 client) left this list on 2026-09-23 because
+ * the file itself was deleted, not because the rule was relaxed.
  */
 const STRICT_CONSOLE_FILES = [
-  'src/shared/services/zk.ts',
   'src/shared/services/denominatedPool.ts',
   'src/shared/store/denominatedPool.ts',
   'src/shared/services/subscriptionVault.ts',
@@ -331,11 +334,12 @@ describe('the extension names no note', () => {
     // pass while measuring an empty set.
     expect(FILES.length).toBeGreaterThan(80);
     const names = SOURCES.map((s) => s.file);
+    // ShieldedWallet.tsx and services/zk.ts were anchors here until they were
+    // deleted on 2026-09-23; Shield.tsx is the screen that replaced the former.
     for (const f of [
-      'src/popup/pages/ShieldedWallet.tsx',
+      'src/popup/pages/Shield.tsx',
       'src/popup/pages/DenominatedUnshield.tsx',
       'src/popup/pages/DenominatedTransfer.tsx',
-      'src/shared/services/zk.ts',
       'src/shared/services/denominatedPool.ts',
       'src/shared/services/subscribePrivateStarkV4.ts',
     ]) {

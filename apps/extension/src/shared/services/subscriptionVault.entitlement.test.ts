@@ -212,8 +212,8 @@ describe('the max_funded clamp the extension was missing', () => {
   });
 
   it('THE SAME BUG ONE PANEL OVER: nextClaimableSlot stops answering once funding is gone', () => {
-    // SubscriptionVaults.tsx renders this as "Next claim: Slot N" in a panel
-    // still gated on `vault.isActive && !vault.isPaused`. Answering from
+    // SubscriptionVaults.tsx (parked, deleted 2026-09-23) rendered this as
+    // "Next claim: Slot N" in a panel gated on `vault.isActive && !vault.isPaused`. Answering from
     // `isActive` — true on every vault that exists — put a future slot next to
     // the new ENDED badge for a subscription where `claim_period` will return
     // NoClaimablePeriods for ever.

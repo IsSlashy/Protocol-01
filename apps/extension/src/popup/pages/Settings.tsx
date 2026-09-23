@@ -35,7 +35,6 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight,
-  BarChart3,
   Bell,
   Check,
   Copy,
@@ -47,14 +46,12 @@ import {
   Lock,
   LogOut,
   Route,
-  Shield,
   Smartphone,
   Wifi,
   X,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
 import { useSettingsStore } from '@/shared/store/settings';
-import { useShieldedStore } from '@/shared/store/shielded';
 import { cn, truncateAddress, copyToClipboard } from '@/shared/utils';
 import { decrypt, encrypt, verifyPassword, hashPassword } from '@/shared/services/crypto';
 import Wordmark from '@/popup/components/Wordmark';
@@ -145,17 +142,7 @@ export default function Settings() {
   const navigate = useNavigate();
   const { publicKey, network, setNetwork, hideBalance, toggleHideBalance, lock, reset, encryptedSeedPhrase, passwordHash } =
     useWalletStore();
-  const {
-    shieldedWalletEnabled,
-    confidentialBalanceEnabled,
-    relayerEnabled,
-    setShieldedWalletEnabled,
-    setConfidentialBalanceEnabled,
-    setRelayerEnabled,
-    initialize: initSettings,
-  } = useSettingsStore();
-  const { shieldedBalance } = useShieldedStore();
-  const hasShieldedFunds = shieldedBalance > 0;
+  const { relayerEnabled, setRelayerEnabled, initialize: initSettings } = useSettingsStore();
 
   const [copied, setCopied] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
@@ -478,41 +465,12 @@ export default function Settings() {
           </section>
 
           {/* ── PRIVACY FEATURES ──
-              Two of these are retired and say so in their own line rather than
-              in a badge nobody reads. */}
+              The retired "Shielded wallet" (V1) and "Confidential balance"
+              (zkSPL) toggles were removed on 2026-09-23 with the code they
+              switched: neither could move money any more. */}
           <section>
             <Eyebrow>PRIVACY FEATURES</Eyebrow>
             <div className="mt-1 flex flex-col">
-              <Row
-                label="Shielded wallet"
-                sub={
-                  hasShieldedFunds
-                    ? `Legacy · ${shieldedBalance.toFixed(4)} SOL, withdraw it`
-                    : 'Legacy · the privacy pool replaces it'
-                }
-                icon={Shield}
-                value={
-                  <Toggle
-                    checked={shieldedWalletEnabled}
-                    onChange={() => setShieldedWalletEnabled(!shieldedWalletEnabled)}
-                    label="Shielded wallet"
-                  />
-                }
-              />
-              <Hairline className="bg-p01-border-soft" />
-              <Row
-                label="Confidential balance"
-                sub="Legacy · hides amounts, not addresses"
-                icon={BarChart3}
-                value={
-                  <Toggle
-                    checked={confidentialBalanceEnabled}
-                    onChange={() => setConfidentialBalanceEnabled(!confidentialBalanceEnabled)}
-                    label="Confidential balance"
-                  />
-                }
-              />
-              <Hairline className="bg-p01-border-soft" />
               <Row
                 label="Privacy relayer"
                 sub="Hides your IP when withdrawing"

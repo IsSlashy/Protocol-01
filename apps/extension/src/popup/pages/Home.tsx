@@ -17,8 +17,6 @@ import {
   Wallet as WalletIcon,
 } from 'lucide-react';
 import { useWalletStore } from '@/shared/store/wallet';
-import { useShieldedStore } from '@/shared/store/shielded';
-import { useSettingsStore } from '@/shared/store/settings';
 import { getSolscanUrl } from '@/shared/services/transactions';
 import {
   formatCurrency,
@@ -56,15 +54,6 @@ export default function Home() {
     isLoadingTransactions,
     fetchTransactions,
   } = useWalletStore();
-  const { shieldedBalance, isInitialized: shieldedInitialized } = useShieldedStore();
-  const { shieldedWalletEnabled, initialize: initSettings } = useSettingsStore();
-
-  // Show legacy shielded card only if toggle on or has funds
-  const hasShieldedFunds = shieldedBalance > 0;
-  const showShieldedCard = shieldedWalletEnabled || hasShieldedFunds;
-
-  useEffect(() => { initSettings(); }, []);
-
   const [copied, setCopied] = useState(false);
   const [faucetLoading, setFaucetLoading] = useState(false);
   const [faucetSuccess, setFaucetSuccess] = useState(false);
@@ -139,11 +128,13 @@ export default function Home() {
      * What changed, and why each one:
      *   - ONE copy control. There were two, in the header and in the balance
      *     card, firing the same handler eight lines apart.
-     *   - Swap is parked, so the third verb is Shield: the action this product
-     *     is for, rather than one it does not do.
-     *   - The two shielded cards collapse into one strip, and the "no exit, V1
-     *     retired" card is gone. A full-width tappable button that announces
-     *     itself as a dead end is worse than no button.
+     *   - Swap is gone (parked, then deleted 2026-09-23), so the third verb is
+     *     Shield: the action this product is for, rather than one it does not do.
+     *   - The two shielded cards are gone, and so is the "no exit, V1
+     *     retired" card. A full-width tappable button that announces itself
+     *     as a dead end is worse than no button. The V1 "Private balance"
+     *     strip that replaced them went on 2026-09-23 with the V1 client:
+     *     the Shield verb above is the way in.
      *   - A subscriptions strip, because the tab bar was the only way in.
      *   - The faucet is a line, not a card above the product. It is test
      *     plumbing and it was outranking the thing being sold.
@@ -195,24 +186,8 @@ export default function Home() {
           ]}
         />
 
-        {/* The two strips that were duplicated and missing. */}
+        {/* The strip that was missing. */}
         <div className="mt-4 flex flex-col gap-2">
-          {shieldedWalletEnabled && (
-            <Panel className="p-0 px-3">
-              <Row
-                icon={Shield}
-                label="Private balance"
-                sub={
-                  shieldedInitialized
-                    ? `${shieldedBalance.toFixed(2)} SOL shielded`
-                    : "Not set up yet"
-                }
-                chevron
-                onClick={() => navigate("/shield")}
-              />
-            </Panel>
-          )}
-
           <Panel className="p-0 px-3">
             <Row
               icon={RefreshCw}
